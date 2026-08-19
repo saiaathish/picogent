@@ -1,0 +1,13 @@
+/picogent
+/dist/
+*.dmg
+.DS_Store
+.env
+.env.*
+!.env.example
+/bin/
+coverage.out
+*.exe
+.idea/
+.vscode/
+*.log

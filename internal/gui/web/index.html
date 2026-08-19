@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>picogent</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header>
+    <strong>picogent</strong>
+    <span id="provider"></span>
+    <span id="mode-label">safe</span>
+    <span id="model"></span>
+    <span id="ws"></span>
+    <button type="button" id="toggle-mode">switch mode</button>
+  </header>
+  <main>
+    <ol id="log"></ol>
+  </main>
+  <div id="perm" hidden>
+    <p id="perm-text"></p>
+    <button type="button" data-allow="1">yes</button>
+    <button type="button" data-allow="0">no</button>
+    <button type="button" data-turn="1">yes this turn</button>
+  </div>
+  <form id="composer">
+    <textarea id="prompt" rows="2" placeholder="what should picogent do?"></textarea>
+    <button type="submit">send</button>
+  </form>
+  <script src="/app.js"></script>
+</body>
+</html>
