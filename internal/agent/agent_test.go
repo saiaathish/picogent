@@ -31,7 +31,7 @@ func TestWritesFileThenStops(t *testing.T) {
 	gate := perm.New(config.ModeFast, dir, nil)
 	a := agent.New(cfg, fake, reg, gate)
 	h := allowAll{}
-	_, res, err := a.Run(context.Background(), nil, "create hello.txt that says picogent", h)
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "create hello.txt that says picogent"}, h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,12 +63,32 @@ func TestSafeModeDeniesWriteWithoutPromptAllow(t *testing.T) {
 	reg := tools.NewRegistry(tools.Context{Workspace: dir})
 	gate := perm.New(config.ModeSafe, dir, nil)
 	a := agent.New(cfg, fake, reg, gate)
-	_, _, err := a.Run(context.Background(), nil, "write x.txt", denyAll{})
+	_, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "write x.txt"}, denyAll{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "x.txt")); !os.IsNotExist(err) {
 		t.Fatal("file should not exist")
+	}
+}
+
+func TestGoalCompleteMarksResult(t *testing.T) {
+	dir := t.TempDir()
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: all tests pass"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{Workspace: dir})
+	gate := perm.New(config.ModeFast, dir, nil)
+	a := agent.New(cfg, fake, reg, gate)
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "done?"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.GoalDone {
+		t.Fatal("expected GoalDone")
 	}
 }
 
@@ -82,7 +102,7 @@ func TestMissingKeyStopsBeforeLLM(t *testing.T) {
 	reg := tools.NewRegistry(tools.Context{Workspace: dir})
 	gate := perm.New(config.ModeSafe, dir, nil)
 	a := agent.New(cfg, &llm.Scripted{}, reg, gate)
-	_, _, err := a.Run(context.Background(), nil, "hi", denyAll{})
+	_, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "hi"}, denyAll{})
 	if err == nil || err.Error() == "" {
 		t.Fatal("expected auth error")
 	}

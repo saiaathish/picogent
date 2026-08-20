@@ -3,6 +3,7 @@ package llm
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,11 +40,16 @@ func NewAnthropic(apiKey, model string, timeout time.Duration) *Anthropic {
 }
 
 type anthropicReq struct {
-	Model     string           `json:"model"`
-	MaxTokens int              `json:"max_tokens"`
-	System    string           `json:"system,omitempty"`
-	Messages  []anthropicMsg   `json:"messages"`
-	Tools     []anthropicTool  `json:"tools,omitempty"`
+	Model        string                 `json:"model"`
+	MaxTokens    int                    `json:"max_tokens"`
+	System       string                 `json:"system,omitempty"`
+	Messages     []anthropicMsg         `json:"messages"`
+	Tools        []anthropicTool        `json:"tools,omitempty"`
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Effort string `json:"effort"`
 }
 
 type anthropicMsg struct {
@@ -77,6 +83,9 @@ type anthropicResp struct {
 
 func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
 	model := req.Model
+	if IsAutoModel(model) {
+		model = c.Model
+	}
 	if model == "" {
 		model = c.Model
 	}
@@ -91,7 +100,11 @@ func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, er
 			}
 			system.WriteString(m.Content)
 		case "user":
-			msgs = append(msgs, anthropicMsg{Role: "user", Content: m.Content})
+			if len(m.Parts) > 0 {
+				msgs = append(msgs, anthropicMsg{Role: "user", Content: anthropicUserParts(m.Content, m.Parts)})
+			} else {
+				msgs = append(msgs, anthropicMsg{Role: "user", Content: m.Content})
+			}
 		case "assistant":
 			if len(m.ToolCalls) > 0 {
 				var blocks []map[string]any
@@ -129,6 +142,9 @@ func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, er
 		MaxTokens: 8192,
 		System:    system.String(),
 		Messages:  msgs,
+	}
+	if req.Reasoning != "" {
+		body.OutputConfig = &anthropicOutputConfig{Effort: string(req.Reasoning)}
 	}
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, anthropicTool{
@@ -192,4 +208,52 @@ func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, er
 		PromptTokens:     out.Usage.InputTokens,
 		CompletionTokens: out.Usage.OutputTokens,
 	}, nil
+}
+
+func anthropicUserParts(text string, parts []Part) []map[string]any {
+	var blocks []map[string]any
+	if t := strings.TrimSpace(text); t != "" {
+		blocks = append(blocks, map[string]any{"type": "text", "text": t})
+	}
+	for _, p := range parts {
+		switch p.Type {
+		case "image":
+			blocks = append(blocks, map[string]any{
+				"type": "image",
+				"source": map[string]any{
+					"type":       "base64",
+					"media_type": p.MIME,
+					"data":       base64.StdEncoding.EncodeToString(p.Data),
+				},
+			})
+		case "file":
+			if p.MIME == "application/pdf" || strings.HasSuffix(strings.ToLower(p.Name), ".pdf") {
+				blocks = append(blocks, map[string]any{
+					"type": "document",
+					"source": map[string]any{
+						"type":       "base64",
+						"media_type": "application/pdf",
+						"data":       base64.StdEncoding.EncodeToString(p.Data),
+					},
+				})
+			} else {
+				body := string(p.Data)
+				if p.Text != "" {
+					body = p.Text
+				}
+				blocks = append(blocks, map[string]any{
+					"type": "text",
+					"text": fmt.Sprintf("--- %s ---\n%s", p.Name, body),
+				})
+			}
+		case "text":
+			if p.Text != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": p.Text})
+			}
+		}
+	}
+	if len(blocks) == 0 {
+		return []map[string]any{{"type": "text", "text": text}}
+	}
+	return blocks
 }

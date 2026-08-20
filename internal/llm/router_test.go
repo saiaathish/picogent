@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
 )
 
@@ -86,5 +87,30 @@ func TestRouterOverridesModel(t *testing.T) {
 	dec := r.LastDecision()
 	if dec.Tier != llm.TierLight {
 		t.Fatalf("expected light tier, got %s", dec.Tier)
+	}
+}
+
+func TestRouterNeverSendsAuto(t *testing.T) {
+	scripted := &llm.Scripted{
+		Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "ok"}}},
+	}
+	cat := llm.InitCatalog(false)
+	advisor := llm.NewAdvisor(cat, nil, "")
+	r := llm.NewRouter(scripted, advisor, llm.EcoCodex, false, nil)
+	_, err := r.Chat(context.Background(), llm.ChatRequest{
+		Model:    config.ModelAuto,
+		Messages: []llm.Message{{Role: "user", Content: "what is in this image", Parts: []llm.Part{{Type: "image", MIME: "image/png", Data: []byte{1, 2, 3}}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scripted.Calls) != 1 {
+		t.Fatalf("calls=%d", len(scripted.Calls))
+	}
+	if llm.IsAutoModel(scripted.Calls[0].Model) {
+		t.Fatalf("backend received auto model: %q", scripted.Calls[0].Model)
+	}
+	if scripted.Calls[0].Model == "" {
+		t.Fatal("backend received empty model")
 	}
 }

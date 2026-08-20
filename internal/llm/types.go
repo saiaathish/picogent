@@ -2,9 +2,19 @@ package llm
 
 import "context"
 
+// Part is one block in a multimodal user message (image, file, or extra text).
+type Part struct {
+	Type string `json:"type"` // text, image, file
+	Text string `json:"text,omitempty"`
+	MIME string `json:"mime,omitempty"`
+	Name string `json:"name,omitempty"`
+	Data []byte `json:"data,omitempty"`
+}
+
 type Message struct {
 	Role       string     `json:"role"`
 	Content    string     `json:"content,omitempty"`
+	Parts      []Part     `json:"parts,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
 	Name       string     `json:"name,omitempty"`
@@ -28,8 +38,12 @@ type ChatRequest struct {
 	Messages []Message
 	Tools    []ToolSpec
 	// Routing hints — used by auto router inside agent loops.
-	ToolRound int
-	Escalate  bool
+	ToolRound    int
+	Escalate     bool
+	TaskMode     string
+	ReadOnly     bool
+	LastToolKind string
+	Reasoning    ReasoningLevel // set by router; forwarded to provider
 }
 
 type ChatResponse struct {

@@ -18,22 +18,26 @@ import (
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/app"
+	"github.com/saiaathish/picogent/internal/attachments"
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
 	"github.com/saiaathish/picogent/internal/extensions"
+	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/learn"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/setup"
 	"github.com/saiaathish/picogent/internal/slash"
+	"github.com/saiaathish/picogent/internal/trace"
 )
 
 type event struct {
 	Type    string  `json:"type"`
 	Text    string  `json:"text,omitempty"`
 	Summary string  `json:"summary,omitempty"`
+	Hint    string  `json:"hint,omitempty"`
 	Path    string  `json:"path,omitempty"`
 	Line    int     `json:"line,omitempty"`
 	LineEnd int     `json:"line_end,omitempty"`
@@ -54,16 +58,19 @@ type transcriptLine struct {
 }
 
 type server struct {
-	cfg       config.Config
-	ag        *agent.Agent
-	mu        sync.Mutex
-	hist      []llm.Message
-	sessionID string
-	permCh    chan perm.Decision
-	subs      []chan event
-	busy      bool
-	cancel    context.CancelFunc
-	undoStack []extensions.UndoEntry
+	cfg         config.Config
+	ag          *agent.Agent
+	mu          sync.Mutex
+	hist        []llm.Message
+	sessionID   string
+	permCh      chan perm.Decision
+	subs        []chan event
+	busy        bool
+	cancel      context.CancelFunc
+	steerMu     sync.Mutex
+	steerPrompt string
+	steerParts  []llm.Part
+	undoStack   []extensions.UndoEntry
 	pendingPerm perm.Request
 }
 
@@ -125,6 +132,7 @@ func (s *server) Handler() http.Handler {
 	mux.HandleFunc("/api/chat", s.chat)
 	mux.HandleFunc("/api/permission", s.permission)
 	mux.HandleFunc("/api/mode", s.setMode)
+	mux.HandleFunc("/api/task-mode", s.setTaskMode)
 	mux.HandleFunc("/api/cancel", s.cancelChat)
 	mux.HandleFunc("/api/reset", s.reset)
 	mux.HandleFunc("/api/sessions", s.sessions)
@@ -133,13 +141,32 @@ func (s *server) Handler() http.Handler {
 	mux.HandleFunc("/api/router", s.routerAPI)
 	mux.HandleFunc("/api/projects", s.projectsAPI)
 	mux.HandleFunc("/api/folder/pick", s.folderPickAPI)
+	mux.HandleFunc("/api/files/pick", s.filesPickAPI)
+	mux.HandleFunc("/api/files/read", s.filesReadAPI)
 	mux.HandleFunc("/api/overview", s.overviewAPI)
 	mux.HandleFunc("/api/test", s.testAPI)
 	mux.HandleFunc("/api/diff", s.diffAPI)
 	mux.HandleFunc("/api/extensions", s.extensionsAPI)
+	mux.HandleFunc("/api/trace", s.traceAPI)
 	mux.HandleFunc("/api/events", s.events)
 	mux.Handle("/", http.FileServer(http.FS(static)))
 	return mux
+}
+
+func (s *server) traceAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", 405)
+		return
+	}
+	var events []trace.Event
+	if s.ag != nil && s.ag.Trace != nil {
+		events = s.ag.Trace.Tail(80)
+	}
+	if events == nil {
+		events = []trace.Event{}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"events": events})
 }
 
 func (s *server) attachRouterHook() {
@@ -159,7 +186,9 @@ func (s *server) attachRouterHook() {
 		s.cfg.Router.LastTier = string(dec.Tier)
 		s.cfg.Router.LastModel = dec.Model
 		s.cfg.Router.LastReason = dec.Reason
-		s.cfg.Model = dec.Model
+		s.cfg.Router.LastReasoning = string(dec.Reasoning)
+		s.cfg.Router.LastTaskKind = string(dec.TaskKind)
+		s.cfg.Router.LastRouteMode = string(dec.RouteMode)
 		s.mu.Unlock()
 		s.emit(event{Type: "route", Text: dec.Label, Summary: dec.Reason})
 	}
@@ -198,21 +227,27 @@ func (s *server) snapshot() map[string]any {
 		hint = err.Error()
 	}
 	out := map[string]any{
-		"mode":       cfg.Mode,
-		"model":      cfg.Model,
-		"workspace":  cfg.Workspace,
-		"provider":   cfg.Provider,
-		"codex":      cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
-		"quadcode":   cfg.Provider == config.ProviderQuadCode && cfg.AnthropicKeyResolved() != "",
-		"busy":       busy,
-		"hint":       hint,
-		"setup":      !cfg.SetupComplete,
-		"mcp_tools":  mcpToolCount(ag),
-		"session_id": sessionID,
-		"router":     s.routerSnapshot(),
+		"mode":          cfg.Mode,
+		"task_mode":     agent.ParseTaskMode(cfg.TaskMode),
+		"model":         cfg.DisplayModel(),
+		"workspace":     cfg.Workspace,
+		"provider":      cfg.Provider,
+		"codex":         cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
+		"quadcode":      cfg.Provider == config.ProviderQuadCode && cfg.AnthropicKeyResolved() != "",
+		"busy":          busy,
+		"hint":          hint,
+		"setup":         !cfg.SetupComplete,
+		"mcp_tools":     mcpToolCount(ag),
+		"session_id":    sessionID,
+		"router":        s.routerSnapshot(),
+		"model_options": llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
+		"slash":         slash.Catalog(cfg.Workspace),
 	}
 	if store, err := learn.Load(cfg.Workspace); err == nil {
 		out["overview"] = store
+	}
+	if g, err := goal.Load(cfg.Workspace); err == nil && g != "" {
+		out["goal"] = g
 	}
 	if len(hist) > 0 {
 		out["messages"] = messagesToTranscript(hist)
@@ -233,45 +268,60 @@ func (s *server) routerSnapshot() map[string]any {
 	cat := llm.CatalogSnapshot()
 	tiers := make([]map[string]any, 0)
 	for _, m := range cat.ForEcosystem(llm.Ecosystem(eco)) {
-		tiers = append(tiers, map[string]any{
+		entry := map[string]any{
 			"id":          m.ID,
 			"display":     m.Display,
 			"tier":        m.Tier,
 			"description": m.Description,
 			"gated":       m.Gated,
-		})
+		}
+		if m.Reasoning != nil {
+			entry["reasoning"] = map[string]any{
+				"supported": m.Reasoning.Supported,
+				"default":   m.Reasoning.Default,
+			}
+		}
+		tiers = append(tiers, entry)
 	}
 	last := map[string]any{
-		"tier":   cfg.Router.LastTier,
-		"model":  cfg.Router.LastModel,
-		"reason": cfg.Router.LastReason,
+		"tier":       cfg.Router.LastTier,
+		"model":      cfg.Router.LastModel,
+		"reason":     cfg.Router.LastReason,
+		"reasoning":  cfg.Router.LastReasoning,
+		"task_kind":  cfg.Router.LastTaskKind,
+		"route_mode": cfg.Router.LastRouteMode,
 	}
 	if ag != nil {
 		if r, ok := ag.LLM.(*llm.Router); ok {
 			dec := r.LastDecision()
 			if dec.Model != "" {
 				last = map[string]any{
-					"tier":    dec.Tier,
-					"label":   dec.Label,
-					"model":   dec.Model,
-					"reason":  dec.Reason,
-					"score":   dec.Score,
-					"advisor": dec.Advisor,
+					"tier":       dec.Tier,
+					"label":      dec.Label,
+					"model":      dec.Model,
+					"reason":     dec.Reason,
+					"score":      dec.Score,
+					"advisor":    dec.Advisor,
+					"reasoning":  dec.Reasoning,
+					"task_kind":  dec.TaskKind,
+					"route_mode": dec.RouteMode,
 				}
 			}
 		}
 	}
+	reasoningScale := llm.ReasoningScaleFor(llm.Ecosystem(eco))
 	return map[string]any{
-		"enabled":          cfg.Router.Enabled,
-		"ecosystem":        eco,
-		"use_llm_advisor":  cfg.Router.UseLLMAdvisor,
-		"allow_fable":      cfg.Router.AllowFable,
-		"fable_confirmed":  cfg.Router.FableConfirmed,
-		"fable_available":  cfg.AnthropicKeyResolved() != "",
-		"catalog_version":  cat.Version,
-		"catalog_updated":  cat.Updated,
-		"tiers":            tiers,
-		"last":             last,
+		"enabled":         cfg.Router.Enabled,
+		"ecosystem":       eco,
+		"use_llm_advisor": cfg.Router.UseLLMAdvisor,
+		"allow_fable":     cfg.Router.AllowFable,
+		"fable_confirmed": cfg.Router.FableConfirmed,
+		"fable_available": cfg.AnthropicKeyResolved() != "",
+		"catalog_version": cat.Version,
+		"catalog_updated": cat.Updated,
+		"tiers":           tiers,
+		"reasoning_scale": reasoningScale,
+		"last":            last,
 	}
 }
 
@@ -390,12 +440,12 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-			s.mu.Lock()
-			s.cfg = next
-			s.ag = a
-			s.hist = nil
-			s.mu.Unlock()
-			s.attachRouterHook()
+	s.mu.Lock()
+	s.cfg = next
+	s.ag = a
+	s.hist = nil
+	s.mu.Unlock()
+	s.attachRouterHook()
 	w.WriteHeader(204)
 }
 
@@ -428,6 +478,183 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 	_ = config.Save(s.cfg)
 	s.mu.Unlock()
 	w.WriteHeader(204)
+}
+
+func (s *server) setTaskMode(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		TaskMode string `json:"task_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	m := agent.ParseTaskMode(in.TaskMode)
+	if !m.Valid() {
+		http.Error(w, "invalid task mode", 400)
+		return
+	}
+	s.mu.Lock()
+	s.cfg.TaskMode = string(m)
+	if s.ag != nil {
+		s.ag.SetTaskMode(m)
+	}
+	_ = config.Save(s.cfg)
+	s.mu.Unlock()
+	s.emit(event{Type: "system", Text: "mode: " + strings.ToLower(m.Label())})
+	s.emit(event{Type: "task_mode", Text: string(m)})
+	w.WriteHeader(204)
+}
+
+func (s *server) applyTaskMode(payload string) {
+	m := agent.ParseTaskMode(strings.TrimPrefix(payload, "task:"))
+	s.mu.Lock()
+	s.cfg.TaskMode = string(m)
+	if s.ag != nil {
+		s.ag.SetTaskMode(m)
+	}
+	_ = config.Save(s.cfg)
+	s.mu.Unlock()
+	s.emit(event{Type: "system", Text: "mode: " + strings.ToLower(m.Label())})
+	s.emit(event{Type: "task_mode", Text: string(m)})
+}
+
+func (s *server) autoApplyFromUserPrompt(prompt string) {
+	if !s.cfg.AutoTaskModeOn() {
+		return
+	}
+	if strings.HasPrefix(strings.TrimSpace(prompt), "/") {
+		return
+	}
+	s.mu.Lock()
+	ag := s.ag
+	cur := agent.TaskAgent
+	goalText := ""
+	if ag != nil {
+		cur = ag.TaskMode
+		goalText = ag.Goal
+	}
+	s.mu.Unlock()
+	if ag == nil {
+		return
+	}
+
+	dec := agent.InferAuto(prompt, cur, goalText)
+	if dec.GoalSet && dec.Goal != goalText {
+		_ = s.setGoal(dec.Goal)
+	}
+	if dec.TaskMode != cur {
+		s.mu.Lock()
+		s.cfg.TaskMode = string(dec.TaskMode)
+		ag.SetTaskMode(dec.TaskMode)
+		_ = config.Save(s.cfg)
+		s.mu.Unlock()
+		s.emit(event{Type: "task_mode", Text: string(dec.TaskMode)})
+	}
+}
+
+func (s *server) queueSteer(prompt string, parts []llm.Part) {
+	s.steerMu.Lock()
+	s.steerPrompt = prompt
+	s.steerParts = parts
+	s.steerMu.Unlock()
+}
+
+func (s *server) popSteer() (string, []llm.Part, bool) {
+	s.steerMu.Lock()
+	defer s.steerMu.Unlock()
+	if s.steerPrompt == "" {
+		return "", nil, false
+	}
+	p := s.steerPrompt
+	parts := s.steerParts
+	s.steerPrompt = ""
+	s.steerParts = nil
+	return p, parts, true
+}
+
+func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
+	s.mu.Lock()
+	if s.busy {
+		s.mu.Unlock()
+		return
+	}
+	s.busy = true
+	hist := s.hist
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	s.mu.Unlock()
+
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.busy = false
+			s.cancel = nil
+			s.mu.Unlock()
+			s.emit(event{Type: "done"})
+			if p, pts, ok := s.popSteer(); ok {
+				s.startAgentTurn(p, pts)
+			}
+		}()
+		h := newGUIHandler(s)
+		h.beginTurn(prompt)
+		s.maybeRecommendExtensions(prompt)
+		userMsg := llm.Message{Role: "user", Content: prompt, Parts: parts}
+		next, result, err := s.ag.Run(ctx, hist, userMsg, h)
+		for i := len(next) - 1; i >= 0; i-- {
+			if next[i].Role == "user" && len(next[i].Parts) > 0 {
+				next[i].Content = attachments.SummaryLine(next[i].Parts) + next[i].Content
+				next[i].Parts = nil
+				break
+			}
+		}
+		h.endTurn(result)
+		if result.GoalDone {
+			_ = s.clearGoal()
+		}
+		s.mu.Lock()
+		s.hist = next
+		ws := s.cfg.Workspace
+		sid := s.sessionID
+		llmClient := s.ag.LLM
+		model := s.cfg.Model
+		_ = config.Save(s.cfg)
+		_ = session.SaveMessages(ws, sid, next)
+		s.mu.Unlock()
+		if result.Context.Tokens > 0 {
+			s.emit(contextEvent(result.Context))
+		}
+		s.maybeAutoTitle(context.Background(), llmClient, model, ws, sid, next)
+		if err != nil && ctx.Err() == nil {
+			s.emit(event{Type: "error", Text: err.Error()})
+		}
+	}()
+}
+
+func (s *server) setGoal(text string) error {
+	text = strings.TrimSpace(text)
+	if err := goal.Set(s.cfg.Workspace, text); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.ag != nil {
+		s.ag.Goal = text
+	}
+	s.mu.Unlock()
+	s.emit(event{Type: "goal", Text: text})
+	return nil
+}
+
+func (s *server) clearGoal() error {
+	if err := goal.Clear(s.cfg.Workspace); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.ag != nil {
+		s.ag.Goal = ""
+	}
+	s.mu.Unlock()
+	s.emit(event{Type: "goal", Text: ""})
+	return nil
 }
 
 func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
@@ -535,20 +762,37 @@ func (s *server) cancelChat(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Prompt string `json:"prompt"`
+		Prompt      string              `json:"prompt"`
+		Attachments []attachments.Input `json:"attachments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
 	prompt := strings.TrimSpace(in.Prompt)
-	if prompt == "" {
+	parts, err := attachments.Decode(in.Attachments)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if prompt == "" && len(parts) == 0 {
 		http.Error(w, "empty prompt", 400)
 		return
 	}
 
+	userPrompt := prompt
 	kind, payload := slash.Resolve(s.cfg.Workspace, prompt)
-	if kind == slash.Local {
+	runAgent := kind != slash.Local
+	if kind == slash.Local && strings.HasPrefix(payload, "goal:set:") {
+		text := strings.TrimPrefix(payload, "goal:set:")
+		if err := s.setGoal(text); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		s.emit(event{Type: "system", Text: "goal set — working…"})
+		prompt = goal.WorkPrompt(text)
+		runAgent = true
+	} else if kind == slash.Local {
 		switch payload {
 		case "clear":
 			s.mu.Lock()
@@ -570,15 +814,33 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 			s.emit(event{Type: "system", Text: msg})
 			s.emit(contextEvent(stats))
 		case "status":
-			st := fmt.Sprintf("mode=%s model=%s workspace=%s", s.cfg.Mode, s.cfg.Model, s.cfg.Workspace)
+			st := fmt.Sprintf("safe/fast=%s task=%s model=%s workspace=%s", s.cfg.Mode, agent.ParseTaskMode(s.cfg.TaskMode).Label(), s.cfg.Model, s.cfg.Workspace)
+			if s.ag != nil && s.ag.Goal != "" {
+				st += " · goal: " + s.ag.Goal
+			}
 			if s.ag.Tools != nil && s.ag.Tools.HasMCP() {
 				st += fmt.Sprintf(" · %d MCP tools", len(s.ag.Tools.MCP.Tools()))
 			}
 			s.emit(event{Type: "system", Text: st})
 		case "diff":
 			s.emit(event{Type: "system", Text: slash.GitDiff()})
+		case "goal:show":
+			g, _ := goal.Load(s.cfg.Workspace)
+			if g == "" {
+				s.emit(event{Type: "system", Text: "no active goal (/goal <objective> to set one)"})
+			} else {
+				s.emit(event{Type: "system", Text: "goal: " + g})
+			}
+		case "goal:clear":
+			if err := s.clearGoal(); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			s.emit(event{Type: "system", Text: "goal cleared"})
 		default:
-			if strings.HasPrefix(payload, "memory:") {
+			if strings.HasPrefix(payload, "task:") {
+				s.applyTaskMode(payload)
+			} else if strings.HasPrefix(payload, "memory:") {
 				text := strings.TrimPrefix(payload, "memory:")
 				if text == "" {
 					text = "(no project rules files)"
@@ -586,70 +848,45 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 				s.emit(event{Type: "system", Text: text})
 			}
 		}
-		w.WriteHeader(204)
-		return
+		if !runAgent {
+			w.WriteHeader(204)
+			return
+		}
 	}
 	if kind == slash.Prompt {
 		prompt = payload
 	}
 
+	s.autoApplyFromUserPrompt(userPrompt)
+
 	s.mu.Lock()
 	if s.busy {
 		s.mu.Unlock()
-		http.Error(w, "already running", 409)
+		s.queueSteer(prompt, parts)
+		s.emit(event{Type: "system", Text: "Follow-up queued for when the current turn finishes"})
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(202)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "queued": true})
 		return
 	}
-	s.busy = true
-	hist := s.hist
-	ctx, cancel := context.WithCancel(context.Background())
-	s.cancel = cancel
 	s.mu.Unlock()
 
-	go func() {
-		defer func() {
-			s.mu.Lock()
-			s.busy = false
-			s.cancel = nil
-			s.mu.Unlock()
-			s.emit(event{Type: "done"})
-		}()
-		h := newGUIHandler(s)
-		h.beginTurn(prompt)
-		s.maybeRecommendExtensions(prompt)
-		next, result, err := s.ag.Run(ctx, hist, prompt, h)
-		h.endTurn(result)
-		s.mu.Lock()
-		s.hist = next
-		ws := s.cfg.Workspace
-		sid := s.sessionID
-		llmClient := s.ag.LLM
-		model := s.cfg.Model
-		_ = config.Save(s.cfg)
-		_ = session.SaveMessages(ws, sid, next)
-		s.mu.Unlock()
-		if result.Context.Tokens > 0 {
-			s.emit(contextEvent(result.Context))
-		}
-		s.maybeAutoTitle(context.Background(), llmClient, model, ws, sid, next)
-		if err != nil && ctx.Err() == nil {
-			s.emit(event{Type: "error", Text: err.Error()})
-		}
-	}()
+	s.startAgentTurn(prompt, parts)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(202)
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 type guiHandler struct {
-	s       *server
-	learn   learn.Store
-	explore int
+	s        *server
+	learn    learn.Store
+	explore  int
 	searches int
-	reads   int
-	edits   int
-	added   int
-	removed int
-	changes []event
+	reads    int
+	edits    int
+	added    int
+	removed  int
+	changes  []event
 }
 
 func newGUIHandler(s *server) *guiHandler {
@@ -814,10 +1051,13 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 	h.s.pendingPerm = req
 	h.s.mu.Unlock()
 	kind := req.Tool
-	if strings.HasPrefix(kind, "mcp_") {
+	if strings.HasPrefix(kind, "mcp_") || kind == "mcp_manage" {
 		kind = "mcp"
 	}
-	h.s.emit(event{Type: "permission", Summary: req.Summary, Text: req.Tool, Kind: kind, Status: permStatus(req)})
+	if h.s.ag != nil {
+		_ = h.s.ag.Trace.Append("perm", req.Tool, req.Summary, nil, 0)
+	}
+	h.s.emit(event{Type: "permission", Summary: req.Summary, Hint: req.Hint, Text: req.Tool, Kind: kind, Status: permStatus(req)})
 	select {
 	case <-ctx.Done():
 		return perm.Deny, ctx.Err()
@@ -1038,9 +1278,9 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"path":    display,
-		"lines":   rows,
-		"total":   total,
+		"path":      display,
+		"lines":     rows,
+		"total":     total,
 		"truncated": total > maxLines,
 	})
 }
@@ -1070,19 +1310,19 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		})
 	case http.MethodPost:
 		var in struct {
-			Workspace       string `json:"workspace"`
-			Mode            string `json:"mode"`
-			Model           string `json:"model"`
-			Provider        string `json:"provider"`
-			AnthropicKey    string `json:"anthropic_api_key"`
-			MaxToolRounds   int    `json:"max_tool_rounds"`
-			LLMTimeoutSec   int    `json:"llm_timeout_sec"`
-			BashTimeoutSec  int    `json:"bash_timeout_sec"`
-			RouterEnabled   *bool  `json:"router_enabled"`
-			UseLLMAdvisor   *bool  `json:"use_llm_advisor"`
-			AllowFable      *bool  `json:"allow_fable"`
-			FableConfirmed  *bool  `json:"fable_confirmed"`
-			RefreshCatalog  bool   `json:"refresh_catalog"`
+			Workspace      string `json:"workspace"`
+			Mode           string `json:"mode"`
+			Model          string `json:"model"`
+			Provider       string `json:"provider"`
+			AnthropicKey   string `json:"anthropic_api_key"`
+			MaxToolRounds  int    `json:"max_tool_rounds"`
+			LLMTimeoutSec  int    `json:"llm_timeout_sec"`
+			BashTimeoutSec int    `json:"bash_timeout_sec"`
+			RouterEnabled  *bool  `json:"router_enabled"`
+			UseLLMAdvisor  *bool  `json:"use_llm_advisor"`
+			AllowFable     *bool  `json:"allow_fable"`
+			FableConfirmed *bool  `json:"fable_confirmed"`
+			RefreshCatalog bool   `json:"refresh_catalog"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			http.Error(w, err.Error(), 400)

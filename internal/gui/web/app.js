@@ -7,8 +7,13 @@ const emptyEl = $("empty");
 const thinkingEl = $("thinking");
 const permEl = $("perm");
 const permText = $("perm-text");
+const permHint = $("perm-hint");
 const promptEl = $("prompt");
 const sendBtn = $("send");
+const attachBtn = $("attach-btn");
+const fileInput = $("file-input");
+const attachTray = $("attach-tray");
+const modelPick = $("model-pick");
 const statusText = $("status-text");
 const contextBar = $("context-bar");
 const threadList = $("thread-list");
@@ -19,6 +24,7 @@ const reviewScroll = $("review-scroll");
 const reviewNote = $("review-note");
 const reviewInput = $("review-input");
 const modeSeg = $("mode-seg");
+const slashMenu = $("slash-menu");
 const scrim = $("scrim");
 const threadSearch = $("thread-search");
 const reasoningEl = $("reasoning");
@@ -41,6 +47,11 @@ let activityPanel = null;
 let ready = false;
 let busy = false;
 let sessionId = "";
+let pendingAttachments = [];
+let modelOptions = [];
+let userModelChoice = "auto";
+let slashItems = [];
+let slashIndex = 0;
 let reviewOpen = false;
 let reviewFile = "";
 let highlight = { start: 0, end: 0 };
@@ -376,7 +387,7 @@ function linkifyRefs(text, container) {
   if (last === 0) container.textContent = text;
 }
 
-function add(kind, text) {
+function add(kind, text, attachmentMeta) {
   if (kind === "tool") {
     return;
   }
@@ -386,6 +397,24 @@ function add(kind, text) {
   wrap.className = "turn turn-" + role;
 
   if (role === "user") {
+    if (attachmentMeta?.length) {
+      const tray = document.createElement("div");
+      tray.className = "msg-attachments";
+      for (const a of attachmentMeta) {
+        const chip = document.createElement("span");
+        chip.className = "msg-attach-chip";
+        if (a.preview) {
+          const img = document.createElement("img");
+          img.src = a.preview;
+          img.alt = a.name;
+          chip.appendChild(img);
+        } else {
+          chip.textContent = a.name;
+        }
+        tray.appendChild(chip);
+      }
+      wrap.appendChild(tray);
+    }
     const b = document.createElement("div");
     b.className = "bubble";
     b.textContent = text;
@@ -508,19 +537,28 @@ async function refresh() {
   const s = await (await fetch("/api/state")).json();
   sessionId = s.session_id || sessionId;
   currentMode = s.mode || "safe";
+  if (s.slash?.length) slashItems = s.slash;
 
   modeSeg.querySelectorAll("button").forEach((b) => {
     b.classList.toggle("is-on", b.dataset.mode === s.mode);
   });
 
+  if (s.model_options?.length) {
+    if (s.model === "auto") userModelChoice = "auto";
+    fillModelPick(s.model_options, userModelChoice);
+  }
+
   const bits = [];
-  if (s.router?.enabled || s.model === "auto") {
+  const isAuto = s.model === "auto" || userModelChoice === "auto";
+  if (isAuto) {
     const last = s.router?.last;
     bits.push(last?.label ? "auto · " + last.label : "auto");
   } else if (s.model) {
     bits.push(s.model);
   }
   if (s.workspace) bits.push(s.workspace.split("/").pop());
+  if (s.task_mode && s.task_mode !== "agent") bits.unshift(s.task_mode);
+  if (s.goal) bits.unshift("goal · " + (s.goal.length > 36 ? s.goal.slice(0, 36) + "…" : s.goal));
   if (s.mcp_tools) bits.push(s.mcp_tools + " MCP");
   statusText.textContent = bits.join(" · ") || "Ready";
 
@@ -532,7 +570,7 @@ async function refresh() {
     replayMessages(s.messages);
   }
   busy = !!s.busy;
-  sendBtn.disabled = busy || !ready;
+  sendBtn.disabled = !ready;
   setThinking(busy);
   await loadThreads();
   await loadProjects();
@@ -732,36 +770,250 @@ function escapeHtml(s) {
 
 let currentMode = "safe";
 
+function fillModelPick(options, selected) {
+  modelOptions = options || [];
+  if (!modelPick) return;
+  modelPick.innerHTML = "";
+  for (const opt of modelOptions) {
+    const o = document.createElement("option");
+    o.value = opt.value;
+    o.textContent = opt.label;
+    o.title = opt.description || "";
+    modelPick.appendChild(o);
+  }
+  const pick = userModelChoice === "auto" ? "auto" : (selected || userModelChoice || "auto");
+  if ([...modelPick.options].some((o) => o.value === pick)) {
+    modelPick.value = pick;
+  } else if (modelPick.options.length) {
+    modelPick.value = modelPick.options[0].value;
+  }
+}
+
+modelPick?.addEventListener("change", async () => {
+  userModelChoice = modelPick.value;
+  await fetch("/api/settings", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: modelPick.value }),
+  });
+  refresh();
+});
+
+const MAX_ATTACH = 8;
+const MAX_ATTACH_BYTES = 10 * 1024 * 1024;
+
+function renderAttachTray() {
+  if (!attachTray) return;
+  attachTray.innerHTML = "";
+  attachTray.hidden = pendingAttachments.length === 0;
+  for (const a of pendingAttachments) {
+    const chip = document.createElement("div");
+    chip.className = "attach-chip";
+    if (a.preview) {
+      const img = document.createElement("img");
+      img.src = a.preview;
+      img.alt = a.name;
+      chip.appendChild(img);
+    }
+    const label = document.createElement("span");
+    label.textContent = a.name;
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.setAttribute("aria-label", "Remove");
+    rm.textContent = "×";
+    rm.onclick = () => {
+      pendingAttachments = pendingAttachments.filter((x) => x.id !== a.id);
+      renderAttachTray();
+    };
+    chip.appendChild(label);
+    chip.appendChild(rm);
+    attachTray.appendChild(chip);
+  }
+}
+
+function fileToAttachment(file) {
+  return new Promise((resolve, reject) => {
+    if (file.size > MAX_ATTACH_BYTES) {
+      reject(new Error(file.name + " is too large (max 10 MB)"));
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result;
+      const base64 = String(dataUrl).split(",")[1] || "";
+      const mime = file.type || guessMime(file.name);
+      const isImage = mime.startsWith("image/");
+      resolve({
+        id: file.name + "-" + file.size + "-" + Date.now(),
+        name: file.name,
+        mime,
+        data: base64,
+        preview: isImage ? dataUrl : "",
+      });
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function guessMime(name) {
+  const ext = name.toLowerCase().split(".").pop();
+  const map = {
+    png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+    pdf: "application/pdf", md: "text/markdown", json: "application/json", csv: "text/csv",
+  };
+  return map[ext] || "text/plain";
+}
+
+async function addFiles(fileList) {
+  const files = [...fileList];
+  if (!files.length) return;
+  if (pendingAttachments.length + files.length > MAX_ATTACH) {
+    add("error", "Max " + MAX_ATTACH + " attachments per message");
+    return;
+  }
+  for (const file of files) {
+    try {
+      pendingAttachments.push(await fileToAttachment(file));
+    } catch (err) {
+      add("error", err.message || "Couldn't read file");
+    }
+  }
+  renderAttachTray();
+}
+
+attachBtn?.addEventListener("click", async () => {
+  if (busy) return;
+  try {
+    const res = await fetch("/api/files/pick", { method: "POST" });
+    if (res.status === 204) return;
+    if (!res.ok) {
+      fileInput?.click();
+      return;
+    }
+    const data = await res.json();
+    for (const f of data.files || []) {
+      if (pendingAttachments.length >= MAX_ATTACH) break;
+      const isImage = (f.mime || "").startsWith("image/");
+      pendingAttachments.push({
+        id: f.name + "-" + Date.now(),
+        name: f.name,
+        mime: f.mime,
+        data: f.data,
+        preview: isImage ? "data:" + f.mime + ";base64," + f.data : "",
+      });
+    }
+    renderAttachTray();
+  } catch {
+    fileInput?.click();
+  }
+});
+
+fileInput?.addEventListener("change", () => {
+  if (fileInput.files?.length) addFiles(fileInput.files);
+  fileInput.value = "";
+});
+
+promptEl?.addEventListener("paste", (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  const files = [];
+  for (const item of items) {
+    if (item.kind === "file") {
+      const f = item.getAsFile();
+      if (f) files.push(f);
+    }
+  }
+  if (files.length) {
+    e.preventDefault();
+    addFiles(files);
+  }
+});
+
 $("composer").onsubmit = async (e) => {
   e.preventDefault();
   const prompt = promptEl.value.trim();
-  if (!prompt || busy || !ready) return;
-  add("you", prompt);
+  if ((!prompt && !pendingAttachments.length) || !ready) return;
+  if (busy) {
+    // Allow steering / follow-ups while the agent works.
+  }
+  const sentAttachments = pendingAttachments.map((a) => ({
+    name: a.name,
+    mime: a.mime,
+    data: a.data,
+    preview: a.preview,
+  }));
+  add("you", prompt || "(attached files)", sentAttachments);
+  const attachments = pendingAttachments.map((a) => ({ name: a.name, mime: a.mime, data: a.data }));
+  pendingAttachments = [];
+  renderAttachTray();
   promptEl.value = "";
   promptEl.style.height = "auto";
-  busy = true;
-  sendBtn.disabled = true;
-  setThinking(true);
+  const wasBusy = busy;
+  if (!wasBusy) {
+    setThinking(true);
+  }
+  sendBtn.disabled = !ready;
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, attachments }),
   });
   if (res.status === 204) {
-    busy = false;
-    sendBtn.disabled = !ready;
-    setThinking(false);
+    if (!wasBusy) {
+      busy = false;
+      sendBtn.disabled = !ready;
+      setThinking(false);
+    }
+    return;
+  }
+  let queued = false;
+  if (res.ok) {
+    try {
+      const data = await res.json();
+      queued = !!data.queued;
+    } catch (_) {}
+  }
+  if (queued) {
     return;
   }
   if (!res.ok) {
     add("error", await res.text());
-    busy = false;
-    sendBtn.disabled = !ready;
-    setThinking(false);
+    if (!wasBusy) {
+      busy = false;
+      sendBtn.disabled = !ready;
+      setThinking(false);
+    }
   }
 };
 
 promptEl.addEventListener("keydown", (e) => {
+  if (slashMenuOpen()) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      slashIndex = Math.min(slashIndex + 1, visibleSlash().length - 1);
+      renderSlashMenu();
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      slashIndex = Math.max(slashIndex - 1, 0);
+      renderSlashMenu();
+      return;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      const pick = visibleSlash()[slashIndex];
+      if (pick) {
+        e.preventDefault();
+        applySlash(pick);
+        return;
+      }
+    }
+    if (e.key === "Escape") {
+      hideSlashMenu();
+      return;
+    }
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     $("composer").requestSubmit();
@@ -771,7 +1023,90 @@ promptEl.addEventListener("keydown", (e) => {
 promptEl.addEventListener("input", () => {
   promptEl.style.height = "auto";
   promptEl.style.height = Math.min(promptEl.scrollHeight, 160) + "px";
+  updateSlashMenu();
 });
+
+const DEFAULT_SLASH = [
+  { name: "commit", hint: "Commit current changes" },
+  { name: "review", hint: "Review uncommitted diffs" },
+  { name: "status", hint: "Mode, model, workspace" },
+  { name: "clear", hint: "New chat" },
+];
+
+function slashCatalog() {
+  return slashItems.length ? slashItems : DEFAULT_SLASH;
+}
+
+function slashQuery() {
+  const v = promptEl.value;
+  if (!v.startsWith("/")) return null;
+  if (v.includes(" ") || v.includes("\n")) return null;
+  return v.slice(1).toLowerCase();
+}
+
+function visibleSlash() {
+  const q = slashQuery();
+  if (q === null) return [];
+  return slashCatalog().filter((it) => {
+    const name = (it.name || "").toLowerCase();
+    return name.startsWith(q);
+  });
+}
+
+function slashMenuOpen() {
+  return slashMenu && !slashMenu.hidden;
+}
+
+function hideSlashMenu() {
+  if (!slashMenu) return;
+  slashMenu.hidden = true;
+  slashMenu.innerHTML = "";
+}
+
+function updateSlashMenu() {
+  const items = visibleSlash();
+  if (!items.length) {
+    hideSlashMenu();
+    return;
+  }
+  if (slashIndex >= items.length) slashIndex = 0;
+  renderSlashMenu();
+}
+
+function renderSlashMenu() {
+  const items = visibleSlash();
+  if (!slashMenu || !items.length) {
+    hideSlashMenu();
+    return;
+  }
+  slashMenu.hidden = false;
+  slashMenu.innerHTML = "";
+  items.forEach((it, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "slash-item" + (i === slashIndex ? " is-on" : "");
+    b.setAttribute("role", "option");
+    b.innerHTML =
+      '<span class="slash-name">/' + escapeHtml(it.name) + "</span>" +
+      '<span class="slash-hint">' + escapeHtml(it.hint || "") + "</span>";
+    b.onmousedown = (e) => {
+      e.preventDefault();
+      applySlash(it);
+    };
+    slashMenu.appendChild(b);
+  });
+}
+
+function applySlash(it) {
+  const insert = it.insert || "/" + it.name;
+  promptEl.value = insert;
+  promptEl.focus();
+  promptEl.dispatchEvent(new Event("input"));
+  hideSlashMenu();
+  if (!insert.endsWith(" ")) {
+    $("composer").requestSubmit();
+  }
+}
 
 document.querySelectorAll(".rec").forEach((b) => {
   b.onclick = () => {
@@ -933,11 +1268,16 @@ function connectEvents() {
     const e = JSON.parse(m.data);
     if (e.type === "hello") {
       ready = true;
-      sendBtn.disabled = busy;
+      sendBtn.disabled = !ready;
       return;
     }
     if (e.type === "permission") {
-      permText.textContent = e.summary || "";
+      permText.textContent = e.summary || e.text || "";
+      if (permHint) {
+        const hint = e.hint || "";
+        permHint.textContent = hint;
+        permHint.hidden = !hint;
+      }
       if (permTitle) {
         if (e.status === "terminal") permTitle.textContent = "Allow terminal command?";
         else if (e.status === "destructive") permTitle.textContent = "Allow risky action?";
@@ -997,6 +1337,10 @@ function connectEvents() {
     }
     if (e.type === "done") {
       permEl.classList.remove("is-on");
+      if (permHint) {
+        permHint.hidden = true;
+        permHint.textContent = "";
+      }
       finishTurnUI();
       return;
     }
@@ -1075,6 +1419,14 @@ function connectEvents() {
       logEl.appendChild(note);
       syncEmpty();
       scrollChat();
+      return;
+    }
+    if (e.type === "goal") {
+      refresh();
+      return;
+    }
+    if (e.type === "task_mode") {
+      refresh();
       return;
     }
     if (e.type === "system") {

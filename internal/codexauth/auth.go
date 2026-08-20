@@ -61,7 +61,11 @@ func DefaultModel() string {
 	b, err := os.ReadFile(filepath.Join(HomeDir(), "config.toml"))
 	if err == nil {
 		if m := regexp.MustCompile(`(?m)^\s*model\s*=\s*"([^"]+)"`).FindSubmatch(b); len(m) == 2 {
-			return string(m[1])
+			id := string(m[1])
+			if strings.EqualFold(id, "auto") {
+				return defaultModel
+			}
+			return id
 		}
 	}
 	return defaultModel

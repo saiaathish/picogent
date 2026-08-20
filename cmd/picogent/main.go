@@ -228,7 +228,7 @@ func runOnce(args []string) error {
 		a.Gate.Mode = config.ModeFast
 	}
 	h := &stdioHandler{yes: *yes, in: bufio.NewReader(os.Stdin)}
-	_, _, err = a.Run(context.Background(), nil, prompt, h)
+	_, _, err = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h)
 	return err
 }
 

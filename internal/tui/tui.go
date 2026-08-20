@@ -12,12 +12,13 @@ import (
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/codexauth"
+	"github.com/saiaathish/picogent/internal/commands"
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/slash"
-	"github.com/saiaathish/picogent/internal/commands"
 )
 
 var (
@@ -86,14 +87,14 @@ type model struct {
 	history   []llm.Message
 	sessionID string
 	lines     []logLine
-	vp      viewport.Model
-	ta      textarea.Model
-	busy    bool
-	perm    *perm.Request
-	h       *handler
-	width   int
-	height  int
-	cancel  context.CancelFunc
+	vp        viewport.Model
+	ta        textarea.Model
+	busy      bool
+	perm      *perm.Request
+	h         *handler
+	width     int
+	height    int
+	cancel    context.CancelFunc
 }
 
 func Run() error {
@@ -188,7 +189,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case permAskMsg:
 		req := perm.Request(msg)
 		m.perm = &req
-		m.lines = append(m.lines, logLine{Kind: "perm", Text: "Allow " + req.Summary + "?"})
+		body := req.Summary
+		if req.Hint != "" {
+			body = req.Hint + "\n\n" + req.Summary
+		}
+		m.lines = append(m.lines, logLine{Kind: "perm", Text: "Allow " + body + "?"})
 		m.layout()
 		return m, nil
 	case logMsg:
@@ -239,6 +244,22 @@ func (m *model) stop() {
 	m.busy = false
 }
 
+func (m *model) autoApplyPrompt(prompt string) {
+	if !m.cfg.AutoTaskModeOn() || strings.HasPrefix(strings.TrimSpace(prompt), "/") {
+		return
+	}
+	dec := agent.InferAuto(prompt, m.ag.TaskMode, m.ag.Goal)
+	if dec.GoalSet && dec.Goal != m.ag.Goal {
+		_ = goal.Set(m.cfg.Workspace, dec.Goal)
+		m.ag.Goal = dec.Goal
+	}
+	if dec.TaskMode != m.ag.TaskMode {
+		m.ag.SetTaskMode(dec.TaskMode)
+		m.cfg.TaskMode = string(dec.TaskMode)
+		_ = config.Save(m.cfg)
+	}
+}
+
 func (m *model) submit(line string) tea.Cmd {
 	if strings.HasPrefix(line, "/") {
 		kind, payload := slash.Resolve(m.cfg.Workspace, line)
@@ -253,6 +274,7 @@ func (m *model) submit(line string) tea.Cmd {
 			return m.slash(line)
 		}
 	}
+	m.autoApplyPrompt(line)
 	return m.runAgent(line)
 }
 
@@ -268,7 +290,11 @@ func (m *model) runAgent(prompt string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	return func() tea.Msg {
-		hist, _, err := ag.Run(ctx, hist, prompt, h)
+		hist, res, err := ag.Run(ctx, hist, llm.Message{Role: "user", Content: prompt}, h)
+		if res.GoalDone {
+			_ = goal.Clear(ag.CFG.Workspace)
+			ag.Goal = ""
+		}
 		return doneMsg{history: hist, err: err}
 	}
 }
@@ -288,7 +314,10 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		}
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "context compacted"})
 	case payload == "status":
-		st := fmt.Sprintf("mode=%s provider=%s model=%s\n%s", m.cfg.Mode, m.cfg.Provider, m.cfg.Model, m.cfg.Workspace)
+		st := fmt.Sprintf("safe/fast=%s task=%s provider=%s model=%s\n%s", m.cfg.Mode, agent.ParseTaskMode(m.cfg.TaskMode).Label(), m.cfg.Provider, m.cfg.Model, m.cfg.Workspace)
+		if g := m.ag.Goal; g != "" {
+			st += "\ngoal: " + g
+		}
 		if m.ag.Tools != nil && m.ag.Tools.HasMCP() {
 			st += fmt.Sprintf("\n%d MCP tools", len(m.ag.Tools.MCP.Tools()))
 		}
@@ -316,6 +345,31 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		} else {
 			m.lines = append(m.lines, logLine{Kind: "system", Text: "custom: /" + strings.Join(cmds, "  /")})
 		}
+	case strings.HasPrefix(payload, "task:"):
+		tm := agent.ParseTaskMode(strings.TrimPrefix(payload, "task:"))
+		m.cfg.TaskMode = string(tm)
+		m.ag.SetTaskMode(tm)
+		_ = config.Save(m.cfg)
+		m.lines = append(m.lines, logLine{Kind: "system", Text: "task mode: " + strings.ToLower(tm.Label())})
+	case strings.HasPrefix(payload, "goal:set:"):
+		text := strings.TrimPrefix(payload, "goal:set:")
+		_ = goal.Set(m.cfg.Workspace, text)
+		m.ag.Goal = text
+		m.lines = append(m.lines, logLine{Kind: "user", Text: "/goal " + text})
+		m.lines = append(m.lines, logLine{Kind: "system", Text: "goal set"})
+		m.refresh()
+		return m.runAgent(goal.WorkPrompt(text))
+	case payload == "goal:show":
+		g, _ := goal.Load(m.cfg.Workspace)
+		if g == "" {
+			m.lines = append(m.lines, logLine{Kind: "system", Text: "no active goal (/goal <objective> to set one)"})
+		} else {
+			m.lines = append(m.lines, logLine{Kind: "system", Text: "goal: " + g})
+		}
+	case payload == "goal:clear":
+		_ = goal.Clear(m.cfg.Workspace)
+		m.ag.Goal = ""
+		m.lines = append(m.lines, logLine{Kind: "system", Text: "goal cleared"})
 	}
 	m.refresh()
 	return nil
@@ -328,7 +382,7 @@ func (m *model) slash(line string) tea.Cmd {
 	case "/quit", "/exit", "/q":
 		return tea.Quit
 	case "/help":
-		help := "Claude Code-style: /commit /review /clear /compact /status /diff /memory /resume /commands\n/safe /fast /model /provider /reset /mcp /quit\nCustom: .claude/commands/foo.md → /foo"
+		help := "Task modes: /agent /ask /plan /debug\nGoal: /goal <objective>  /goal  /goal clear\nClaude Code-style: /commit /review /clear /compact /status /diff /memory /resume /commands\n/safe /fast /model /provider /reset /mcp /quit\nCustom: .claude/commands/foo.md → /foo"
 		if m.ag.Tools != nil && m.ag.Tools.HasMCP() {
 			help += fmt.Sprintf("\nConnected: %d MCP tools.", len(m.ag.Tools.MCP.Tools()))
 		}
@@ -463,7 +517,11 @@ func (m *model) View() string {
 	body := m.vp.View()
 	permBox := ""
 	if m.perm != nil {
-		permBox = permStyle.Width(max(m.width-4, 20)).Render("Allow " + m.perm.Summary + "?\n\n  [Y]  Yes      [N]  No      [A]  Yes for this turn")
+		body := m.perm.Summary
+		if m.perm.Hint != "" {
+			body = m.perm.Hint + "\n\n" + body
+		}
+		permBox = permStyle.Width(max(m.width-4, 20)).Render(body + "?\n\n  [Y]  Yes      [N]  No      [A]  Yes for this turn")
 	}
 	help := "enter send · ctrl-c stop/quit · /help"
 	if m.busy {
