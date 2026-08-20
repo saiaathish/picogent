@@ -555,6 +555,7 @@ async function loadThread(id) {
 async function newChat() {
   viewEpoch++;
   const epoch = viewEpoch;
+  setChatsOpen(false);
   if (busy) {
     try { await fetch("/api/cancel", { method: "POST" }); } catch (_) {}
   }
