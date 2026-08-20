@@ -158,6 +158,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.decide(perm.Deny)
 			case "a", "A":
 				m.decide(perm.AllowTurn)
+			case "l", "L":
+				m.decideAlways()
 			case "ctrl+c":
 				m.decide(perm.Deny)
 				m.stop()
@@ -229,6 +231,28 @@ func (m *model) decide(d perm.Decision) {
 	}
 	m.perm = nil
 	m.layout()
+}
+
+func (m *model) decideAlways() {
+	tool := ""
+	if m.perm != nil {
+		tool = m.perm.Tool
+	}
+	if tool != "" && m.ag != nil && m.ag.Gate != nil {
+		m.cfg.Extensions.AlwaysAllowTools = appendUniqueStr(m.cfg.Extensions.AlwaysAllowTools, tool)
+		m.ag.Gate.SetAlwaysAllowed(m.cfg.Extensions.AlwaysAllowTools)
+		_ = config.Save(m.cfg)
+	}
+	m.decide(perm.AllowAlways)
+}
+
+func appendUniqueStr(list []string, v string) []string {
+	for _, x := range list {
+		if x == v {
+			return list
+		}
+	}
+	return append(list, v)
 }
 
 func (m *model) stop() {
@@ -506,7 +530,14 @@ func (m *model) View() string {
 		conn = chipOn.Render("API key")
 	}
 	left := brandStyle.Render("PICOGENT")
-	right := fmt.Sprintf("%s  %s  %s", mode, conn, metaStyle.Render(m.cfg.Model))
+	taskChip := ""
+	if m.ag != nil && m.ag.TaskMode.Valid() && m.ag.TaskMode != agent.TaskAgent {
+		taskChip = "  " + chipOn.Render(m.ag.TaskMode.Label())
+	}
+	if m.ag != nil && m.ag.Goal != "" {
+		taskChip += "  " + chipOn.Render("goal")
+	}
+	right := fmt.Sprintf("%s%s  %s  %s", mode, taskChip, conn, metaStyle.Render(m.cfg.Model))
 	if m.ag != nil && m.ag.Tools != nil && m.ag.Tools.HasMCP() {
 		right += "  " + chipOn.Render(fmt.Sprintf("%d MCP", len(m.ag.Tools.MCP.Tools())))
 	}
@@ -519,7 +550,7 @@ func (m *model) View() string {
 		if m.perm.Hint != "" {
 			body = m.perm.Hint + "\n\n" + body
 		}
-		permBox = permStyle.Width(max(m.width-4, 20)).Render(body + "?\n\n  [Y]  Yes      [N]  No      [A]  Yes for this turn")
+		permBox = permStyle.Width(max(m.width-4, 20)).Render(body + "?\n\n  [Y]  Yes      [N]  No      [A]  This turn      [L]  Always")
 	}
 	help := "enter send · ctrl-c stop/quit · /help"
 	if m.busy {

@@ -142,6 +142,7 @@
         <div class="review-tabs" role="tablist">
           <button type="button" class="review-tab is-on" data-tab="review" role="tab">Review</button>
           <button type="button" class="review-tab" data-tab="changes" role="tab">Changes</button>
+          <button type="button" class="review-tab" data-tab="activity" role="tab">Activity</button>
         </div>
         <button type="button" class="ghost-btn" id="close-review">Close</button>
       </div>
@@ -160,6 +161,11 @@
         <div class="changes-summary" id="changes-summary"></div>
         <div class="changes-list" id="changes-list">
           <p class="review-empty">File edits appear here with line counts. Click a file to review.</p>
+        </div>
+      </div>
+      <div id="panel-activity" hidden>
+        <div class="activity-list" id="activity-list">
+          <p class="review-empty">Tool and turn events from this workspace appear here.</p>
         </div>
       </div>
     </aside>

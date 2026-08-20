@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | v0.1 MVP |
+| Status | Hardening toward production harness |
 | Owner | Sai |
 | License | MIT (open source, BYOK) |
 | Binary | `picogent` |
