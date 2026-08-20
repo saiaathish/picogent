@@ -62,13 +62,62 @@ func Build(cfg config.Config) (*agent.Agent, error) {
 	return a, nil
 }
 
+// RoutePersist saves the last routing decision into config (best-effort).
+func RoutePersist(cfg *config.Config, dec llm.RouteDecision) {
+	cfg.Router.LastTier = string(dec.Tier)
+	cfg.Router.LastModel = dec.Model
+	cfg.Router.LastReason = dec.Reason
+	cfg.Model = dec.Model
+	_ = config.Save(*cfg)
+}
+
 func NewClient(cfg config.Config) (llm.Client, error) {
+	backend, err := newBackend(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if !cfg.AutoRouter() {
+		return backend, nil
+	}
+	if cfg.Provider != config.ProviderCodex && cfg.Provider != config.ProviderQuadCode {
+		return backend, nil
+	}
+
+	cat := llm.InitCatalog(false)
+	eco := llm.EcosystemForProvider(string(cfg.Provider))
+
+	var advisorBackend llm.Client
+	if cfg.Router.UseLLMAdvisor {
+		advisorBackend = backend
+	}
+	advisorModel := cfg.Router.AdvisorModel
+	if advisorModel == "" {
+		if m, ok := cat.ModelForTier(eco, llm.TierLight, false); ok {
+			advisorModel = m.ID
+		}
+	}
+	advisor := llm.NewAdvisor(cat, advisorBackend, advisorModel)
+	if !cfg.Router.UseLLMAdvisor {
+		advisor.UseLLMAdvisor = false
+	}
+
+	return llm.NewRouter(backend, advisor, eco, cfg.FableAllowed(), nil), nil
+}
+
+func newBackend(cfg config.Config) (llm.Client, error) {
+	timeout := time.Duration(cfg.LLMTimeoutSec) * time.Second
 	switch cfg.Provider {
 	case config.ProviderCodex:
-		return llm.NewCodex(cfg.Model), nil
+		return llm.NewCodex(cfg.BackendModel()), nil
+	case config.ProviderQuadCode:
+		key := cfg.AnthropicKeyResolved()
+		if key == "" {
+			return nil, fmt.Errorf("Claude Code requires an Anthropic API key (Settings → API key or ANTHROPIC_API_KEY)")
+		}
+		return llm.NewAnthropic(key, cfg.BackendModel(), timeout), nil
 	case config.ProviderOllama, config.ProviderOpenAI:
-		return llm.NewOpenAI(cfg.ChatBaseURL(), cfg.APIKeyResolved(), cfg.Model, time.Duration(cfg.LLMTimeoutSec)*time.Second), nil
+		return llm.NewOpenAI(cfg.ChatBaseURL(), cfg.APIKeyResolved(), cfg.Model, timeout), nil
 	default:
-		return nil, fmt.Errorf("unknown provider %q (codex, openai, ollama)", cfg.Provider)
+		return nil, fmt.Errorf("unknown provider %q (codex, claude-code, openai, ollama)", cfg.Provider)
 	}
 }

@@ -68,6 +68,15 @@ function showStage(n) {
   }
 }
 
+let modelOptionsCache = [];
+
+function updateSetupModelDesc() {
+  const val = document.getElementById("model").value;
+  const opt = modelOptionsCache.find((o) => o.value === val);
+  const el = document.getElementById("model-desc");
+  if (el) el.textContent = opt?.description || "";
+}
+
 function paint(st) {
   status = st;
   compsEl.innerHTML = "";
@@ -96,7 +105,19 @@ function paint(st) {
 
   if (st.workspace) document.getElementById("workspace").value = st.workspace;
   if (st.mode) document.getElementById("mode").value = st.mode;
-  if (st.model) document.getElementById("model").value = st.model;
+  const modelSel = document.getElementById("model");
+  if (st.model_options && st.model_options.length) {
+    modelOptionsCache = st.model_options;
+    modelSel.innerHTML = "";
+    for (const opt of modelOptionsCache) {
+      const o = document.createElement("option");
+      o.value = opt.value;
+      o.textContent = opt.label;
+      modelSel.appendChild(o);
+    }
+  }
+  modelSel.value = st.model || "auto";
+  updateSetupModelDesc();
   if (st.log) {
     logEl.hidden = false;
     logEl.textContent = st.log;
@@ -219,6 +240,7 @@ dots.forEach((dot) => {
 });
 
 installBtn.onclick = install;
+document.getElementById("model").onchange = updateSetupModelDesc;
 
 const params = new URLSearchParams(location.search);
 if (params.get("login") === "ok") {

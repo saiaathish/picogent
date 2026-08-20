@@ -1,0 +1,63 @@
+{
+  "version": "2026.2",
+  "updated": "2026-08-19T00:00:00Z",
+  "models": [
+    {
+      "id": "gpt-5.6-luna",
+      "display": "Luna",
+      "tier": "light",
+      "ecosystem": "codex",
+      "description": "Fast & affordable — linting, tests, docs",
+      "patterns": ["gpt-5\\.\\d+-luna", "gpt-\\d+\\.\\d+-luna"]
+    },
+    {
+      "id": "gpt-5.6-terra",
+      "display": "Terra",
+      "tier": "standard",
+      "ecosystem": "codex",
+      "description": "Balanced daily coding — implementation & refactors",
+      "patterns": ["gpt-5\\.\\d+-terra", "gpt-\\d+\\.\\d+-terra"]
+    },
+    {
+      "id": "gpt-5.6-sol",
+      "display": "Sol",
+      "tier": "heavy",
+      "ecosystem": "codex",
+      "description": "Flagship — planning, architecture, hard problems",
+      "patterns": ["gpt-5\\.\\d+-sol", "gpt-5\\.\\d+-soul", "gpt-\\d+\\.\\d+-sol", "^gpt-5\\.\\d+$"]
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "display": "Haiku 4.5",
+      "tier": "light",
+      "ecosystem": "quadcode",
+      "description": "Fast loops — quick edits and simple tasks",
+      "patterns": ["claude-.*haiku", "haiku-\\d"]
+    },
+    {
+      "id": "claude-sonnet-5",
+      "display": "Sonnet 5",
+      "tier": "standard",
+      "ecosystem": "quadcode",
+      "description": "Daily coding — best speed vs quality balance",
+      "patterns": ["claude-sonnet-5", "claude-.*sonnet-5"]
+    },
+    {
+      "id": "claude-opus-5",
+      "display": "Opus 5",
+      "tier": "heavy",
+      "ecosystem": "quadcode",
+      "description": "Complex agentic work and deep reasoning",
+      "patterns": ["claude-opus-5", "claude-.*opus-5"]
+    },
+    {
+      "id": "claude-fable-5",
+      "display": "Fable 5",
+      "tier": "premium",
+      "ecosystem": "quadcode",
+      "description": "Premium tier — longest, hardest tasks (API billing)",
+      "patterns": ["claude-fable-5", "claude-.*fable"],
+      "gated": true
+    }
+  ]
+}

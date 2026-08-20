@@ -377,8 +377,13 @@ func (m *model) slash(line string) tea.Cmd {
 			}
 		case "openai":
 			m.cfg.Provider = config.ProviderOpenAI
+		case "quadcode", "claude":
+			m.cfg.Provider = config.ProviderQuadCode
+			if strings.HasPrefix(m.cfg.Model, "gpt-") {
+				m.cfg.Model = "claude-sonnet-4-5"
+			}
 		default:
-			m.lines = append(m.lines, logLine{Kind: "error", Text: "provider must be codex, ollama, or openai"})
+			m.lines = append(m.lines, logLine{Kind: "error", Text: "provider must be codex, claude-code, ollama, or openai"})
 			m.refresh()
 			return nil
 		}
