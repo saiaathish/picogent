@@ -21,6 +21,7 @@ func TestLoadServersFromYAML(t *testing.T) {
 	// Point PICOGENT_HOME at temp and isolate from real ~/.cursor
 	t.Setenv("PICOGENT_HOME", home)
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME")) // Windows UserHomeDir ignores HOME
 	got, err := mcpbridge.LoadServers("")
 	if err != nil {
 		t.Fatal(err)
@@ -45,6 +46,7 @@ func TestLoadServersProjectOverride(t *testing.T) {
 	}
 	t.Setenv("PICOGENT_HOME", picogent)
 	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root) // Windows UserHomeDir ignores HOME
 	global := `{"mcpServers":{"a":{"url":"http://global","type":"http"}}}`
 	projCfg := `{"mcpServers":{"b":{"url":"http://project","type":"http"}}}`
 	if err := os.MkdirAll(filepath.Join(root, ".cursor"), 0o700); err != nil {

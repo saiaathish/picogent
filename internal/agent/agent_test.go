@@ -121,6 +121,54 @@ func TestGoalCompleteMarksResult(t *testing.T) {
 	}
 }
 
+func TestSystemPromptRefreshesTaskMode(t *testing.T) {
+	dir := t.TempDir()
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "ok"}},
+		{Message: llm.Message{Role: "assistant", Content: "plan"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{Workspace: dir})
+	gate := perm.New(config.ModeFast, dir, nil)
+	a := agent.New(cfg, fake, reg, gate)
+
+	hist, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "hi"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls) < 1 || !strings.Contains(fake.Calls[0].Messages[0].Content, "Picogent") {
+		t.Fatalf("first system missing: %+v", fake.Calls)
+	}
+	if strings.Contains(fake.Calls[0].Messages[0].Content, "PLAN MODE") {
+		t.Fatal("first turn should not be plan")
+	}
+
+	a.SetTaskMode(agent.TaskPlan)
+	_, _, err = a.Run(context.Background(), hist, llm.Message{Role: "user", Content: "plan a REST API"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls) < 2 {
+		t.Fatal("expected second chat call")
+	}
+	sys := fake.Calls[1].Messages[0]
+	if sys.Role != "system" || !strings.Contains(sys.Content, "PLAN MODE") {
+		t.Fatalf("second system should include PLAN MODE, got role=%s content=%q", sys.Role, sys.Content)
+	}
+	// Stale system from hist must not appear twice.
+	sysCount := 0
+	for _, m := range fake.Calls[1].Messages {
+		if m.Role == "system" {
+			sysCount++
+		}
+	}
+	if sysCount != 1 {
+		t.Fatalf("expected one system message, got %d", sysCount)
+	}
+}
+
 func TestMissingKeyStopsBeforeLLM(t *testing.T) {
 	t.Setenv("PICOGENT_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -78,6 +79,7 @@ func globWalk(root, pattern string) ([]string, error) {
 		if err != nil {
 			return nil
 		}
+		rel = filepath.ToSlash(rel)
 		if globMatch(pattern, rel) {
 			out = append(out, rel)
 		}
@@ -89,20 +91,22 @@ func globWalk(root, pattern string) ([]string, error) {
 func globMatch(pattern, rel string) bool {
 	rel = filepath.ToSlash(rel)
 	pattern = filepath.ToSlash(pattern)
-	if ok, _ := filepath.Match(pattern, rel); ok {
+	// path.Match always treats '/' as separator; filepath.Match follows the OS
+	// and on Windows would let '*' cross '/' after ToSlash.
+	if ok, _ := path.Match(pattern, rel); ok {
 		return true
 	}
 	if strings.HasPrefix(pattern, "**/") {
 		suf := strings.TrimPrefix(pattern, "**/")
-		if ok, _ := filepath.Match(suf, rel); ok {
+		if ok, _ := path.Match(suf, rel); ok {
 			return true
 		}
-		if ok, _ := filepath.Match(suf, filepath.Base(rel)); ok {
+		if ok, _ := path.Match(suf, path.Base(rel)); ok {
 			return true
 		}
 		parts := strings.Split(rel, "/")
 		for i := range parts {
-			if ok, _ := filepath.Match(suf, strings.Join(parts[i:], "/")); ok {
+			if ok, _ := path.Match(suf, strings.Join(parts[i:], "/")); ok {
 				return true
 			}
 		}
@@ -199,6 +203,7 @@ func walkGrep(ws, pattern, glob string) (string, error) {
 			return nil
 		}
 		rel, _ := filepath.Rel(ws, path)
+		rel = filepath.ToSlash(rel)
 		if glob != "" && !globMatch(glob, rel) && !globMatch(glob, filepath.Base(rel)) {
 			return nil
 		}
