@@ -16,6 +16,11 @@ const attachTray = $("attach-tray");
 const modelPick = $("model-pick");
 const statusText = $("status-text");
 const contextBar = $("context-bar");
+const contextRing = $("context-ring");
+const contextPop = $("context-pop");
+const contextPopPct = $("context-pop-pct");
+const contextPopTokens = $("context-pop-tokens");
+const contextPopNote = $("context-pop-note");
 const threadList = $("thread-list");
 const shell = $("shell");
 const reviewRail = $("rail-review");
@@ -191,20 +196,56 @@ function updateReasonStats() {
   }
 }
 
+function formatTokens(n) {
+  const v = Math.max(0, Number(n) || 0);
+  if (v >= 1000) {
+    const k = v / 1000;
+    return "~" + (k >= 100 ? Math.round(k) : k.toFixed(k >= 10 ? 0 : 1)) + "K";
+  }
+  return String(Math.round(v));
+}
+
+function setContextPopOpen(open) {
+  if (!contextPop || !contextRing) return;
+  contextPop.hidden = !open;
+  contextRing.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 function renderContext(ctx) {
   if (!contextBar || !ctx) return;
-  const pct = Math.min(100, Math.round((ctx.pct || 0) * 100));
-  contextBar.hidden = false;
-  contextBar.dataset.level = ctx.level || "ok";
-  contextBar.title = (ctx.tokens || 0).toLocaleString() + " / " + (ctx.budget || 0).toLocaleString() + " est. tokens";
+  const pct = Math.min(100, Math.max(0, Math.round((ctx.pct || 0) * 100)));
+  const level = ctx.level || "ok";
+  contextBar.hidden = pct <= 0 && level === "ok";
+  if (contextBar.hidden) {
+    setContextPopOpen(false);
+    return;
+  }
+  contextBar.dataset.level = level;
   const fill = contextBar.querySelector(".context-fill");
-  const label = contextBar.querySelector(".context-label");
-  if (fill) fill.style.width = pct + "%";
-  if (label) {
-    if (ctx.level === "critical") label.textContent = "Context " + pct + "% · compacting";
-    else if (ctx.level === "warning") label.textContent = "Context " + pct + "%";
-    else label.textContent = pct > 0 ? "Context " + pct + "%" : "";
-    contextBar.hidden = pct <= 0 && ctx.level === "ok";
+  if (fill) fill.style.strokeDasharray = pct + " 100";
+  if (contextRing) {
+    let label = "Context window " + pct + "% full";
+    if (level === "critical") label += ", compacting";
+    else if (level === "warning") label += ", approaching limit";
+    contextRing.setAttribute("aria-label", label);
+    contextRing.title = formatTokens(ctx.tokens) + " / " + formatTokens(ctx.budget) + " tokens";
+  }
+  if (contextPopPct) contextPopPct.textContent = pct + "% full";
+  if (contextPopTokens) {
+    contextPopTokens.textContent = formatTokens(ctx.tokens) + " / " + formatTokens(ctx.budget) + " tokens";
+  }
+  if (contextPopNote) {
+    if (level === "critical") {
+      contextPopNote.textContent = ctx.status
+        ? "Compacting (" + ctx.status + ") to keep room for the next tool rounds."
+        : "Compacting automatically to keep room for the next tool rounds.";
+    } else if (level === "warning") {
+      contextPopNote.textContent = "Getting full — older tool output will be trimmed soon.";
+    } else if (ctx.status) {
+      contextPopNote.textContent = "Recently compacted (" + ctx.status + "). Ring shrinks as context is tamed.";
+    } else {
+      contextPopNote.textContent = "Estimated tokens in the live agent window.";
+    }
   }
 }
 
@@ -1418,16 +1459,28 @@ $("close-review").onclick = () => setReviewOpen(false);
 $("toggle-rail").onclick = () => setChatsOpen(!chatsOpen);
 $("side-fab")?.addEventListener("click", () => setSideOpen(!sideOpen));
 $("close-side")?.addEventListener("click", () => setSideOpen(false));
+contextRing?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!contextPop) return;
+  setContextPopOpen(contextPop.hidden);
+});
+document.addEventListener("click", (e) => {
+  if (!contextBar || !contextPop || contextPop.hidden) return;
+  if (contextBar.contains(e.target)) return;
+  setContextPopOpen(false);
+});
 scrim.onclick = () => {
   setChatsOpen(false);
   setReviewOpen(false);
   setSideOpen(false);
+  setContextPopOpen(false);
 };
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     setChatsOpen(false);
     setReviewOpen(false);
     setSideOpen(false);
+    setContextPopOpen(false);
   }
 });
 
