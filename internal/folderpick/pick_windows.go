@@ -19,7 +19,7 @@ $d.Description = '%s'
 $d.ShowNewFolderButton = $true
 if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { $d.SelectedPath }
 `, escapePS(prompt))
-	out, err := exec.Command("powershell", "-NoProfile", "-Command", script).CombinedOutput()
+	out, err := exec.Command("powershell", "-NoProfile", "-STA", "-Command", script).CombinedOutput()
 	if err != nil {
 		return "", ErrCancelled
 	}

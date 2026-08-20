@@ -242,6 +242,26 @@ dots.forEach((dot) => {
 installBtn.onclick = install;
 document.getElementById("model").onchange = updateSetupModelDesc;
 
+document.getElementById("workspace-pick").onclick = async () => {
+  clearError();
+  const btn = document.getElementById("workspace-pick");
+  btn.disabled = true;
+  try {
+    const res = await fetch("/api/folder/pick", { method: "POST" });
+    if (res.status === 204) return;
+    if (!res.ok) {
+      showError(await res.text());
+      return;
+    }
+    const data = await res.json();
+    document.getElementById("workspace").value = data.path || "";
+  } catch (err) {
+    showError(err.message || "Couldn't open folder picker");
+  } finally {
+    btn.disabled = false;
+  }
+};
+
 const params = new URLSearchParams(location.search);
 if (params.get("login") === "ok") {
   history.replaceState({}, "", "/setup.html");

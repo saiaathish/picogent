@@ -20,6 +20,7 @@ import (
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/ctxmgr"
 	"github.com/saiaathish/picogent/internal/learn"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
@@ -29,17 +30,21 @@ import (
 )
 
 type event struct {
-	Type    string `json:"type"`
-	Text    string `json:"text,omitempty"`
-	Summary string `json:"summary,omitempty"`
-	Path    string `json:"path,omitempty"`
-	Line    int    `json:"line,omitempty"`
-	LineEnd int    `json:"line_end,omitempty"`
-	Added   int    `json:"added,omitempty"`
-	Removed int    `json:"removed,omitempty"`
-	Count   int    `json:"count,omitempty"`
-	Kind    string `json:"kind,omitempty"`
-	Status  string `json:"status,omitempty"`
+	Type    string  `json:"type"`
+	Text    string  `json:"text,omitempty"`
+	Summary string  `json:"summary,omitempty"`
+	Path    string  `json:"path,omitempty"`
+	Line    int     `json:"line,omitempty"`
+	LineEnd int     `json:"line_end,omitempty"`
+	Added   int     `json:"added,omitempty"`
+	Removed int     `json:"removed,omitempty"`
+	Count   int     `json:"count,omitempty"`
+	Kind    string  `json:"kind,omitempty"`
+	Status  string  `json:"status,omitempty"`
+	Tokens  int     `json:"tokens,omitempty"`
+	Budget  int     `json:"budget,omitempty"`
+	Pct     float64 `json:"pct,omitempty"`
+	Level   string  `json:"level,omitempty"`
 }
 
 type transcriptLine struct {
@@ -64,7 +69,8 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: session.New(cfg.Workspace).ID}
+	sessID, hist := initialSession(cfg.Workspace)
+	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
 	s.ensureProject()
 	addr := "127.0.0.1:7420"
@@ -121,6 +127,7 @@ func (s *server) Handler() http.Handler {
 	mux.HandleFunc("/api/settings", s.settings)
 	mux.HandleFunc("/api/router", s.routerAPI)
 	mux.HandleFunc("/api/projects", s.projectsAPI)
+	mux.HandleFunc("/api/folder/pick", s.folderPickAPI)
 	mux.HandleFunc("/api/overview", s.overviewAPI)
 	mux.HandleFunc("/api/test", s.testAPI)
 	mux.HandleFunc("/api/diff", s.diffAPI)
@@ -164,30 +171,49 @@ func (s *server) emit(e event) {
 	}
 }
 
+func initialSession(workspace string) (id string, hist []llm.Message) {
+	if prev, err := session.Latest(workspace); err == nil {
+		return prev.ID, prev.Messages
+	}
+	return session.New(workspace).ID, nil
+}
+
 func (s *server) snapshot() map[string]any {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	cfg := s.cfg
+	ag := s.ag
+	busy := s.busy
+	sessionID := s.sessionID
+	hist := s.hist
+	s.mu.Unlock()
+
 	hint := ""
-	if err := s.cfg.MissingAuth(); err != nil {
+	if err := cfg.MissingAuth(); err != nil {
 		hint = err.Error()
 	}
 	out := map[string]any{
-		"mode":       s.cfg.Mode,
-		"model":      s.cfg.Model,
-		"workspace":  s.cfg.Workspace,
-		"provider":   s.cfg.Provider,
-		"codex":      s.cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
-		"quadcode":   s.cfg.Provider == config.ProviderQuadCode && s.cfg.AnthropicKeyResolved() != "",
-		"busy":       s.busy,
+		"mode":       cfg.Mode,
+		"model":      cfg.Model,
+		"workspace":  cfg.Workspace,
+		"provider":   cfg.Provider,
+		"codex":      cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
+		"quadcode":   cfg.Provider == config.ProviderQuadCode && cfg.AnthropicKeyResolved() != "",
+		"busy":       busy,
 		"hint":       hint,
-		"setup":      !s.cfg.SetupComplete,
-		"mcp_tools":  mcpToolCount(s.ag),
-		"session_id": s.sessionID,
+		"setup":      !cfg.SetupComplete,
+		"mcp_tools":  mcpToolCount(ag),
+		"session_id": sessionID,
 		"router":     s.routerSnapshot(),
 	}
-	if store, err := learn.Load(s.cfg.Workspace); err == nil {
+	if store, err := learn.Load(cfg.Workspace); err == nil {
 		out["overview"] = store
 	}
+	if len(hist) > 0 {
+		out["messages"] = messagesToTranscript(hist)
+	}
+	budget := ctxmgr.BudgetForModel(cfg.Model)
+	ctxStats := ctxmgr.StatsFor(hist, budget)
+	out["context"] = ctxStats
 	return out
 }
 
@@ -508,15 +534,18 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 			s.emit(event{Type: "system", Text: "cleared"})
 		case "compact":
 			s.mu.Lock()
-			if len(s.hist) > 16 {
-				head := s.hist[0]
-				if head.Role != "system" {
-					head = llm.Message{}
-				}
-				s.hist = append([]llm.Message{head}, s.hist[len(s.hist)-15:]...)
+			budget := ctxmgr.BudgetForModel(s.cfg.Model)
+			compact, stats, err := ctxmgr.Manage(context.Background(), s.ag.LLM, s.cfg.Model, s.hist, budget)
+			if err == nil {
+				s.hist = compact
 			}
 			s.mu.Unlock()
-			s.emit(event{Type: "system", Text: "context compacted"})
+			msg := "context compacted"
+			if stats.Compacted && stats.Method != "" {
+				msg = fmt.Sprintf("context compacted (%s · %d/%dk tokens)", stats.Method, stats.Tokens/1000, stats.Budget/1000)
+			}
+			s.emit(event{Type: "system", Text: msg})
+			s.emit(contextEvent(stats))
 		case "status":
 			st := fmt.Sprintf("mode=%s model=%s workspace=%s", s.cfg.Mode, s.cfg.Model, s.cfg.Workspace)
 			if s.ag.Tools != nil && s.ag.Tools.HasMCP() {
@@ -567,9 +596,17 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		h.endTurn(result)
 		s.mu.Lock()
 		s.hist = next
+		ws := s.cfg.Workspace
+		sid := s.sessionID
+		llmClient := s.ag.LLM
+		model := s.cfg.Model
 		_ = config.Save(s.cfg)
-		_ = session.SaveMessages(s.cfg.Workspace, s.sessionID, next)
+		_ = session.SaveMessages(ws, sid, next)
 		s.mu.Unlock()
+		if result.Context.Tokens > 0 {
+			s.emit(contextEvent(result.Context))
+		}
+		s.maybeAutoTitle(context.Background(), llmClient, model, ws, sid, next)
 		if err != nil && ctx.Err() == nil {
 			s.emit(event{Type: "error", Text: err.Error()})
 		}
@@ -606,6 +643,17 @@ func (h *guiHandler) beginTurn(prompt string) {
 }
 
 func (h *guiHandler) endTurn(result agent.Result) {
+	if result.Context.Compacted && result.Context.Method != "" {
+		h.s.emit(event{
+			Type:   "context",
+			Text:   fmt.Sprintf("Auto-compacted context (%s)", result.Context.Method),
+			Tokens: result.Context.Tokens,
+			Budget: result.Context.Budget,
+			Pct:    result.Context.Pct,
+			Level:  result.Context.Level,
+			Status: result.Context.Method,
+		})
+	}
 	if len(result.FilesChanged) > 0 || h.edits > 0 {
 		h.s.emit(event{
 			Type:    "changes_summary",
@@ -637,7 +685,6 @@ func (h *guiHandler) OnText(text string) {
 }
 func (h *guiHandler) OnToolStart(call llm.ToolCall) {
 	h.learn.RecordTool(call.Name)
-	h.s.emit(event{Type: "tool", Text: "→ " + call.Name})
 
 	switch call.Name {
 	case "read_file":
@@ -670,7 +717,6 @@ func (h *guiHandler) OnToolEnd(call llm.ToolCall, result string, err error) {
 		h.s.emit(event{Type: "error", Text: err.Error()})
 		return
 	}
-	h.s.emit(event{Type: "tool", Text: clip(result, 400)})
 
 	h.s.mu.Lock()
 	ws := h.s.cfg.Workspace
@@ -749,6 +795,35 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 }
 func (h *guiHandler) OnError(err error) {
 	h.s.emit(event{Type: "error", Text: err.Error()})
+}
+
+func contextEvent(st ctxmgr.Stats) event {
+	return event{
+		Type:   "context",
+		Tokens: st.Tokens,
+		Budget: st.Budget,
+		Pct:    st.Pct,
+		Level:  st.Level,
+		Status: st.Method,
+	}
+}
+
+func (s *server) maybeAutoTitle(ctx context.Context, client llm.Client, model, workspace, id string, msgs []llm.Message) {
+	if client == nil || id == "" {
+		return
+	}
+	prev, err := session.Load(id)
+	if err != nil || !session.NeedsAutoTitle(prev) {
+		return
+	}
+	title, err := session.GenerateTitle(ctx, client, model, msgs)
+	if err != nil || title == "" {
+		return
+	}
+	if err := session.SetTitle(id, title); err != nil {
+		return
+	}
+	s.emit(event{Type: "title", Text: title})
 }
 
 func clip(s string, n int) string {

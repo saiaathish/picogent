@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/ctxmgr"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/tools"
@@ -53,6 +54,7 @@ type Result struct {
 	Text         string
 	FilesChanged []string
 	ToolRounds   int
+	Context      ctxmgr.Stats
 }
 
 type Agent struct {
@@ -98,9 +100,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 	}
 	msgs = append(msgs, history...)
 	msgs = append(msgs, llm.Message{Role: "user", Content: user})
-	msgs = compact(msgs)
+	budget := ctxmgr.BudgetForModel(a.CFG.Model)
+	compactMsgs, ctxStats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
+	msgs = compactMsgs
 
 	var res Result
+	res.Context = ctxStats
 	changed := map[string]struct{}{}
 
 	for round := 0; round < a.CFG.MaxToolRounds; round++ {
@@ -135,7 +140,9 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 			for p := range changed {
 				res.FilesChanged = append(res.FilesChanged, p)
 			}
-			return compact(msgs), res, nil
+			final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
+			res.Context = stats
+			return final, res, nil
 		}
 
 		res.ToolRounds = round + 1
@@ -201,28 +208,17 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
 		}
+		if len(msgs) > 35 {
+			compactMsgs, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
+			msgs = compactMsgs
+			res.Context = stats
+		}
 	}
 	err := fmt.Errorf("stopped after %d tool rounds (limit)", a.CFG.MaxToolRounds)
 	ev.OnError(err)
-	return compact(msgs), res, err
-}
-
-func compact(msgs []llm.Message) []llm.Message {
-	const keep = 30
-	if len(msgs) <= keep {
-		return msgs
-	}
-	head := msgs[0]
-	tail := msgs[len(msgs)-keep+1:]
-	out := make([]llm.Message, 0, keep)
-	out = append(out, head)
-	out = append(out, tail...)
-	for i := range out {
-		if out[i].Role == "tool" && len(out[i].Content) > 2000 && i < len(out)-6 {
-			out[i].Content = out[i].Content[:2000] + "\n… dropped for context …"
-		}
-	}
-	return out
+	final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
+	res.Context = stats
+	return final, res, err
 }
 
 type NopHandler struct{}

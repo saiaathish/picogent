@@ -10,6 +10,7 @@ const permText = $("perm-text");
 const promptEl = $("prompt");
 const sendBtn = $("send");
 const statusText = $("status-text");
+const contextBar = $("context-bar");
 const threadList = $("thread-list");
 const shell = $("shell");
 const reviewRail = $("rail-review");
@@ -24,7 +25,6 @@ const reasoningEl = $("reasoning");
 const overviewCard = $("overview-card");
 const overviewPct = $("overview-pct");
 const overviewBar = $("overview-bar");
-const overviewList = $("overview-list");
 const projectList = $("project-list");
 const changesList = $("changes-list");
 const changesSummary = $("changes-summary");
@@ -32,6 +32,8 @@ let threadsCache = [];
 let chatsOpen = false;
 let turnChanges = [];
 let turnStats = { reads: 0, searches: 0, edits: 0, added: 0, removed: 0 };
+let activityItems = [];
+let activityPanel = null;
 
 let ready = false;
 let busy = false;
@@ -48,10 +50,12 @@ function syncEmpty() {
 }
 
 function setThinking(on) {
-  thinkingEl.classList.toggle("is-on", on);
+  thinkingEl.classList.toggle("is-on", false);
   if (on) {
     resetReasoning();
     reasoningEl.hidden = false;
+  } else {
+    reasoningEl.hidden = reasoningEl.children.length === 0;
   }
   if (on) $("chat-scroll").scrollTop = $("chat-scroll").scrollHeight;
 }
@@ -59,38 +63,91 @@ function setThinking(on) {
 function resetReasoning() {
   turnChanges = [];
   turnStats = { reads: 0, searches: 0, edits: 0, added: 0, removed: 0 };
+  activityItems = [];
+  activityPanel = null;
   reasoningEl.innerHTML = "";
   renderChangesPanel();
 }
 
-function addReasonStep(text, meta) {
-  const step = document.createElement("div");
-  step.className = "reason-step";
-  const p = document.createElement("p");
-  p.className = "reason-text";
-  p.textContent = text;
-  step.appendChild(p);
-  if (meta) {
-    const ul = document.createElement("ul");
-    ul.className = "reason-stats";
-    const li = document.createElement("li");
-    li.textContent = meta;
-    ul.appendChild(li);
-    step.appendChild(ul);
-  }
-  reasoningEl.appendChild(step);
-  scrollChat();
+function ensureActivityPanel() {
+  if (activityPanel) return activityPanel;
+  const block = document.createElement("div");
+  block.className = "activity-block";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "activity-toggle";
+  toggle.innerHTML =
+    '<svg class="activity-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>' +
+    '<span class="activity-label">Working…</span>';
+
+  const details = document.createElement("div");
+  details.className = "activity-details";
+  details.hidden = true;
+
+  toggle.onclick = () => {
+    const open = details.hidden;
+    details.hidden = !open;
+    toggle.classList.toggle("is-open", open);
+  };
+
+  block.appendChild(toggle);
+  block.appendChild(details);
+  reasoningEl.appendChild(block);
+  activityPanel = { block, toggle, details, label: toggle.querySelector(".activity-label") };
+  return activityPanel;
 }
 
-function updateReasonStats() {
+function pushActivity(kind, text, path) {
+  const panel = ensureActivityPanel();
+  if (path && !activityItems.some((a) => a.path === path && a.kind === kind)) {
+    activityItems.push({ kind, text, path });
+  } else if (!path && text) {
+    activityItems.push({ kind, text, path: "" });
+  }
+  updateActivityPanel();
+}
+
+function updateActivityPanel() {
+  const panel = ensureActivityPanel();
   const parts = [];
   if (turnStats.reads) parts.push("Explored " + turnStats.reads + " file" + (turnStats.reads === 1 ? "" : "s"));
   if (turnStats.searches) parts.push(turnStats.searches + " search" + (turnStats.searches === 1 ? "" : "es"));
-  if (turnStats.edits) {
-    parts.push("Edited " + turnStats.edits + " file" + (turnStats.edits === 1 ? "" : "s"));
+  if (turnStats.edits) parts.push("Edited " + turnStats.edits + " file" + (turnStats.edits === 1 ? "" : "s"));
+  panel.label.textContent = parts.length ? parts.join(" · ") : "Working…";
+
+  panel.details.innerHTML = "";
+  if (!activityItems.length) return;
+  const ul = document.createElement("ul");
+  ul.className = "activity-list";
+  for (const item of activityItems.slice(-24)) {
+    const li = document.createElement("li");
+    if (item.path) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "activity-file";
+      btn.textContent = item.text || item.path;
+      btn.onclick = () => openReview(item.path);
+      li.appendChild(btn);
+    } else {
+      li.textContent = item.text;
+    }
+    ul.appendChild(li);
   }
+  panel.details.appendChild(ul);
+}
+
+function addReasonStep(text) {
+  /* Plan steps fold into the activity summary — no verbose step list */
+  if (text && text.length < 140) {
+    pushActivity("plan", text);
+  }
+}
+
+function updateReasonStats() {
+  updateActivityPanel();
   let summary = reasoningEl.querySelector(".reason-summary");
-  if (!summary && (turnStats.edits || parts.length)) {
+  if (!summary && turnStats.edits) {
     summary = document.createElement("button");
     summary.type = "button";
     summary.className = "reason-summary";
@@ -101,33 +158,44 @@ function updateReasonStats() {
     reasoningEl.appendChild(summary);
   }
   if (summary) {
-    let html = parts.join(" · ");
+    let html = "";
     if (turnStats.edits) {
-      html = (html ? html + " · " : "") + "Edited " + turnStats.edits + " files";
+      html = "Edited " + turnStats.edits + " files";
       if (turnStats.added || turnStats.removed) {
         html += ' <span class="diff-add">+' + turnStats.added + '</span> <span class="diff-del">−' + turnStats.removed + "</span>";
       }
     }
     summary.innerHTML = html || "View changes";
-    summary.hidden = !turnStats.edits && !parts.length;
+    summary.hidden = !turnStats.edits;
+  }
+}
+
+function renderContext(ctx) {
+  if (!contextBar || !ctx) return;
+  const pct = Math.min(100, Math.round((ctx.pct || 0) * 100));
+  contextBar.hidden = false;
+  contextBar.dataset.level = ctx.level || "ok";
+  contextBar.title = (ctx.tokens || 0).toLocaleString() + " / " + (ctx.budget || 0).toLocaleString() + " est. tokens";
+  const fill = contextBar.querySelector(".context-fill");
+  const label = contextBar.querySelector(".context-label");
+  if (fill) fill.style.width = pct + "%";
+  if (label) {
+    if (ctx.level === "critical") label.textContent = "Context " + pct + "% · compacting";
+    else if (ctx.level === "warning") label.textContent = "Context " + pct + "%";
+    else label.textContent = pct > 0 ? "Context " + pct + "%" : "";
+    contextBar.hidden = pct <= 0 && ctx.level === "ok";
   }
 }
 
 function renderOverview(ov) {
-  if (!ov) {
+  if (!ov || !ov.knowledge) {
     overviewCard.hidden = true;
     return;
   }
   overviewCard.hidden = false;
   const pct = ov.knowledge || 0;
-  overviewPct.textContent = pct + "%";
+  overviewPct.textContent = pct + "% explored";
   overviewBar.style.width = pct + "%";
-  overviewList.innerHTML = "";
-  for (const line of ov.overview || []) {
-    const li = document.createElement("li");
-    li.textContent = line;
-    overviewList.appendChild(li);
-  }
 }
 
 function renderChangesPanel() {
@@ -209,21 +277,26 @@ async function applyProjectSwitch(data) {
 
 async function pickProjectFolder() {
   if (busy) return;
-  statusText.textContent = "Choose a folder in Finder…";
-  const res = await fetch("/api/projects", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "pick" }),
-  });
-  if (res.status === 204) {
-    await refresh();
-    return;
+  const prev = statusText.textContent;
+  statusText.textContent = "Choose a folder…";
+  try {
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "pick" }),
+    });
+    if (res.status === 204) {
+      statusText.textContent = prev || "Ready";
+      return;
+    }
+    if (!res.ok) {
+      statusText.textContent = await res.text();
+      return;
+    }
+    await applyProjectSwitch(await res.json());
+  } catch (err) {
+    statusText.textContent = err.message || "Couldn't open folder picker";
   }
-  if (!res.ok) {
-    statusText.textContent = await res.text();
-    return;
-  }
-  await applyProjectSwitch(await res.json());
 }
 
 async function switchProject(id) {
@@ -241,7 +314,7 @@ $("add-project").onclick = pickProjectFolder;
 
 async function runTests() {
   if (busy) return;
-  addReasonStep("Running tests…");
+  pushActivity("test", "Running tests…");
   await fetch("/api/test", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
 }
 
@@ -268,27 +341,13 @@ function scrollChat() {
   sc.scrollTop = sc.scrollHeight;
 }
 
-function addToolChip(label, done, path) {
-  const chip = document.createElement("button");
-  chip.type = "button";
-  chip.className = "chip" + (done ? " is-done" : "");
-  const mark = document.createElement("span");
-  mark.textContent = done ? "✓" : "→";
-  const body = document.createElement("span");
-  body.className = "chip-body";
-  body.textContent = label;
-  chip.appendChild(mark);
-  chip.appendChild(body);
-  if (path) {
-    chip.onclick = () => openReview(path);
-  }
-  logEl.appendChild(chip);
-  syncEmpty();
-  scrollChat();
-  return chip;
-}
-
 function linkifyRefs(text, container) {
+  if (window.renderContent) {
+    window.renderContent(text, container, (path, start, end) => {
+      openReview(path, start, end, "Referenced in reply");
+    });
+    return;
+  }
   container.textContent = "";
   let last = 0;
   const re = new RegExp(REF_RE.source, "g");
@@ -316,21 +375,6 @@ function linkifyRefs(text, container) {
 
 function add(kind, text) {
   if (kind === "tool") {
-    const isStart = text.startsWith("→ ");
-    const name = isStart ? text.slice(2) : text;
-    if (isStart) {
-      addToolChip(name, false);
-    } else {
-      const last = logEl.querySelector(".chip:not(.is-done):last-of-type");
-      if (last) {
-        last.classList.add("is-done");
-        last.querySelector("span").textContent = "✓";
-        const body = last.querySelector(".chip-body");
-        if (body && text && text.length < 80) body.textContent = text.replace(/\s+/g, " ").trim();
-      } else {
-        addToolChip(text, true);
-      }
-    }
     return;
   }
 
@@ -345,7 +389,7 @@ function add(kind, text) {
     wrap.appendChild(b);
   } else if (role === "assistant") {
     const c = document.createElement("div");
-    c.className = "content";
+    c.className = "content md";
     linkifyRefs(text, c);
     wrap.appendChild(c);
     applyRefsFromText(text);
@@ -375,8 +419,8 @@ function clearLog() {
 function replayMessages(msgs) {
   clearLog();
   for (const m of msgs) {
-    if (m.role === "tool") addToolChip(m.text, true);
-    else add(m.role === "user" ? "you" : m.role, m.text);
+    if (m.role === "tool") continue;
+    add(m.role === "user" ? "you" : m.role, m.text);
   }
 }
 
@@ -479,6 +523,10 @@ async function refresh() {
   if (s.hint) statusText.textContent = s.hint;
 
   renderOverview(s.overview);
+  renderContext(s.context);
+  if (logEl.children.length === 0 && s.messages?.length) {
+    replayMessages(s.messages);
+  }
   busy = !!s.busy;
   sendBtn.disabled = busy || !ready;
   setThinking(busy);
@@ -685,134 +733,163 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+function finishTurnUI() {
+  busy = false;
+  sendBtn.disabled = !ready;
+  setThinking(false);
+  const thinkLabel = reasoningEl.querySelector(".reason-thinking");
+  if (thinkLabel) thinkLabel.remove();
+  if (activityPanel) {
+    activityPanel.details.hidden = true;
+    activityPanel.toggle.classList.remove("is-open");
+  }
+  reasoningEl.hidden = reasoningEl.children.length === 0;
+  refresh();
+}
+
 /* ─── SSE ─── */
-const ev = new EventSource("/api/events");
-ev.onmessage = (m) => {
-  const e = JSON.parse(m.data);
-  if (e.type === "hello") {
-    ready = true;
-    sendBtn.disabled = busy;
-    return;
-  }
-  if (e.type === "permission") {
-    permText.textContent = e.summary || "";
-    permEl.classList.add("is-on");
-    setThinking(false);
-    return;
-  }
-  if (e.type === "review" && e.path) {
-    openReview(e.path, e.line || 0, e.line_end || e.line || 0, "Reading file…");
-    const last = logEl.querySelector(".chip:not(.is-done):last-of-type");
-    if (last) {
-      last.onclick = () => openReview(e.path);
-      const body = last.querySelector(".chip-body");
-      if (body) body.textContent = "read " + e.path;
+let ev;
+function connectEvents() {
+  if (ev) ev.close();
+  ev = new EventSource("/api/events");
+  ev.onopen = () => {
+    refresh().catch(() => {});
+  };
+  ev.onmessage = (m) => {
+    const e = JSON.parse(m.data);
+    if (e.type === "hello") {
+      ready = true;
+      sendBtn.disabled = busy;
+      return;
     }
-    return;
-  }
-  if (e.type === "done") {
-    busy = false;
-    sendBtn.disabled = !ready;
-    permEl.classList.remove("is-on");
-    setThinking(false);
-    const thinkLabel = reasoningEl.querySelector(".reason-thinking");
-    if (thinkLabel) thinkLabel.remove();
-    refresh();
-    return;
-  }
-  if (e.type === "think") {
-    if (e.status === "start") addReasonStep(e.text);
-    if (e.status === "done") {
-      const t = reasoningEl.querySelector(".reason-thinking");
-      if (t) t.remove();
+    if (e.type === "permission") {
+      permText.textContent = e.summary || "";
+      permEl.classList.add("is-on");
+      setThinking(false);
+      return;
     }
-    return;
-  }
-  if (e.type === "activity") {
-    if (e.kind === "reset") return;
-    if (e.kind === "read") turnStats.reads = e.count || turnStats.reads + 1;
-    if (e.kind === "search") turnStats.searches = e.count || turnStats.searches + 1;
-    if (e.kind === "edit") {
+    if (e.type === "title") {
+      const row = threadsCache.find((s) => s.id === sessionId);
+      if (row) row.title = e.text;
+      renderThreads();
+      return;
+    }
+    if (e.type === "context") {
+      renderContext(e);
+      return;
+    }
+    if (e.type === "review" && e.path) {
+      openReview(e.path, e.line || 0, e.line_end || e.line || 0, "Reading file…");
+      pushActivity("read", e.path, e.path);
+      return;
+    }
+    if (e.type === "done") {
+      permEl.classList.remove("is-on");
+      finishTurnUI();
+      return;
+    }
+    if (e.type === "think") {
+      if (e.status === "start") addReasonStep(e.text);
+      if (e.status === "done") {
+        const t = reasoningEl.querySelector(".reason-thinking");
+        if (t) t.remove();
+      }
+      return;
+    }
+    if (e.type === "activity") {
+      if (e.kind === "reset") return;
+      if (e.kind === "read") {
+        turnStats.reads = e.count || turnStats.reads + 1;
+        if (e.path) pushActivity("read", e.path, e.path);
+      }
+      if (e.kind === "search") {
+        turnStats.searches = e.count || turnStats.searches + 1;
+        pushActivity("search", "search");
+      }
+      if (e.kind === "edit") {
+        turnStats.edits = e.count || turnStats.edits;
+        turnStats.added = e.added || turnStats.added;
+        turnStats.removed = e.removed || turnStats.removed;
+      }
+      updateReasonStats();
+      return;
+    }
+    if (e.type === "change" && e.path) {
+      turnChanges.push({ path: e.path, added: e.added || 0, removed: e.removed || 0 });
+      turnStats.edits = turnChanges.length;
+      turnStats.added = turnChanges.reduce((a, c) => a + (c.added || 0), 0);
+      turnStats.removed = turnChanges.reduce((a, c) => a + (c.removed || 0), 0);
+      updateReasonStats();
+      renderChangesPanel();
+      return;
+    }
+    if (e.type === "changes_summary") {
       turnStats.edits = e.count || turnStats.edits;
       turnStats.added = e.added || turnStats.added;
       turnStats.removed = e.removed || turnStats.removed;
+      updateReasonStats();
+      renderChangesPanel();
+      return;
     }
-    updateReasonStats();
-    return;
-  }
-  if (e.type === "change" && e.path) {
-    turnChanges.push({ path: e.path, added: e.added || 0, removed: e.removed || 0 });
-    turnStats.edits = turnChanges.length;
-    turnStats.added = turnChanges.reduce((a, c) => a + (c.added || 0), 0);
-    turnStats.removed = turnChanges.reduce((a, c) => a + (c.removed || 0), 0);
-    updateReasonStats();
-    renderChangesPanel();
-    return;
-  }
-  if (e.type === "changes_summary") {
-    turnStats.edits = e.count || turnStats.edits;
-    turnStats.added = e.added || turnStats.added;
-    turnStats.removed = e.removed || turnStats.removed;
-    updateReasonStats();
-    renderChangesPanel();
-    return;
-  }
-  if (e.type === "test") {
-    const note = document.createElement("div");
-    note.className = "test-result" + (e.status === "fail" ? " is-fail" : " is-pass");
-    note.innerHTML = "<strong>" + (e.text || "Tests") + "</strong>";
-    if (e.summary) {
-      const pre = document.createElement("pre");
-      pre.textContent = e.summary.slice(0, 1200);
-      note.appendChild(pre);
+    if (e.type === "test") {
+      const note = document.createElement("div");
+      note.className = "test-result" + (e.status === "fail" ? " is-fail" : " is-pass");
+      note.innerHTML = "<strong>" + (e.text || "Tests") + "</strong>";
+      if (e.summary) {
+        const pre = document.createElement("pre");
+        pre.textContent = e.summary.slice(0, 1200);
+        note.appendChild(pre);
+      }
+      logEl.appendChild(note);
+      syncEmpty();
+      scrollChat();
+      if (e.status === "fail") {
+        promptEl.value = "Fix the failing tests";
+        promptEl.focus();
+      }
+      return;
     }
-    logEl.appendChild(note);
-    syncEmpty();
-    scrollChat();
-    if (e.status === "fail") {
-      promptEl.value = "Fix the failing tests";
-      promptEl.focus();
+    if (e.type === "overview") {
+      fetch("/api/overview")
+        .then((r) => r.json())
+        .then(renderOverview);
+      return;
     }
-    return;
-  }
-  if (e.type === "overview") {
-    fetch("/api/overview")
-      .then((r) => r.json())
-      .then(renderOverview);
-    return;
-  }
-  if (e.type === "route") {
-    const note = document.createElement("div");
-    note.className = "route-chip";
-    note.textContent = "Routed to " + (e.text || "model");
-    if (e.summary) note.title = e.summary;
-    logEl.appendChild(note);
-    syncEmpty();
-    scrollChat();
-    return;
-  }
-  if (e.type === "system") {
-    add("system", e.text || "");
-    return;
-  }
-  if (e.type === "tool") {
-    add("tool", e.text || "");
-    return;
-  }
-  add(e.type === "you" ? "you" : e.type, e.text || e.summary || e.type);
-  if (busy && !reasoningEl.querySelector(".reason-thinking")) {
-    const t = document.createElement("div");
-    t.className = "reason-thinking";
-    t.textContent = "Thinking";
-    reasoningEl.appendChild(t);
-    scrollChat();
-  }
-};
-ev.onerror = () => {
-  ready = false;
-  statusText.textContent = "Reconnecting…";
-};
-ev.onopen = () => refresh();
+    if (e.type === "route") {
+      const note = document.createElement("div");
+      note.className = "route-chip";
+      note.textContent = "Routed to " + (e.text || "model");
+      if (e.summary) note.title = e.summary;
+      logEl.appendChild(note);
+      syncEmpty();
+      scrollChat();
+      return;
+    }
+    if (e.type === "system") {
+      add("system", e.text || "");
+      return;
+    }
+    if (e.type === "tool") {
+      return;
+    }
+    add(e.type === "you" ? "you" : e.type, e.text || e.summary || e.type);
+    if (busy && !reasoningEl.querySelector(".reason-thinking")) {
+      const t = document.createElement("div");
+      t.className = "reason-thinking";
+      t.textContent = "Thinking";
+      reasoningEl.appendChild(t);
+      scrollChat();
+    }
+  };
+  ev.onerror = () => {
+    ready = false;
+    sendBtn.disabled = true;
+    if (statusText.textContent !== "Choose a folder…") {
+      statusText.textContent = "Reconnecting…";
+    }
+  };
+}
 
+connectEvents();
 syncEmpty();
 refresh();
