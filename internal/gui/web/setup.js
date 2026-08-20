@@ -26,7 +26,7 @@ function clearError() {
   stageErr.hidden = true;
 }
 const dots = [...document.querySelectorAll(".step-dot")];
-const panels = [...document.querySelectorAll(".stage")];
+const panels = [...document.querySelectorAll(".setup-stage")];
 
 function toolsReady(st) {
   const required = (st.components || []).filter(
@@ -54,7 +54,9 @@ function showStage(n) {
     p.hidden = i !== current;
   });
   dots.forEach((d, i) => {
+    d.classList.toggle("is-active", i === current);
     d.classList.toggle("active", i === current);
+    d.classList.toggle("is-done", i < current || (i === 1 && toolsReady(status)) || (i === 2 && status.logged_in));
     d.classList.toggle("done", i < current || (i === 1 && toolsReady(status)) || (i === 2 && status.logged_in));
   });
   backBtn.disabled = current === 0;
@@ -71,8 +73,8 @@ function paint(st) {
   compsEl.innerHTML = "";
   (st.components || []).forEach((c) => {
     const li = document.createElement("li");
-    li.className = c.ok ? "ok" : "miss";
-    li.innerHTML = `<strong>${c.name}</strong><span>${c.ok ? "ready" : c.detail}</span>`;
+    li.className = c.ok ? "is-done" : status.busy && !c.ok ? "is-running" : "";
+    li.innerHTML = `<span class="setup-check-icon">${c.ok ? "✓" : "·"}</span><span><strong>${c.name}</strong><br><small>${c.ok ? "ready" : c.detail}</small></span>`;
     compsEl.appendChild(li);
   });
 

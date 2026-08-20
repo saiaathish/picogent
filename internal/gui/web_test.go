@@ -19,8 +19,15 @@ func TestEmbeddedIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(js), "Codex connected") {
-		t.Fatal("gui missing Codex badge")
+	if !strings.Contains(string(js), "/api/sessions") {
+		t.Fatal("gui missing session API client")
+	}
+	settings, err := gui.ReadWeb("web/settings.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), "Settings") {
+		t.Fatal("settings page missing")
 	}
 	setup, err := gui.ReadWeb("web/setup.html")
 	if err != nil {

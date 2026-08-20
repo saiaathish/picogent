@@ -6,74 +6,74 @@
   <title>Set up Picogent</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
-<body class="setup-page">
-  <div class="setup-shell">
+<body>
+  <div class="setup-app">
     <header class="setup-header">
-      <div class="brand">Picogent</div>
-      <p class="setup-tagline">First-time setup</p>
+      <div class="setup-logo" aria-hidden="true">P</div>
+      <h1>Picogent</h1>
+      <p>First-time setup · about two minutes</p>
     </header>
 
-    <main class="setup-main">
-      <p id="stage-err" class="error-line setup-error" hidden></p>
+    <main class="setup-body">
+      <p id="stage-err" class="setup-status is-error" hidden></p>
 
-      <!-- Stage 1: Welcome -->
-      <section class="stage" data-stage="0">
-        <h1>Welcome</h1>
-        <p class="stage-lede">Picogent runs on your machine. We'll install the CLIs, connect your account, and pick a folder — about two minutes.</p>
-        <ul class="stage-checklist">
-          <li><span class="check-icon">1</span> Install Codex &amp; Claude Code CLIs</li>
-          <li><span class="check-icon">2</span> Log in with ChatGPT</li>
-          <li><span class="check-icon">3</span> Choose folder &amp; mode</li>
+      <section class="setup-stage" data-stage="0">
+        <h2>Welcome</h2>
+        <p>Picogent runs on your machine. We'll install the CLIs, connect your account, and pick a folder.</p>
+        <ul class="setup-checklist stage-checklist">
+          <li><span class="setup-check-icon check-icon">1</span> Install Codex &amp; Claude Code CLIs</li>
+          <li><span class="setup-check-icon check-icon">2</span> Log in with ChatGPT</li>
+          <li><span class="setup-check-icon check-icon">3</span> Choose folder &amp; mode</li>
         </ul>
       </section>
 
-      <!-- Stage 2: CLI tools -->
-      <section class="stage" data-stage="1" hidden>
-        <h1>Core tools</h1>
-        <p class="stage-lede">Picogent installs missing command-line tools for you. Git must already be on your system.</p>
-        <ul id="comps" class="comps"></ul>
+      <section class="setup-stage" data-stage="1" hidden>
+        <h2>Core tools</h2>
+        <p>Picogent installs missing command-line tools for you. Git must already be on your system.</p>
+        <ul id="comps" class="setup-checklist comps"></ul>
         <pre id="install-log" class="install-log" hidden></pre>
-        <button type="button" id="install" class="stage-action">Install missing pieces</button>
+        <button type="button" id="install" class="setup-nav-btn primary stage-action">Install missing pieces</button>
       </section>
 
-      <!-- Stage 3: Login -->
-      <section class="stage" data-stage="2" hidden>
-        <h1>Log in</h1>
-        <p class="stage-lede">Connect ChatGPT so Picogent can use Codex. You'll be redirected and come back here.</p>
+      <section class="setup-stage" data-stage="2" hidden>
+        <h2>Log in</h2>
+        <p>Connect ChatGPT so Picogent can use Codex. You'll be redirected and come back here.</p>
         <div id="logins" class="login-stack"></div>
       </section>
 
-      <!-- Stage 4: Agent config -->
-      <section class="stage" data-stage="3" hidden>
-        <h1>Your agent</h1>
-        <p class="stage-lede">Pick the folder Picogent works in and how cautious it should be.</p>
+      <section class="setup-stage" data-stage="3" hidden>
+        <h2>Your agent</h2>
+        <p>Pick the folder Picogent works in and how cautious it should be.</p>
         <div class="form-grid">
-          <label>Folder
+          <div class="setup-field">
+            <label for="workspace">Folder</label>
             <input id="workspace" type="text" />
-          </label>
-          <label>Mode
+          </div>
+          <div class="setup-field">
+            <label for="mode">Mode</label>
             <select id="mode">
               <option value="safe">Safe — ask before writes</option>
               <option value="fast">Fast — auto-edit inside the folder</option>
             </select>
-          </label>
-          <label>Model
+          </div>
+          <div class="setup-field">
+            <label for="model">Model</label>
             <input id="model" type="text" />
-          </label>
+          </div>
         </div>
-        <p id="finish-err" class="error-line" hidden></p>
+        <p id="finish-err" class="setup-status is-error" hidden></p>
       </section>
     </main>
 
     <footer class="setup-footer">
-      <button type="button" id="back" class="ghost nav-btn" disabled>Back</button>
-      <ol class="step-track" aria-label="Setup progress">
-        <li class="step-dot active" data-step="0"><span>1</span></li>
-        <li class="step-dot" data-step="1"><span>2</span></li>
-        <li class="step-dot" data-step="2"><span>3</span></li>
-        <li class="step-dot" data-step="3"><span>4</span></li>
-      </ol>
-      <button type="button" id="next" class="nav-btn">Next</button>
+      <button type="button" id="back" class="setup-nav-btn" disabled>Back</button>
+      <div class="setup-dots step-track" aria-label="Setup progress">
+        <span class="setup-dot step-dot active" data-step="0"></span>
+        <span class="setup-dot step-dot" data-step="1"></span>
+        <span class="setup-dot step-dot" data-step="2"></span>
+        <span class="setup-dot step-dot" data-step="3"></span>
+      </div>
+      <button type="button" id="next" class="setup-nav-btn primary">Next</button>
     </footer>
   </div>
   <script src="/setup.js"></script>

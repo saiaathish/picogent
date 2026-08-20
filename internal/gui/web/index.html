@@ -6,49 +6,117 @@
   <title>Picogent</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
-<body class="chat-page">
-  <div class="chat-shell">
-    <header class="chat-header">
-      <div class="chat-header-left">
-        <div class="brand">Picogent</div>
-        <p id="workspace" class="workspace"></p>
-      </div>
-      <div class="status">
-        <span id="badge" class="badge off">connecting</span>
-        <span id="model" class="meta"></span>
-      </div>
-      <div class="actions">
-        <button type="button" id="toggle-mode" class="ghost sm">Safe</button>
-        <button type="button" id="reset" class="ghost sm">New chat</button>
-        <a class="ghost linkbtn sm" href="/setup.html">Setup</a>
-      </div>
-    </header>
+<body>
+  <div class="app" id="shell">
+    <div class="hatch" aria-hidden="true"></div>
+    <div class="scrim" id="scrim" hidden></div>
 
-    <p id="hint" class="hint" hidden></p>
-
-    <main class="chat-main">
-      <div id="empty" class="chat-empty">
-        <p class="chat-empty-title">What should we work on?</p>
-        <p class="chat-empty-sub">Ask Picogent to read, edit, or run things in your folder.</p>
+    <aside class="drawer drawer-left" id="rail-left" aria-label="Chats">
+      <div class="drawer-head">
+        <p class="drawer-kicker">Chats</p>
+        <button type="button" class="ghost-btn" id="new-chat">New</button>
       </div>
-      <ol id="log"></ol>
-    </main>
-
-    <div id="perm" class="perm-bar" hidden>
-      <p id="perm-text">Allow this?</p>
-      <div class="perm-btns">
-        <button type="button" class="yes sm" data-allow="1">Yes</button>
-        <button type="button" class="no sm" data-allow="0">No</button>
-        <button type="button" class="turn ghost sm" data-turn="1">This turn</button>
+      <label class="search-wrap">
+        <span class="sr-only">Search chats</span>
+        <input id="thread-search" type="search" placeholder="Search" autocomplete="off" />
+      </label>
+      <nav class="thread-list" id="thread-list" aria-label="Chat history"></nav>
+      <div class="drawer-foot">
+        <a href="/settings.html">Settings</a>
+        <a href="/setup.html">Setup</a>
       </div>
+    </aside>
+
+    <div class="stage">
+      <header class="top">
+        <button type="button" class="icon" id="toggle-rail" aria-label="Open chats" title="Chats">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h10M4 18h16"/></svg>
+        </button>
+        <div class="brand">
+          <span class="mark" aria-hidden="true"></span>
+          <div>
+            <strong>Picogent</strong>
+            <span id="status-text">Connecting…</span>
+          </div>
+        </div>
+        <div class="top-right">
+          <div class="mode" id="mode-seg" role="group" aria-label="Permission mode">
+            <button type="button" data-mode="safe">Safe</button>
+            <button type="button" data-mode="fast">Fast</button>
+          </div>
+          <a class="icon" href="/settings.html" aria-label="Settings" title="Settings">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
+          </a>
+          <button type="button" class="icon" id="toggle-review" aria-label="Code review" title="Review">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <main class="feed" id="chat-scroll">
+        <div id="empty" class="hero">
+          <p class="eyebrow">Local agent</p>
+          <h1>What should we work on?</h1>
+          <p class="lede">Read, edit, and run things in this folder. Open chats on the left, review files on the right.</p>
+          <div class="recs">
+            <button type="button" class="rec" data-prompt="Give me a quick overview of this codebase">
+              <span>Overview</span>
+              <small>How this repo is structured</small>
+            </button>
+            <button type="button" class="rec" data-prompt="Review internal/gui/web/app.js for issues">
+              <span>Review app.js</span>
+              <small>Point to specific lines</small>
+            </button>
+            <button type="button" class="rec" data-prompt="Run go test ./... and fix failures">
+              <span>Run tests</span>
+              <small>Fix whatever fails</small>
+            </button>
+          </div>
+        </div>
+        <div id="log" class="log"></div>
+        <div id="thinking" class="think" aria-live="polite">
+          <span class="pixels" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          <span>Working…</span>
+        </div>
+      </main>
+
+      <footer class="dock">
+        <div id="perm" class="approve">
+          <p>Allow this?</p>
+          <code id="perm-text"></code>
+          <div class="approve-row">
+            <button type="button" data-allow="0">Deny</button>
+            <button type="button" data-turn="1">This turn</button>
+            <button type="button" class="yes" data-allow="1">Allow</button>
+          </div>
+        </div>
+        <form id="composer" class="prompt">
+          <textarea id="prompt" rows="1" placeholder="Message Picogent" autocomplete="off"></textarea>
+          <button type="submit" id="send" aria-label="Send" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+          </button>
+        </form>
+        <p class="hint">Enter to send · Shift+Enter for a new line · / for commands</p>
+      </footer>
     </div>
 
-    <footer class="chat-dock">
-      <form id="composer" class="composer-bar">
-        <textarea id="prompt" rows="1" placeholder="Message Picogent…"></textarea>
-        <button type="submit" id="send" aria-label="Send">↑</button>
+    <aside class="drawer drawer-right" id="rail-review" hidden>
+      <div class="drawer-head">
+        <p class="drawer-kicker" id="review-path">Review</p>
+        <button type="button" class="ghost-btn" id="close-review">Close</button>
+      </div>
+      <div class="review-note" id="review-note"></div>
+      <div class="review-scroll" id="review-scroll">
+        <p class="review-empty">When Picogent reads a file or cites <code>path:line</code>, those lines light up here.</p>
+      </div>
+      <form class="review-ask" id="review-ask">
+        <input id="review-input" type="text" placeholder="Line 42 or ask about this file" autocomplete="off" />
+        <button type="submit">Ask</button>
       </form>
-    </footer>
+    </aside>
   </div>
   <script src="/app.js"></script>
 </body>

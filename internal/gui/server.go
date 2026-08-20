@@ -9,10 +9,12 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/app"
@@ -29,6 +31,14 @@ type event struct {
 	Type    string `json:"type"`
 	Text    string `json:"text,omitempty"`
 	Summary string `json:"summary,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Line    int    `json:"line,omitempty"`
+	LineEnd int    `json:"line_end,omitempty"`
+}
+
+type transcriptLine struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
 }
 
 type server struct {
@@ -98,6 +108,9 @@ func (s *server) Handler() http.Handler {
 	mux.HandleFunc("/api/mode", s.setMode)
 	mux.HandleFunc("/api/cancel", s.cancelChat)
 	mux.HandleFunc("/api/reset", s.reset)
+	mux.HandleFunc("/api/sessions", s.sessions)
+	mux.HandleFunc("/api/file", s.readFile)
+	mux.HandleFunc("/api/settings", s.settings)
 	mux.HandleFunc("/api/events", s.events)
 	mux.Handle("/", http.FileServer(http.FS(static)))
 	return mux
@@ -123,15 +136,16 @@ func (s *server) snapshot() map[string]any {
 		hint = err.Error()
 	}
 	return map[string]any{
-		"mode":      s.cfg.Mode,
-		"model":     s.cfg.Model,
-		"workspace": s.cfg.Workspace,
-		"provider":  s.cfg.Provider,
-		"codex":     s.cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
-		"busy":      s.busy,
-		"hint":      hint,
-		"setup":     !s.cfg.SetupComplete,
-		"mcp_tools": mcpToolCount(s.ag),
+		"mode":       s.cfg.Mode,
+		"model":      s.cfg.Model,
+		"workspace":  s.cfg.Workspace,
+		"provider":   s.cfg.Provider,
+		"codex":      s.cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
+		"busy":       s.busy,
+		"hint":       hint,
+		"setup":      !s.cfg.SetupComplete,
+		"mcp_tools":  mcpToolCount(s.ag),
+		"session_id": s.sessionID,
 	}
 }
 
@@ -266,9 +280,15 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
+	if len(s.hist) > 0 {
+		_ = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
+	}
+	s.sessionID = session.New(s.cfg.Workspace).ID
 	s.hist = nil
+	id := s.sessionID
 	s.mu.Unlock()
-	w.WriteHeader(204)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
 }
 
 func (s *server) permission(w http.ResponseWriter, r *http.Request) {
@@ -448,6 +468,15 @@ func (h *guiHandler) OnText(text string) {
 }
 func (h *guiHandler) OnToolStart(call llm.ToolCall) {
 	h.s.emit(event{Type: "tool", Text: "→ " + call.Name})
+	if call.Name == "read_file" {
+		var in struct {
+			Path string `json:"path"`
+		}
+		_ = json.Unmarshal([]byte(call.Arguments), &in)
+		if in.Path != "" {
+			h.s.emit(event{Type: "review", Path: in.Path})
+		}
+	}
 }
 func (h *guiHandler) OnToolEnd(_ llm.ToolCall, result string, err error) {
 	if err != nil {
@@ -474,6 +503,239 @@ func clip(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func messagesToTranscript(msgs []llm.Message) []transcriptLine {
+	var out []transcriptLine
+	for _, m := range msgs {
+		switch m.Role {
+		case "user":
+			if t := strings.TrimSpace(m.Content); t != "" {
+				out = append(out, transcriptLine{Role: "user", Text: t})
+			}
+		case "assistant":
+			if t := strings.TrimSpace(m.Content); t != "" {
+				out = append(out, transcriptLine{Role: "assistant", Text: t})
+			}
+		case "tool":
+			if t := strings.TrimSpace(m.Content); t != "" {
+				out = append(out, transcriptLine{Role: "tool", Text: clip(t, 400)})
+			}
+		}
+	}
+	return out
+}
+
+func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.mu.Lock()
+		ws := s.cfg.Workspace
+		cur := s.sessionID
+		s.mu.Unlock()
+		metas, err := session.ListMeta(ws)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"sessions":   metas,
+			"current_id": cur,
+		})
+	case http.MethodPost:
+		var in struct {
+			Action string `json:"action"`
+			ID     string `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		switch in.Action {
+		case "new":
+			s.mu.Lock()
+			if len(s.hist) > 0 {
+				_ = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
+			}
+			s.sessionID = session.New(s.cfg.Workspace).ID
+			s.hist = nil
+			id := s.sessionID
+			s.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
+		case "load":
+			if in.ID == "" {
+				http.Error(w, "id required", 400)
+				return
+			}
+			sess, err := session.Load(in.ID)
+			if err != nil {
+				http.Error(w, err.Error(), 404)
+				return
+			}
+			s.mu.Lock()
+			s.sessionID = sess.ID
+			s.hist = sess.Messages
+			s.mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":       sess.ID,
+				"title":    sess.Title,
+				"messages": messagesToTranscript(sess.Messages),
+			})
+		case "delete":
+			if in.ID == "" {
+				http.Error(w, "id required", 400)
+				return
+			}
+			s.mu.Lock()
+			if s.sessionID == in.ID {
+				s.sessionID = session.New(s.cfg.Workspace).ID
+				s.hist = nil
+			}
+			s.mu.Unlock()
+			if err := session.Delete(in.ID); err != nil && !os.IsNotExist(err) {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			w.WriteHeader(204)
+		default:
+			http.Error(w, "action must be new, load, or delete", 400)
+		}
+	default:
+		http.Error(w, "GET or POST only", 405)
+	}
+}
+
+func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "GET only", 405)
+		return
+	}
+	rel := strings.TrimSpace(r.URL.Query().Get("path"))
+	if rel == "" {
+		http.Error(w, "path required", 400)
+		return
+	}
+	s.mu.Lock()
+	ws := s.cfg.Workspace
+	s.mu.Unlock()
+	wsAbs, err := filepath.Abs(ws)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	abs := filepath.Join(wsAbs, rel)
+	abs, err = filepath.Abs(abs)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if abs != wsAbs && !strings.HasPrefix(abs, wsAbs+string(os.PathSeparator)) {
+		http.Error(w, "outside workspace", 403)
+		return
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	if !utf8.Valid(data) {
+		http.Error(w, "not a utf-8 text file", 415)
+		return
+	}
+	const maxLines = 800
+	lines := strings.Split(string(data), "\n")
+	total := len(lines)
+	if total > maxLines {
+		lines = lines[:maxLines]
+	}
+	type lineRow struct {
+		N int    `json:"n"`
+		T string `json:"t"`
+	}
+	rows := make([]lineRow, len(lines))
+	for i, t := range lines {
+		rows[i] = lineRow{N: i + 1, T: t}
+	}
+	display, _ := filepath.Rel(wsAbs, abs)
+	if display == "." {
+		display = rel
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"path":    display,
+		"lines":   rows,
+		"total":   total,
+		"truncated": total > maxLines,
+	})
+}
+
+func (s *server) settings(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.mu.Lock()
+		cfg := s.cfg
+		s.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"workspace":        cfg.Workspace,
+			"mode":             cfg.Mode,
+			"model":            cfg.Model,
+			"provider":         cfg.Provider,
+			"max_tool_rounds":  cfg.MaxToolRounds,
+			"llm_timeout_sec":  cfg.LLMTimeoutSec,
+			"bash_timeout_sec": cfg.BashTimeoutSec,
+			"has_api_key":      cfg.APIKeyResolved() != "",
+			"codex":            cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
+		})
+	case http.MethodPost:
+		var in struct {
+			Workspace      string `json:"workspace"`
+			Mode           string `json:"mode"`
+			Model          string `json:"model"`
+			MaxToolRounds  int    `json:"max_tool_rounds"`
+			LLMTimeoutSec  int    `json:"llm_timeout_sec"`
+			BashTimeoutSec int    `json:"bash_timeout_sec"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		s.mu.Lock()
+		if in.Workspace != "" {
+			s.cfg.Workspace = in.Workspace
+		}
+		if mode := config.Mode(in.Mode); mode.Valid() {
+			s.cfg.Mode = mode
+			s.ag.CFG.Mode = mode
+			s.ag.Gate.Mode = mode
+		}
+		if in.Model != "" {
+			s.cfg.Model = in.Model
+			s.ag.CFG.Model = in.Model
+		}
+		if in.MaxToolRounds > 0 {
+			s.cfg.MaxToolRounds = in.MaxToolRounds
+			s.ag.CFG.MaxToolRounds = in.MaxToolRounds
+		}
+		if in.LLMTimeoutSec > 0 {
+			s.cfg.LLMTimeoutSec = in.LLMTimeoutSec
+		}
+		if in.BashTimeoutSec > 0 {
+			s.cfg.BashTimeoutSec = in.BashTimeoutSec
+		}
+		cfg := s.cfg
+		s.mu.Unlock()
+		if err := config.Save(cfg); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.WriteHeader(204)
+	default:
+		http.Error(w, "GET or POST only", 405)
+	}
 }
 
 func openBrowser(url string) {
