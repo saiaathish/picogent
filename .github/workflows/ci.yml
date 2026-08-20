@@ -21,3 +21,36 @@ jobs:
         run: go test ./...
       - name: Build
         run: go build -o picogent ./cmd/picogent
+      - name: GUI listens
+        shell: bash
+        env:
+          PICOGENT_GUI_ADDR: 127.0.0.1:7420
+          PICOGENT_NO_BROWSER: "1"
+          HOME: ${{ runner.temp }}/picogent-home
+          USERPROFILE: ${{ runner.temp }}/picogent-home
+        run: |
+          mkdir -p "$HOME"
+          BIN=./picogent
+          if [[ -f ./picogent.exe ]]; then BIN=./picogent.exe; fi
+          "$BIN" gui &
+          pid=$!
+          ok=0
+          for i in $(seq 1 45); do
+            if curl -sf "http://127.0.0.1:7420/api/state" >/tmp/pico-state.json; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          if [[ "$ok" != "1" ]]; then
+            echo "GUI never answered /api/state"
+            exit 1
+          fi
+          python - <<'PY' || python3 - <<'PY'
+          import json
+          d=json.load(open("/tmp/pico-state.json"))
+          assert "mode" in d and "workspace" in d, d
+          print("gui smoke ok", d.get("mode"), d.get("workspace"))
+          PY
