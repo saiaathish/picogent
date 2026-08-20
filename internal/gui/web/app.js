@@ -47,6 +47,7 @@ let activityPanel = null;
 let ready = false;
 let busy = false;
 let sessionId = "";
+let viewEpoch = 0;
 let pendingAttachments = [];
 let modelOptions = [];
 let userModelChoice = "auto";
@@ -495,6 +496,8 @@ threadSearch.addEventListener("input", renderThreads);
 
 async function loadThread(id) {
   if (busy) return;
+  viewEpoch++;
+  const epoch = viewEpoch;
   const data = await (
     await fetch("/api/sessions", {
       method: "POST",
@@ -502,6 +505,7 @@ async function loadThread(id) {
       body: JSON.stringify({ action: "load", id }),
     })
   ).json();
+  if (epoch !== viewEpoch) return;
   sessionId = data.id;
   replayMessages(data.messages || []);
   setChatsOpen(false);
@@ -509,6 +513,8 @@ async function loadThread(id) {
 }
 
 async function newChat() {
+  viewEpoch++;
+  const epoch = viewEpoch;
   if (busy) {
     try { await fetch("/api/cancel", { method: "POST" }); } catch (_) {}
   }
@@ -519,6 +525,7 @@ async function newChat() {
       body: JSON.stringify({ action: "new" }),
     })
   ).json();
+  if (epoch !== viewEpoch) return;
   sessionId = data.id;
   clearLog();
   await loadThreads();
@@ -536,7 +543,9 @@ async function deleteThread(id) {
 }
 
 async function refresh() {
+  const epoch = viewEpoch;
   const s = await (await fetch("/api/state")).json();
+  if (epoch !== viewEpoch) return;
   sessionId = s.session_id || sessionId;
   currentMode = s.mode || "safe";
   if (s.slash?.length) slashItems = s.slash;
@@ -753,7 +762,7 @@ function showAuthPrompt(name, hint, id) {
   if (!extToastsEl) return;
   const toast = document.createElement("div");
   toast.className = "ext-toast ext-auth";
-  toast.innerHTML = "<strong>Authorize " + escapeHtml(name) + "</strong><p>" + escapeHtml(hint || "Add credentials in Settings → Extensions or ~/.picogent/mcp.yaml") + "</p>";
+  toast.innerHTML = "<strong>Authorize " + escapeHtml(name) + "</strong><p>" + escapeHtml(hint || "Add credentials in Settings → Extensions") + "</p>";
   const ok = document.createElement("button");
   ok.type = "button";
   ok.className = "ext-install";

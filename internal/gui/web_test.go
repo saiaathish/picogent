@@ -19,8 +19,8 @@ func TestEmbeddedIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(js), "/api/sessions") {
-		t.Fatal("gui missing session API client")
+	if !strings.Contains(string(js), "/api/sessions") || !strings.Contains(string(js), "viewEpoch") {
+		t.Fatal("gui missing session client or new-chat race guard")
 	}
 	settings, err := gui.ReadWeb("web/settings.html")
 	if err != nil {
