@@ -14,7 +14,7 @@
     <aside class="drawer drawer-left" id="rail-left" aria-label="Chats">
       <div class="drawer-head">
         <p class="drawer-kicker">Projects</p>
-        <button type="button" class="ghost-btn" id="add-project">Add</button>
+        <button type="button" class="ghost-btn" id="add-project">Select folder</button>
       </div>
       <nav class="project-list" id="project-list" aria-label="Projects"></nav>
       <div class="drawer-divider"></div>
@@ -22,6 +22,7 @@
         <p class="drawer-kicker">Chats</p>
         <button type="button" class="ghost-btn" id="new-chat">New</button>
       </div>
+      <p class="drawer-sub" id="active-project"></p>
       <label class="search-wrap">
         <span class="sr-only">Search chats</span>
         <input id="thread-search" type="search" placeholder="Search" autocomplete="off" />
@@ -66,7 +67,7 @@
         <div id="empty" class="hero">
           <p class="eyebrow">Local agent</p>
           <h1>What should we work on?</h1>
-          <p class="lede">Read, edit, and run things in this folder. Open chats on the left, review files on the right.</p>
+          <p class="lede">Pick a folder on your Mac, then chat, edit, and run tests in that project.</p>
           <div class="overview-card" id="overview-card" hidden>
             <div class="overview-head">
               <span class="overview-label">Repo knowledge</span>
@@ -76,6 +77,10 @@
             <ul class="overview-list" id="overview-list"></ul>
           </div>
           <div class="recs">
+            <button type="button" class="rec rec-folder" data-action="pick">
+              <span>Select folder</span>
+              <small>Open a project from Finder</small>
+            </button>
             <button type="button" class="rec" data-prompt="Give me a quick overview of this codebase">
               <span>Overview</span>
               <small>How this repo is structured</small>
@@ -144,25 +149,6 @@
         </div>
       </div>
     </aside>
-
-    <dialog id="add-project-dialog" class="project-dialog">
-      <form method="dialog" id="add-project-form">
-        <h2>Add project</h2>
-        <p class="lede">Link a folder on your machine. Picogent runs locally in the browser.</p>
-        <label class="field">
-          <span>Name</span>
-          <input id="project-name" type="text" placeholder="My app" autocomplete="off" />
-        </label>
-        <label class="field">
-          <span>Folder path</span>
-          <input id="project-path" type="text" placeholder="~/Desktop/my-app" autocomplete="off" required />
-        </label>
-        <div class="dialog-actions">
-          <button type="button" class="ghost-btn" id="cancel-project">Cancel</button>
-          <button type="submit" class="btn-accent">Open project</button>
-        </div>
-      </form>
-    </dialog>
   </div>
   <script src="/app.js"></script>
 </body>

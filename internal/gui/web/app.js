@@ -28,7 +28,6 @@ const overviewList = $("overview-list");
 const projectList = $("project-list");
 const changesList = $("changes-list");
 const changesSummary = $("changes-summary");
-const addProjectDialog = $("add-project-dialog");
 let threadsCache = [];
 let chatsOpen = false;
 let turnChanges = [];
@@ -179,6 +178,11 @@ document.querySelectorAll(".review-tab").forEach((b) => {
 async function loadProjects() {
   const data = await (await fetch("/api/projects")).json();
   projectList.innerHTML = "";
+  const active = (data.projects || []).find((p) => p.id === data.current_id);
+  const sub = $("active-project");
+  if (sub) {
+    sub.textContent = active ? active.name + " · " + (active.path.split("/").slice(-2).join("/") || "") : "";
+  }
   for (const p of data.projects || []) {
     const row = document.createElement("button");
     row.type = "button";
@@ -195,40 +199,45 @@ async function loadProjects() {
   }
 }
 
+async function applyProjectSwitch(data) {
+  sessionId = data.session_id || sessionId;
+  if (data.messages) replayMessages(data.messages);
+  else clearLog();
+  setChatsOpen(true);
+  await refresh();
+}
+
+async function pickProjectFolder() {
+  if (busy) return;
+  statusText.textContent = "Choose a folder in Finder…";
+  const res = await fetch("/api/projects", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "pick" }),
+  });
+  if (res.status === 204) {
+    await refresh();
+    return;
+  }
+  if (!res.ok) {
+    statusText.textContent = await res.text();
+    return;
+  }
+  await applyProjectSwitch(await res.json());
+}
+
 async function switchProject(id) {
   if (busy) return;
-  await fetch("/api/projects", {
+  const res = await fetch("/api/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action: "switch", id }),
   });
-  clearLog();
-  setChatsOpen(false);
-  await refresh();
+  if (!res.ok) return;
+  await applyProjectSwitch(await res.json());
 }
 
-$("add-project").onclick = () => addProjectDialog.showModal();
-$("cancel-project").onclick = () => addProjectDialog.close();
-$("add-project-form").onsubmit = async (e) => {
-  e.preventDefault();
-  const name = $("project-name").value.trim();
-  const path = $("project-path").value.trim();
-  if (!path) return;
-  const res = await fetch("/api/projects", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "add", name, path }),
-  });
-  if (!res.ok) {
-    alert(await res.text());
-    return;
-  }
-  addProjectDialog.close();
-  $("project-name").value = "";
-  $("project-path").value = "";
-  clearLog();
-  await refresh();
-};
+$("add-project").onclick = pickProjectFolder;
 
 async function runTests() {
   if (busy) return;
@@ -546,6 +555,10 @@ document.querySelectorAll(".rec").forEach((b) => {
   b.onclick = () => {
     if (b.dataset.action === "test") {
       runTests();
+      return;
+    }
+    if (b.dataset.action === "pick") {
+      pickProjectFolder();
       return;
     }
     promptEl.value = b.dataset.prompt || "";

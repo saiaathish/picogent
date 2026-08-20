@@ -872,6 +872,16 @@ button, input, textarea { font: inherit; color: inherit; }
 .overview-list li { margin: 4px 0; }
 
 /* Projects */
+.drawer-sub {
+  margin: -4px 14px 8px;
+  font-size: 12px;
+  color: var(--mute);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.drawer-sub:empty { display: none; }
+
 .drawer-divider {
   height: 1px;
   margin: 4px 12px 8px;
@@ -983,36 +993,15 @@ button, input, textarea { font: inherit; color: inherit; }
   white-space: pre-wrap;
 }
 
-/* Add project dialog */
-.project-dialog {
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 0;
-  max-width: 420px;
-  width: calc(100% - 32px);
-  background: var(--card);
-  color: var(--ink);
-}
-.project-dialog::backdrop { background: color-mix(in srgb, var(--ink) 35%, transparent); }
-.project-dialog form { padding: 24px; }
-.project-dialog h2 { margin: 0 0 6px; letter-spacing: -0.03em; }
-.project-dialog .field { display: block; margin: 14px 0; }
-.project-dialog .field span {
-  display: block;
-  margin-bottom: 4px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.project-dialog input {
-  width: 100%;
-  padding: 9px 11px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--paper);
-}
-.dialog-actions {
+.field-row {
   display: flex;
-  justify-content: flex-end;
   gap: 8px;
-  margin-top: 18px;
+  align-items: stretch;
+}
+.field-row input { flex: 1; min-width: 0; }
+.field-row .ghost-btn { flex-shrink: 0; white-space: nowrap; }
+
+.rec-folder {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+  background: color-mix(in srgb, var(--accent) 6%, var(--paper));
 }

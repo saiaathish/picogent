@@ -18,7 +18,10 @@
       <div class="field">
         <label for="workspace">Project folder</label>
         <p class="field-hint">Files here can be read and edited by the agent.</p>
-        <input id="workspace" type="text" autocomplete="off" placeholder="/Users/you/projects/my-app" />
+        <div class="field-row">
+          <input id="workspace" type="text" readonly autocomplete="off" placeholder="Select a folder…" />
+          <button type="button" class="ghost-btn" id="workspace-pick">Select folder</button>
+        </div>
       </div>
 
       <div class="field">

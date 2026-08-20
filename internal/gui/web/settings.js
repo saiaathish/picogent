@@ -82,6 +82,27 @@ document.getElementById("model").onchange = () => {
   renderLast(state.router || {});
 };
 
+document.getElementById("workspace-pick").onclick = async () => {
+  const status = document.getElementById("status");
+  status.textContent = "Choose a folder in Finder…";
+  const res = await fetch("/api/projects", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "pick" }),
+  });
+  if (res.status === 204) {
+    status.textContent = "";
+    return;
+  }
+  if (!res.ok) {
+    status.textContent = await res.text();
+    return;
+  }
+  const data = await res.json();
+  document.getElementById("workspace").value = data.path || "";
+  status.textContent = "Folder selected — click Save.";
+};
+
 document.getElementById("form").onsubmit = async (e) => {
   e.preventDefault();
   const status = document.getElementById("status");
