@@ -86,8 +86,10 @@ func mcpAdd(a *agent.Agent, id string) (string, error) {
 	if res.AuthNeeded {
 		msg += " — needs auth: " + res.AuthHint
 	}
-	if err := ReloadMCP(a); err != nil {
-		msg += " (reload warning: " + err.Error() + ")"
+	if a.Tools != nil {
+		if err := ReloadMCP(a); err != nil {
+			msg += " (reload warning: " + err.Error() + ")"
+		}
 	}
 	_ = a.Trace.Append("mcp_add", "mcp_manage", id, trace.Bool(true), 0)
 	return msg, nil
@@ -102,9 +104,11 @@ func mcpRemove(a *agent.Agent, id string) (string, error) {
 	if err := mcpbridge.RemoveServer(name); err != nil {
 		return "", err
 	}
-	if err := ReloadMCP(a); err != nil {
-		_ = a.Trace.Append("mcp_remove", "mcp_manage", id, trace.Bool(false), 0)
-		return "removed " + name + " (reload warning: " + err.Error() + ")", nil
+	if a.Tools != nil {
+		if err := ReloadMCP(a); err != nil {
+			_ = a.Trace.Append("mcp_remove", "mcp_manage", id, trace.Bool(false), 0)
+			return "removed " + name + " (reload warning: " + err.Error() + ")", nil
+		}
 	}
 	_ = a.Trace.Append("mcp_remove", "mcp_manage", id, trace.Bool(true), 0)
 	return "removed " + name, nil
