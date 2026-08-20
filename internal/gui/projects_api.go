@@ -9,9 +9,7 @@ import (
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/folderpick"
-	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/projects"
-	"github.com/saiaathish/picogent/internal/session"
 )
 
 type projectSwitchResult struct {
@@ -131,14 +129,7 @@ func (s *server) switchWorkspace(path string) (projectSwitchResult, error) {
 		return projectSwitchResult{}, err
 	}
 
-	sessID := session.New(path).ID
-	var hist []llm.Message
-	if metas, err := session.ListMeta(path); err == nil && len(metas) > 0 {
-		if sess, err := session.Load(metas[0].ID); err == nil {
-			sessID = sess.ID
-			hist = sess.Messages
-		}
-	}
+	sessID, hist := initialSession(path)
 
 	s.mu.Lock()
 	s.cfg = cfg

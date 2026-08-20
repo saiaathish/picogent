@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Picogent</title>
   <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
 </head>
 <body>
   <div class="app" id="shell">
@@ -46,6 +47,10 @@
             <span id="status-text">Connecting…</span>
           </div>
         </div>
+        <div class="context-bar" id="context-bar" hidden title="Estimated context usage">
+          <span class="context-label"></span>
+          <span class="context-track"><i class="context-fill"></i></span>
+        </div>
         <div class="top-right">
           <div class="mode" id="mode-seg" role="group" aria-label="Permission mode">
             <button type="button" data-mode="safe">Safe</button>
@@ -67,19 +72,18 @@
         <div id="empty" class="hero">
           <p class="eyebrow">Local agent</p>
           <h1>What should we work on?</h1>
-          <p class="lede">Pick a folder on your Mac, then chat, edit, and run tests in that project.</p>
+          <p class="lede">Pick a project folder, then chat, edit, and run tests in that workspace.</p>
           <div class="overview-card" id="overview-card" hidden>
             <div class="overview-head">
               <span class="overview-label">Repo knowledge</span>
-              <span class="overview-pct" id="overview-pct">0%</span>
+              <span class="overview-pct" id="overview-pct">0% explored</span>
             </div>
             <div class="overview-bar"><i id="overview-bar"></i></div>
-            <ul class="overview-list" id="overview-list"></ul>
           </div>
           <div class="recs">
             <button type="button" class="rec rec-folder" data-action="pick">
               <span>Select folder</span>
-              <small>Open a project from Finder</small>
+              <small>Open a project from your file manager</small>
             </button>
             <button type="button" class="rec" data-prompt="Give me a quick overview of this codebase">
               <span>Overview</span>
@@ -150,6 +154,8 @@
       </div>
     </aside>
   </div>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <script src="/render.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

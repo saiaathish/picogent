@@ -228,14 +228,5 @@ func Latest(workspace string) (*Session, error) {
 }
 
 func SaveMessages(workspace string, id string, msgs []llm.Message) error {
-	s := &Session{ID: id, Workspace: workspace, Messages: msgs}
-	if s.ID == "" {
-		s = New(workspace)
-	}
-	s.Messages = msgs
-	s.Title = deriveTitle(msgs)
-	if err := s.Save(); err != nil {
-		return err
-	}
-	return Prune(workspace)
+	return saveMessagesWithTitle(workspace, id, msgs, "")
 }

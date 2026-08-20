@@ -12,7 +12,15 @@ func Choose(prompt string) (string, error) {
 	if prompt == "" {
 		prompt = "Select a project folder"
 	}
-	script := fmt.Sprintf(`POSIX path of (choose folder with prompt "%s")`, escapeAppleScript(prompt))
+	script := fmt.Sprintf(`
+try
+	tell application "Finder" to activate
+	set picked to choose folder with prompt %q
+	return POSIX path of picked
+on error number -128
+	return ""
+end try
+`, prompt)
 	out, err := exec.Command("osascript", "-e", script).CombinedOutput()
 	if err != nil {
 		text := strings.TrimSpace(string(out))
@@ -25,9 +33,5 @@ func Choose(prompt string) (string, error) {
 	if path == "" {
 		return "", ErrCancelled
 	}
-	return path, nil
-}
-
-func escapeAppleScript(s string) string {
-	return strings.ReplaceAll(s, `"`, `\"`)
+	return strings.TrimSuffix(path, "/"), nil
 }

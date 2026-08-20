@@ -84,12 +84,8 @@ document.getElementById("model").onchange = () => {
 
 document.getElementById("workspace-pick").onclick = async () => {
   const status = document.getElementById("status");
-  status.textContent = "Choose a folder in Finder…";
-  const res = await fetch("/api/projects", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "pick" }),
-  });
+  status.textContent = "Choose a folder…";
+  const res = await fetch("/api/folder/pick", { method: "POST" });
   if (res.status === 204) {
     status.textContent = "";
     return;
