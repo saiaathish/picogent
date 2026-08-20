@@ -75,6 +75,22 @@ type server struct {
 	pendingPerm perm.Request
 	liveTask    agent.TaskMode
 	turnGen     uint64 // bumped on cancel/new chat so stale turns cannot rewrite hist
+
+	// Side chat companion (Codex-style)
+	sideHist     []llm.Message
+	sideBusy     bool
+	turnStarted  time.Time
+	turnPrompt   string
+	turnReads    int
+	turnSearches int
+	turnEdits    int
+
+	// AI prompt recommendations (main hero + side chips)
+	mainRecs   []promptRec
+	sideRecs   []promptRec
+	mainRecsAt time.Time
+	sideRecsAt time.Time
+	recsKey    string
 }
 
 func Run() error {
@@ -154,9 +170,19 @@ func (s *server) Handler() http.Handler {
 	mux.HandleFunc("/api/diff", s.diffAPI)
 	mux.HandleFunc("/api/extensions", s.extensionsAPI)
 	mux.HandleFunc("/api/trace", s.traceAPI)
+	mux.HandleFunc("/api/help", s.helpAPI)
+	mux.HandleFunc("/api/sidechat", s.sidechatAPI)
+	mux.HandleFunc("/api/prompts", s.promptsAPI)
 	mux.HandleFunc("/api/events", s.events)
-	mux.Handle("/", http.FileServer(http.FS(static)))
+	mux.Handle("/", noCacheStatic(http.FileServer(http.FS(static))))
 	return mux
+}
+
+func noCacheStatic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store, max-age=0")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *server) traceAPI(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +222,7 @@ func (s *server) attachRouterHook() {
 		s.cfg.Router.LastTaskKind = string(dec.TaskKind)
 		s.cfg.Router.LastRouteMode = string(dec.RouteMode)
 		s.mu.Unlock()
-		s.emit(event{Type: "route", Text: dec.Label, Summary: dec.Reason})
+		s.emit(event{Type: "route", Text: dec.Label, Summary: dec.Reason, Tokens: dec.EstTokens})
 	}
 }
 
@@ -324,15 +350,17 @@ func (s *server) routerSnapshot() map[string]any {
 			dec := r.LastDecision()
 			if dec.Model != "" {
 				last = map[string]any{
-					"tier":       dec.Tier,
-					"label":      dec.Label,
-					"model":      dec.Model,
-					"reason":     dec.Reason,
-					"score":      dec.Score,
-					"advisor":    dec.Advisor,
-					"reasoning":  dec.Reasoning,
-					"task_kind":  dec.TaskKind,
-					"route_mode": dec.RouteMode,
+					"tier":         dec.Tier,
+					"label":        dec.Label,
+					"model":        dec.Model,
+					"reason":       dec.Reason,
+					"score":        dec.Score,
+					"advisor":      dec.Advisor,
+					"reasoning":    dec.Reasoning,
+					"task_kind":    dec.TaskKind,
+					"route_mode":   dec.RouteMode,
+					"token_save_x": dec.TokenSaveX,
+					"est_tokens":   dec.EstTokens,
 				}
 			}
 		}
@@ -610,6 +638,9 @@ func (s *server) abortTurnLocked() {
 	}
 	s.turnGen++
 	s.busy = false
+	s.turnStarted = time.Time{}
+	s.turnPrompt = ""
+	s.turnReads, s.turnSearches, s.turnEdits = 0, 0, 0
 	s.pendingPerm = perm.Request{}
 	select {
 	case s.permCh <- perm.Deny:
@@ -634,6 +665,7 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.mu.Unlock()
+	s.noteTurnStart(prompt)
 
 	go func() {
 		defer func() {
@@ -651,7 +683,10 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 			if !live {
 				return
 			}
+			s.clearTurnProgress()
 			s.emit(event{Type: "done"})
+			s.invalidatePromptRecs()
+			s.emit(event{Type: "prompts_refresh", Text: "all"})
 			if p, pts, ok := s.popSteer(); ok {
 				s.startAgentTurn(p, pts)
 			}
@@ -749,13 +784,16 @@ func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	s.abortTurnLocked()
 	s.sessionID = session.New(s.cfg.Workspace).ID
 	s.hist = nil
+	s.sideHist = nil
 	s.liveTask = agent.TaskAgent
 	if s.ag != nil {
 		s.ag.SetTaskMode(agent.TaskAgent)
 	}
 	id := s.sessionID
 	s.mu.Unlock()
+	s.invalidatePromptRecs()
 	s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
+	s.emit(event{Type: "prompts_refresh", Text: "main"})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
 }
@@ -1056,6 +1094,9 @@ func summarizePrompt(prompt string) string {
 func (h *guiHandler) OnText(text string) {
 	h.s.emit(event{Type: "assistant", Text: text})
 }
+func (h *guiHandler) OnTextDelta(delta string) {
+	h.s.emit(event{Type: "assistant_delta", Text: delta})
+}
 func (h *guiHandler) OnToolStart(call llm.ToolCall) {
 	h.learn.RecordTool(call.Name)
 
@@ -1064,16 +1105,19 @@ func (h *guiHandler) OnToolStart(call llm.ToolCall) {
 		path := parseToolPath(call.Arguments)
 		if path != "" {
 			h.reads++
+			h.s.noteTurnActivity("read")
 			h.learn.RecordRead(path)
 			h.s.emit(event{Type: "review", Path: path})
 			h.s.emit(event{Type: "activity", Kind: "read", Count: h.reads, Path: path})
 		}
 	case "glob", "grep":
 		h.searches++
+		h.s.noteTurnActivity("search")
 		h.learn.RecordSearch()
 		h.s.emit(event{Type: "activity", Kind: "search", Count: h.searches})
 	case "write_file", "edit_file":
 		path := parseToolPath(call.Arguments)
+		h.s.noteTurnActivity("edit")
 		h.s.emit(event{Type: "think", Text: "Editing " + path, Kind: "edit", Status: "start", Path: path})
 	case "bash":
 		var in struct {
@@ -1289,13 +1333,16 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			s.abortTurnLocked()
 			s.sessionID = session.New(s.cfg.Workspace).ID
 			s.hist = nil
+			s.sideHist = nil
 			s.liveTask = agent.TaskAgent
 			if s.ag != nil {
 				s.ag.SetTaskMode(agent.TaskAgent)
 			}
 			id := s.sessionID
 			s.mu.Unlock()
+			s.invalidatePromptRecs()
 			s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
+			s.emit(event{Type: "prompts_refresh", Text: "all"})
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
 		case "load":

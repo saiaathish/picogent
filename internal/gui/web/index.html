@@ -46,14 +46,26 @@
         </button>
         <div class="brand">
           <span class="mark" aria-hidden="true"></span>
-          <div>
-            <strong>Picogent</strong>
-            <span id="status-text">Connecting…</span>
-          </div>
+          <strong>Picogent</strong>
         </div>
-        <div class="context-bar" id="context-bar" hidden title="Estimated context usage">
-          <span class="context-label"></span>
-          <span class="context-track"><i class="context-fill"></i></span>
+        <div class="context-meter" id="context-bar" hidden>
+          <button type="button" class="context-ring" id="context-ring" aria-label="Context window usage" aria-expanded="false" aria-controls="context-pop">
+            <svg class="context-svg" viewBox="0 0 36 36" aria-hidden="true">
+              <circle class="context-track" cx="18" cy="18" r="15" fill="none" pathLength="100" />
+              <circle class="context-fill" cx="18" cy="18" r="15" fill="none" pathLength="100" />
+            </svg>
+            <span class="context-caption">context window</span>
+          </button>
+          <div class="context-pop" id="context-pop" hidden role="dialog" aria-label="Context usage">
+            <div class="context-pop-top">
+              <div>
+                <p class="context-pop-title">Context usage</p>
+                <p class="context-pop-pct" id="context-pop-pct">0% full</p>
+              </div>
+              <p class="context-pop-tokens" id="context-pop-tokens">~0 / 0 tokens</p>
+            </div>
+            <p class="context-pop-note" id="context-pop-note">256k Codex ceiling — soft compaction keeps the live set small.</p>
+          </div>
         </div>
         <div class="top-right">
           <div class="mode" id="mode-seg" role="group" aria-label="Permission mode">
@@ -82,18 +94,10 @@
             </div>
             <div class="overview-bar"><i id="overview-bar"></i></div>
           </div>
-          <div class="recs">
+          <div class="recs" id="hero-recs">
             <button type="button" class="rec rec-folder" data-action="pick">
               <span>Select folder</span>
               <small>Open a project</small>
-            </button>
-            <button type="button" class="rec" data-prompt="Give me a quick overview of this codebase">
-              <span>Overview</span>
-              <small>How this repo is structured</small>
-            </button>
-            <button type="button" class="rec" data-action="test">
-              <span>Run tests</span>
-              <small>Fix whatever fails</small>
             </button>
           </div>
         </div>
@@ -101,8 +105,8 @@
         <div id="ext-recs" class="ext-recs" hidden aria-label="Suggested extensions"></div>
         <div id="log" class="log"></div>
         <div id="thinking" class="think" aria-live="polite">
-          <span class="pixels" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
-          <span>Working…</span>
+          <span class="work-orb" aria-hidden="true"></span>
+          <span class="work-label">Working</span>
         </div>
       </main>
 
@@ -120,6 +124,7 @@
           </div>
         </div>
         <form id="composer" class="prompt">
+          <span class="beam" aria-hidden="true"></span>
           <div id="slash-menu" class="slash-menu" hidden role="listbox" aria-label="Commands"></div>
           <div id="attach-tray" class="attach-tray" hidden></div>
           <div class="composer-row">
@@ -169,6 +174,30 @@
         </div>
       </div>
     </aside>
+
+    <aside class="drawer drawer-side" id="rail-side" hidden aria-label="PicoChat Companion">
+      <div class="drawer-head">
+        <strong class="side-title">PicoChat Companion</strong>
+        <button type="button" class="ghost-btn" id="close-side">Close</button>
+      </div>
+      <div class="side-chat">
+        <p class="side-intro" id="side-intro">Ask for anything about the project or help using Picogent.</p>
+        <div class="side-starters" id="side-starters"></div>
+        <div class="side-log" id="side-log" aria-live="polite"></div>
+        <form class="side-ask prompt" id="side-ask">
+          <span class="beam" aria-hidden="true"></span>
+          <input id="side-input" type="text" placeholder="Ask anything" autocomplete="off" />
+          <button type="submit" aria-label="Send">Send</button>
+        </form>
+      </div>
+    </aside>
+
+    <button type="button" class="side-fab" id="side-fab" aria-label="Open PicoChat" title="PicoChat Companion">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 12a8.5 8.5 0 0 1-8.5 8.5H7l-4 2.2V12A8.5 8.5 0 1 1 21 12z"/>
+        <path d="M8 11h.01M12 11h.01M16 11h.01"/>
+      </svg>
+    </button>
   </div>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
   <script src="/render.js"></script>

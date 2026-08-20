@@ -142,6 +142,8 @@ func (s *server) switchWorkspace(path string) (projectSwitchResult, error) {
 	_, _, _ = projects.Ensure(path)
 	s.emit(event{Type: "system", Text: "Opened " + projects.NameFromPath(path)})
 	s.emit(event{Type: "overview", Text: "refresh"})
+	s.invalidatePromptRecs()
+	s.emit(event{Type: "prompts_refresh", Text: "all"})
 	return projectSwitchResult{
 		SessionID: sessID,
 		Messages:  messagesToTranscript(hist),

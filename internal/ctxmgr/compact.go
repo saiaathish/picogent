@@ -1,5 +1,5 @@
-// Package ctxmgr implements tiered context-window compaction (micro-mask → summarize → truncate).
-// Pattern inspired by Microsoft Agent Framework TokenBudgetComposedStrategy and contextkit.
+// Package ctxmgr implements tiered context-window compaction (micro-mask → soft-fit → summarize → truncate).
+// Pattern inspired by Microsoft Agent Framework TokenBudgetComposedStrategy, TokenTamer, and Headroom.
 package ctxmgr
 
 import (
@@ -11,13 +11,15 @@ import (
 )
 
 const (
-	DefaultBudget   = 128_000
-	WarningPct      = 0.72
-	AutoCompactPct  = 0.82
-	KeepRecent      = 12
-	KeepAfterCompact = 20
-	ToolKeepChars   = 1200
-	ToolMaskChars   = 80
+	// DefaultBudget is the Codex hard ceiling (capacity). SoftTarget keeps the live set far below this.
+	DefaultBudget = 256_000
+	// WarningPct / AutoCompactPct are relative to the hard ceiling — soft-fit already holds growth down.
+	WarningPct       = 0.35
+	AutoCompactPct   = 0.48
+	KeepRecent       = 6
+	KeepAfterCompact = 10
+	ToolKeepChars    = 500
+	ToolMaskChars    = 48
 )
 
 type Stats struct {
@@ -32,13 +34,18 @@ type Stats struct {
 func BudgetForModel(model string) int {
 	m := strings.ToLower(model)
 	switch {
+	case strings.Contains(m, "luna"), strings.Contains(m, "terra"), strings.Contains(m, "sol"),
+		strings.Contains(m, "soul"), strings.Contains(m, "codex"), strings.Contains(m, "gpt-5"),
+		strings.Contains(m, "gpt-4"), strings.HasPrefix(m, "o3"), strings.HasPrefix(m, "o4"):
+		return 256_000
 	case strings.Contains(m, "opus"), strings.Contains(m, "fable"):
 		return 200_000
-	case strings.Contains(m, "sonnet"), strings.Contains(m, "terra"):
+	case strings.Contains(m, "sonnet"):
+		return 200_000
+	case strings.Contains(m, "haiku"), strings.Contains(m, "mini"):
 		return 128_000
-	case strings.Contains(m, "haiku"), strings.Contains(m, "luna"), strings.Contains(m, "mini"):
-		return 64_000
 	default:
+		// Picogent is Codex-first — default to the Codex 256k window.
 		return DefaultBudget
 	}
 }
@@ -82,7 +89,7 @@ func MicroCompact(msgs []llm.Message) []llm.Message {
 	}
 	out := make([]llm.Message, len(msgs))
 	copy(out, msgs)
-	const keepRecent = 6
+	const keepRecent = 4
 	for i := range out {
 		if out[i].Role != "tool" {
 			continue
@@ -91,10 +98,13 @@ func MicroCompact(msgs []llm.Message) []llm.Message {
 			continue
 		}
 		c := out[i].Content
-		if len(c) <= ToolKeepChars {
+		if alreadyDigested(c) || len(c) <= ToolKeepChars {
 			continue
 		}
-		head := c[:ToolMaskChars]
+		head := c
+		if len(head) > ToolMaskChars {
+			head = c[:ToolMaskChars]
+		}
 		out[i].Content = head + "\n… [tool output compacted] …"
 	}
 	return out
@@ -164,25 +174,61 @@ func Summarize(ctx context.Context, client llm.Client, model string, msgs []llm.
 	return strings.TrimSpace(out.Message.Content), nil
 }
 
-// Manage applies tiered compaction when approaching the token budget.
+// Manage applies tiered compaction every round so context grows slowly under a soft target
+// while preserving a large hard ceiling (256k for Codex).
 func Manage(ctx context.Context, client llm.Client, model string, msgs []llm.Message, budget int) ([]llm.Message, Stats, error) {
 	if budget <= 0 {
 		budget = DefaultBudget
 	}
-	out := MicroCompact(msgs)
-	st := StatsFor(out, budget)
+	before := EstimateTokens(msgs)
 
-	if st.Pct < AutoCompactPct {
-		if len(out) > 40 {
-			out = TruncateTail(out, 30)
+	// Tier 0 — always: TokenTamer + micro-mask + digest (cheap, every round).
+	out := ToolAwareCompact(msgs)
+	out = MicroCompact(out)
+	out = DigestStaleTools(out)
+
+	soft := SoftTarget(budget)
+	method := ""
+	if EstimateTokens(out) > soft {
+		var softMethod string
+		out, softMethod = SoftFit(out, soft)
+		method = softMethod
+	} else if EstimateTokens(out) < before {
+		method = "tokentamer"
+	}
+
+	st := StatsFor(out, budget)
+	if method != "" && EstimateTokens(out) < before {
+		st.Compacted = true
+		st.Method = method
+	}
+
+	// Under auto-compact threshold: optional light window if the transcript is long.
+	if st.Pct < SoftTrimPct {
+		if len(out) > 24 {
+			out = TruncateTail(out, 18)
 			st = StatsFor(out, budget)
 			st.Compacted = true
-			st.Method = "truncate"
+			if method == "" {
+				st.Method = "truncate+tame"
+			} else {
+				st.Method = method + "+truncate"
+			}
 		}
 		return out, st, nil
 	}
 
-	// Tier 2: sliding window + tool trim
+	if st.Pct < AutoCompactPct {
+		if len(out) > KeepAfterCompact+1 {
+			out = TruncateTail(out, KeepAfterCompact)
+			st = StatsFor(out, budget)
+			st.Compacted = true
+			st.Method = "window+soft"
+		}
+		return out, st, nil
+	}
+
+	// Tier 2: sliding window + tool trim near hard pressure
 	if len(out) > KeepAfterCompact+1 {
 		out = TruncateTail(out, KeepAfterCompact)
 		st = StatsFor(out, budget)

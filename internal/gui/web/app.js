@@ -16,9 +16,15 @@ const attachTray = $("attach-tray");
 const modelPick = $("model-pick");
 const statusText = $("status-text");
 const contextBar = $("context-bar");
+const contextRing = $("context-ring");
+const contextPop = $("context-pop");
+const contextPopPct = $("context-pop-pct");
+const contextPopTokens = $("context-pop-tokens");
+const contextPopNote = $("context-pop-note");
 const threadList = $("thread-list");
 const shell = $("shell");
 const reviewRail = $("rail-review");
+const sideRail = $("rail-side");
 const reviewPath = $("review-path");
 const reviewScroll = $("review-scroll");
 const reviewNote = $("review-note");
@@ -40,6 +46,9 @@ const extToastsEl = $("ext-toasts");
 const permTitle = $("perm-title");
 let threadsCache = [];
 let chatsOpen = false;
+let sideOpen = false;
+let sideBusy = false;
+let sideStream = null;
 let turnChanges = [];
 let turnStats = { reads: 0, searches: 0, edits: 0, added: 0, removed: 0 };
 let activityItems = [];
@@ -66,7 +75,8 @@ function syncEmpty() {
 }
 
 function setThinking(on) {
-  thinkingEl.classList.toggle("is-on", false);
+  thinkingEl.classList.toggle("is-on", !!on);
+  $("composer")?.classList.toggle("is-busy", !!on);
   if (on) {
     resetReasoning();
     reasoningEl.hidden = false;
@@ -186,20 +196,56 @@ function updateReasonStats() {
   }
 }
 
+function formatTokens(n) {
+  const v = Math.max(0, Number(n) || 0);
+  if (v >= 1000) {
+    const k = v / 1000;
+    return "~" + (k >= 100 ? Math.round(k) : k.toFixed(k >= 10 ? 0 : 1)) + "K";
+  }
+  return String(Math.round(v));
+}
+
+function setContextPopOpen(open) {
+  if (!contextPop || !contextRing) return;
+  contextPop.hidden = !open;
+  contextRing.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 function renderContext(ctx) {
   if (!contextBar || !ctx) return;
-  const pct = Math.min(100, Math.round((ctx.pct || 0) * 100));
-  contextBar.hidden = false;
-  contextBar.dataset.level = ctx.level || "ok";
-  contextBar.title = (ctx.tokens || 0).toLocaleString() + " / " + (ctx.budget || 0).toLocaleString() + " est. tokens";
+  const pct = Math.min(100, Math.max(0, Math.round((ctx.pct || 0) * 100)));
+  const level = ctx.level || "ok";
+  contextBar.hidden = pct <= 0 && level === "ok";
+  if (contextBar.hidden) {
+    setContextPopOpen(false);
+    return;
+  }
+  contextBar.dataset.level = level;
   const fill = contextBar.querySelector(".context-fill");
-  const label = contextBar.querySelector(".context-label");
-  if (fill) fill.style.width = pct + "%";
-  if (label) {
-    if (ctx.level === "critical") label.textContent = "Context " + pct + "% · compacting";
-    else if (ctx.level === "warning") label.textContent = "Context " + pct + "%";
-    else label.textContent = pct > 0 ? "Context " + pct + "%" : "";
-    contextBar.hidden = pct <= 0 && ctx.level === "ok";
+  if (fill) fill.style.strokeDasharray = pct + " 100";
+  if (contextRing) {
+    let label = "Context window " + pct + "% full";
+    if (level === "critical") label += ", compacting";
+    else if (level === "warning") label += ", approaching limit";
+    contextRing.setAttribute("aria-label", label);
+    contextRing.title = formatTokens(ctx.tokens) + " / " + formatTokens(ctx.budget) + " tokens";
+  }
+  if (contextPopPct) contextPopPct.textContent = pct + "% full";
+  if (contextPopTokens) {
+    contextPopTokens.textContent = formatTokens(ctx.tokens) + " / " + formatTokens(ctx.budget) + " tokens";
+  }
+  if (contextPopNote) {
+    if (level === "critical") {
+      contextPopNote.textContent = ctx.status
+        ? "Compacting (" + ctx.status + ") to keep room for the next tool rounds."
+        : "Compacting automatically to keep room for the next tool rounds.";
+    } else if (level === "warning") {
+      contextPopNote.textContent = "Getting full — older tool output will be trimmed soon.";
+    } else if (ctx.status) {
+      contextPopNote.textContent = "Recently compacted (" + ctx.status + "). Soft-fit keeps the ring low on a 256k Codex ceiling.";
+    } else {
+      contextPopNote.textContent = "256k Codex ceiling — soft compaction keeps the live set small so this grows slowly.";
+    }
   }
 }
 
@@ -327,8 +373,6 @@ async function applyProjectSwitch(data) {
 
 async function pickProjectFolder() {
   if (busy) return;
-  const prev = statusText.textContent;
-  statusText.textContent = "Choose a folder…";
   try {
     const res = await fetch("/api/projects", {
       method: "POST",
@@ -336,16 +380,15 @@ async function pickProjectFolder() {
       body: JSON.stringify({ action: "pick" }),
     });
     if (res.status === 204) {
-      statusText.textContent = prev || "Ready";
       return;
     }
     if (!res.ok) {
-      statusText.textContent = await res.text();
+      add("error", await res.text());
       return;
     }
     await applyProjectSwitch(await res.json());
   } catch (err) {
-    statusText.textContent = err.message || "Couldn't open folder picker";
+    add("error", err.message || "Couldn't open folder picker");
   }
 }
 
@@ -369,7 +412,7 @@ async function runTests() {
 }
 
 function syncScrim() {
-  const on = chatsOpen || reviewOpen;
+  const on = chatsOpen || reviewOpen || sideOpen;
   scrim.hidden = !on;
 }
 
@@ -383,6 +426,19 @@ function setReviewOpen(on) {
   reviewOpen = on;
   reviewRail.hidden = !on;
   shell.classList.toggle("review-open", on);
+  if (on) setSideOpen(false);
+  syncScrim();
+}
+
+function setSideOpen(on) {
+  sideOpen = on;
+  shell.classList.toggle("side-open", on);
+  if (sideRail) sideRail.hidden = !on;
+  if (on) {
+    setReviewOpen(false);
+    loadSidePrompts(false);
+    $("side-input")?.focus();
+  }
   syncScrim();
 }
 
@@ -421,6 +477,123 @@ function linkifyRefs(text, container) {
     container.appendChild(document.createTextNode(text.slice(last)));
   }
   if (last === 0) container.textContent = text;
+}
+
+/* Live / typewriter assistant streaming */
+let stream = null;
+
+function ensureStreamBubble() {
+  if (stream?.content?.isConnected) return stream;
+  const wrap = document.createElement("div");
+  wrap.className = "turn turn-assistant is-streaming";
+  const c = document.createElement("div");
+  c.className = "content md";
+  wrap.appendChild(c);
+  logEl.appendChild(wrap);
+  syncEmpty();
+  stream = { wrap, content: c, target: "", shown: 0, timer: 0, live: false, finishing: false };
+  return stream;
+}
+
+function paintStream() {
+  if (!stream) return;
+  const shown = stream.target.slice(0, stream.shown);
+  const showCaret = stream.shown < stream.target.length || stream.live;
+  if (window.renderStreamingContent && showCaret) {
+    window.renderStreamingContent(shown, stream.content, (path, start, end) => {
+      openReview(path, start, end, "Referenced in reply");
+    });
+  } else if (window.renderContent) {
+    window.renderContent(shown, stream.content, (path, start, end) => {
+      openReview(path, start, end, "Referenced in reply");
+    });
+    if (showCaret) {
+      const caret = document.createElement("span");
+      caret.className = "stream-cursor";
+      caret.setAttribute("aria-hidden", "true");
+      stream.content.appendChild(caret);
+    }
+  } else {
+    stream.content.textContent = "";
+    stream.content.appendChild(document.createTextNode(shown));
+    if (showCaret) {
+      const caret = document.createElement("span");
+      caret.className = "stream-cursor";
+      caret.setAttribute("aria-hidden", "true");
+      stream.content.appendChild(caret);
+    }
+  }
+}
+
+function stopStreamTimer() {
+  if (stream?.timer) {
+    clearTimeout(stream.timer);
+    stream.timer = 0;
+  }
+}
+
+function kickTypewriter() {
+  if (!stream || stream.timer) return;
+  const tick = () => {
+    if (!stream) return;
+    stream.timer = 0;
+    const lag = stream.target.length - stream.shown;
+    if (lag <= 0) {
+      if (stream.finishing) finalizeStream();
+      return;
+    }
+    // ~35–50 chars/sec; catch up faster when behind (live stream)
+    let step = 1;
+    if (stream.live) step = Math.min(lag, lag > 120 ? 24 : lag > 40 ? 8 : 3);
+    else step = Math.min(lag, lag > 100 ? 6 : lag > 30 ? 3 : 1);
+    stream.shown += step;
+    paintStream();
+    scrollChat();
+    const delay = stream.live ? 10 : 18;
+    stream.timer = setTimeout(tick, delay);
+  };
+  stream.timer = setTimeout(tick, 12);
+}
+
+function appendAssistantDelta(delta) {
+  if (!delta) return;
+  const s = ensureStreamBubble();
+  s.live = true;
+  s.target += delta;
+  thinkingEl.classList.remove("is-on");
+  kickTypewriter();
+}
+
+function typeAssistantFull(text) {
+  if (!text) {
+    finalizeStream();
+    return;
+  }
+  const s = ensureStreamBubble();
+  s.live = false;
+  s.target = text;
+  s.shown = Math.min(s.shown, text.length);
+  s.finishing = true;
+  thinkingEl.classList.remove("is-on");
+  kickTypewriter();
+}
+
+function finalizeStream() {
+  if (!stream) return;
+  stopStreamTimer();
+  const text = stream.target;
+  const content = stream.content;
+  const wrap = stream.wrap;
+  stream = null;
+  if (!text) {
+    wrap.remove();
+    syncEmpty();
+    return;
+  }
+  linkifyRefs(text, content);
+  applyRefsFromText(text);
+  wrap.classList.remove("is-streaming");
+  scrollChat();
 }
 
 function add(kind, text, attachmentMeta) {
@@ -485,6 +658,8 @@ function applyRefsFromText(text) {
 }
 
 function clearLog() {
+  stopStreamTimer();
+  stream = null;
   logEl.innerHTML = "";
   syncEmpty();
 }
@@ -570,6 +745,8 @@ async function newChat() {
   sessionId = data.id;
   clearLog();
   await loadThreads();
+  loadHeroPrompts(true);
+  loadSideChat();
   promptEl.focus();
 }
 
@@ -599,22 +776,6 @@ async function refresh() {
     if (s.model === "auto") userModelChoice = "auto";
     fillModelPick(s.model_options, userModelChoice);
   }
-
-  const bits = [];
-  const isAuto = s.model === "auto" || userModelChoice === "auto";
-  if (isAuto) {
-    const last = s.router?.last;
-    bits.push(last?.label ? "auto · " + last.label : "auto");
-  } else if (s.model) {
-    bits.push(s.model);
-  }
-  if (s.workspace) bits.push(s.workspace.split("/").pop());
-  if (s.task_mode && s.task_mode !== "agent") bits.unshift(s.task_mode);
-  if (s.goal) bits.unshift("goal · " + (s.goal.length > 36 ? s.goal.slice(0, 36) + "…" : s.goal));
-  if (s.mcp_tools) bits.push(s.mcp_tools + " MCP");
-  statusText.textContent = bits.join(" · ") || "Ready";
-
-  if (s.hint) statusText.textContent = s.hint;
 
   renderOverview(s.overview);
   renderContext(s.context);
@@ -1296,20 +1457,42 @@ $("review-ask").onsubmit = (e) => {
 $("toggle-review").onclick = () => setReviewOpen(!reviewOpen);
 $("close-review").onclick = () => setReviewOpen(false);
 $("toggle-rail").onclick = () => setChatsOpen(!chatsOpen);
+$("side-fab")?.addEventListener("click", () => setSideOpen(!sideOpen));
+$("close-side")?.addEventListener("click", () => setSideOpen(false));
+contextRing?.addEventListener("click", (e) => {
+  e.stopPropagation();
+  if (!contextPop) return;
+  setContextPopOpen(contextPop.hidden);
+});
+document.addEventListener("click", (e) => {
+  if (!contextBar || !contextPop || contextPop.hidden) return;
+  if (contextBar.contains(e.target)) return;
+  setContextPopOpen(false);
+});
 scrim.onclick = () => {
   setChatsOpen(false);
   setReviewOpen(false);
+  setSideOpen(false);
+  setContextPopOpen(false);
 };
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     setChatsOpen(false);
     setReviewOpen(false);
+    setSideOpen(false);
+    setContextPopOpen(false);
   }
 });
 
 function finishTurnUI() {
   busy = false;
   sendBtn.disabled = !ready;
+  if (stream) {
+    stream.finishing = true;
+    stream.live = false;
+    if (stream.shown >= stream.target.length) finalizeStream();
+    else kickTypewriter();
+  }
   setThinking(false);
   const thinkLabel = reasoningEl.querySelector(".reason-thinking");
   if (thinkLabel) thinkLabel.remove();
@@ -1413,6 +1596,26 @@ function connectEvents() {
       }
       finishTurnUI();
       if ($("panel-activity") && !$("panel-activity").hidden) refreshActivity();
+      if (sideOpen) refreshSideBusy();
+      return;
+    }
+    if (e.type === "side_delta") {
+      appendSideDelta(e.text || "");
+      return;
+    }
+    if (e.type === "side") {
+      finalizeSide(e.text || "");
+      return;
+    }
+    if (e.type === "side_done") {
+      if (sideStream) finalizeSide(sideStream.text || "");
+      else setSideBusyUI(false);
+      return;
+    }
+    if (e.type === "prompts_refresh") {
+      const kind = e.text || "all";
+      if (kind === "main" || kind === "all") loadHeroPrompts(true);
+      if ((kind === "side" || kind === "all") && sideOpen) loadSidePrompts(true);
       return;
     }
     if (e.type === "think") {
@@ -1501,11 +1704,29 @@ function connectEvents() {
     if (e.type === "tool") {
       return;
     }
+    if (e.type === "assistant_delta") {
+      appendAssistantDelta(e.text || "");
+      return;
+    }
+    if (e.type === "assistant") {
+      if (stream?.live) {
+        if (e.text && e.text.length >= stream.target.length) stream.target = e.text;
+        stream.finishing = true;
+        stream.live = false;
+        if (stream.shown >= stream.target.length) finalizeStream();
+        else kickTypewriter();
+      } else if (e.text) {
+        typeAssistantFull(e.text);
+      } else {
+        finalizeStream();
+      }
+      return;
+    }
     add(e.type === "you" ? "you" : e.type, e.text || e.summary || e.type);
-    if (busy && !reasoningEl.querySelector(".reason-thinking")) {
+    if (busy && !reasoningEl.querySelector(".reason-thinking") && !stream) {
       const t = document.createElement("div");
       t.className = "reason-thinking";
-      t.textContent = "Thinking";
+      t.textContent = "Working";
       reasoningEl.appendChild(t);
       scrollChat();
     }
@@ -1513,12 +1734,207 @@ function connectEvents() {
   ev.onerror = () => {
     ready = false;
     sendBtn.disabled = true;
-    if (statusText.textContent !== "Choose a folder…") {
-      statusText.textContent = "Reconnecting…";
-    }
   };
 }
 
 connectEvents();
 syncEmpty();
 refresh();
+loadSideChat();
+loadHeroPrompts(false);
+
+/* ─── PicoChat Companion + AI prompt recommendations ─── */
+function setSideBusyUI(on) {
+  sideBusy = !!on;
+  const form = $("side-ask");
+  form?.classList.toggle("is-busy", sideBusy);
+  const send = form?.querySelector("button");
+  if (send) send.disabled = sideBusy;
+}
+
+function refreshSideBusy() {
+  /* status widget removed — only keep send/beam in sync after main turns */
+}
+
+async function loadSideChat() {
+  try {
+    const res = await fetch("/api/sidechat");
+    const data = await res.json();
+    renderSidePromptChips(data.prompts || []);
+    const log = $("side-log");
+    if (log) {
+      log.innerHTML = "";
+      (data.messages || []).forEach((m) => addSideBubble(m.role === "user" ? "you" : "assistant", m.text || ""));
+      if (!log.children.length) {
+        addSideBubble(
+          "assistant",
+          "Ask for anything about the project or help using Picogent."
+        );
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function loadSidePrompts(force) {
+  const row = $("side-starters");
+  if (row && force) {
+    row.innerHTML = '<button type="button" class="side-chip is-loading">Updating…</button>';
+  }
+  try {
+    const res = await fetch("/api/prompts?kind=side" + (force ? "&refresh=1" : ""));
+    const data = await res.json();
+    renderSidePromptChips(data.prompts || []);
+  } catch {
+    if (row && !row.children.length) {
+      row.innerHTML = "";
+    }
+  }
+}
+
+function renderSidePromptChips(items) {
+  const row = $("side-starters");
+  if (!row) return;
+  row.innerHTML = "";
+  (items || []).forEach((it) => {
+    const title = it.title || it.prompt || "";
+    const prompt = it.prompt || it.title || "";
+    if (!prompt) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "side-chip";
+    b.textContent = title;
+    b.title = it.subtitle || prompt;
+    b.onclick = () => askSide(prompt);
+    row.appendChild(b);
+  });
+}
+
+async function loadHeroPrompts(force) {
+  const host = $("hero-recs");
+  if (!host) return;
+  const folder = host.querySelector(".rec-folder");
+  // Keep folder button; replace AI cards.
+  host.querySelectorAll(".rec.is-ai, .rec.is-loading").forEach((n) => n.remove());
+  const loading = document.createElement("button");
+  loading.type = "button";
+  loading.className = "rec is-loading is-ai";
+  loading.innerHTML = "<span>Recommended</span><small>Tuning to this repo…</small>";
+  host.appendChild(loading);
+  try {
+    const res = await fetch("/api/prompts?kind=main" + (force ? "&refresh=1" : ""));
+    const data = await res.json();
+    loading.remove();
+    renderHeroPrompts(data.prompts || [], folder);
+  } catch {
+    loading.remove();
+  }
+}
+
+function renderHeroPrompts(items, folderBtn) {
+  const host = $("hero-recs");
+  if (!host) return;
+  host.querySelectorAll(".rec.is-ai").forEach((n) => n.remove());
+  const folder = folderBtn || host.querySelector(".rec-folder");
+  (items || []).slice(0, 4).forEach((it) => {
+    const prompt = it.prompt || "";
+    if (!prompt) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "rec is-ai";
+    b.dataset.prompt = prompt;
+    b.innerHTML =
+      "<span>" + escapeHtml(it.title || "Try this") + "</span>" +
+      "<small>" + escapeHtml(it.subtitle || prompt) + "</small>";
+    b.onclick = () => {
+      promptEl.value = prompt;
+      promptEl.focus();
+      promptEl.dispatchEvent(new Event("input"));
+    };
+    host.appendChild(b);
+  });
+  if (folder) host.insertBefore(folder, host.firstChild);
+}
+
+function addSideBubble(role, text) {
+  const log = $("side-log");
+  if (!log || !text) return null;
+  const wrap = document.createElement("div");
+  wrap.className = "side-bubble side-" + role;
+  const body = document.createElement("div");
+  body.className = "content md";
+  if (role === "assistant" && window.renderContent) {
+    window.renderContent(text, body);
+  } else {
+    body.textContent = text;
+  }
+  wrap.appendChild(body);
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+  return { wrap, body };
+}
+
+function ensureSideStream() {
+  if (sideStream?.body?.isConnected) return sideStream;
+  const bubble = addSideBubble("assistant", "…");
+  if (!bubble) return null;
+  bubble.body.textContent = "";
+  sideStream = { body: bubble.body, text: "" };
+  return sideStream;
+}
+
+function appendSideDelta(delta) {
+  const s = ensureSideStream();
+  if (!s || !delta) return;
+  s.text += delta;
+  if (window.renderStreamingContent) {
+    window.renderStreamingContent(s.text, s.body);
+  } else if (window.renderContent) {
+    window.renderContent(s.text, s.body);
+  } else {
+    s.body.textContent = s.text;
+  }
+  const log = $("side-log");
+  if (log) log.scrollTop = log.scrollHeight;
+}
+
+function finalizeSide(text) {
+  const finalText = text || sideStream?.text || "";
+  if (sideStream?.body) {
+    if (window.renderContent) window.renderContent(finalText, sideStream.body);
+    else sideStream.body.textContent = finalText;
+  } else if (finalText) {
+    addSideBubble("assistant", finalText);
+  }
+  sideStream = null;
+  setSideBusyUI(false);
+}
+
+async function askSide(question) {
+  const q = (question || "").trim();
+  if (!q || sideBusy) return;
+  addSideBubble("you", q);
+  setSideBusyUI(true);
+  try {
+    const res = await fetch("/api/sidechat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: q }),
+    });
+    if (!res.ok) {
+      finalizeSide("PicoChat is busy or unavailable.");
+    }
+  } catch {
+    finalizeSide("Couldn’t reach PicoChat.");
+  }
+}
+
+$("side-ask")?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const input = $("side-input");
+  const q = input?.value.trim();
+  if (!q) return;
+  input.value = "";
+  askSide(q);
+});

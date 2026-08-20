@@ -17,35 +17,29 @@ function protectMath(text) {
     slots.push(html);
     return `\x00M${i}\x00`;
   };
+  const renderTex = (tex, displayMode) => {
+    if (!window.katex) {
+      return stash(
+        displayMode
+          ? `<pre class="math-fallback">${escapeHtml(tex)}</pre>`
+          : `<code class="math-fallback">${escapeHtml(tex)}</code>`
+      );
+    }
+    try {
+      return stash(window.katex.renderToString(tex.trim(), { displayMode, throwOnError: false }));
+    } catch {
+      return stash(
+        displayMode
+          ? `<pre class="math-fallback">${escapeHtml(tex)}</pre>`
+          : `<code class="math-fallback">${escapeHtml(tex)}</code>`
+      );
+    }
+  };
 
-  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => {
-    try {
-      return stash(window.katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false }));
-    } catch {
-      return stash(`<pre class="math-fallback">${escapeHtml(tex)}</pre>`);
-    }
-  });
-  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => {
-    try {
-      return stash(window.katex.renderToString(tex.trim(), { displayMode: true, throwOnError: false }));
-    } catch {
-      return stash(`<pre class="math-fallback">${escapeHtml(tex)}</pre>`);
-    }
-  });
-  text = text.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (_, tex) => {
-    try {
-      return stash(window.katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false }));
-    } catch {
-      return stash(`<code class="math-fallback">${escapeHtml(tex)}</code>`);
-    }
-  });
-  text = text.replace(/\\\(([\s\S]+?)\\\)/g, (_, tex) => {
-    try {
-      return stash(window.katex.renderToString(tex.trim(), { displayMode: false, throwOnError: false }));
-    } catch {
-      return stash(`<code class="math-fallback">${escapeHtml(tex)}</code>`);
-    }
-  });
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, tex) => renderTex(tex, true));
+  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (_, tex) => renderTex(tex, true));
+  text = text.replace(/(?<!\$)\$(?!\$)([^\$\n]+?)\$(?!\$)/g, (_, tex) => renderTex(tex, false));
+  text = text.replace(/\\\(([\s\S]+?)\\\)/g, (_, tex) => renderTex(tex, false));
   return { text, slots };
 }
 
@@ -152,16 +146,42 @@ function renderMarkdown(text) {
   return restoreMath(out.join("\n"), slots);
 }
 
-function renderContent(text, container, onRefClick) {
-  if (!text) {
-    container.textContent = "";
-    return;
+/** Soft-close unfinished markdown/math so live streaming still formats cleanly. */
+function softCloseForStream(text) {
+  if (!text) return "";
+  let s = text;
+
+  const fenceCount = (s.match(/^```/gm) || []).length;
+  const inFence = fenceCount % 2 === 1;
+  if (inFence) s += "\n```";
+
+  if (!inFence) {
+    if (((s.match(/\$\$/g) || []).length) % 2 === 1) s += "$$";
+    const opens = (s.match(/\\\[/g) || []).length;
+    const closes = (s.match(/\\\]/g) || []).length;
+    if (opens > closes) s += "\\]";
+    const pOpen = (s.match(/\\\(/g) || []).length;
+    const pClose = (s.match(/\\\)/g) || []).length;
+    if (pOpen > pClose) s += "\\)";
+
+    // Odd count of ** → close bold
+    if (((s.match(/\*\*/g) || []).length) % 2 === 1) s += "**";
+
+    // Trailing incomplete inline $math
+    const dollars = s.match(/\$(?!\$)/g) || [];
+    if (dollars.length % 2 === 1) {
+      // Prefer hiding the unfinished fragment over flashing raw $
+      s = s.replace(/\$(?!\$)[^$\n]*$/, (m) => m.slice(1));
+    }
+
+    // Odd backticks → close inline code (outside fences)
+    if (((s.match(/`/g) || []).length) % 2 === 1) s += "`";
   }
-  if (!window.katex) {
-    container.textContent = text;
-    return;
-  }
-  container.innerHTML = renderMarkdown(text);
+
+  return s;
+}
+
+function bindCodeRefs(container, onRefClick) {
   container.querySelectorAll(".code-ref").forEach((btn) => {
     btn.onclick = () => {
       if (onRefClick) {
@@ -171,4 +191,35 @@ function renderContent(text, container, onRefClick) {
   });
 }
 
+function renderContent(text, container, onRefClick) {
+  if (!text) {
+    container.textContent = "";
+    return;
+  }
+  container.innerHTML = renderMarkdown(text);
+  bindCodeRefs(container, onRefClick);
+}
+
+function renderStreamingContent(text, container, onRefClick) {
+  if (!text) {
+    container.textContent = "";
+    return;
+  }
+  container.innerHTML = renderMarkdown(softCloseForStream(text));
+  bindCodeRefs(container, onRefClick);
+  const caret = document.createElement("span");
+  caret.className = "stream-cursor";
+  caret.setAttribute("aria-hidden", "true");
+  const last = container.lastElementChild;
+  if (last && (last.tagName === "UL" || last.tagName === "OL") && last.lastElementChild) {
+    last.lastElementChild.appendChild(caret);
+  } else if (last && /^(P|H[1-6]|LI)$/.test(last.tagName)) {
+    last.appendChild(caret);
+  } else {
+    container.appendChild(caret);
+  }
+}
+
 window.renderContent = renderContent;
+window.renderStreamingContent = renderStreamingContent;
+window.softCloseForStream = softCloseForStream;

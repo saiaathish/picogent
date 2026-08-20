@@ -1,5 +1,5 @@
 {
-  "version": "2026.4",
+  "version": "2026.5",
   "updated": "2026-08-20T00:00:00Z",
   "models": [
     {
@@ -7,11 +7,11 @@
       "display": "Luna",
       "tier": "light",
       "ecosystem": "codex",
-      "description": "Fast & affordable — linting, tests, docs, bounded subtasks",
+      "description": "Token-efficient default — explore, lint, tests, bounded subtasks",
       "patterns": ["gpt-5\\.\\d+-luna", "gpt-\\d+\\.\\d+-luna"],
       "reasoning": {
         "supported": ["none", "low", "medium", "high", "xhigh", "max"],
-        "default": "low"
+        "default": "none"
       }
     },
     {
@@ -23,7 +23,7 @@
       "patterns": ["gpt-5\\.\\d+-terra", "gpt-\\d+\\.\\d+-terra"],
       "reasoning": {
         "supported": ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
-        "default": "medium"
+        "default": "low"
       }
     },
     {
@@ -35,7 +35,7 @@
       "patterns": ["gpt-5\\.\\d+-sol", "gpt-5\\.\\d+-soul", "gpt-\\d+\\.\\d+-sol", "^gpt-5\\.\\d+$"],
       "reasoning": {
         "supported": ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
-        "default": "high"
+        "default": "medium"
       }
     },
     {
@@ -47,7 +47,7 @@
       "patterns": ["claude-.*haiku", "haiku-\\d"],
       "reasoning": {
         "supported": ["none", "low", "medium"],
-        "default": "low"
+        "default": "none"
       }
     },
     {
@@ -59,7 +59,7 @@
       "patterns": ["claude-sonnet-5", "claude-.*sonnet-5"],
       "reasoning": {
         "supported": ["none", "low", "medium", "high", "xhigh", "max"],
-        "default": "high"
+        "default": "low"
       }
     },
     {
@@ -71,7 +71,7 @@
       "patterns": ["claude-opus-5", "claude-.*opus-5"],
       "reasoning": {
         "supported": ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
-        "default": "high"
+        "default": "medium"
       }
     },
     {
@@ -84,7 +84,7 @@
       "gated": true,
       "reasoning": {
         "supported": ["high", "xhigh", "max", "ultra"],
-        "default": "max"
+        "default": "high"
       }
     }
   ]

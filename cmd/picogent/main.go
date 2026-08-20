@@ -267,7 +267,16 @@ type stdioHandler struct {
 	in  *bufio.Reader
 }
 
-func (h *stdioHandler) OnText(text string) { fmt.Println(text) }
+func (h *stdioHandler) OnText(text string) {
+	if text == "" {
+		fmt.Println()
+		return
+	}
+	fmt.Println(text)
+}
+func (h *stdioHandler) OnTextDelta(delta string) {
+	fmt.Print(delta)
+}
 func (h *stdioHandler) OnToolStart(call llm.ToolCall) {
 	fmt.Fprintf(os.Stderr, "→ %s %s\n", call.Name, short(call.Arguments, 80))
 }

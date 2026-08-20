@@ -49,6 +49,7 @@ Tab hygiene: prefer one owned tab for a task; reuse it; close inactive tabs you 
 
 type EventHandler interface {
 	OnText(text string)
+	OnTextDelta(delta string)
 	OnToolStart(call llm.ToolCall)
 	OnToolEnd(call llm.ToolCall, result string, err error)
 	OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error)
@@ -147,15 +148,23 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		if r, ok := a.LLM.(*llm.Router); ok {
 			r.SetUserPrompt(userText)
 		}
+		streamed := false
 		out, err := a.LLM.Chat(ctx, llm.ChatRequest{
 			Model:        a.CFG.Model,
 			Messages:     msgs,
 			Tools:        a.Tools.Specs(),
 			ToolRound:    round,
-			Escalate:     round >= 6,
+			Escalate:     round >= 10,
 			TaskMode:     string(a.TaskMode),
 			ReadOnly:     a.TaskMode.ReadOnly(),
 			LastToolKind: lastToolKind,
+			OnDelta: func(delta string) {
+				if delta == "" {
+					return
+				}
+				streamed = true
+				ev.OnTextDelta(delta)
+			},
 		})
 		if err != nil {
 			wrapped := userErr("the model call failed", err)
@@ -180,8 +189,13 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 				text += footer
 				msg.Content = text
 				msgs[len(msgs)-1] = msg
+				if streamed {
+					ev.OnTextDelta("\n\n" + footer)
+				}
 			}
-			if text != "" {
+			if streamed {
+				ev.OnText("")
+			} else if text != "" {
 				ev.OnText(text)
 			}
 			res.Text = text
@@ -272,11 +286,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		if len(pending) > 0 {
 			lastToolKind = classifyToolKind(pending[len(pending)-1].call.Name)
 		}
-		if len(msgs) > 35 {
-			compactMsgs, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
-			msgs = compactMsgs
-			res.Context = stats
-		}
+		// TokenTamer every round — don't wait for message count / budget critical.
+		compactMsgs, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
+		msgs = compactMsgs
+		res.Context = stats
 	}
 	err := fmt.Errorf("stopped after %d tool rounds (limit)", a.CFG.MaxToolRounds)
 	ev.OnError(err)
@@ -323,6 +336,7 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, filesChanged, 
 type NopHandler struct{}
 
 func (NopHandler) OnText(string)                         {}
+func (NopHandler) OnTextDelta(string)                    {}
 func (NopHandler) OnToolStart(llm.ToolCall)              {}
 func (NopHandler) OnToolEnd(llm.ToolCall, string, error) {}
 func (NopHandler) OnNeedPermission(context.Context, perm.Request) (perm.Decision, error) {

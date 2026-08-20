@@ -119,17 +119,17 @@ func codexReasoningProfile(tier Tier) ReasoningProfile {
 	case TierLight: // Luna
 		return ReasoningProfile{
 			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax},
-			Default:   ReasonLow,
+			Default:   ReasonNone, // token-first: explore/simple default to zero effort
 		}
 	case TierStandard: // Terra — ultra is highest
 		return ReasoningProfile{
 			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra},
-			Default:   ReasonMedium,
+			Default:   ReasonLow,
 		}
 	case TierHeavy, TierPremium: // Sol — ultra is highest
 		return ReasoningProfile{
 			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra},
-			Default:   ReasonHigh,
+			Default:   ReasonMedium,
 		}
 	default:
 		return ReasoningProfile{Supported: []ReasoningLevel{ReasonMedium}, Default: ReasonMedium}
@@ -141,22 +141,22 @@ func quadReasoningProfile(tier Tier) ReasoningProfile {
 	case TierLight:
 		return ReasoningProfile{
 			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium},
-			Default:   ReasonLow,
+			Default:   ReasonNone,
 		}
 	case TierStandard:
 		return ReasoningProfile{
 			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax},
-			Default:   ReasonHigh,
+			Default:   ReasonLow,
 		}
 	case TierHeavy:
 		return ReasoningProfile{
 			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra},
-			Default:   ReasonHigh,
+			Default:   ReasonMedium,
 		}
 	case TierPremium:
 		return ReasoningProfile{
 			Supported: []ReasoningLevel{ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra},
-			Default:   ReasonMax,
+			Default:   ReasonHigh,
 		}
 	default:
 		return ReasoningProfile{Supported: []ReasoningLevel{ReasonHigh}, Default: ReasonHigh}

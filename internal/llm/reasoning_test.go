@@ -23,40 +23,43 @@ func TestReasoningOrchestrationSolHigh(t *testing.T) {
 	if dec.Tier != llm.TierHeavy {
 		t.Fatalf("tier=%s want heavy", dec.Tier)
 	}
-	if dec.Reasoning != llm.ReasonHigh && dec.Reasoning != llm.ReasonXHigh && dec.Reasoning != llm.ReasonMax {
-		t.Fatalf("reasoning=%s want high+ for orchestration", dec.Reasoning)
+	if dec.Reasoning != llm.ReasonHigh && dec.Reasoning != llm.ReasonMedium {
+		t.Fatalf("reasoning=%s want medium/high for orchestration", dec.Reasoning)
 	}
 	if dec.TaskKind != llm.TaskOrchestrate {
 		t.Fatalf("task=%s want orchestrate", dec.TaskKind)
 	}
-}
-
-func TestReasoningLunaMaxForBoundedImplement(t *testing.T) {
-	level := llm.DecideReasoning(llm.EcoCodex, llm.TierLight, llm.TaskImplement, 4, false, 4)
-	if level != llm.ReasonMax {
-		t.Fatalf("luna implement effort=%s want max", level)
+	if dec.TokenSaveX < 1 {
+		t.Fatalf("token_save_x=%v", dec.TokenSaveX)
 	}
 }
 
-func TestReasoningTerraHighForJudgment(t *testing.T) {
+func TestReasoningLunaLowForBoundedImplement(t *testing.T) {
+	level := llm.DecideReasoning(llm.EcoCodex, llm.TierLight, llm.TaskImplement, 4, false, 4)
+	if level != llm.ReasonLow && level != llm.ReasonNone {
+		t.Fatalf("luna implement effort=%s want low/none (token-efficient)", level)
+	}
+}
+
+func TestReasoningTerraMediumForJudgment(t *testing.T) {
 	level := llm.DecideReasoning(llm.EcoCodex, llm.TierStandard, llm.TaskImplement, 4, false, 5)
-	if level != llm.ReasonHigh {
-		t.Fatalf("terra implement effort=%s want high", level)
+	if level != llm.ReasonMedium && level != llm.ReasonLow {
+		t.Fatalf("terra implement effort=%s want medium/low", level)
 	}
 }
 
 func TestReasoningEscalatesOnLateRounds(t *testing.T) {
 	early := llm.DecideReasoning(llm.EcoCodex, llm.TierStandard, llm.TaskImplement, 2, false, 4)
-	late := llm.DecideReasoning(llm.EcoCodex, llm.TierStandard, llm.TaskImplement, 8, true, 4)
+	late := llm.DecideReasoning(llm.EcoCodex, llm.TierStandard, llm.TaskImplement, 10, true, 4)
 	if llm.ReasoningRank(late) <= llm.ReasoningRank(early) {
 		t.Fatalf("late=%s should exceed early=%s", late, early)
 	}
 }
 
-func TestReasoningExploreUsesLowOnLuna(t *testing.T) {
+func TestReasoningExploreUsesNoneOnLuna(t *testing.T) {
 	level := llm.DecideReasoning(llm.EcoCodex, llm.TierLight, llm.TaskExplore, 1, false, 2)
-	if level != llm.ReasonLow && level != llm.ReasonNone {
-		t.Fatalf("explore effort=%s want low/none", level)
+	if level != llm.ReasonNone && level != llm.ReasonLow {
+		t.Fatalf("explore effort=%s want none/low", level)
 	}
 }
 
@@ -66,15 +69,15 @@ func TestReasoningQuadCodeProfiles(t *testing.T) {
 		t.Fatalf("opus should support 4+ levels, got %v", p.Supported)
 	}
 	level := llm.DecideReasoning(llm.EcoQuadCode, llm.TierHeavy, llm.TaskOrchestrate, 0, false, 8)
-	if level != llm.ReasonHigh && level != llm.ReasonXHigh && level != llm.ReasonMax {
+	if level != llm.ReasonHigh && level != llm.ReasonMedium {
 		t.Fatalf("opus orchestrate=%s", level)
 	}
 }
 
 func TestRouteModeDelegateForExplore(t *testing.T) {
 	mode := llm.DecideRouteMode(llm.TierStandard, llm.TaskExplore, 2, 3, false)
-	if mode != llm.RouteDelegate && mode != llm.RouteSolo {
-		t.Fatalf("mode=%s", mode)
+	if mode != llm.RouteDelegate {
+		t.Fatalf("mode=%s want delegate", mode)
 	}
 }
 
@@ -82,6 +85,14 @@ func TestAdjustTierDelegateDowngrades(t *testing.T) {
 	tier := llm.AdjustTierForRoute(llm.EcoCodex, llm.TierHeavy, llm.RouteDelegate, llm.TaskExplore, false)
 	if tier != llm.TierLight {
 		t.Fatalf("delegate explore tier=%s want light", tier)
+	}
+}
+
+func TestTokenSaveXExploreIsHuge(t *testing.T) {
+	// Luna + none + mid-loop context ≈ 100×+ vs Sol@high plain.
+	x := llm.EstimateTokenSaveX(llm.TierLight, llm.ReasonNone, 5)
+	if x < 100 {
+		t.Fatalf("saveX=%.1f want >=100 for explore/delegate", x)
 	}
 }
 
@@ -113,6 +124,9 @@ func TestRouterSetsReasoningOnRequest(t *testing.T) {
 	}
 	if dec.Label == "" {
 		t.Fatal("decision missing label")
+	}
+	if dec.TokenSaveX < 1 {
+		t.Fatalf("missing token save estimate: %v", dec.TokenSaveX)
 	}
 }
 

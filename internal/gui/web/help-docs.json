@@ -1,0 +1,84 @@
+{
+  "product": "Picogent",
+  "tagline": "A tiny coding agent — 80% of the useful loop, 20% of the machinery.",
+  "starters": [
+    "How do I get started?",
+    "What's the difference between Safe and Fast?",
+    "How do I pick a model?",
+    "What are slash commands?",
+    "How do MCP tools work?",
+    "How do I attach files?"
+  ],
+  "topics": [
+    {
+      "id": "start",
+      "title": "Getting started",
+      "blurb": "Open a folder and chat.",
+      "keywords": ["start", "begin", "setup", "first", "install", "login", "codex", "claude", "ollama", "gui", "tui"],
+      "body": "## Getting started\n\n1. Run `picogent gui` (or `picogent` for the terminal UI).\n2. Tap **Select folder** and open the project you want edited.\n3. Type what you want in the chat bar — e.g. “fix the failing tests”.\n4. In **Safe** mode, Picogent asks before writing files or running shell.\n\n**First-time setup:** `picogent` opens a browser setup page to install Codex / Claude CLIs and log in.\n\n**Logins:**\n- `picogent login` — ChatGPT Codex (default)\n- `picogent login claude` — Claude Code subscription (no API key)\n- `picogent init --ollama` — local models via Ollama\n\nNo extra app: the GUI is a local page at `127.0.0.1`."
+    },
+    {
+      "id": "modes",
+      "title": "Safe vs Fast",
+      "blurb": "Permission modes in the top bar.",
+      "keywords": ["safe", "fast", "mode", "permission", "allow", "deny", "approve", "yes", "auto"],
+      "body": "## Safe vs Fast\n\nUse the **Safe / Fast** toggle in the top bar.\n\n| Mode | Behavior |\n|---|---|\n| **Safe** (default) | Asks before writes and shell commands |\n| **Fast** | Auto-edits inside the workspace; still asks for deletes, `rm`, and paths outside the folder |\n\nWhen a permission prompt appears, you can **Deny**, allow for **This turn**, **Always allow**, or **Allow** once.\n\nTip: stay in Safe while exploring a new repo; switch to Fast when you trust the loop."
+    },
+    {
+      "id": "models",
+      "title": "Models & Auto",
+      "blurb": "The Auto picker next to Send.",
+      "keywords": ["model", "auto", "router", "gpt", "claude", "luna", "provider", "codex", "openai"],
+      "body": "## Models & Auto\n\nThe **Auto** control next to the send button picks which model runs.\n\n- **Auto** lets Picogent route the task (light vs heavy models when available).\n- Pick a specific model to lock the turn to that choice.\n\nProviders live in **Settings**: Codex (default), Claude Code, Ollama, or any OpenAI-compatible base URL.\n\nSet `PICOGENT_API_KEY` when using your own key / OpenRouter."
+    },
+    {
+      "id": "chat",
+      "title": "Chat & attachments",
+      "blurb": "Message bar, files, and streaming replies.",
+      "keywords": ["chat", "message", "attach", "file", "image", "pdf", "send", "composer", "type", "markdown", "latex"],
+      "body": "## Chat & attachments\n\n- Type in **Message Picogent** and press Enter (Shift+Enter for a new line).\n- Use **+** to attach images, PDFs, and code/text files.\n- Replies stream live and render **Markdown** and **LaTeX** (`$...$`, `$$...$$`) as they arrive.\n- Click `path:line` citations in a reply to open the Review panel.\n\nThe spinning ring on the chat bar means a turn is in progress. You can still type; send queues a follow-up where supported."
+    },
+    {
+      "id": "slash",
+      "title": "Slash commands",
+      "blurb": "Type / for shortcuts.",
+      "keywords": ["slash", "command", "/", "commit", "review", "clear", "status", "diff", "compact", "goal", "plan", "ask"],
+      "body": "## Slash commands\n\nType `/` in the chat bar to open the command menu.\n\nBuilt-ins include:\n- `/commit` — prepare a commit\n- `/review` — review changes\n- `/clear` — reset the chat\n- `/status` — session status\n- `/diff` — show git diff\n- `/compact` — shrink context\n- `/agent` `/ask` `/plan` `/debug` — task modes\n- `/goal …` — set or clear a goal\n\n**Custom commands:** add `.claude/commands/deploy.md` in your project, then type `/deploy`."
+    },
+    {
+      "id": "review",
+      "title": "Review & changes",
+      "blurb": "Right-side code review panel.",
+      "keywords": ["review", "changes", "diff", "activity", "file", "line", "citation", "panel"],
+      "body": "## Review & changes\n\nOpen the **Review** icon in the top-right.\n\n- **Review** — file lines Picogent read or cited (`path:line`)\n- **Changes** — edits with added/removed line counts; click a file to jump in\n- **Activity** — tool and turn events for this workspace\n\nAsk about a line from the review footer (“Line 42 or ask about this file”)."
+    },
+    {
+      "id": "mcp",
+      "title": "MCP & extensions",
+      "blurb": "Connect GitHub, browser, search…",
+      "keywords": ["mcp", "extension", "plugin", "github", "browser", "search", "tool", "connect"],
+      "body": "## MCP & extensions\n\nAsk in chat to connect GitHub, a browser, or search — Picogent uses `mcp_manage` and waits for Allow in Safe mode.\n\nConfig is Cursor-compatible, checked in order:\n1. `~/.cursor/mcp.json`\n2. `~/.picogent/mcp.yaml`\n3. `{project}/.cursor/mcp.json`\n4. `{project}/.mcp.json`\n\n`picogent mcp list` shows connected tools. Manage installed extensions under **Settings → Extensions**."
+    },
+    {
+      "id": "rules",
+      "title": "Project rules",
+      "blurb": "AGENTS.md and CLAUDE.md.",
+      "keywords": ["agents.md", "claude.md", "rules", "project", "memory", "context", "system"],
+      "body": "## Project rules\n\nDrop `AGENTS.md` or `CLAUDE.md` in your repo. Picogent injects them into the system prompt (same idea as Claude Code).\n\nUse them for house style, test commands, “never touch X”, and repo-specific conventions."
+    },
+    {
+      "id": "context",
+      "title": "Context bar",
+      "blurb": "How full the window is.",
+      "keywords": ["context", "tokens", "budget", "compact", "window", "memory", "usage"],
+      "body": "## Context window\n\nCodex models get a **256k** hard ceiling. Picogent does **not** try to fill it.\n\nEvery tool round runs soft compaction (TokenTamer + digests + soft-fit) so the live working set stays near a small soft target and the ring grows slowly — Cursor-style headroom, not a race to the limit.\n\nWhen pressure still climbs, older turns are windowed or summarized. You can also run `/compact`."
+    },
+    {
+      "id": "cli",
+      "title": "CLI cheatsheet",
+      "blurb": "Terminal commands.",
+      "keywords": ["cli", "terminal", "command", "run", "init", "version", "help", "tui"],
+      "body": "## CLI cheatsheet\n\n```\npicogent              # TUI (setup on first run)\npicogent gui          # browser chat\npicogent setup        # open setup again\npicogent login        # Codex\npicogent login claude # Claude Code\npicogent run --yes \"…\"  # one-shot, Fast-ish\npicogent init --ollama\npicogent mcp          # list MCP tools\npicogent version\n```\n\nUseful flags: `--dir PATH`, `--yes`, `--model NAME`."
+    }
+  ]
+}

@@ -3,31 +3,31 @@ package llm
 import "strings"
 
 // DecideReasoning picks reasoning effort for a routed call.
-// Inspired by sol-advisor: orchestration→High, bounded work→Max on Luna,
-// judgment-heavy→High on Terra, review→High on Sol.
+// Token-first (Cursor auto / RouteLLM style): spend effort only when the
+// phase actually needs it. Explore/simple stay at none/low. Flagship high+
+// is reserved for orchestration, review, and explicit escalation.
 func DecideReasoning(eco Ecosystem, tier Tier, kind TaskKind, toolRound int, escalate bool, score int) ReasoningLevel {
 	profile := ProfileFor(eco, tier)
 	level := baseReasoningForKind(eco, tier, kind, profile)
 
 	// Vary effort across agent loop rounds — save tokens early, spend late.
 	switch {
-	case escalate || toolRound >= 8:
+	case escalate || toolRound >= 10:
 		level = bump(level, 2)
-	case toolRound >= 5:
+	case toolRound >= 7:
 		level = bump(level, 1)
-	case toolRound <= 1 && kind == TaskExplore:
+	case toolRound <= 2 && (kind == TaskExplore || kind == TaskSimple):
 		level = drop(level, 1)
-	case toolRound == 0 && kind == TaskOrchestrate:
-		level = bump(level, 0) // keep orchestration baseline
+	case toolRound <= 1 && kind == TaskImplement && score <= 4:
+		level = drop(level, 1)
 	}
 
-	// Score nudges for ambiguous/complex prompts.
+	// Score nudges — keep low for routine work; only spike on hard prompts.
+	// Orchestration already starts at medium/high; don't auto-jump to xhigh/max.
 	switch {
-	case score >= 9:
-		level = bump(level, 2)
-	case score >= 7:
+	case score >= 9 && kind != TaskOrchestrate:
 		level = bump(level, 1)
-	case score <= 2 && kind != TaskOrchestrate:
+	case score <= 3 && kind != TaskOrchestrate && kind != TaskReview:
 		level = drop(level, 1)
 	}
 
@@ -37,38 +37,39 @@ func DecideReasoning(eco Ecosystem, tier Tier, kind TaskKind, toolRound int, esc
 func baseReasoningForKind(eco Ecosystem, tier Tier, kind TaskKind, profile ReasoningProfile) ReasoningLevel {
 	switch kind {
 	case TaskOrchestrate:
+		// Plan once with medium/high — not ultra. Escalation can bump later.
+		if tier == TierHeavy || tier == TierPremium {
+			return ReasonHigh
+		}
+		if tier == TierStandard {
+			return ReasonMedium
+		}
+		return ReasonLow
+	case TaskReview:
 		if tier == TierHeavy || tier == TierPremium {
 			return ReasonHigh
 		}
 		return ReasonMedium
-	case TaskReview:
-		return ReasonHigh
 	case TaskExplore:
+		// Cheap reads/searches — almost never need deep reasoning.
 		if tier == TierLight {
-			return ReasonLow
-		}
-		return ReasonMedium
-	case TaskSimple:
-		if tier == TierLight {
-			// sol-advisor uses Luna/Max for bounded implementation; we use max only when implementing.
 			return ReasonNone
 		}
 		return ReasonLow
+	case TaskSimple:
+		return ReasonNone
 	case TaskImplement:
-		if eco == EcoCodex {
-			switch tier {
-			case TierLight:
-				return ReasonMax // bounded routine work — Luna/Max
-			case TierStandard:
-				return ReasonHigh // judgment-heavy — Terra/High
-			case TierHeavy, TierPremium:
-				return ReasonHigh
-			}
-		}
-		if tier == TierLight {
+		// Bounded implementation: prefer low/medium. Luna/Max was quality-first
+		// and burned huge reasoning budgets on "light" work — inverted here.
+		switch tier {
+		case TierLight:
+			return ReasonLow
+		case TierStandard:
 			return ReasonMedium
+		case TierHeavy, TierPremium:
+			return ReasonHigh
 		}
-		return ReasonHigh
+		return ReasonMedium
 	default:
 		return profile.Default
 	}
@@ -87,51 +88,82 @@ func InferTaskKind(in RouteInput) TaskKind {
 	if in.TaskMode == "ask" || in.ReadOnly {
 		return TaskExplore
 	}
+	if looksSimple(p) {
+		return TaskSimple
+	}
 	if in.TaskMode == "debug" {
 		return TaskImplement
 	}
 
-	// Tool-round phase detection inside agent loops.
+	// Tool-round phase detection inside agent loops — stay explore longer.
 	switch {
 	case in.ToolRound == 0:
-		if scorePromptQuick(p) >= 6 {
+		if scorePromptQuick(p) >= 7 {
 			return TaskOrchestrate
 		}
+		if scorePromptQuick(p) <= 2 {
+			return TaskSimple
+		}
 		return TaskExplore
-	case in.ToolRound <= 2:
+	case in.ToolRound <= 3:
 		return TaskExplore
 	case in.LastToolKind == "write":
 		return TaskImplement
 	case in.LastToolKind == "read":
-		if in.ToolRound >= 6 {
+		if in.ToolRound >= 8 {
 			return TaskReview
 		}
 		return TaskExplore
 	default:
-		if in.ToolRound >= 7 {
+		if in.ToolRound >= 9 {
 			return TaskReview
 		}
 		return TaskImplement
 	}
 }
 
-// DecideRouteMode picks sol-advisor-style selective routing mode.
+func looksSimple(p string) bool {
+	if p == "" {
+		return false
+	}
+	words := len(strings.Fields(p))
+	if words > 20 {
+		return false
+	}
+	for _, k := range []string{
+		"typo", "lint", "format", "rename", "comment", "docstring",
+		"whitespace", "import ", "one-liner", "quick fix", "small fix",
+	} {
+		if strings.Contains(p, k) {
+			return true
+		}
+	}
+	return false
+}
+
+// DecideRouteMode picks RouteLLM-style selective routing.
+// Prefer delegate (weak model) unless risk/complexity demands solo/audit/full.
 func DecideRouteMode(tier Tier, kind TaskKind, toolRound int, score int, escalate bool) RouteMode {
 	if escalate || score >= 9 {
 		return RouteFull
 	}
-	if kind == TaskReview || (kind == TaskOrchestrate && toolRound == 0 && score >= 7) {
-		if tier == TierHeavy || tier == TierPremium {
-			return RouteAudit
-		}
+	if kind == TaskReview && (tier == TierHeavy || tier == TierPremium) && score >= 7 {
+		return RouteAudit
 	}
-	if kind == TaskSimple || kind == TaskExplore {
-		if tier == TierLight && toolRound > 0 {
+	if kind == TaskOrchestrate && toolRound == 0 && score >= 8 && (tier == TierHeavy || tier == TierPremium) {
+		return RouteAudit
+	}
+	// Default bias: delegate bounded phases to the light tier.
+	switch kind {
+	case TaskSimple, TaskExplore:
+		return RouteDelegate
+	case TaskImplement:
+		if tier != TierHeavy && tier != TierPremium && score <= 6 {
 			return RouteDelegate
 		}
-	}
-	if kind == TaskImplement && tier != TierHeavy && toolRound >= 3 && score >= 5 {
-		return RouteDelegate
+		if toolRound >= 2 && score <= 5 {
+			return RouteDelegate
+		}
 	}
 	return RouteSolo
 }
@@ -143,17 +175,9 @@ func AdjustTierForRoute(eco Ecosystem, tier Tier, mode RouteMode, kind TaskKind,
 	}
 	switch kind {
 	case TaskSimple, TaskExplore:
-		if tierRank(tier) > tierRank(TierLight) {
-			return TierLight
-		}
+		return TierLight
 	case TaskImplement:
-		if tier == TierHeavy {
-			return TierStandard
-		}
-		if tier == TierPremium {
-			if allowPremium {
-				return TierHeavy
-			}
+		if tierRank(tier) > tierRank(TierStandard) {
 			return TierStandard
 		}
 	}
