@@ -77,12 +77,6 @@ func NewRegistry(c Context) *Registry {
 }
 
 func (r *Registry) AttachMCP(m *mcpbridge.Manager) {
-	r.MCP = m
-	if m == nil {
-		return
-	}
-	// Drop prior MCP tools if re-attaching. Do not strip builtins like mcp_manage
-	// (they also start with mcp_).
 	filtered := r.order[:0]
 	for _, name := range r.order {
 		if _, isMCP := r.byName[name].(mcpTool); isMCP {
@@ -92,6 +86,10 @@ func (r *Registry) AttachMCP(m *mcpbridge.Manager) {
 		filtered = append(filtered, name)
 	}
 	r.order = filtered
+	r.MCP = m
+	if m == nil {
+		return
+	}
 	for _, spec := range m.Specs() {
 		r.register(mcpTool{mgr: m, name: spec.Name})
 	}
