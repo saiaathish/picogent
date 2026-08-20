@@ -306,7 +306,7 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, filesChanged, 
 		out = "error: " + err.Error()
 	}
 	ev.OnToolEnd(call, out, err)
-	okv := err == nil && !strings.Contains(strings.ToLower(out), "fail")
+	okv := err == nil && strings.Contains(strings.ToLower(out), "pass") && !strings.Contains(strings.ToLower(out), "inconclusive")
 	_ = a.Trace.Append("verify", "verify", out, &okv, 0)
 	return out
 }

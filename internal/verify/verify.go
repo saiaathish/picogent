@@ -45,7 +45,7 @@ func fileExists(p string) bool {
 func Run(ctx context.Context, workspace string) Result {
 	runner, display, args := Detect(workspace)
 	if runner == "" {
-		return Result{OK: true, Runner: "none", Reason: "no test runner found"}
+		return Result{OK: false, Runner: "none", Reason: "no test runner found"}
 	}
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
@@ -106,7 +106,7 @@ func count(out string) (passed, failed int) {
 
 func Format(r Result) string {
 	if r.Runner == "none" {
-		return "verify: skipped (no tests)"
+		return "verify INCONCLUSIVE (no test runner found)"
 	}
 	status := "PASS"
 	if !r.OK {
