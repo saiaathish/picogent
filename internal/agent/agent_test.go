@@ -75,6 +75,7 @@ func TestSafeModeDeniesWriteWithoutPromptAllow(t *testing.T) {
 func TestMissingKeyStopsBeforeLLM(t *testing.T) {
 	t.Setenv("PICOGENT_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
 	dir := t.TempDir()
 	cfg := config.Default()
 	cfg.Workspace = dir

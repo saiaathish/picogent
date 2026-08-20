@@ -161,8 +161,8 @@ func compact(msgs []llm.Message) []llm.Message {
 
 type NopHandler struct{}
 
-func (NopHandler) OnText(string) {}
-func (NopHandler) OnToolStart(llm.ToolCall) {}
+func (NopHandler) OnText(string)                         {}
+func (NopHandler) OnToolStart(llm.ToolCall)              {}
 func (NopHandler) OnToolEnd(llm.ToolCall, string, error) {}
 func (NopHandler) OnNeedPermission(context.Context, perm.Request) (perm.Decision, error) {
 	return perm.Deny, nil
@@ -171,9 +171,13 @@ func (NopHandler) OnError(error) {}
 
 func userErr(problem string, err error) error {
 	cause := err.Error()
-	fix := "check your key, base URL, and model name."
-	if strings.Contains(strings.ToLower(cause), "connection refused") || strings.Contains(cause, "11434") {
+	fix := "check Codex login (`picogent login`), or your key / base URL / model name."
+	low := strings.ToLower(cause)
+	if strings.Contains(low, "connection refused") || strings.Contains(cause, "11434") {
 		fix = "run `ollama serve`, then `ollama pull` your model, and set provider: ollama."
+	}
+	if strings.Contains(low, "401") || strings.Contains(low, "codex login") || strings.Contains(low, "auth.json") {
+		fix = "run `picogent login` (or `codex login`) so Picogent can use ~/.codex/auth.json."
 	}
 	return fmt.Errorf("Problem: %s.\nCause:   %s.\nFix:     %s", problem, cause, fix)
 }

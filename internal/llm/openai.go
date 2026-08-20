@@ -50,10 +50,10 @@ type apiMessage struct {
 }
 
 type apiRequest struct {
-	Model    string         `json:"model"`
-	Messages []apiMessage   `json:"messages"`
-	Tools    []apiTool      `json:"tools,omitempty"`
-	Stream   bool           `json:"stream"`
+	Model    string       `json:"model"`
+	Messages []apiMessage `json:"messages"`
+	Tools    []apiTool    `json:"tools,omitempty"`
+	Stream   bool         `json:"stream"`
 }
 
 type apiTool struct {

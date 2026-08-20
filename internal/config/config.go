@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/saiaathish/picogent/internal/codexauth"
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,6 +21,7 @@ const (
 type Provider string
 
 const (
+	ProviderCodex  Provider = "codex"
 	ProviderOpenAI Provider = "openai"
 	ProviderOllama Provider = "ollama"
 )
@@ -34,18 +37,19 @@ type Config struct {
 	MaxToolRounds  int      `yaml:"max_tool_rounds"`
 	LLMTimeoutSec  int      `yaml:"llm_timeout_sec"`
 	BashTimeoutSec int      `yaml:"bash_timeout_sec"`
+	SetupComplete  bool     `yaml:"setup_complete"`
 }
 
 func Default() Config {
 	return Config{
 		Workspace:      ".",
 		Mode:           ModeSafe,
-		Provider:       ProviderOpenAI,
+		Provider:       ProviderCodex,
 		BaseURL:        "https://api.openai.com/v1",
-		Model:          "gpt-4.1-mini",
+		Model:          codexauth.DefaultModel(),
 		OllamaURL:      "http://127.0.0.1:11434",
 		MaxToolRounds:  25,
-		LLMTimeoutSec:  120,
+		LLMTimeoutSec:  180,
 		BashTimeoutSec: 60,
 	}
 }
@@ -62,13 +66,38 @@ func Dir() (string, error) {
 }
 
 func (c Config) MissingAuth() error {
-	if c.Provider == ProviderOllama {
+	switch c.Provider {
+	case ProviderOllama:
 		return nil
+	case ProviderCodex:
+		if codexauth.LoggedIn() {
+			return nil
+		}
+		return fmt.Errorf("Problem: Codex is not logged in.\nCause:   no tokens in ~/.codex/auth.json.\nFix:     picogent login   (uses your ChatGPT Codex subscription)")
+	default:
+		if c.APIKeyResolved() != "" {
+			return nil
+		}
+		if codexauth.LoggedIn() {
+			return fmt.Errorf("Problem: no API key for provider %s.\nCause:   api_key / PICOGENT_API_KEY / OPENAI_API_KEY are empty.\nFix:     use Codex (the default) or export PICOGENT_API_KEY=sk-...", c.Provider)
+		}
+		return fmt.Errorf("Problem: no API key.\nCause:   api_key, PICOGENT_API_KEY, and OPENAI_API_KEY are all empty.\nFix:     picogent login  (Codex)  or  export PICOGENT_API_KEY=sk-...  or  picogent init --ollama")
 	}
-	if c.APIKeyResolved() != "" {
-		return nil
+}
+
+func NeedsSetup() bool {
+	path, err := Path()
+	if err != nil {
+		return true
 	}
-	return fmt.Errorf("Problem: no API key.\nCause:   api_key, PICOGENT_API_KEY, and OPENAI_API_KEY are all empty.\nFix:     picogent init, then export PICOGENT_API_KEY=sk-...  Or: picogent init --ollama")
+	if _, err := os.Stat(path); err != nil {
+		return true
+	}
+	cfg, err := Load()
+	if err != nil {
+		return true
+	}
+	return !cfg.SetupComplete
 }
 
 func Path() (string, error) {
@@ -88,7 +117,7 @@ func Load() (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return overlayEnv(overlayProject(cfg)), nil
+			return overlayEnv(preferCodex(overlayProject(cfg))), nil
 		}
 		return cfg, err
 	}
@@ -99,12 +128,15 @@ func Load() (Config, error) {
 		cfg.MaxToolRounds = 25
 	}
 	if cfg.LLMTimeoutSec <= 0 {
-		cfg.LLMTimeoutSec = 120
+		cfg.LLMTimeoutSec = 180
 	}
 	if cfg.BashTimeoutSec <= 0 {
 		cfg.BashTimeoutSec = 60
 	}
-	return overlayEnv(overlayProject(cfg)), nil
+	if cfg.Provider == "" {
+		cfg.Provider = ProviderCodex
+	}
+	return overlayEnv(preferCodex(overlayProject(cfg))), nil
 }
 
 func Save(cfg Config) error {
@@ -150,6 +182,19 @@ func (c Config) ChatBaseURL() string {
 	return "https://api.openai.com/v1"
 }
 
+func preferCodex(cfg Config) Config {
+	if cfg.Provider == ProviderOpenAI && cfg.APIKeyResolved() == "" && codexauth.LoggedIn() {
+		cfg.Provider = ProviderCodex
+		if cfg.Model == "" || cfg.Model == "gpt-4.1-mini" {
+			cfg.Model = codexauth.DefaultModel()
+		}
+	}
+	if cfg.Provider == ProviderCodex && (cfg.Model == "" || cfg.Model == "gpt-4.1-mini") {
+		cfg.Model = codexauth.DefaultModel()
+	}
+	return cfg
+}
+
 func overlayEnv(cfg Config) Config {
 	if v := os.Getenv("PICOGENT_MODEL"); v != "" {
 		cfg.Model = v
@@ -160,6 +205,14 @@ func overlayEnv(cfg Config) Config {
 	}
 	if v := os.Getenv("PICOGENT_MODE"); v == string(ModeSafe) || v == string(ModeFast) {
 		cfg.Mode = Mode(v)
+	}
+	switch strings.ToLower(os.Getenv("PICOGENT_PROVIDER")) {
+	case "codex":
+		cfg.Provider = ProviderCodex
+	case "openai":
+		cfg.Provider = ProviderOpenAI
+	case "ollama":
+		cfg.Provider = ProviderOllama
 	}
 	return cfg
 }

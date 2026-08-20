@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -45,5 +46,12 @@ func Build(cfg config.Config) (*agent.Agent, error) {
 }
 
 func NewClient(cfg config.Config) (llm.Client, error) {
-	return llm.NewOpenAI(cfg.ChatBaseURL(), cfg.APIKeyResolved(), cfg.Model, time.Duration(cfg.LLMTimeoutSec)*time.Second), nil
+	switch cfg.Provider {
+	case config.ProviderCodex:
+		return llm.NewCodex(cfg.Model), nil
+	case config.ProviderOllama, config.ProviderOpenAI:
+		return llm.NewOpenAI(cfg.ChatBaseURL(), cfg.APIKeyResolved(), cfg.Model, time.Duration(cfg.LLMTimeoutSec)*time.Second), nil
+	default:
+		return nil, fmt.Errorf("unknown provider %q (codex, openai, ollama)", cfg.Provider)
+	}
 }

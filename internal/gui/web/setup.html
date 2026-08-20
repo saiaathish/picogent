@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Set up Picogent</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="setup-page">
+  <header>
+    <div class="brand">Picogent</div>
+    <div class="meta">Setup</div>
+  </header>
+  <div class="setup-wrap">
+    <h1>Get this folder ready</h1>
+    <p class="lede">No extra app. Picogent installs the CLIs itself, then you log in here.</p>
+
+    <section>
+      <h2>Core pieces</h2>
+      <ul id="comps" class="comps"></ul>
+      <pre id="install-log" class="install-log" hidden></pre>
+      <button type="button" id="install" class="big">Install missing pieces</button>
+    </section>
+
+    <section>
+      <h2>Log in</h2>
+      <div id="logins" class="login-grid"></div>
+    </section>
+
+    <section>
+      <h2>This agent</h2>
+      <label>Folder
+        <input id="workspace" type="text" />
+      </label>
+      <label>Mode
+        <select id="mode">
+          <option value="safe">Safe — ask before writes</option>
+          <option value="fast">Fast — auto-edit inside the folder</option>
+        </select>
+      </label>
+      <label>Model
+        <input id="model" type="text" />
+      </label>
+      <button type="button" id="start" class="big">Start chatting</button>
+      <p id="finish-err" class="error-line" hidden></p>
+    </section>
+  </div>
+  <script src="/setup.js"></script>
+</body>
+</html>
