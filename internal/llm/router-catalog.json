@@ -1,5 +1,5 @@
 {
-  "version": "2026.2",
+  "version": "2026.3",
   "updated": "2026-08-19T00:00:00Z",
   "models": [
     {
@@ -7,32 +7,48 @@
       "display": "Luna",
       "tier": "light",
       "ecosystem": "codex",
-      "description": "Fast & affordable — linting, tests, docs",
-      "patterns": ["gpt-5\\.\\d+-luna", "gpt-\\d+\\.\\d+-luna"]
+      "description": "Fast & affordable — linting, tests, docs, bounded subtasks",
+      "patterns": ["gpt-5\\.\\d+-luna", "gpt-\\d+\\.\\d+-luna"],
+      "reasoning": {
+        "supported": ["none", "minimal", "low", "medium", "high", "max"],
+        "default": "low"
+      }
     },
     {
       "id": "gpt-5.6-terra",
       "display": "Terra",
       "tier": "standard",
       "ecosystem": "codex",
-      "description": "Balanced daily coding — implementation & refactors",
-      "patterns": ["gpt-5\\.\\d+-terra", "gpt-\\d+\\.\\d+-terra"]
+      "description": "Balanced daily coding — implementation & judgment-heavy work",
+      "patterns": ["gpt-5\\.\\d+-terra", "gpt-\\d+\\.\\d+-terra"],
+      "reasoning": {
+        "supported": ["low", "medium", "high", "xhigh"],
+        "default": "medium"
+      }
     },
     {
       "id": "gpt-5.6-sol",
       "display": "Sol",
       "tier": "heavy",
       "ecosystem": "codex",
-      "description": "Flagship — planning, architecture, hard problems",
-      "patterns": ["gpt-5\\.\\d+-sol", "gpt-5\\.\\d+-soul", "gpt-\\d+\\.\\d+-sol", "^gpt-5\\.\\d+$"]
+      "description": "Flagship orchestrator — planning, architecture, audit/review",
+      "patterns": ["gpt-5\\.\\d+-sol", "gpt-5\\.\\d+-soul", "gpt-\\d+\\.\\d+-sol", "^gpt-5\\.\\d+$"],
+      "reasoning": {
+        "supported": ["medium", "high", "xhigh", "max"],
+        "default": "high"
+      }
     },
     {
       "id": "claude-haiku-4-5",
       "display": "Haiku 4.5",
       "tier": "light",
       "ecosystem": "quadcode",
-      "description": "Fast loops — quick edits and simple tasks",
-      "patterns": ["claude-.*haiku", "haiku-\\d"]
+      "description": "Fast loops — quick edits, exploration, delegate subtasks",
+      "patterns": ["claude-.*haiku", "haiku-\\d"],
+      "reasoning": {
+        "supported": ["low", "medium"],
+        "default": "low"
+      }
     },
     {
       "id": "claude-sonnet-5",
@@ -40,15 +56,23 @@
       "tier": "standard",
       "ecosystem": "quadcode",
       "description": "Daily coding — best speed vs quality balance",
-      "patterns": ["claude-sonnet-5", "claude-.*sonnet-5"]
+      "patterns": ["claude-sonnet-5", "claude-.*sonnet-5"],
+      "reasoning": {
+        "supported": ["low", "medium", "high"],
+        "default": "high"
+      }
     },
     {
       "id": "claude-opus-5",
       "display": "Opus 5",
       "tier": "heavy",
       "ecosystem": "quadcode",
-      "description": "Complex agentic work and deep reasoning",
-      "patterns": ["claude-opus-5", "claude-.*opus-5"]
+      "description": "Complex agentic work, orchestration, deep reasoning",
+      "patterns": ["claude-opus-5", "claude-.*opus-5"],
+      "reasoning": {
+        "supported": ["low", "medium", "high", "xhigh", "max"],
+        "default": "high"
+      }
     },
     {
       "id": "claude-fable-5",
@@ -57,7 +81,11 @@
       "ecosystem": "quadcode",
       "description": "Premium tier — longest, hardest tasks (API billing)",
       "patterns": ["claude-fable-5", "claude-.*fable"],
-      "gated": true
+      "gated": true,
+      "reasoning": {
+        "supported": ["high", "xhigh", "max"],
+        "default": "max"
+      }
     }
   ]
 }

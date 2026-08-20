@@ -46,7 +46,9 @@ func (r *Router) SetUserPrompt(p string) {
 }
 
 func (r *Router) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
-	if !r.Enabled || r.Advisor == nil {
+	mustRoute := IsAutoModel(req.Model)
+	if (!r.Enabled && !mustRoute) || r.Advisor == nil {
+		req.Model = r.guardModel(req)
 		return r.Backend.Chat(ctx, req)
 	}
 
@@ -60,14 +62,25 @@ func (r *Router) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error
 	r.mu.Unlock()
 
 	dec := r.Advisor.Decide(ctx, RouteInput{
-		Prompt:     prompt,
-		ToolRound:  toolRound,
-		Escalate:   escalate,
-		Ecosystem:  r.Ecosystem,
-		AllowFable: r.AllowFable,
+		Prompt:       prompt,
+		ToolRound:    toolRound,
+		Escalate:     escalate,
+		Ecosystem:    r.Ecosystem,
+		AllowFable:   r.AllowFable,
+		HasImages:    MessageHasImages(req.Messages),
+		HasFiles:     MessageHasFiles(req.Messages),
+		TaskMode:     req.TaskMode,
+		ReadOnly:     req.ReadOnly,
+		LastToolKind: req.LastToolKind,
 	})
 
 	req.Model = dec.Model
+	if dec.Reasoning != "" {
+		req.Reasoning = dec.Reasoning
+	}
+	if req.Model == "" {
+		req.Model = r.guardModel(req)
+	}
 
 	r.mu.Lock()
 	r.last = dec
@@ -87,4 +100,24 @@ func (r *Router) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error
 	r.failures = 0
 	r.mu.Unlock()
 	return out, nil
+}
+
+func (r *Router) guardModel(req ChatRequest) string {
+	if !IsAutoModel(req.Model) && req.Model != "" {
+		return req.Model
+	}
+	cat := InitCatalog(false)
+	prompt := LatestUserPrompt(req.Messages)
+	r.mu.Lock()
+	if prompt == "" {
+		prompt = r.userPrompt
+	}
+	r.mu.Unlock()
+	if id := ResolveRequestModel(cat, r.Ecosystem, r.AllowFable, req, prompt, req.ToolRound, req.Escalate); id != "" {
+		return id
+	}
+	if m, ok := cat.ModelForTier(r.Ecosystem, TierStandard, false); ok {
+		return m.ID
+	}
+	return req.Model
 }

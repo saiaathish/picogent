@@ -21,6 +21,7 @@ const (
 type Request struct {
 	Tool             string
 	Summary          string
+	Hint             string
 	Path             string
 	Command          string
 	Destructive      bool
@@ -105,6 +106,9 @@ func autoAllow(mode config.Mode, req Request) bool {
 	case "git":
 		return req.Command == "status" || req.Command == "diff"
 	}
+	if req.Tool == "mcp_manage" {
+		return req.Command == "list" || req.Command == "suggest"
+	}
 	if strings.HasPrefix(req.Tool, "mcp_") {
 		if mode == config.ModeFast {
 			return true
@@ -113,7 +117,7 @@ func autoAllow(mode config.Mode, req Request) bool {
 	}
 	if mode == config.ModeFast {
 		switch req.Tool {
-		case "write_file", "edit_file", "bash", "web_fetch":
+		case "write_file", "edit_file", "bash", "web_fetch", "verify":
 			return true
 		}
 	}

@@ -15,19 +15,19 @@ const (
 
 // Item is a discoverable MCP server, skill, or plugin.
 type Item struct {
-	ID           string                 `json:"id"`
-	Name         string                 `json:"name"`
-	Kind         Kind                   `json:"kind"`
-	Description  string                 `json:"description"`
-	Keywords     []string               `json:"keywords"`
-	Source       string                 `json:"source"`
-	Stars        int                    `json:"stars,omitempty"`
-	AuthRequired bool                   `json:"auth_required,omitempty"`
-	AuthHint     string                 `json:"auth_hint,omitempty"`
+	ID           string                  `json:"id"`
+	Name         string                  `json:"name"`
+	Kind         Kind                    `json:"kind"`
+	Description  string                  `json:"description"`
+	Keywords     []string                `json:"keywords"`
+	Source       string                  `json:"source"`
+	Stars        int                     `json:"stars,omitempty"`
+	AuthRequired bool                    `json:"auth_required,omitempty"`
+	AuthHint     string                  `json:"auth_hint,omitempty"`
 	MCP          *mcpbridge.ServerConfig `json:"mcp,omitempty"`
-	SkillRepo    string                 `json:"skill_repo,omitempty"`
-	SkillPath    string                 `json:"skill_path,omitempty"`
-	PluginCmd    string                 `json:"plugin_cmd,omitempty"`
+	SkillRepo    string                  `json:"skill_repo,omitempty"`
+	SkillPath    string                  `json:"skill_path,omitempty"`
+	PluginCmd    string                  `json:"plugin_cmd,omitempty"`
 }
 
 // Catalog returns the built-in curated extension catalog.
@@ -35,10 +35,10 @@ func Catalog() []Item {
 	return []Item{
 		{
 			ID: "mcp-github", Name: "GitHub", Kind: KindMCP,
-			Description: "Browse repos, issues, and pull requests from GitHub.",
-			Keywords:    []string{"github", "pull request", "pr", "issue", "repo", "commit"},
-			Source:      "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
-			Stars:       4200,
+			Description:  "Browse repos, issues, and pull requests from GitHub.",
+			Keywords:     []string{"github", "pull request", "pr", "issue", "repo", "commit"},
+			Source:       "https://github.com/modelcontextprotocol/servers/tree/main/src/github",
+			Stars:        4200,
 			AuthRequired: true,
 			AuthHint:     "Set GITHUB_PERSONAL_ACCESS_TOKEN in MCP env or authorize when prompted.",
 			MCP: &mcpbridge.ServerConfig{
@@ -49,10 +49,10 @@ func Catalog() []Item {
 		},
 		{
 			ID: "mcp-brave-search", Name: "Brave Search", Kind: KindMCP,
-			Description: "Search the web for docs, errors, and current information.",
-			Keywords:    []string{"search", "web", "google", "lookup", "docs", "documentation", "api"},
-			Source:      "https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search",
-			Stars:       3800,
+			Description:  "Search the web for docs, errors, and current information.",
+			Keywords:     []string{"search", "web", "google", "lookup", "docs", "documentation", "api"},
+			Source:       "https://github.com/modelcontextprotocol/servers/tree/main/src/brave-search",
+			Stars:        3800,
 			AuthRequired: true,
 			AuthHint:     "Get a Brave Search API key and set BRAVE_API_KEY.",
 			MCP: &mcpbridge.ServerConfig{
@@ -74,10 +74,10 @@ func Catalog() []Item {
 		},
 		{
 			ID: "mcp-postgres", Name: "PostgreSQL", Kind: KindMCP,
-			Description: "Query and inspect PostgreSQL databases.",
-			Keywords:    []string{"postgres", "postgresql", "sql", "database", "db", "query"},
-			Source:      "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
-			Stars:       2900,
+			Description:  "Query and inspect PostgreSQL databases.",
+			Keywords:     []string{"postgres", "postgresql", "sql", "database", "db", "query"},
+			Source:       "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres",
+			Stars:        2900,
 			AuthRequired: true,
 			AuthHint:     "Set POSTGRES_CONNECTION_STRING to your database URL.",
 			MCP: &mcpbridge.ServerConfig{
@@ -88,10 +88,10 @@ func Catalog() []Item {
 		},
 		{
 			ID: "mcp-slack", Name: "Slack", Kind: KindMCP,
-			Description: "Send messages and read channels in Slack.",
-			Keywords:    []string{"slack", "message", "channel", "notify", "notification"},
-			Source:      "https://github.com/modelcontextprotocol/servers/tree/main/src/slack",
-			Stars:       2100,
+			Description:  "Send messages and read channels in Slack.",
+			Keywords:     []string{"slack", "message", "channel", "notify", "notification"},
+			Source:       "https://github.com/modelcontextprotocol/servers/tree/main/src/slack",
+			Stars:        2100,
 			AuthRequired: true,
 			AuthHint:     "Set SLACK_BOT_TOKEN and SLACK_TEAM_ID.",
 			MCP: &mcpbridge.ServerConfig{
@@ -105,16 +105,26 @@ func Catalog() []Item {
 		},
 		{
 			ID: "mcp-linear", Name: "Linear", Kind: KindMCP,
-			Description: "Manage Linear issues and projects.",
-			Keywords:    []string{"linear", "ticket", "issue", "task", "project management"},
-			Source:      "https://github.com/modelcontextprotocol/servers/tree/main/src/linear",
-			Stars:       1800,
+			Description:  "Manage Linear issues and projects.",
+			Keywords:     []string{"linear", "ticket", "issue", "task", "project management"},
+			Source:       "https://github.com/modelcontextprotocol/servers/tree/main/src/linear",
+			Stars:        1800,
 			AuthRequired: true,
 			AuthHint:     "Set LINEAR_API_KEY from Linear settings.",
 			MCP: &mcpbridge.ServerConfig{
 				Command: "npx",
 				Args:    []string{"-y", "@modelcontextprotocol/server-linear"},
 				Env:     map[string]string{"LINEAR_API_KEY": ""},
+			},
+		},
+		{
+			ID: "mcp-browseros", Name: "BrowserOS", Kind: KindMCP,
+			Description: "Control a real browser for testing sites you are signed into.",
+			Keywords:    []string{"browseros", "browser", "tab", "snapshot", "navigate", "click", "website"},
+			Source:      "https://browseros.com",
+			MCP: &mcpbridge.ServerConfig{
+				URL:  "http://127.0.0.1:9010/mcp",
+				Type: "http",
 			},
 		},
 		{

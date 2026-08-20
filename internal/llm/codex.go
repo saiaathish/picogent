@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -59,13 +60,18 @@ func NewCodex(model string) *Codex {
 }
 
 type responsesReq struct {
-	Model        string          `json:"model"`
-	Instructions string          `json:"instructions,omitempty"`
-	Input        []any           `json:"input"`
-	Tools        []responsesTool `json:"tools,omitempty"`
-	ToolChoice   string          `json:"tool_choice,omitempty"`
-	Store        bool            `json:"store"`
-	Stream       bool            `json:"stream"`
+	Model        string             `json:"model"`
+	Instructions string             `json:"instructions,omitempty"`
+	Input        []any              `json:"input"`
+	Tools        []responsesTool    `json:"tools,omitempty"`
+	ToolChoice   string             `json:"tool_choice,omitempty"`
+	Store        bool               `json:"store"`
+	Stream       bool               `json:"stream"`
+	Reasoning    *responsesReasoning `json:"reasoning,omitempty"`
+}
+
+type responsesReasoning struct {
+	Effort string `json:"effort"`
 }
 
 type responsesTool struct {
@@ -91,6 +97,12 @@ func (c *Codex) chatOnce(ctx context.Context, req ChatRequest, retried bool) (Ch
 		return ChatResponse{}, err
 	}
 	model := req.Model
+	if IsAutoModel(model) {
+		model = c.Model
+	}
+	if IsAutoModel(model) {
+		model = codexauth.DefaultModel()
+	}
 	if model == "" {
 		model = c.Model
 	}
@@ -102,6 +114,9 @@ func (c *Codex) chatOnce(ctx context.Context, req ChatRequest, retried bool) (Ch
 		Tools:        toResponsesTools(req.Tools),
 		Store:        false,
 		Stream:       true,
+	}
+	if req.Reasoning != "" {
+		body.Reasoning = &responsesReasoning{Effort: string(req.Reasoning)}
 	}
 	if len(body.Tools) > 0 {
 		body.ToolChoice = "auto"
@@ -178,12 +193,9 @@ func toResponsesInput(msgs []Message) (instructions string, input []any) {
 			instructions += m.Content
 		case "user":
 			input = append(input, map[string]any{
-				"type": "message",
-				"role": "user",
-				"content": []map[string]any{{
-					"type": "input_text",
-					"text": m.Content,
-				}},
+				"type":    "message",
+				"role":    "user",
+				"content": responsesUserContent(m.Content, m.Parts),
 			})
 		case "assistant":
 			if strings.TrimSpace(m.Content) != "" {
@@ -218,6 +230,39 @@ func toResponsesInput(msgs []Message) (instructions string, input []any) {
 		}
 	}
 	return instructions, input
+}
+
+func responsesUserContent(text string, parts []Part) []map[string]any {
+	if len(parts) == 0 {
+		return []map[string]any{{"type": "input_text", "text": text}}
+	}
+	var content []map[string]any
+	if t := strings.TrimSpace(text); t != "" {
+		content = append(content, map[string]any{"type": "input_text", "text": t})
+	}
+	for _, p := range parts {
+		switch p.Type {
+		case "image":
+			content = append(content, map[string]any{
+				"type":      "input_image",
+				"image_url": fmt.Sprintf("data:%s;base64,%s", p.MIME, base64.StdEncoding.EncodeToString(p.Data)),
+			})
+		case "file":
+			content = append(content, map[string]any{
+				"type":      "input_file",
+				"filename":  p.Name,
+				"file_data": base64.StdEncoding.EncodeToString(p.Data),
+			})
+		case "text":
+			if p.Text != "" {
+				content = append(content, map[string]any{"type": "input_text", "text": p.Text})
+			}
+		}
+	}
+	if len(content) == 0 {
+		return []map[string]any{{"type": "input_text", "text": text}}
+	}
+	return content
 }
 
 func readResponsesStream(r io.Reader) (Message, error) {

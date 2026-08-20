@@ -307,12 +307,11 @@ async function installExt(id, btn, row) {
 function renderStats(stats) {
   const el = document.getElementById("ext-stats");
   if (!el) return;
-  const n = stats?.plugins || stats?.total;
-  if (n) {
-    el.textContent = n.toLocaleString() + "+ Claude Code extensions · on demand";
-  } else {
-    el.textContent = "Claude Code library · on demand";
-  }
+  const bits = [];
+  if (stats?.plugins) bits.push(stats.plugins.toLocaleString() + " plugins");
+  if (stats?.mcp) bits.push(stats.mcp + " MCP");
+  if (stats?.skills) bits.push(stats.skills + " skills");
+  el.textContent = bits.length ? bits.join(" · ") : "";
 }
 
 async function browseExtensions(reset) {

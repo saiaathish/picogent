@@ -7,21 +7,30 @@ import (
 
 // RouteInput is what the advisor uses to pick a tier.
 type RouteInput struct {
-	Prompt     string
-	ToolRound  int
-	Escalate   bool
-	Ecosystem  Ecosystem
-	AllowFable bool
+	Prompt       string
+	ToolRound    int
+	Escalate     bool
+	Ecosystem    Ecosystem
+	AllowFable   bool
+	HasImages    bool
+	HasFiles     bool
+	TaskKind     TaskKind // optional; inferred when empty
+	TaskMode     string   // agent | ask | plan | debug
+	ReadOnly     bool
+	LastToolKind string // read | write | shell | other — from prior tool round
 }
 
 // RouteDecision is the advisor's output.
 type RouteDecision struct {
-	Tier    Tier   `json:"tier"`
-	Model   string `json:"model"`
-	Label   string `json:"label"`
-	Reason  string `json:"reason"`
-	Score   int    `json:"score"`
-	Advisor string `json:"advisor"` // heuristic | llm
+	Tier      Tier           `json:"tier"`
+	Model     string         `json:"model"`
+	Label     string         `json:"label"`
+	Reason    string         `json:"reason"`
+	Score     int            `json:"score"`
+	Advisor   string         `json:"advisor"` // heuristic | llm
+	Reasoning ReasoningLevel `json:"reasoning"`
+	TaskKind  TaskKind       `json:"task_kind"`
+	RouteMode RouteMode      `json:"route_mode"`
 }
 
 // Advisor classifies task complexity.
@@ -55,6 +64,15 @@ func (a *Advisor) Decide(ctx context.Context, in RouteInput) RouteDecision {
 	}
 
 	score := a.scorePrompt(in.Prompt)
+	if in.HasImages {
+		score += 2
+		if score < 4 {
+			score = 4 // images/PDFs → at least standard tier (Terra)
+		}
+	}
+	if in.HasFiles && !in.HasImages {
+		score += 1
+	}
 	tier := tierFromScore(score)
 
 	if a.UseLLMAdvisor && ambiguous(score) {
@@ -68,17 +86,41 @@ func (a *Advisor) Decide(ctx context.Context, in RouteInput) RouteDecision {
 }
 
 func (a *Advisor) finish(in RouteInput, tier Tier, kind, reason string, score int, advisor string) RouteDecision {
+	taskKind := InferTaskKind(in)
+	routeMode := DecideRouteMode(tier, taskKind, in.ToolRound, score, in.Escalate)
+	tier = AdjustTierForRoute(in.Ecosystem, tier, routeMode, taskKind, in.AllowFable)
+	reasoning := DecideReasoning(in.Ecosystem, tier, taskKind, in.ToolRound, in.Escalate, score)
+
 	if in.AllowFable && tier == TierPremium {
 		if m, ok := a.Catalog.ModelForTier(in.Ecosystem, TierPremium, true); ok {
-			return RouteDecision{Tier: TierPremium, Model: m.ID, Label: m.Display, Reason: reason, Score: score, Advisor: advisor}
+			return a.buildDecision(in, TierPremium, m, reason, kind, score, advisor, taskKind, routeMode, reasoning)
 		}
 	}
 	if m, ok := a.Catalog.ModelForTier(in.Ecosystem, tier, in.AllowFable); ok {
-		return RouteDecision{Tier: tier, Model: m.ID, Label: m.Display, Reason: reason + " (" + kind + ")", Score: score, Advisor: advisor}
+		return a.buildDecision(in, tier, m, reason, kind, score, advisor, taskKind, routeMode, reasoning)
 	}
 	// Last resort.
 	m, _ := a.Catalog.ModelForTier(in.Ecosystem, TierStandard, false)
-	return RouteDecision{Tier: TierStandard, Model: m.ID, Label: m.Display, Reason: "fallback to standard tier", Score: score, Advisor: advisor}
+	return a.buildDecision(in, TierStandard, m, "fallback to standard tier", kind, score, advisor, taskKind, routeMode, reasoning)
+}
+
+func (a *Advisor) buildDecision(in RouteInput, tier Tier, m ModelEntry, reason, kind string, score int, advisor string, taskKind TaskKind, routeMode RouteMode, reasoning ReasoningLevel) RouteDecision {
+	fullReason := reason + " (" + kind + ")"
+	if routeMode != RouteSolo {
+		fullReason += "; route=" + string(routeMode)
+	}
+	fullReason += "; task=" + string(taskKind) + "; effort=" + string(reasoning)
+	return RouteDecision{
+		Tier:      tier,
+		Model:     m.ID,
+		Label:     ReasoningLabel(m.Display, reasoning),
+		Reason:    fullReason,
+		Score:     score,
+		Advisor:   advisor,
+		Reasoning: reasoning,
+		TaskKind:  taskKind,
+		RouteMode: routeMode,
+	}
 }
 
 func tierFromScore(score int) Tier {
@@ -120,6 +162,10 @@ func (a *Advisor) scorePrompt(prompt string) int {
 		"test ", "unit test", "fix test", "rename", "whitespace", "import ",
 		"what is", "explain this line", "quick", "small fix", "one-liner",
 	}
+	vision := []string{
+		"this image", "the image", "screenshot", "what's in", "what is in",
+		"describe the image", "look at this", "attached image", "see the photo",
+	}
 	heavy := []string{
 		"architect", "architecture", "design system", "refactor entire", "migrate",
 		"plan", "roadmap", "strategy", "complex", "multi-file", "across the codebase",
@@ -131,6 +177,11 @@ func (a *Advisor) scorePrompt(prompt string) int {
 	for _, k := range light {
 		if strings.Contains(p, k) {
 			score -= 2
+		}
+	}
+	for _, k := range vision {
+		if strings.Contains(p, k) {
+			score += 2
 		}
 	}
 	for _, k := range heavy {

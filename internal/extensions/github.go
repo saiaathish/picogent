@@ -49,9 +49,13 @@ func Browse(kind Kind, query string, page int, installed map[string]bool) ([]Sea
 	filtered := FilterClaude(claudeItems, kind, query)
 	out = append(out, filtered...)
 
-	// Local Cursor/Claude skills count.
-	if n := countLocalSkills(); n > 0 {
-		stats.Skills += n
+	// Local Cursor/Claude skills.
+	localSkills := LocalSkillResults(query, installed)
+	if kind == "" || kind == KindSkill {
+		out = append(out, localSkills...)
+		for range localSkills {
+			stats.Skills++
+		}
 	}
 
 	stats.Total = stats.Plugins + stats.MCP + stats.Skills
@@ -129,7 +133,7 @@ func countLocalSkills() int {
 func AssistantFind(workflow string, installed map[string]bool) (string, []SearchResult) {
 	wf := strings.TrimSpace(workflow)
 	if wf == "" {
-		return "Describe your workflow — I'll pick MCPs, plugins, and skills from the Claude Code library.", nil
+		return "Tell me what you're building and I'll suggest MCP servers, plugins, and skills.", nil
 	}
 
 	var items []SearchResult
@@ -151,6 +155,7 @@ func AssistantFind(workflow string, installed map[string]bool) (string, []Search
 
 	claudeItems, _ := LoadClaudeLibrary()
 	add(FilterClaude(claudeItems, "", wf))
+	add(LocalSkillResults(wf, installed))
 
 	sort.SliceStable(items, func(i, j int) bool {
 		scoreI := matchScore(strings.ToLower(wf), items[i].Keywords) + items[i].Stars/100 + reliabilityRank(items[i].Reliability)*10
@@ -161,9 +166,9 @@ func AssistantFind(workflow string, installed map[string]bool) (string, []Search
 		items = items[:8]
 	}
 
-	msg := fmt.Sprintf("Found %d match%s — PicoGent will load these only when needed.", len(items), plural(len(items)))
+	msg := fmt.Sprintf("Found %d match%s. Picogent loads these only when you need them.", len(items), plural(len(items)))
 	if len(items) == 0 {
-		msg = "No exact matches. Browse the Claude Code library below or try different keywords."
+		msg = "No close matches yet. Try different keywords or browse below."
 	}
 	return msg, items
 }

@@ -36,7 +36,7 @@ func (p *Pool) EnsureForPrompt(prompt string) ([]string, error) {
 	claudeItems, _ := LoadClaudeLibrary()
 	lower := strings.ToLower(prompt)
 	for _, it := range claudeItems {
-		if matchScore(lower, it.Keywords) > 0 && !installed[it.ID] {
+		if matchScore(lower, it.Keywords) >= 8 && !installed[it.ID] {
 			recs = append(recs, Item{
 				ID: it.ID, Name: it.Name, Kind: it.Kind,
 				Description: it.Description, Keywords: it.Keywords,

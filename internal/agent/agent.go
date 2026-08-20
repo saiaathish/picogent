@@ -8,28 +8,31 @@ import (
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
+	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/tools"
+	"github.com/saiaathish/picogent/internal/trace"
 )
 
-const systemPromptBase = `You are Picogent — a coding agent in the Claude Code mold, kept simple (80/20).
+const systemPromptBase = `You are Picogent — a small coding agent.
 
-Core workflow:
-1. When the user asks you to do something, DO it with tools. Do not tell them to run commands, open apps, or click links if you have a tool for it.
-2. Explore before you edit: glob/grep/read_file first.
-3. Prefer edit_file for small changes; write_file for new files.
-4. Keep diffs small. Do not invent files you have not read.
-5. Never git push. Never run destructive shell unless the user asked.
-6. After file changes, end with three short lines:
+Do the work yourself. Never tell the user to type /goal, /plan, /debug, /mcp, or to edit config files.
+
+1. Explore with glob/grep/read_file, then edit.
+2. For long jobs, keep going until done. When fully done, start with "Goal complete:".
+3. For bugs: hypothesize, gather evidence, fix, then call verify.
+4. For large changes: a short plan via todo_write, then implement (unless they only asked a question).
+5. If you need GitHub, a browser, Slack, Postgres, or web search, call mcp_manage to add it. Remove it when finished.
+6. After code changes, call verify.
+7. Never git push. Never destructive shell unless asked.
+8. After file changes, end with:
    Changed: ...
    Run: ...
-   Undo: ... (git checkout -- <file> or delete the new file)
+   Undo: ...
 
-Built-in tools: read_file, list_dir, write_file, edit_file, glob, grep, bash, git, web_fetch, todo_write.
-Use todo_write for multi-step tasks (like Claude Code).
-
-Be direct. No filler. No "you can run..." — just run it.`
+Tools: read_file, list_dir, write_file, edit_file, glob, grep, bash, git, web_fetch, todo_write, mcp_manage, verify.
+Be direct. No filler.`
 
 const systemPromptMCP = `
 
@@ -55,6 +58,7 @@ type Result struct {
 	FilesChanged []string
 	ToolRounds   int
 	Context      ctxmgr.Stats
+	GoalDone     bool
 }
 
 type Agent struct {
@@ -64,10 +68,20 @@ type Agent struct {
 	Gate         *perm.Gate
 	ProjectRules string
 	SkillRules   string
+	TaskMode     TaskMode
+	Goal         string
+	Trace        *trace.Log
 }
 
 func New(cfg config.Config, client llm.Client, reg *tools.Registry, gate *perm.Gate) *Agent {
-	return &Agent{CFG: cfg, LLM: client, Tools: reg, Gate: gate}
+	return &Agent{CFG: cfg, LLM: client, Tools: reg, Gate: gate, TaskMode: ParseTaskMode(cfg.TaskMode)}
+}
+
+func (a *Agent) SetTaskMode(m TaskMode) {
+	if m.Valid() {
+		a.TaskMode = m
+		a.CFG.TaskMode = string(m)
+	}
 }
 
 func (a *Agent) systemPrompt() string {
@@ -84,13 +98,20 @@ func (a *Agent) systemPrompt() string {
 	if skills := strings.TrimSpace(a.SkillRules); skills != "" {
 		p += "\n\n" + skills
 	}
+	if a.TaskMode.Valid() && a.TaskMode != TaskAgent {
+		p += a.TaskMode.Prompt()
+	}
+	if suffix := goal.PromptSuffix(a.Goal); suffix != "" {
+		p += suffix
+	}
 	return p
 }
 
-func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev EventHandler) ([]llm.Message, Result, error) {
+func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message, ev EventHandler) ([]llm.Message, Result, error) {
 	if ev == nil {
 		ev = NopHandler{}
 	}
+	_ = a.Trace.Append("turn_start", "", user.Content, nil, 0)
 	if err := a.CFG.MissingAuth(); err != nil {
 		ev.OnError(err)
 		return history, Result{}, err
@@ -98,12 +119,13 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 	a.Gate.ResetTurn()
 	a.Gate.Prompt = ev.OnNeedPermission
 
+	userText := strings.TrimSpace(user.Content)
 	msgs := make([]llm.Message, 0, len(history)+3)
 	if len(history) == 0 || history[0].Role != "system" {
 		msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt()})
 	}
 	msgs = append(msgs, history...)
-	msgs = append(msgs, llm.Message{Role: "user", Content: user})
+	msgs = append(msgs, user)
 	budget := ctxmgr.BudgetForModel(a.CFG.Model)
 	compactMsgs, ctxStats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
 	msgs = compactMsgs
@@ -111,17 +133,21 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 	var res Result
 	res.Context = ctxStats
 	changed := map[string]struct{}{}
+	lastToolKind := ""
 
 	for round := 0; round < a.CFG.MaxToolRounds; round++ {
 		if r, ok := a.LLM.(*llm.Router); ok {
-			r.SetUserPrompt(user)
+			r.SetUserPrompt(userText)
 		}
 		out, err := a.LLM.Chat(ctx, llm.ChatRequest{
-			Model:     a.CFG.Model,
-			Messages:  msgs,
-			Tools:     a.Tools.Specs(),
-			ToolRound: round,
-			Escalate:  round >= 6,
+			Model:        a.CFG.Model,
+			Messages:     msgs,
+			Tools:        a.Tools.Specs(),
+			ToolRound:    round,
+			Escalate:     round >= 6,
+			TaskMode:     string(a.TaskMode),
+			ReadOnly:     a.TaskMode.ReadOnly(),
+			LastToolKind: lastToolKind,
 		})
 		if err != nil {
 			wrapped := userErr("the model call failed", err)
@@ -141,6 +167,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 			}
 			res.Text = text
 			res.ToolRounds = round
+			res.GoalDone = goal.LooksComplete(text)
+			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
 			for p := range changed {
 				res.FilesChanged = append(res.FilesChanged, p)
 			}
@@ -160,6 +188,12 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 
 		for _, call := range msg.ToolCalls {
 			ev.OnToolStart(call)
+			_ = a.Trace.Append("tool_start", call.Name, call.Arguments, nil, 0)
+			if blocked, reason := a.TaskMode.BlockTool(call.Name); blocked {
+				ev.OnToolEnd(call, reason, nil)
+				pending = append(pending, executed{call: call, text: reason})
+				continue
+			}
 			tool, ok := a.Tools.Get(call.Name)
 			if !ok {
 				err := fmt.Errorf("unknown tool %s", call.Name)
@@ -168,6 +202,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 				continue
 			}
 			req := tool.Permission(call.Arguments, a.Tools.Ctx)
+			req.Hint = perm.EnrichHint(req, call.Arguments)
 			dec, err := a.Gate.Check(ctx, req)
 			if err != nil {
 				ev.OnToolEnd(call, "", err)
@@ -198,6 +233,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 					pending[i].text = "error: " + err.Error()
 				}
 				ev.OnToolEnd(call, outText, err)
+				ok := err == nil
+				_ = a.Trace.Append("tool_end", call.Name, outText, &ok, 0)
 			}(i)
 		}
 		wg.Wait()
@@ -211,6 +248,9 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 				content = ex.err.Error()
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
+		}
+		if len(pending) > 0 {
+			lastToolKind = classifyToolKind(pending[len(pending)-1].call.Name)
 		}
 		if len(msgs) > 35 {
 			compactMsgs, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)

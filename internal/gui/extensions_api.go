@@ -99,9 +99,9 @@ func (s *server) extensionsBrowse(w http.ResponseWriter, _ *http.Request, query,
 	items = extensions.ActiveStatus(items, cfg.Extensions.EssentialPlugins, cfg.Extensions.ActiveTransient)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"items": items,
-		"stats": stats,
-		"page":  page,
+		"items":   items,
+		"stats":   stats,
+		"page":    page,
 		"library": "claude-official",
 	})
 }
@@ -157,7 +157,7 @@ func (s *server) extensionsInstall(w http.ResponseWriter, id string, approved bo
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"needs_approval": true,
-			"item": extensions.ToSearchResults([]extensions.Item{*it}, nil)[0],
+			"item":           extensions.ToSearchResults([]extensions.Item{*it}, nil)[0],
 		})
 		return
 	}
@@ -327,7 +327,7 @@ func (s *server) maybeRecommendExtensions(prompt string) {
 	claudeItems, _ := extensions.LoadClaudeLibrary()
 	lower := strings.ToLower(prompt)
 	for _, sr := range claudeItems {
-		if extensions.MatchScore(lower, sr.Keywords) > 0 && !installed[sr.ID] {
+		if extensions.MatchScore(lower, sr.Keywords) >= 8 && !installed[sr.ID] {
 			recs = append(recs, extensions.Item{
 				ID: sr.ID, Name: sr.Name, Kind: sr.Kind,
 				Description: sr.Description, Keywords: sr.Keywords,
@@ -335,10 +335,9 @@ func (s *server) maybeRecommendExtensions(prompt string) {
 		}
 	}
 
-	if len(recs) == 0 {
-		return
+	if len(recs) > 1 {
+		recs = recs[:1]
 	}
-
 	for _, it := range recs {
 		s.emit(event{
 			Type:    "extension_recommend",

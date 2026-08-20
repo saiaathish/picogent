@@ -40,6 +40,9 @@ type RouterConfig struct {
 	LastTier        string `yaml:"last_tier,omitempty"`
 	LastModel       string `yaml:"last_model,omitempty"`
 	LastReason      string `yaml:"last_reason,omitempty"`
+	LastReasoning   string `yaml:"last_reasoning,omitempty"`
+	LastTaskKind    string `yaml:"last_task_kind,omitempty"`
+	LastRouteMode   string `yaml:"last_route_mode,omitempty"`
 }
 
 // ExtensionsConfig tracks installed extensions and permission preferences.
@@ -55,6 +58,7 @@ type ExtensionsConfig struct {
 type Config struct {
 	Workspace      string           `yaml:"workspace"`
 	Mode           Mode             `yaml:"mode"`
+	TaskMode       string           `yaml:"task_mode"`
 	Provider       Provider         `yaml:"provider"`
 	BaseURL        string           `yaml:"base_url"`
 	APIKey         string           `yaml:"api_key"`
@@ -65,6 +69,7 @@ type Config struct {
 	LLMTimeoutSec  int              `yaml:"llm_timeout_sec"`
 	BashTimeoutSec int              `yaml:"bash_timeout_sec"`
 	SetupComplete  bool             `yaml:"setup_complete"`
+	AutoTaskMode   *bool            `yaml:"auto_task_mode"`
 	Router         RouterConfig     `yaml:"router"`
 	Extensions     ExtensionsConfig `yaml:"extensions"`
 }
@@ -73,6 +78,7 @@ func Default() Config {
 	return Config{
 		Workspace:      ".",
 		Mode:           ModeSafe,
+		TaskMode:       "agent",
 		Provider:       ProviderCodex,
 		BaseURL:        "https://api.openai.com/v1",
 		Model:          ModelAuto,
@@ -227,6 +233,14 @@ func (c Config) RouterEcosystem() string {
 
 func (c Config) FableAllowed() bool {
 	return c.Router.AllowFable && c.Router.FableConfirmed && c.AnthropicKeyResolved() != ""
+}
+
+// AutoTaskModeOn reports whether Picogent should infer plan/debug/ask/goal from messages.
+func (c Config) AutoTaskModeOn() bool {
+	if c.AutoTaskMode == nil {
+		return true
+	}
+	return *c.AutoTaskMode
 }
 
 // AutoRouter reports whether the auto model router should run.

@@ -52,9 +52,46 @@ func Resolve(workspace, line string) (Kind, string) {
 		return Local, "resume"
 	case "commands":
 		return Local, "commands"
+	case "agent":
+		return Local, "task:agent"
+	case "ask":
+		return Local, "task:ask"
+	case "plan":
+		return Local, "task:plan"
+	case "debug":
+		return Local, "task:debug"
+	case "goal":
+		rest := strings.TrimSpace(strings.TrimPrefix(line, parts[0]))
+		if rest == "" {
+			return Local, "goal:show"
+		}
+		if strings.EqualFold(rest, "clear") {
+			return Local, "goal:clear"
+		}
+		return Local, "goal:set:" + rest
 	default:
 		return Unknown, line
 	}
+}
+
+type Item struct {
+	Name   string `json:"name"`
+	Hint   string `json:"hint"`
+	Insert string `json:"insert,omitempty"`
+}
+
+// Catalog is the / menu in the GUI.
+func Catalog(workspace string) []Item {
+	out := []Item{
+		{Name: "commit", Hint: "Commit current changes"},
+		{Name: "review", Hint: "Review uncommitted diffs"},
+		{Name: "status", Hint: "Mode, model, workspace"},
+		{Name: "clear", Hint: "New chat"},
+	}
+	for _, name := range commands.List(workspace) {
+		out = append(out, Item{Name: name, Hint: "Custom command"})
+	}
+	return out
 }
 
 func commitPrompt() string {

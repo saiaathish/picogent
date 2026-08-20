@@ -10,6 +10,7 @@ import (
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/extensions"
+	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/mcpbridge"
 	"github.com/saiaathish/picogent/internal/perm"
@@ -63,7 +64,17 @@ func Build(cfg config.Config) (*agent.Agent, error) {
 	a.ProjectRules = projectctx.Load(cfg.Workspace)
 	skills := extensions.LoadDeveloperExtensions(cfg.Extensions.InstalledSkills)
 	a.SkillRules = extensions.SkillsPrompt(skills)
+	syncGoal(a, cfg.Workspace)
+	wireRuntime(a)
 	return a, nil
+}
+
+func syncGoal(a *agent.Agent, workspace string) {
+	if a == nil {
+		return
+	}
+	g, _ := goal.Load(workspace)
+	a.Goal = g
 }
 
 // RoutePersist saves the last routing decision into config (best-effort).
@@ -71,7 +82,9 @@ func RoutePersist(cfg *config.Config, dec llm.RouteDecision) {
 	cfg.Router.LastTier = string(dec.Tier)
 	cfg.Router.LastModel = dec.Model
 	cfg.Router.LastReason = dec.Reason
-	cfg.Model = dec.Model
+	cfg.Router.LastReasoning = string(dec.Reasoning)
+	cfg.Router.LastTaskKind = string(dec.TaskKind)
+	cfg.Router.LastRouteMode = string(dec.RouteMode)
 	_ = config.Save(*cfg)
 }
 
@@ -105,7 +118,9 @@ func NewClient(cfg config.Config) (llm.Client, error) {
 		advisor.UseLLMAdvisor = false
 	}
 
-	return llm.NewRouter(backend, advisor, eco, cfg.FableAllowed(), nil), nil
+	r := llm.NewRouter(backend, advisor, eco, cfg.FableAllowed(), nil)
+	r.Enabled = cfg.Router.Enabled || cfg.AutoRouter()
+	return r, nil
 }
 
 func newBackend(cfg config.Config) (llm.Client, error) {

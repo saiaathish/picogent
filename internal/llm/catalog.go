@@ -33,13 +33,14 @@ const (
 
 // ModelEntry is one routable model in a catalog.
 type ModelEntry struct {
-	ID          string    `json:"id"`
-	Display     string    `json:"display"`
-	Tier        Tier      `json:"tier"`
-	Ecosystem   Ecosystem `json:"ecosystem"`
-	Description string    `json:"description"`
-	Patterns    []string  `json:"patterns,omitempty"`
-	Gated       bool      `json:"gated,omitempty"`
+	ID          string            `json:"id"`
+	Display     string            `json:"display"`
+	Tier        Tier              `json:"tier"`
+	Ecosystem   Ecosystem         `json:"ecosystem"`
+	Description string            `json:"description"`
+	Patterns    []string          `json:"patterns,omitempty"`
+	Gated       bool              `json:"gated,omitempty"`
+	Reasoning   *ReasoningProfile `json:"reasoning,omitempty"`
 }
 
 // Catalog holds routable models for each ecosystem.
@@ -153,7 +154,7 @@ func (c Catalog) ModelForTier(eco Ecosystem, tier Tier, allowPremium bool) (Mode
 		if m.Gated && !allowPremium {
 			continue
 		}
-		return m, true
+		return c.enrichReasoning(m), true
 	}
 	// Fall back to nearest lower tier.
 	for _, t := range []Tier{TierHeavy, TierStandard, TierLight} {
@@ -165,6 +166,15 @@ func (c Catalog) ModelForTier(eco Ecosystem, tier Tier, allowPremium bool) (Mode
 		}
 	}
 	return ModelEntry{}, false
+}
+
+func (c Catalog) enrichReasoning(m ModelEntry) ModelEntry {
+	if m.Reasoning != nil {
+		return m
+	}
+	p := ProfileFor(m.Ecosystem, m.Tier)
+	m.Reasoning = &p
+	return m
 }
 
 func (c Catalog) ResolveID(eco Ecosystem, modelID string) ModelEntry {
@@ -331,6 +341,9 @@ func mergeCatalog(base, over Catalog) Catalog {
 			}
 			if len(m.Patterns) > 0 {
 				existing.Patterns = m.Patterns
+			}
+			if m.Reasoning != nil {
+				existing.Reasoning = m.Reasoning
 			}
 			byKey[key] = existing
 		} else {
