@@ -12,8 +12,8 @@ func TestEmbeddedIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(b), "Picogent") {
-		t.Fatal("index missing title")
+	if !strings.Contains(string(b), "Picogent") || !strings.Contains(string(b), "new-chat-top") {
+		t.Fatal("index missing title or header new chat")
 	}
 	js, err := gui.ReadWeb("web/app.js")
 	if err != nil {

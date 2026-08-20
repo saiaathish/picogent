@@ -603,7 +603,15 @@ modeSeg.addEventListener("click", async (e) => {
   refresh();
 });
 
-$("new-chat").onclick = newChat;
+function bindNewChat(el) {
+  if (!el) return;
+  el.addEventListener("click", (e) => {
+    e.preventDefault();
+    newChat();
+  });
+}
+bindNewChat($("new-chat"));
+bindNewChat($("new-chat-top"));
 
 permEl.addEventListener("click", async (e) => {
   const t = e.target.closest("[data-allow], [data-turn], [data-always]");
