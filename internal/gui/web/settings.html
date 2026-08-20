@@ -31,9 +31,30 @@
       </div>
 
       <div class="field">
+        <label for="provider">Provider</label>
+        <p class="field-hint">Codex uses ChatGPT login. Claude Code uses an Anthropic API key.</p>
+        <select id="provider" class="picker">
+          <option value="codex">Codex</option>
+          <option value="quadcode">Claude Code</option>
+        </select>
+      </div>
+
+      <div class="field model-field">
         <label for="model">Model</label>
-        <p class="field-hint">Usually fine to leave as-is. Change only if you prefer a different model.</p>
-        <input id="model" type="text" placeholder="gpt-5.6-luna" />
+        <select id="model" class="picker"></select>
+        <p class="model-desc" id="model-desc" aria-live="polite"></p>
+      </div>
+
+      <div class="field" id="anthropic-block" hidden>
+        <label for="anthropic-key">Anthropic API key</label>
+        <p class="field-hint">Required for Claude Code models.</p>
+        <input id="anthropic-key" type="password" autocomplete="off" placeholder="sk-ant-…" />
+      </div>
+
+      <div class="router-last" id="router-last" hidden>
+        <p class="router-last-kicker">Last auto route</p>
+        <p class="router-last-main" id="router-last-main"></p>
+        <p class="router-last-reason" id="router-last-reason"></p>
       </div>
 
       <div class="settings-actions">

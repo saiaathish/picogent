@@ -104,10 +104,15 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 	changed := map[string]struct{}{}
 
 	for round := 0; round < a.CFG.MaxToolRounds; round++ {
+		if r, ok := a.LLM.(*llm.Router); ok {
+			r.SetUserPrompt(user)
+		}
 		out, err := a.LLM.Chat(ctx, llm.ChatRequest{
-			Model:    a.CFG.Model,
-			Messages: msgs,
-			Tools:    a.Tools.Specs(),
+			Model:     a.CFG.Model,
+			Messages:  msgs,
+			Tools:     a.Tools.Specs(),
+			ToolRound: round,
+			Escalate:  round >= 6,
 		})
 		if err != nil {
 			wrapped := userErr("the model call failed", err)

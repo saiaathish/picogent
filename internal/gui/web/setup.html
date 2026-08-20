@@ -56,9 +56,12 @@
               <option value="fast">Fast — auto-edit inside the folder</option>
             </select>
           </div>
-          <div class="setup-field">
+          <div class="setup-field model-field">
             <label for="model">Model</label>
-            <input id="model" type="text" />
+            <select id="model" class="picker">
+              <option value="auto">Auto</option>
+            </select>
+            <p class="model-desc" id="model-desc" aria-live="polite"></p>
           </div>
         </div>
         <p id="finish-err" class="setup-status is-error" hidden></p>

@@ -12,6 +12,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/llm"
 )
 
 type Component struct {
@@ -40,9 +41,10 @@ type Status struct {
 	Logins     []LoginTarget `json:"logins"`
 	Workspace  string        `json:"workspace"`
 	Mode       string        `json:"mode"`
-	Model      string        `json:"model"`
-	Provider   string        `json:"provider"`
-	LoggedIn   bool          `json:"logged_in"`
+	Model        string            `json:"model"`
+	Provider     string            `json:"provider"`
+	ModelOptions []llm.ModelChoice `json:"model_options"`
+	LoggedIn     bool              `json:"logged_in"`
 	SetupDone  bool          `json:"setup_done"`
 }
 
@@ -81,17 +83,18 @@ func Snapshot(cfg config.Config) Status {
 		ws, _ = os.Getwd()
 	}
 	return Status{
-		Ready:      ready,
-		Busy:       Busy(),
-		Log:        LastLog(),
-		Components: comps,
-		Logins:     logins,
-		Workspace:  ws,
-		Mode:       string(cfg.Mode),
-		Model:      cfg.Model,
-		Provider:   string(cfg.Provider),
-		LoggedIn:   codexauth.LoggedIn(),
-		SetupDone:  cfg.SetupComplete,
+		Ready:        ready,
+		Busy:         Busy(),
+		Log:          LastLog(),
+		Components:   comps,
+		Logins:       logins,
+		Workspace:    ws,
+		Mode:         string(cfg.Mode),
+		Model:        cfg.DisplayModel(),
+		Provider:     string(cfg.Provider),
+		ModelOptions: llm.ModelChoices(llm.EcoCodex, false),
+		LoggedIn:     codexauth.LoggedIn(),
+		SetupDone:    cfg.SetupComplete,
 	}
 }
 
@@ -349,8 +352,12 @@ func Apply(cfg config.Config, workspace, mode, model string) (config.Config, err
 	}
 	cfg.Workspace = abs
 	cfg.Mode = m
-	if strings.TrimSpace(model) != "" {
+	if strings.TrimSpace(model) != "" && model != config.ModelAuto {
 		cfg.Model = strings.TrimSpace(model)
+		cfg.Router.Enabled = false
+	} else {
+		cfg.Model = config.ModelAuto
+		cfg.Router.Enabled = true
 	}
 	if cfg.Provider == "" {
 		cfg.Provider = config.ProviderCodex

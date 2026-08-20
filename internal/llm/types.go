@@ -27,6 +27,9 @@ type ChatRequest struct {
 	Model    string
 	Messages []Message
 	Tools    []ToolSpec
+	// Routing hints — used by auto router inside agent loops.
+	ToolRound int
+	Escalate  bool
 }
 
 type ChatResponse struct {
