@@ -1466,9 +1466,12 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg := s.cfg
 		s.mu.Unlock()
+		persisted := true
+		var persistErr string
 		if err := config.Save(cfg); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
+			// Keep the in-memory change even if disk is unwritable (sandbox, permissions).
+			persisted = false
+			persistErr = err.Error()
 		}
 		if in.Provider != "" || in.RouterEnabled != nil || in.UseLLMAdvisor != nil || in.AllowFable != nil || in.FableConfirmed != nil || in.AnthropicKey != "" {
 			a, err := app.Build(cfg)
@@ -1482,7 +1485,14 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			s.mu.Unlock()
 			s.attachRouterHook()
 		}
-		w.WriteHeader(204)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":        true,
+			"persisted": persisted,
+			"warning":   persistErr,
+			"model":     cfg.DisplayModel(),
+			"mode":      cfg.Mode,
+		})
 	default:
 		http.Error(w, "GET or POST only", 405)
 	}

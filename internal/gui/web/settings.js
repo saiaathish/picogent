@@ -142,11 +142,17 @@ document.getElementById("form").onsubmit = async (e) => {
     body: JSON.stringify(body),
   });
   save.disabled = false;
-  status.textContent = res.ok ? "Saved." : "Couldn't save.";
-  if (res.ok) {
-    await load();
-    setTimeout(() => (status.textContent = ""), 2000);
+  if (!res.ok) {
+    status.textContent = "Couldn't save.";
+    return;
   }
+  let data = {};
+  try {
+    data = await res.json();
+  } catch (_) {}
+  status.textContent = data.persisted === false ? "Applied (couldn’t write config file)." : "Saved.";
+  await load();
+  setTimeout(() => (status.textContent = ""), 2500);
 };
 
 load();
