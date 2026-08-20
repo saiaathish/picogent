@@ -159,7 +159,7 @@ func ReasoningLabel(modelLabel string, level ReasoningLevel) string {
 	if modelLabel == "" {
 		return string(level)
 	}
-	if level == "" {
+	if level == "" || level == ReasonNone {
 		return modelLabel
 	}
 	return modelLabel + " / " + capitalize(string(level))

@@ -509,7 +509,9 @@ async function loadThread(id) {
 }
 
 async function newChat() {
-  if (busy) return;
+  if (busy) {
+    try { await fetch("/api/cancel", { method: "POST" }); } catch (_) {}
+  }
   const data = await (
     await fetch("/api/sessions", {
       method: "POST",
@@ -1412,13 +1414,7 @@ function connectEvents() {
       return;
     }
     if (e.type === "route") {
-      const note = document.createElement("div");
-      note.className = "route-chip";
-      note.textContent = "Routed to " + (e.text || "model");
-      if (e.summary) note.title = e.summary;
-      logEl.appendChild(note);
-      syncEmpty();
-      scrollChat();
+      refresh();
       return;
     }
     if (e.type === "goal") {

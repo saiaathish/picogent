@@ -168,6 +168,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			res.Text = text
 			res.ToolRounds = round
 			res.GoalDone = goal.LooksComplete(text)
+			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
 			for p := range changed {
 				res.FilesChanged = append(res.FilesChanged, p)
 			}

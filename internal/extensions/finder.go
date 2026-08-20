@@ -16,22 +16,32 @@ func Recommend(prompt string, installed map[string]bool, dismissed map[string]bo
 			continue
 		}
 		score := matchScore(lower, it.Keywords)
-		if score > 0 {
+		if score >= 6 {
 			out = append(out, it)
 		}
 	}
 	sortByScore(out, lower)
-	if len(out) > 3 {
-		out = out[:3]
+	if len(out) > 1 {
+		out = out[:1]
 	}
 	return out
 }
 
 func matchScore(text string, keywords []string) int {
 	score := 0
+	padded := " " + text + " "
 	for _, kw := range keywords {
-		kw = strings.ToLower(kw)
-		if strings.Contains(text, kw) {
+		kw = strings.ToLower(strings.TrimSpace(kw))
+		if len(kw) < 4 {
+			continue
+		}
+		if strings.Contains(kw, " ") {
+			if strings.Contains(text, kw) {
+				score += len(kw)
+			}
+			continue
+		}
+		if strings.Contains(padded, " "+kw+" ") || strings.Contains(padded, " "+kw+".") || strings.Contains(padded, " "+kw+",") || strings.Contains(padded, " "+kw+"?") {
 			score += len(kw)
 		}
 	}

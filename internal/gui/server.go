@@ -81,6 +81,9 @@ func Run() error {
 	}
 	cfg.Extensions.InstalledSkills = extensions.LoadDeveloperExtensions(cfg.Extensions.InstalledSkills)
 	_ = config.Save(cfg)
+	if a != nil {
+		a.SetTaskMode(agent.TaskAgent)
+	}
 	sessID, hist := initialSession(cfg.Workspace)
 	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
@@ -226,9 +229,13 @@ func (s *server) snapshot() map[string]any {
 	if err := cfg.MissingAuth(); err != nil {
 		hint = err.Error()
 	}
+	taskMode := agent.ParseTaskMode(cfg.TaskMode)
+	if ag != nil && ag.TaskMode.Valid() {
+		taskMode = ag.TaskMode
+	}
 	out := map[string]any{
 		"mode":          cfg.Mode,
-		"task_mode":     agent.ParseTaskMode(cfg.TaskMode),
+		"task_mode":     taskMode,
 		"model":         cfg.DisplayModel(),
 		"workspace":     cfg.Workspace,
 		"provider":      cfg.Provider,
@@ -544,9 +551,7 @@ func (s *server) autoApplyFromUserPrompt(prompt string) {
 	}
 	if dec.TaskMode != cur {
 		s.mu.Lock()
-		s.cfg.TaskMode = string(dec.TaskMode)
 		ag.SetTaskMode(dec.TaskMode)
-		_ = config.Save(s.cfg)
 		s.mu.Unlock()
 		s.emit(event{Type: "task_mode", Text: string(dec.TaskMode)})
 	}
@@ -827,7 +832,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		case "goal:show":
 			g, _ := goal.Load(s.cfg.Workspace)
 			if g == "" {
-				s.emit(event{Type: "system", Text: "no active goal (/goal <objective> to set one)"})
+				s.emit(event{Type: "system", Text: "no active goal"})
 			} else {
 				s.emit(event{Type: "system", Text: "goal: " + g})
 			}
@@ -1173,6 +1178,9 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			}
 			s.sessionID = session.New(s.cfg.Workspace).ID
 			s.hist = nil
+			if s.ag != nil {
+				s.ag.SetTaskMode(agent.TaskAgent)
+			}
 			id := s.sessionID
 			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")

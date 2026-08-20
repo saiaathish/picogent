@@ -25,6 +25,13 @@ func TestRecommendDismissed(t *testing.T) {
 	}
 }
 
+func TestRecommendIgnoresSmallTalk(t *testing.T) {
+	recs := extensions.Recommend("Reply with the single word pong. Do not use tools.", nil, nil)
+	if len(recs) != 0 {
+		t.Fatalf("unexpected recs %#v", recs)
+	}
+}
+
 func TestSearch(t *testing.T) {
 	items := extensions.Search("postgres", nil)
 	found := false

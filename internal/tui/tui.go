@@ -255,8 +255,6 @@ func (m *model) autoApplyPrompt(prompt string) {
 	}
 	if dec.TaskMode != m.ag.TaskMode {
 		m.ag.SetTaskMode(dec.TaskMode)
-		m.cfg.TaskMode = string(dec.TaskMode)
-		_ = config.Save(m.cfg)
 	}
 }
 
