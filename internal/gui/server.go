@@ -615,6 +615,10 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 
 	go func() {
 		defer func() {
+			if rec := recover(); rec != nil {
+				s.emit(event{Type: "error", Text: fmt.Sprintf("agent panic: %v", rec)})
+				fmt.Fprintf(os.Stderr, "picogent: agent panic: %v\n", rec)
+			}
 			s.mu.Lock()
 			s.busy = false
 			s.cancel = nil
@@ -624,6 +628,15 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 				s.startAgentTurn(p, pts)
 			}
 		}()
+		if s.ag == nil {
+			s.emit(event{Type: "error", Text: "agent not ready"})
+			return
+		}
+		if s.ag.Trace == nil {
+			if log, err := trace.Open(s.cfg.Workspace); err == nil {
+				s.ag.Trace = log
+			}
+		}
 		h := newGUIHandler(s)
 		h.beginTurn(prompt)
 		s.maybeRecommendExtensions(prompt)
@@ -657,6 +670,7 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 		}
 		s.maybeAutoTitle(context.Background(), llmClient, model, ws, sid, next)
 		if err != nil && ctx.Err() == nil {
+			fmt.Fprintf(os.Stderr, "picogent: turn error: %v\n", err)
 			s.emit(event{Type: "error", Text: err.Error()})
 		}
 	}()

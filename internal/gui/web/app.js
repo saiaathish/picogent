@@ -455,6 +455,11 @@ function add(kind, text, attachmentMeta) {
     b.className = "bubble";
     b.textContent = text;
     wrap.appendChild(b);
+  } else if (role === "error") {
+    const b = document.createElement("div");
+    b.className = "bubble bubble-error";
+    b.textContent = text;
+    wrap.appendChild(b);
   } else if (role === "assistant") {
     const c = document.createElement("div");
     c.className = "content md";

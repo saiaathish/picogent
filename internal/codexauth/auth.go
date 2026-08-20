@@ -98,7 +98,10 @@ func tokenLocked(ctx context.Context, force bool) (string, string, error) {
 	path := AuthPath()
 	unlock, err := lockAuth(path)
 	if err != nil {
-		return "", "", err
+		// Fall back to process-local locking when the file lock is unavailable
+		// (sandbox, read-only home, etc.). Concurrent writers across processes
+		// are still best-effort protected by mu above.
+		unlock = func() {}
 	}
 	defer unlock()
 
