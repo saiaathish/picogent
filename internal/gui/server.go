@@ -21,6 +21,7 @@ import (
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
+	"github.com/saiaathish/picogent/internal/extensions"
 	"github.com/saiaathish/picogent/internal/learn"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
@@ -62,6 +63,8 @@ type server struct {
 	subs      []chan event
 	busy      bool
 	cancel    context.CancelFunc
+	undoStack []extensions.UndoEntry
+	pendingPerm perm.Request
 }
 
 func Run() error {
@@ -69,6 +72,8 @@ func Run() error {
 	if err != nil {
 		return err
 	}
+	cfg.Extensions.InstalledSkills = extensions.LoadDeveloperExtensions(cfg.Extensions.InstalledSkills)
+	_ = config.Save(cfg)
 	sessID, hist := initialSession(cfg.Workspace)
 	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
@@ -131,6 +136,7 @@ func (s *server) Handler() http.Handler {
 	mux.HandleFunc("/api/overview", s.overviewAPI)
 	mux.HandleFunc("/api/test", s.testAPI)
 	mux.HandleFunc("/api/diff", s.diffAPI)
+	mux.HandleFunc("/api/extensions", s.extensionsAPI)
 	mux.HandleFunc("/api/events", s.events)
 	mux.Handle("/", http.FileServer(http.FS(static)))
 	return mux
@@ -406,15 +412,20 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	mode := config.Mode(in.Mode)
-	if !mode.Valid() {
-		http.Error(w, "mode must be safe or fast", 400)
+	m := config.Mode(in.Mode)
+	if !m.Valid() {
+		http.Error(w, "invalid mode", 400)
 		return
 	}
 	s.mu.Lock()
-	s.cfg.Mode = mode
-	s.ag.CFG.Mode = mode
-	s.ag.Gate.Mode = mode
+	s.cfg.Mode = m
+	if s.ag != nil {
+		s.ag.CFG.Mode = m
+		if s.ag.Gate != nil {
+			s.ag.Gate.Mode = m
+		}
+	}
+	_ = config.Save(s.cfg)
 	s.mu.Unlock()
 	w.WriteHeader(204)
 }
@@ -434,15 +445,18 @@ func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Allow bool `json:"allow"`
-		Turn  bool `json:"turn"`
+		Allow  bool `json:"allow"`
+		Turn   bool `json:"turn"`
+		Always bool `json:"always"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
 	d := perm.Deny
-	if in.Turn {
+	if in.Always {
+		d = perm.AllowAlways
+	} else if in.Turn {
 		d = perm.AllowTurn
 	} else if in.Allow {
 		d = perm.Allow
@@ -450,6 +464,15 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	select {
 	case s.permCh <- d:
 	case <-time.After(2 * time.Second):
+	}
+	if d == perm.AllowAlways {
+		s.mu.Lock()
+		if s.ag != nil && s.ag.Gate != nil {
+			s.cfg.Extensions.AlwaysAllowTools = appendUnique(s.cfg.Extensions.AlwaysAllowTools, s.pendingPerm.Tool)
+			s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
+			_ = config.Save(s.cfg)
+		}
+		s.mu.Unlock()
 	}
 	w.WriteHeader(204)
 }
@@ -592,6 +615,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		}()
 		h := newGUIHandler(s)
 		h.beginTurn(prompt)
+		s.maybeRecommendExtensions(prompt)
 		next, result, err := s.ag.Run(ctx, hist, prompt, h)
 		h.endTurn(result)
 		s.mu.Lock()
@@ -667,6 +691,7 @@ func (h *guiHandler) endTurn(result agent.Result) {
 	h.s.emit(event{Type: "think", Text: "Done", Kind: "plan", Status: "done"})
 	_ = learn.Save(h.learn)
 	h.s.emit(event{Type: "overview", Text: "refresh"})
+	h.s.cleanupExtensionPool()
 }
 
 func summarizePrompt(prompt string) string {
@@ -785,13 +810,33 @@ func ternary(cond bool, a, b string) string {
 }
 
 func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error) {
-	h.s.emit(event{Type: "permission", Summary: req.Summary})
+	h.s.mu.Lock()
+	h.s.pendingPerm = req
+	h.s.mu.Unlock()
+	kind := req.Tool
+	if strings.HasPrefix(kind, "mcp_") {
+		kind = "mcp"
+	}
+	h.s.emit(event{Type: "permission", Summary: req.Summary, Text: req.Tool, Kind: kind, Status: permStatus(req)})
 	select {
 	case <-ctx.Done():
 		return perm.Deny, ctx.Err()
 	case d := <-h.s.permCh:
 		return d, nil
 	}
+}
+
+func permStatus(req perm.Request) string {
+	if req.Destructive {
+		return "destructive"
+	}
+	if req.OutsideWorkspace {
+		return "outside"
+	}
+	if req.Tool == "bash" {
+		return "terminal"
+	}
+	return "risky"
 }
 func (h *guiHandler) OnError(err error) {
 	h.s.emit(event{Type: "error", Text: err.Error()})

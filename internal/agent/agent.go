@@ -63,6 +63,7 @@ type Agent struct {
 	Tools        *tools.Registry
 	Gate         *perm.Gate
 	ProjectRules string
+	SkillRules   string
 }
 
 func New(cfg config.Config, client llm.Client, reg *tools.Registry, gate *perm.Gate) *Agent {
@@ -79,6 +80,9 @@ func (a *Agent) systemPrompt() string {
 	}
 	if rules := strings.TrimSpace(a.ProjectRules); rules != "" {
 		p += "\n\nProject rules (follow these):\n" + rules
+	}
+	if skills := strings.TrimSpace(a.SkillRules); skills != "" {
+		p += "\n\n" + skills
 	}
 	return p
 }

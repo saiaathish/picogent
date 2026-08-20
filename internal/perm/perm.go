@@ -12,9 +12,10 @@ import (
 type Decision string
 
 const (
-	Allow     Decision = "allow"
-	Deny      Decision = "deny"
-	AllowTurn Decision = "allow_turn"
+	Allow       Decision = "allow"
+	Deny        Decision = "deny"
+	AllowTurn   Decision = "allow_turn"
+	AllowAlways Decision = "allow_always"
 )
 
 type Request struct {
@@ -29,19 +30,47 @@ type Request struct {
 type Prompter func(ctx context.Context, req Request) (Decision, error)
 
 type Gate struct {
-	Mode      config.Mode
-	Workspace string
-	Prompt    Prompter
-	allowTurn bool
+	Mode          config.Mode
+	Workspace     string
+	Prompt        Prompter
+	allowTurn     bool
+	alwaysAllowed map[string]bool
 }
 
 func New(mode config.Mode, workspace string, prompt Prompter) *Gate {
-	return &Gate{Mode: mode, Workspace: workspace, Prompt: prompt}
+	return &Gate{Mode: mode, Workspace: workspace, Prompt: prompt, alwaysAllowed: map[string]bool{}}
 }
 
 func (g *Gate) ResetTurn() { g.allowTurn = false }
 
+func (g *Gate) SetAlwaysAllowed(tools []string) {
+	g.alwaysAllowed = map[string]bool{}
+	for _, t := range tools {
+		if t != "" {
+			g.alwaysAllowed[t] = true
+		}
+	}
+}
+
+func (g *Gate) AddAlwaysAllowed(tool string) {
+	if g.alwaysAllowed == nil {
+		g.alwaysAllowed = map[string]bool{}
+	}
+	g.alwaysAllowed[tool] = true
+}
+
+func (g *Gate) AlwaysAllowedTools() []string {
+	var out []string
+	for t := range g.alwaysAllowed {
+		out = append(out, t)
+	}
+	return out
+}
+
 func (g *Gate) Check(ctx context.Context, req Request) (Decision, error) {
+	if g.alwaysAllowed != nil && g.alwaysAllowed[req.Tool] {
+		return Allow, nil
+	}
 	if autoAllow(g.Mode, req) {
 		return Allow, nil
 	}
@@ -57,6 +86,10 @@ func (g *Gate) Check(ctx context.Context, req Request) (Decision, error) {
 	}
 	if d == AllowTurn {
 		g.allowTurn = true
+		return Allow, nil
+	}
+	if d == AllowAlways {
+		g.AddAlwaysAllowed(req.Tool)
 		return Allow, nil
 	}
 	return d, nil

@@ -28,6 +28,9 @@ const overviewBar = $("overview-bar");
 const projectList = $("project-list");
 const changesList = $("changes-list");
 const changesSummary = $("changes-summary");
+const extRecsEl = $("ext-recs");
+const extToastsEl = $("ext-toasts");
+const permTitle = $("perm-title");
 let threadsCache = [];
 let chatsOpen = false;
 let turnChanges = [];
@@ -504,6 +507,7 @@ async function deleteThread(id) {
 async function refresh() {
   const s = await (await fetch("/api/state")).json();
   sessionId = s.session_id || sessionId;
+  currentMode = s.mode || "safe";
 
   modeSeg.querySelectorAll("button").forEach((b) => {
     b.classList.toggle("is-on", b.dataset.mode === s.mode);
@@ -548,15 +552,185 @@ modeSeg.addEventListener("click", async (e) => {
 $("new-chat").onclick = newChat;
 
 permEl.addEventListener("click", async (e) => {
-  const t = e.target.closest("[data-allow], [data-turn]");
+  const t = e.target.closest("[data-allow], [data-turn], [data-always]");
   if (!t) return;
   await fetch("/api/permission", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ allow: t.dataset.allow === "1", turn: t.dataset.turn === "1" }),
+    body: JSON.stringify({
+      allow: t.dataset.allow === "1",
+      turn: t.dataset.turn === "1",
+      always: t.dataset.always === "1",
+    }),
   });
   permEl.classList.remove("is-on");
 });
+
+/* ─── Extensions finder ─── */
+function kindLabel(kind) {
+  if (kind === "mcp") return "MCP";
+  if (kind === "skill") return "Skill";
+  if (kind === "plugin") return "Plugin";
+  return kind || "Extension";
+}
+
+function renderExtRecommendations(items) {
+  if (!extRecsEl || !items.length) return;
+  extRecsEl.hidden = false;
+  extRecsEl.innerHTML = "";
+  const head = document.createElement("p");
+  head.className = "ext-recs-head";
+  head.textContent = "Suggested for this task";
+  extRecsEl.appendChild(head);
+  for (const it of items) {
+    extRecsEl.appendChild(buildExtCard(it, { recommend: true }));
+  }
+}
+
+function buildExtCard(it, opts) {
+  const card = document.createElement("div");
+  card.className = "ext-card";
+  card.dataset.id = it.path || it.id;
+
+  const badge = document.createElement("span");
+  badge.className = "ext-badge";
+  badge.textContent = kindLabel(it.kind);
+
+  const title = document.createElement("strong");
+  title.textContent = it.text || it.name;
+
+  const desc = document.createElement("p");
+  desc.className = "ext-desc";
+  desc.textContent = it.summary || it.description || "";
+
+  const row = document.createElement("div");
+  row.className = "ext-actions";
+
+  const installBtn = document.createElement("button");
+  installBtn.type = "button";
+  installBtn.className = "ext-install";
+  installBtn.textContent = "Install";
+  installBtn.onclick = () => installExtension(it.path || it.id, !!opts?.recommend);
+
+  const dismissBtn = document.createElement("button");
+  dismissBtn.type = "button";
+  dismissBtn.className = "ext-dismiss ghost-btn";
+  dismissBtn.textContent = "Not now";
+  dismissBtn.onclick = () => dismissExtension(it.path || it.id, card);
+
+  row.appendChild(installBtn);
+  row.appendChild(dismissBtn);
+  card.appendChild(badge);
+  card.appendChild(title);
+  card.appendChild(desc);
+  if (it.status === "auth") {
+    const hint = document.createElement("small");
+    hint.className = "ext-auth-hint";
+    hint.textContent = "Requires authorization after install";
+    card.appendChild(hint);
+  }
+  card.appendChild(row);
+  return card;
+}
+
+async function installExtension(id, fromRecommend) {
+  const res = await fetch("/api/extensions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "install", id, approve: true }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (data.needs_approval) {
+    showExtApproval(data.item);
+    return;
+  }
+  if (!res.ok) {
+    add("error", data.message || "Install failed");
+    return;
+  }
+  if (extRecsEl) {
+    const card = extRecsEl.querySelector('[data-id="' + id + '"]');
+    if (card) card.remove();
+    if (!extRecsEl.querySelector(".ext-card")) extRecsEl.hidden = true;
+  }
+  if (data.auto) {
+    showExtToast(data.result?.message || "Extension installed", data.undo_id, id);
+  } else {
+    add("system", data.result?.message || "Extension installed");
+  }
+  refresh();
+}
+
+function showExtApproval(item) {
+  if (!item) return;
+  renderExtRecommendations([{ path: item.id, text: item.name, summary: item.description, kind: item.kind, status: item.auth_required ? "auth" : "" }]);
+}
+
+async function dismissExtension(id, cardEl) {
+  await fetch("/api/extensions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "dismiss", id }),
+  });
+  if (cardEl) cardEl.remove();
+  if (extRecsEl && !extRecsEl.querySelector(".ext-card")) extRecsEl.hidden = true;
+}
+
+function showExtToast(message, undoId, extId) {
+  if (!extToastsEl) return;
+  const toast = document.createElement("div");
+  toast.className = "ext-toast";
+  const msg = document.createElement("span");
+  msg.textContent = message;
+  const undo = document.createElement("button");
+  undo.type = "button";
+  undo.className = "ext-undo";
+  undo.textContent = "Undo";
+  undo.onclick = async () => {
+    await fetch("/api/extensions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "undo", undo_id: undoId }),
+    });
+    toast.remove();
+    refresh();
+  };
+  toast.appendChild(msg);
+  toast.appendChild(undo);
+  extToastsEl.appendChild(toast);
+  setTimeout(() => toast.classList.add("is-visible"), 10);
+  setTimeout(() => {
+    if (toast.parentNode) toast.remove();
+  }, 30000);
+}
+
+function showAuthPrompt(name, hint, id) {
+  if (!extToastsEl) return;
+  const toast = document.createElement("div");
+  toast.className = "ext-toast ext-auth";
+  toast.innerHTML = "<strong>Authorize " + escapeHtml(name) + "</strong><p>" + escapeHtml(hint || "Add credentials in Settings → Extensions or ~/.picogent/mcp.yaml") + "</p>";
+  const ok = document.createElement("button");
+  ok.type = "button";
+  ok.className = "ext-install";
+  ok.textContent = "Done";
+  ok.onclick = async () => {
+    await fetch("/api/extensions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "auth_done", id }),
+    });
+    toast.remove();
+  };
+  toast.appendChild(ok);
+  extToastsEl.appendChild(toast);
+  setTimeout(() => toast.classList.add("is-visible"), 10);
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+let currentMode = "safe";
 
 $("composer").onsubmit = async (e) => {
   e.preventDefault();
@@ -764,8 +938,46 @@ function connectEvents() {
     }
     if (e.type === "permission") {
       permText.textContent = e.summary || "";
+      if (permTitle) {
+        if (e.status === "terminal") permTitle.textContent = "Allow terminal command?";
+        else if (e.status === "destructive") permTitle.textContent = "Allow risky action?";
+        else if (e.kind === "mcp") permTitle.textContent = "Allow MCP tool?";
+        else permTitle.textContent = "Allow this change?";
+      }
       permEl.classList.add("is-on");
       setThinking(false);
+      return;
+    }
+    if (e.type === "extension_recommend") {
+      const existing = extRecsEl?.querySelector('[data-id="' + e.path + '"]');
+      if (!existing && extRecsEl) {
+        extRecsEl.hidden = false;
+        if (!extRecsEl.querySelector(".ext-recs-head")) {
+          const head = document.createElement("p");
+          head.className = "ext-recs-head";
+          head.textContent = "Suggested for this task";
+          extRecsEl.appendChild(head);
+        }
+        extRecsEl.appendChild(buildExtCard(e, { recommend: true }));
+      }
+      return;
+    }
+    if (e.type === "extension_installed") {
+      if (e.status === "auto") {
+        showExtToast(e.text || "Extension installed", e.summary, e.path);
+      } else {
+        add("system", e.text || "Extension installed");
+      }
+      refresh();
+      return;
+    }
+    if (e.type === "extension_auth") {
+      showAuthPrompt(e.text, e.summary, e.path);
+      return;
+    }
+    if (e.type === "extension_undo") {
+      add("system", e.text || "Extension removed");
+      refresh();
       return;
     }
     if (e.type === "title") {
