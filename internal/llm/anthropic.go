@@ -23,12 +23,13 @@ const claudeCodeUserAgent = "claude-cli/1.0.0 (external, picogent)"
 
 // Anthropic is a Quad Code / Claude API client (API key or Claude Code CLI OAuth).
 type Anthropic struct {
-	BaseURL string
-	APIKey  string // x-api-key (Console key); empty when using Claude Code OAuth
-	UseOAuth bool  // Authorization: Bearer from Claude Code CLI login
-	Model   string
-	Timeout time.Duration
-	HTTP    *http.Client
+	BaseURL   string
+	APIKey    string // x-api-key (Console key); empty when using Claude Code OAuth
+	UseOAuth  bool   // Authorization: Bearer from Claude Code CLI login
+	BearerKey string // Authorization: Bearer for OpenCode Zen/Go gateways
+	Model     string
+	Timeout   time.Duration
+	HTTP      *http.Client
 }
 
 func NewAnthropic(apiKey, model string, timeout time.Duration) *Anthropic {
@@ -199,6 +200,8 @@ func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, er
 		httpReq.Header.Set("anthropic-beta", claudeCodeOAuthBeta)
 		httpReq.Header.Set("User-Agent", claudeCodeUserAgent)
 		httpReq.Header.Set("x-app", "cli")
+	} else if c.BearerKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.BearerKey)
 	} else {
 		if c.APIKey == "" {
 			return ChatResponse{}, fmt.Errorf("anthropic: missing API key")

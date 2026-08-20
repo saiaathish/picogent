@@ -71,6 +71,7 @@ const REF_RE = /([`']?)((?:[\w.-]+\/)+[\w.-]+\.[a-zA-Z0-9]+)\1:(\d+)(?:-(\d+))?/
 const LINE_RE = /(?:^|\s)(?:line|L)\s*(\d+)(?:\s*[-–]\s*(\d+))?/gi;
 
 function syncEmpty() {
+  // Show starter hero (prompts + repo knowledge) whenever the chat log is empty.
   emptyEl.hidden = logEl.children.length > 0;
 }
 
@@ -666,6 +667,8 @@ function clearLog() {
   stopStreamTimer();
   stream = null;
   logEl.innerHTML = "";
+  resetReasoning();
+  setThinking(false);
   syncEmpty();
 }
 
@@ -749,8 +752,17 @@ async function newChat() {
   if (epoch !== viewEpoch) return;
   sessionId = data.id;
   clearLog();
+  // Starter hero is inside #empty — force it visible before prompts paint.
+  emptyEl.hidden = false;
   await loadThreads();
   loadHeroPrompts(true);
+  // Re-pull overview / auth so repo knowledge shows on a fresh chat.
+  try {
+    const s = await (await fetch("/api/state")).json();
+    if (epoch !== viewEpoch) return;
+    renderOverview({ ...(s.overview || {}), evolve: s.evolve });
+    renderAuthBanner(s.auth);
+  } catch (_) {}
   loadSideChat();
   promptEl.focus();
 }
@@ -782,6 +794,8 @@ async function refresh() {
     fillModelPick(s.model_options, userModelChoice);
   }
 
+  renderAuthBanner(s.auth);
+
   renderOverview({
     ...(s.overview || {}),
     evolve: s.evolve,
@@ -796,11 +810,116 @@ async function refresh() {
     replayMessages(s.messages);
   }
   busy = !!s.busy;
-  sendBtn.disabled = !ready;
+  sendBtn.disabled = !ready || !!s.auth?.needed;
   setThinking(busy);
+  syncEmpty();
   await loadThreads();
   await loadProjects();
 }
+
+let authPollTimer = null;
+let lastAuthTarget = "";
+
+function renderAuthBanner(auth) {
+  const banner = $("auth-banner");
+  if (!banner) return;
+  if (!auth?.needed) {
+    banner.hidden = true;
+    if (authPollTimer) {
+      clearInterval(authPollTimer);
+      authPollTimer = null;
+    }
+    return;
+  }
+  banner.hidden = false;
+  lastAuthTarget = auth.target || "";
+  $("auth-banner-title").textContent = auth.label
+    ? "Log in to " + auth.label
+    : "Log in to continue";
+  $("auth-banner-detail").textContent = auth.detail || "Connect your provider to chat.";
+  const btn = $("auth-banner-btn");
+  btn.textContent = auth.button || "Log in";
+  btn.disabled = false;
+}
+
+async function startProviderLogin(target, statusEl, btn) {
+  if (!target) {
+    location.href = "/settings.html";
+    return;
+  }
+  if (target === "settings") {
+    location.href = "/settings.html";
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "Opening…";
+  }
+  if (statusEl) {
+    statusEl.hidden = false;
+    statusEl.textContent = "Starting login…";
+  }
+  try {
+    const res = await fetch("/api/setup/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        target,
+        return_to: location.origin + "/",
+      }),
+    });
+    const text = await res.text();
+    let data = {};
+    try {
+      data = JSON.parse(text);
+    } catch {
+      if (!res.ok) throw new Error(text || "Login failed");
+    }
+    if (!res.ok) {
+      throw new Error(data.error || text || "Login failed");
+    }
+    if (data.url) {
+      location.href = data.url;
+      return;
+    }
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.textContent = data.hint || "Finish login in the window that opened, then come back here.";
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Try again";
+    }
+    if (authPollTimer) clearInterval(authPollTimer);
+    authPollTimer = setInterval(async () => {
+      const s = await (await fetch("/api/state")).json();
+      if (!s.auth?.needed) {
+        clearInterval(authPollTimer);
+        authPollTimer = null;
+        renderAuthBanner(null);
+        sendBtn.disabled = !ready;
+        if (statusEl) {
+          statusEl.hidden = false;
+          statusEl.textContent = "Connected — you’re ready to chat.";
+        }
+      }
+    }, 2000);
+  } catch (err) {
+    if (statusEl) {
+      statusEl.hidden = false;
+      statusEl.textContent = err.message || String(err);
+    }
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Log in";
+    }
+  }
+}
+
+$("auth-banner-btn")?.addEventListener("click", () => {
+  startProviderLogin(lastAuthTarget, $("auth-banner-status"), $("auth-banner-btn"));
+});
+
 
 modeSeg.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-mode]");
@@ -1759,9 +1878,10 @@ function connectEvents() {
 
 connectEvents();
 syncEmpty();
-refresh();
+refresh().then(() => {
+  loadHeroPrompts(false);
+});
 loadSideChat();
-loadHeroPrompts(false);
 
 /* ─── PicoChat Companion + AI prompt recommendations ─── */
 function setSideBusyUI(on) {

@@ -521,13 +521,21 @@ func (m *model) slash(line string) tea.Cmd {
 			}
 		case "openai":
 			m.cfg.Provider = config.ProviderOpenAI
-		case "quadcode", "claude":
+		case "quadcode", "claude", "claude-code":
 			m.cfg.Provider = config.ProviderQuadCode
 			if strings.HasPrefix(m.cfg.Model, "gpt-") {
-				m.cfg.Model = "claude-sonnet-4-5"
+				m.cfg.Model = "claude-sonnet-5"
 			}
+		case "opencode", "zen", "opencode-go":
+			m.cfg.Provider = config.ProviderOpenCode
+			m.cfg.Model = ""
+			m.cfg.Model = m.cfg.BackendModel()
+		case "antigravity", "agy", "gemini":
+			m.cfg.Provider = config.ProviderAntigravity
+			m.cfg.Model = ""
+			m.cfg.Model = m.cfg.BackendModel()
 		default:
-			m.lines = append(m.lines, logLine{Kind: "error", Text: "provider must be codex, claude-code, ollama, or openai"})
+			m.lines = append(m.lines, logLine{Kind: "error", Text: "provider must be codex, claude-code, opencode, antigravity, ollama, or openai"})
 			m.refresh()
 			return nil
 		}

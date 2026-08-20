@@ -10,10 +10,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/saiaathish/picogent/internal/agyauth"
 	"github.com/saiaathish/picogent/internal/claudeauth"
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/opencodeauth"
 )
 
 type Component struct {
@@ -68,8 +70,9 @@ func LastLog() string {
 }
 
 func Snapshot(cfg config.Config) Status {
-	comps := []Component{homeComponent(), gitComponent(), codexCLIComponent(), claudeCLIComponent()}
-	logins := []LoginTarget{codexLogin(), claudeLogin()}
+	llm.RefreshCLIModels(false)
+	comps := []Component{homeComponent(), gitComponent(), codexCLIComponent(), claudeCLIComponent(), openCodeCLIComponent(), agyCLIComponent()}
+	logins := []LoginTarget{codexLogin(), claudeLogin(), openCodeLogin(), antigravityLogin()}
 	ready := true
 	for _, c := range comps {
 		if !c.OK && (c.ID == "home" || c.ID == "git") {
@@ -132,6 +135,20 @@ func claudeCLIComponent() Component {
 	return Component{ID: "claude-cli", Name: "Claude Code CLI", CanFix: true, Detail: "not installed", FixHint: "Will run npm for you."}
 }
 
+func openCodeCLIComponent() Component {
+	if p := look("opencode"); p != "" {
+		return Component{ID: "opencode-cli", Name: "OpenCode CLI", OK: true, Detail: p}
+	}
+	return Component{ID: "opencode-cli", Name: "OpenCode CLI", CanFix: true, Detail: "not installed", FixHint: "Will install OpenCode for you."}
+}
+
+func agyCLIComponent() Component {
+	if p := look("agy"); p != "" {
+		return Component{ID: "agy-cli", Name: "Antigravity CLI", OK: true, Detail: p}
+	}
+	return Component{ID: "agy-cli", Name: "Antigravity CLI", CanFix: true, Detail: "not installed", FixHint: "Will run the official install script."}
+}
+
 func codexLogin() LoginTarget {
 	if codexauth.LoggedIn() {
 		return LoginTarget{ID: "codex", Name: "ChatGPT Codex", OK: true, Detail: "connected via ~/.codex/auth.json", Button: "Connected"}
@@ -145,6 +162,34 @@ func claudeLogin() LoginTarget {
 	}
 	okCLI := look("claude") != ""
 	return LoginTarget{ID: "claude", Name: "Claude Code", Detail: "uses your Claude subscription (same as `claude` CLI)", Button: "Log in to Claude", NeedOAuth: okCLI}
+}
+
+func openCodeLogin() LoginTarget {
+	if opencodeauth.LoggedIn() {
+		detail := "connected"
+		if opencodeauth.ZenLoggedIn() && opencodeauth.GoLoggedIn() {
+			detail = "Zen + Go connected"
+		} else if opencodeauth.GoLoggedIn() {
+			detail = "Go connected via OpenCode CLI"
+		} else {
+			detail = "Zen connected via OpenCode CLI"
+		}
+		return LoginTarget{ID: "opencode", Name: "OpenCode (Zen/Go)", OK: true, Detail: detail, Button: "Connected"}
+	}
+	okCLI := look("opencode") != ""
+	return LoginTarget{ID: "opencode", Name: "OpenCode (Zen/Go)", Detail: "uses OpenCode Zen or Go API key (`opencode auth login`)", Button: "Log in to OpenCode", NeedOAuth: okCLI}
+}
+
+func antigravityLogin() LoginTarget {
+	if agyauth.LoggedIn() {
+		detail := "connected via Antigravity CLI"
+		if agyauth.GeminiAPIKey() != "" {
+			detail = "connected via GEMINI_API_KEY"
+		}
+		return LoginTarget{ID: "antigravity", Name: "Antigravity", OK: true, Detail: detail, Button: "Connected"}
+	}
+	okCLI := look("agy") != ""
+	return LoginTarget{ID: "antigravity", Name: "Antigravity", Detail: "uses Google Antigravity CLI (`agy`) or GEMINI_API_KEY", Button: "Log in to Antigravity", NeedOAuth: okCLI}
 }
 
 func ClaudeLoggedIn() bool {
@@ -248,6 +293,26 @@ func InstallCores() (string, error) {
 		say("ok  claude cli")
 	}
 
+	if look("opencode") == "" {
+		if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
+			say("skip  opencode cli (test)")
+		} else if err := installOpenCode(say); err != nil {
+			say("miss opencode  " + err.Error())
+		}
+	} else {
+		say("ok  opencode cli")
+	}
+
+	if look("agy") == "" {
+		if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
+			say("skip  agy cli (test)")
+		} else if err := installAgy(say); err != nil {
+			say("miss agy  " + err.Error())
+		}
+	} else {
+		say("ok  agy cli")
+	}
+
 	if codexauth.LoggedIn() {
 		say("ok  chatgpt codex login")
 	} else {
@@ -298,20 +363,129 @@ func runTimed(d time.Duration, name string, args ...string) (string, error) {
 }
 
 func StartClaudeLogin() error {
+	if ClaudeLoggedIn() {
+		return nil
+	}
+	if look("claude") == "" {
+		say := func(string) {}
+		if err := installNPM("Claude Code CLI", "@anthropic-ai/claude-code", "claude", say); err != nil {
+			return fmt.Errorf("Claude Code is not installed and auto-install failed: %w", err)
+		}
+	}
 	bin := look("claude")
 	if bin == "" {
 		return fmt.Errorf("Claude Code is not installed yet")
 	}
-	if ClaudeLoggedIn() {
+	return OpenInteractive(bin + " auth login")
+}
+
+func StartOpenCodeLogin() error {
+	if opencodeauth.LoggedIn() {
 		return nil
 	}
-	cmd := exec.Command(bin, "auth", "login")
-	cmd.Env = os.Environ()
-	if err := cmd.Start(); err != nil {
-		cmd = exec.Command(bin, "login")
-		cmd.Env = os.Environ()
-		return cmd.Start()
+	if look("opencode") == "" {
+		say := func(string) {}
+		if err := installOpenCode(say); err != nil {
+			return fmt.Errorf("OpenCode is not installed and auto-install failed: %w", err)
+		}
 	}
+	bin := look("opencode")
+	if bin == "" {
+		home, _ := os.UserHomeDir()
+		cand := filepath.Join(home, ".opencode", "bin", "opencode")
+		if st, e := os.Stat(cand); e == nil && !st.IsDir() {
+			bin = cand
+		}
+	}
+	if bin == "" {
+		return fmt.Errorf("OpenCode is not installed yet")
+	}
+	return OpenInteractive(shellQuote(bin) + " auth login")
+}
+
+func StartAntigravityLogin() error {
+	if agyauth.LoggedIn() {
+		return nil
+	}
+	if look("agy") == "" {
+		say := func(string) {}
+		if err := installAgy(say); err != nil {
+			return fmt.Errorf("Antigravity CLI is not installed and auto-install failed: %w", err)
+		}
+	}
+	bin := look("agy")
+	if bin == "" {
+		home, _ := os.UserHomeDir()
+		cand := filepath.Join(home, ".local", "bin", "agy")
+		if st, e := os.Stat(cand); e == nil && !st.IsDir() {
+			bin = cand
+		}
+	}
+	if bin == "" {
+		return fmt.Errorf("Antigravity CLI (`agy`) is not installed yet")
+	}
+	return OpenInteractive(shellQuote(bin))
+}
+
+// StartCodexCLILogin opens Codex CLI login in a terminal (fallback when browser OAuth isn't used).
+func StartCodexCLILogin() error {
+	if codexauth.LoggedIn() {
+		return nil
+	}
+	if look("codex") == "" {
+		say := func(string) {}
+		if err := installNPM("Codex CLI", "@openai/codex", "codex", say); err != nil {
+			return fmt.Errorf("Codex CLI is not installed and auto-install failed: %w", err)
+		}
+	}
+	bin := look("codex")
+	if bin == "" {
+		return fmt.Errorf("Codex CLI is not installed yet")
+	}
+	return OpenInteractive(shellQuote(bin) + " login")
+}
+
+func installOpenCode(say func(string)) error {
+	say("installing OpenCode CLI…")
+	// Official installer: https://opencode.ai/docs
+	script := `curl -fsSL https://opencode.ai/install | bash`
+	out, err := runTimed(4*time.Minute, "bash", "-lc", script)
+	if err != nil {
+		if e2 := installNPM("OpenCode CLI", "opencode-ai", "opencode", say); e2 == nil {
+			return nil
+		}
+		return fmt.Errorf("%w\n%s", err, strings.TrimSpace(out))
+	}
+	if look("opencode") == "" {
+		// Common install location
+		home, _ := os.UserHomeDir()
+		cand := filepath.Join(home, ".opencode", "bin", "opencode")
+		if st, e := os.Stat(cand); e == nil && !st.IsDir() {
+			say("ok  opencode at " + cand + " (add ~/.opencode/bin to PATH)")
+			return nil
+		}
+		return fmt.Errorf("install finished but `opencode` is still not on PATH")
+	}
+	say("ok  opencode")
+	return nil
+}
+
+func installAgy(say func(string)) error {
+	say("installing Antigravity CLI (`agy`)…")
+	out, err := runTimed(4*time.Minute, "bash", "-lc", `curl -fsSL https://antigravity.google/cli/install.sh | bash`)
+	if err != nil {
+		return fmt.Errorf("%w\n%s", err, strings.TrimSpace(out))
+	}
+	if look("agy") == "" {
+		home, _ := os.UserHomeDir()
+		cand := filepath.Join(home, ".local", "bin", "agy")
+		if st, e := os.Stat(cand); e == nil && !st.IsDir() {
+			say("ok  agy at " + cand)
+			return nil
+		}
+		return fmt.Errorf("install finished but `agy` is still not on PATH")
+	}
+	say("ok  agy")
 	return nil
 }
 
@@ -334,12 +508,21 @@ func Apply(cfg config.Config, workspace, mode, model string) (config.Config, err
 	}
 	cfg.Workspace = abs
 	cfg.Mode = m
+	prov := cfg.Provider
+	if prov == "" {
+		prov = config.ProviderCodex
+	}
+	supportsAuto := prov == config.ProviderCodex || prov == config.ProviderQuadCode
 	if strings.TrimSpace(model) != "" && model != config.ModelAuto {
 		cfg.Model = strings.TrimSpace(model)
 		cfg.Router.Enabled = false
-	} else {
+	} else if supportsAuto {
 		cfg.Model = config.ModelAuto
 		cfg.Router.Enabled = true
+	} else {
+		cfg.Model = ""
+		cfg.Model = cfg.BackendModel()
+		cfg.Router.Enabled = false
 	}
 	if cfg.Provider == "" {
 		cfg.Provider = config.ProviderCodex

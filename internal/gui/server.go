@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/saiaathish/picogent/internal/agent"
+	"github.com/saiaathish/picogent/internal/agyauth"
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/attachments"
 	"github.com/saiaathish/picogent/internal/claudeauth"
@@ -28,6 +29,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/learn"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/opencodeauth"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/setup"
@@ -269,6 +271,8 @@ func (s *server) snapshot() map[string]any {
 	if !taskMode.Valid() {
 		taskMode = agent.ParseTaskMode(cfg.TaskMode)
 	}
+	// Auto-refresh CLI model catalogs whenever the chat UI loads state (model picker).
+	llm.RefreshCLIModels(false)
 	out := map[string]any{
 		"mode":          cfg.Mode,
 		"task_mode":     string(taskMode),
@@ -276,9 +280,16 @@ func (s *server) snapshot() map[string]any {
 		"workspace":     cfg.Workspace,
 		"provider":      cfg.Provider,
 		"codex":         cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
-		"quadcode":      cfg.Provider == config.ProviderQuadCode && cfg.AnthropicKeyResolved() != "",
+		"codex_cli":     codexauth.LoggedIn(),
+		"quadcode":      cfg.Provider == config.ProviderQuadCode && (cfg.AnthropicKeyResolved() != "" || claudeauth.LoggedIn()),
+		"claude_cli":    claudeauth.LoggedIn(),
+		"opencode":      cfg.Provider == config.ProviderOpenCode && opencodeauth.LoggedIn(),
+		"opencode_cli":  opencodeauth.LoggedIn(),
+		"antigravity":   cfg.Provider == config.ProviderAntigravity && agyauth.LoggedIn(),
+		"antigravity_cli": agyauth.LoggedIn(),
 		"busy":          busy,
 		"hint":          hint,
+		"auth":          setup.ProviderAuthPrompt(cfg),
 		"setup":         !cfg.SetupComplete,
 		"mcp_tools":     mcpToolCount(ag),
 		"session_id":    sessionID,
@@ -470,14 +481,52 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), 400)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "hint": "Finish login in the window that opened, then come back here."})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":   true,
+			"hint": "A Terminal window opened for Claude login. Finish there, then come back — Picogent will detect it automatically.",
+		})
+	case "opencode":
+		if err := setup.StartOpenCodeLogin(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":   true,
+			"hint": "A Terminal window opened for OpenCode login. Choose Zen and/or Go, paste your key, then come back here.",
+		})
+	case "antigravity", "agy":
+		if err := setup.StartAntigravityLogin(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":   true,
+			"hint": "Antigravity opened in Terminal. Sign in with Google there, then come back here.",
+		})
+	case "codex-cli":
+		if err := setup.StartCodexCLILogin(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":   true,
+			"hint": "A Terminal window opened for Codex login. Finish there, then come back.",
+		})
 	default:
 		if in.ReturnTo == "" {
-			in.ReturnTo = "http://127.0.0.1:7420/setup.html"
+			in.ReturnTo = "http://127.0.0.1:7420/"
 		}
 		authURL, err := codexauth.BeginBrowserLogin(in.ReturnTo)
 		if err != nil {
-			http.Error(w, err.Error(), 500)
+			// Fall back to CLI login in a Terminal window.
+			if e2 := setup.StartCodexCLILogin(); e2 != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"ok":   true,
+				"hint": "Opened Codex login in Terminal (browser OAuth unavailable).",
+			})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": authURL})
@@ -1483,23 +1532,30 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		cfg := s.cfg
 		s.mu.Unlock()
+		llm.RefreshCLIModels(false)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"workspace":              cfg.Workspace,
-			"mode":                   cfg.Mode,
-			"model":                  cfg.DisplayModel(),
-			"provider":               cfg.Provider,
-			"max_tool_rounds":        cfg.MaxToolRounds,
-			"llm_timeout_sec":        cfg.LLMTimeoutSec,
-			"bash_timeout_sec":       cfg.BashTimeoutSec,
-			"has_api_key":            cfg.APIKeyResolved() != "",
-			"has_anthropic_key":      cfg.AnthropicKeyResolved() != "",
-			"claude_cli":             claudeauth.LoggedIn(),
-			"codex":                  cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
-			"model_options":          llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
-			"model_options_codex":    llm.ModelChoices(llm.EcoCodex, false),
-			"model_options_quadcode": llm.ModelChoices(llm.EcoQuadCode, cfg.FableAllowed()),
-			"router":                 s.routerSnapshot(),
+			"workspace":                 cfg.Workspace,
+			"mode":                      cfg.Mode,
+			"model":                     cfg.DisplayModel(),
+			"provider":                  cfg.Provider,
+			"max_tool_rounds":           cfg.MaxToolRounds,
+			"llm_timeout_sec":           cfg.LLMTimeoutSec,
+			"bash_timeout_sec":          cfg.BashTimeoutSec,
+			"has_api_key":               cfg.APIKeyResolved() != "",
+			"has_anthropic_key":         cfg.AnthropicKeyResolved() != "",
+			"codex_cli":                 codexauth.LoggedIn(),
+			"claude_cli":                claudeauth.LoggedIn(),
+			"opencode_cli":              opencodeauth.LoggedIn(),
+			"antigravity_cli":           agyauth.LoggedIn(),
+			"codex":                     cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
+			"auth":                      setup.ProviderAuthPrompt(cfg),
+			"model_options":             llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
+			"model_options_codex":       llm.ModelChoices(llm.EcoCodex, false),
+			"model_options_quadcode":    llm.ModelChoices(llm.EcoQuadCode, cfg.FableAllowed()),
+			"model_options_opencode":    llm.ModelChoices(llm.EcoOpenCode, false),
+			"model_options_antigravity": llm.ModelChoices(llm.EcoAntigravity, false),
+			"router":                    s.routerSnapshot(),
 		})
 	case http.MethodPost:
 		var in struct {
@@ -1532,8 +1588,15 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		}
 		if in.Model != "" {
 			if in.Model == config.ModelAuto {
-				s.cfg.Model = config.ModelAuto
-				s.cfg.Router.Enabled = true
+				switch s.cfg.Provider {
+				case config.ProviderOpenCode, config.ProviderAntigravity, config.ProviderOllama, config.ProviderOpenAI:
+					s.cfg.Model = ""
+					s.cfg.Model = s.cfg.BackendModel()
+					s.cfg.Router.Enabled = false
+				default:
+					s.cfg.Model = config.ModelAuto
+					s.cfg.Router.Enabled = true
+				}
 			} else {
 				s.cfg.Model = in.Model
 				s.cfg.Router.Enabled = false
@@ -1543,9 +1606,17 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		}
 		if p := config.Provider(strings.ToLower(in.Provider)); in.Provider != "" {
 			switch p {
-			case config.ProviderCodex, config.ProviderQuadCode, config.ProviderOpenAI, config.ProviderOllama:
+			case config.ProviderCodex, config.ProviderQuadCode, config.ProviderOpenCode, config.ProviderAntigravity, config.ProviderOpenAI, config.ProviderOllama:
 				s.cfg.Provider = p
 				s.ag.CFG.Provider = p
+				// Drop Auto when switching to providers without a router.
+				if (p == config.ProviderOpenCode || p == config.ProviderAntigravity || p == config.ProviderOllama || p == config.ProviderOpenAI) &&
+					(s.cfg.Model == "" || s.cfg.Model == config.ModelAuto) {
+					s.cfg.Model = s.cfg.BackendModel()
+					s.cfg.Router.Enabled = false
+					s.ag.CFG.Model = s.cfg.Model
+					s.ag.CFG.Router.Enabled = false
+				}
 			}
 		}
 		if in.AnthropicKey != "" {
@@ -1570,6 +1641,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		}
 		if in.RefreshCatalog {
 			llm.InitCatalog(true)
+			llm.RefreshCLIModels(true)
 		}
 		if in.MaxToolRounds > 0 {
 			s.cfg.MaxToolRounds = in.MaxToolRounds

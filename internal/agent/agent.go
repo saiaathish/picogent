@@ -402,5 +402,11 @@ func userErr(problem string, err error) error {
 	if strings.Contains(low, "401") || strings.Contains(low, "codex login") || strings.Contains(low, "auth.json") {
 		fix = "run `picogent login` (or `codex login`) so Picogent can use ~/.codex/auth.json."
 	}
+	if strings.Contains(low, "opencode") || strings.Contains(low, "zen/go") || strings.Contains(low, "open code") {
+		fix = "run `opencode auth login` for Zen and/or Go, then pick a model from that plan (Zen free models need Zen)."
+	}
+	if strings.Contains(low, "antigravity") || strings.Contains(low, "gemini_api_key") {
+		fix = "run `agy` to sign in, or set GEMINI_API_KEY, then pick an Antigravity model."
+	}
 	return fmt.Errorf("Problem: %s.\nCause:   %s.\nFix:     %s", problem, cause, fix)
 }

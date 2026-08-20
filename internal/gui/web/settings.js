@@ -33,6 +33,8 @@ if (location.hash === "#extensions") switchTab("extensions");
 /* ─── Settings form ─── */
 function modelOptionsForProvider(s, provider) {
   if (provider === "quadcode") return s.model_options_quadcode || s.model_options || [];
+  if (provider === "opencode") return s.model_options_opencode || s.model_options || [];
+  if (provider === "antigravity") return s.model_options_antigravity || s.model_options || [];
   return s.model_options_codex || s.model_options || [];
 }
 
@@ -47,7 +49,7 @@ function fillModelSelect(options, selected) {
     if (opt.value === selected) o.selected = true;
     sel.appendChild(o);
   }
-  if (!sel.value && sel.options.length) sel.value = "auto";
+  if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
   updateModelDesc();
 }
 
@@ -58,11 +60,51 @@ function updateModelDesc() {
 }
 
 function syncProviderUI() {
-  const isClaude = document.getElementById("provider").value === "quadcode";
+  const provider = document.getElementById("provider").value;
+  const isClaude = provider === "quadcode";
   document.getElementById("anthropic-block").hidden = !isClaude;
   const hint = document.getElementById("claude-cli-hint");
   if (hint) {
     hint.hidden = !(isClaude && state?.claude_cli);
+  }
+}
+
+const PROVIDER_AUTH_LABELS = {
+  codex: { label: "ChatGPT Codex", button: "Log in to Codex", target: "codex", detail: "Tap to open the login page." },
+  quadcode: { label: "Claude Code", button: "Log in to Claude", target: "claude", detail: "We’ll open Terminal and run Claude login for you." },
+  opencode: { label: "OpenCode", button: "Log in to OpenCode", target: "opencode", detail: "We’ll open Terminal and run OpenCode login for you." },
+  antigravity: { label: "Antigravity", button: "Log in to Antigravity", target: "antigravity", detail: "We’ll open Antigravity so you can sign in with Google." },
+};
+
+/** True when the selected provider already has usable CLI/API auth. */
+function providerLoggedIn(provider, s = state) {
+  if (provider === "codex") return !!s.codex_cli;
+  if (provider === "quadcode") return !!(s.claude_cli || s.has_anthropic_key);
+  if (provider === "opencode") return !!s.opencode_cli;
+  if (provider === "antigravity") return !!s.antigravity_cli;
+  return false;
+}
+
+function applyProviderAuthUI(provider) {
+  if (providerLoggedIn(provider)) {
+    renderProviderAuth(null);
+    return;
+  }
+  renderProviderAuth({ needed: true, ...(PROVIDER_AUTH_LABELS[provider] || PROVIDER_AUTH_LABELS.codex) });
+}
+
+/** Re-read CLI login status from the server, then show/hide the login widget. */
+async function refreshCLIAuthFlags() {
+  try {
+    const s = await (await fetch("/api/settings")).json();
+    state.codex_cli = !!s.codex_cli;
+    state.claude_cli = !!s.claude_cli;
+    state.opencode_cli = !!s.opencode_cli;
+    state.antigravity_cli = !!s.antigravity_cli;
+    state.has_anthropic_key = !!s.has_anthropic_key;
+    state.codex = !!s.codex;
+  } catch (_) {
+    /* keep last-known flags */
   }
 }
 
@@ -86,22 +128,107 @@ async function load() {
   state = s;
   document.getElementById("workspace").value = s.workspace || "";
   document.getElementById("mode").value = s.mode || "safe";
-  document.getElementById("provider").value = s.provider === "quadcode" ? "quadcode" : "codex";
-  fillModelSelect(modelOptionsForProvider(s, document.getElementById("provider").value), s.model || "auto");
+  document.getElementById("provider").value = ["quadcode", "opencode", "antigravity"].includes(s.provider)
+    ? s.provider
+    : "codex";
+  const provider = document.getElementById("provider").value;
+  fillModelSelect(modelOptionsForProvider(s, provider), s.model || "auto");
   syncProviderUI();
   renderLast(s.router);
+  // Prefer live CLI checks over saved-provider auth so switching providers
+  // (and already-logged-in CLIs) hide the login widget correctly.
+  applyProviderAuthUI(provider);
 
   const conn = document.getElementById("connection");
-  if (s.codex || s.has_anthropic_key || s.has_api_key) {
+  if (providerLoggedIn(provider)) {
     conn.innerHTML = 'Connected. <a href="/setup.html">Setup</a>';
   } else {
-    conn.innerHTML = 'Not connected. <a href="/setup.html">Finish setup</a>';
+    conn.innerHTML = "Not connected — use <strong>Log in</strong> above (no Terminal typing needed).";
   }
 }
 
-document.getElementById("provider").onchange = () => {
+function renderProviderAuth(auth) {
+  const box = document.getElementById("provider-auth");
+  if (!box) return;
+  if (!auth?.needed) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  document.getElementById("provider-auth-title").textContent = auth.label
+    ? "Log in to " + auth.label
+    : "Log in required";
+  document.getElementById("provider-auth-detail").textContent = auth.detail || "";
+  const btn = document.getElementById("provider-auth-btn");
+  btn.textContent = auth.button || "Log in";
+  btn.onclick = async () => {
+    const target = auth.target || "codex";
+    if (target === "settings") {
+      document.getElementById("status").textContent = "Add a key or switch provider above.";
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Opening…";
+    document.getElementById("status").textContent = "Starting login…";
+    try {
+      const res = await fetch("/api/setup/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target, return_to: location.origin + "/settings.html" }),
+      });
+      const text = await res.text();
+      let data = {};
+      try {
+        data = JSON.parse(text);
+      } catch {
+        if (!res.ok) throw new Error(text || "Login failed");
+      }
+      if (!res.ok) throw new Error(data.error || text || "Login failed");
+      if (data.url) {
+        location.href = data.url;
+        return;
+      }
+      document.getElementById("status").textContent =
+        data.hint || "Finish login in the window that opened, then Save.";
+      btn.disabled = false;
+      btn.textContent = auth.button || "Log in";
+      const poll = setInterval(async () => {
+        const s2 = await (await fetch("/api/settings")).json();
+        state.codex_cli = !!s2.codex_cli;
+        state.claude_cli = !!s2.claude_cli;
+        state.opencode_cli = !!s2.opencode_cli;
+        state.antigravity_cli = !!s2.antigravity_cli;
+        state.has_anthropic_key = !!s2.has_anthropic_key;
+        const selected = document.getElementById("provider").value;
+        if (providerLoggedIn(selected)) {
+          clearInterval(poll);
+          renderProviderAuth(null);
+          document.getElementById("status").textContent = "Connected.";
+          document.getElementById("connection").innerHTML =
+            'Connected. <a href="/setup.html">Setup</a>';
+        }
+      }, 2000);
+    } catch (err) {
+      document.getElementById("status").textContent = err.message || String(err);
+      btn.disabled = false;
+      btn.textContent = auth.button || "Log in";
+    }
+  };
+}
+
+document.getElementById("provider").onchange = async () => {
   syncProviderUI();
-  fillModelSelect(modelOptionsForProvider(state, document.getElementById("provider").value), "auto");
+  const p = document.getElementById("provider").value;
+  const opts = modelOptionsForProvider(state, p);
+  const preferAuto = p === "codex" || p === "quadcode";
+  const pick = preferAuto ? "auto" : opts[0]?.value || "";
+  fillModelSelect(opts, pick);
+  await refreshCLIAuthFlags();
+  applyProviderAuthUI(p);
+  const conn = document.getElementById("connection");
+  conn.innerHTML = providerLoggedIn(p)
+    ? 'Connected. <a href="/setup.html">Setup</a>'
+    : "Not connected — use <strong>Log in</strong> above (no Terminal typing needed).";
 };
 
 document.getElementById("model").onchange = () => {

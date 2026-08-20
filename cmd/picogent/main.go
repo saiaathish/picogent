@@ -78,6 +78,8 @@ Usage:
   picogent run "..."    one-shot prompt (headless)
   picogent login        connect ChatGPT Codex (~/.codex/auth.json)
   picogent login claude connect Claude Code CLI (subscription, no API key)
+  picogent login opencode connect OpenCode Zen/Go (opencode auth login)
+  picogent login antigravity connect Antigravity CLI (agy)
   picogent mcp          list connected MCP tools
   picogent init         write ~/.picogent/config.yaml
   picogent version
@@ -85,7 +87,7 @@ Usage:
 No extra app. The GUI is a local page in your browser.
 
 Default backend is your Codex subscription (same auth file as Codex CLI).
-Claude Code provider uses the same login as the claude CLI — no Anthropic API key.
+Claude Code / OpenCode / Antigravity reuse their CLI logins.
 
 Init flags:
   --ollama              use local Ollama
@@ -107,10 +109,14 @@ func runLogin(args []string) error {
 	switch target {
 	case "claude", "quadcode", "anthropic":
 		return runClaudeLogin()
+	case "opencode", "zen", "opencode-go", "go":
+		return runOpenCodeLogin()
+	case "antigravity", "agy", "gemini":
+		return runAntigravityLogin()
 	case "codex", "chatgpt", "":
 		return runCodexLogin()
 	default:
-		return fmt.Errorf("unknown login target %q (try: picogent login  or  picogent login claude)", args[0])
+		return fmt.Errorf("unknown login target %q (try: picogent login | login claude | login opencode | login antigravity)", args[0])
 	}
 }
 
@@ -142,6 +148,22 @@ func runClaudeLogin() error {
 		return nil
 	}
 	fmt.Println("Finish Claude login in the window that opened, then pick Claude Code in Settings.")
+	return nil
+}
+
+func runOpenCodeLogin() error {
+	if err := setup.StartOpenCodeLogin(); err != nil {
+		return err
+	}
+	fmt.Println("Finish OpenCode auth (Zen and/or Go) in the window that opened, then pick OpenCode in Settings.")
+	return nil
+}
+
+func runAntigravityLogin() error {
+	if err := setup.StartAntigravityLogin(); err != nil {
+		return err
+	}
+	fmt.Println("Finish Antigravity Google sign-in in the CLI window, then pick Antigravity in Settings.")
 	return nil
 }
 

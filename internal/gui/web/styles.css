@@ -695,6 +695,77 @@ button, input, textarea { font: inherit; color: inherit; }
 .approve-row button:active { transform: scale(0.97); }
 .approve-row .yes { background: var(--ink); color: var(--card); border-color: var(--ink); }
 
+.auth-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--paper) 88%, var(--accent, #c45c26) 12%);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.auth-banner[hidden] { display: none !important; }
+.auth-banner-copy { min-width: 0; flex: 1; }
+.auth-banner-copy strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 650;
+  margin-bottom: 4px;
+}
+.auth-banner-copy p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--mute);
+}
+.auth-banner-status {
+  margin-top: 6px !important;
+  color: var(--ink) !important;
+  font-weight: 550;
+}
+.auth-banner-btn {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--card);
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .16s ease, opacity .16s ease;
+}
+.auth-banner-btn:hover { opacity: 0.92; }
+.auth-banner-btn:active { transform: scale(0.97); }
+.auth-banner-btn:disabled { opacity: 0.45; cursor: wait; }
+
+.settings-auth {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+}
+.settings-auth[hidden] { display: none !important; }
+.settings-auth p { margin: 0; font-size: 13px; line-height: 1.45; color: var(--mute); }
+.settings-auth strong { display: block; color: var(--ink); margin-bottom: 2px; }
+.settings-auth button {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--card);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .drawer {
   position: fixed;
   top: 0;
