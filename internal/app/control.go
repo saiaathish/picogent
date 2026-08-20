@@ -34,8 +34,6 @@ func wireRuntime(a *agent.Agent) {
 	}
 	a.Tools.Ctx.Verify = func(ctx context.Context) (string, error) {
 		res := verify.Run(ctx, ws)
-		ok := res.OK
-		_ = a.Trace.Append("verify", "verify", verify.Format(res), &ok, 0)
 		return verify.Format(res), nil
 	}
 }

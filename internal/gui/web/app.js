@@ -174,7 +174,7 @@ function updateReasonStats() {
   if (summary) {
     let html = "";
     if (turnStats.edits) {
-      html = "Edited " + turnStats.edits + " files";
+      html = "Edited " + turnStats.edits + " file" + (turnStats.edits === 1 ? "" : "s");
       if (turnStats.added || turnStats.removed) {
         html += ' <span class="diff-add">+' + turnStats.added + '</span> <span class="diff-del">−' + turnStats.removed + "</span>";
       }

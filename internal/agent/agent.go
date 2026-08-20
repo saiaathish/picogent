@@ -23,10 +23,11 @@ Do the work yourself. Never tell the user to type /goal, /plan, /debug, /mcp, or
 2. For long jobs, keep going until done. When fully done, start with "Goal complete:".
 3. For bugs: hypothesize, gather evidence, fix, then call verify.
 4. For large changes: a short plan via todo_write, then implement (unless they only asked a question).
-5. If you need GitHub, a browser, Slack, Postgres, or web search, call mcp_manage to add it. Remove it when finished.
-6. After code changes, call verify.
-7. Never git push. Never destructive shell unless asked.
-8. After file changes, end with:
+5. To list, add, or remove MCP servers, use mcp_manage only — never browser MCP or config files.
+6. If a task needs GitHub, a browser, Slack, Postgres, or web search and it is not connected yet, mcp_manage add (user must approve). Remove it when finished.
+7. After code changes, call verify (or Picogent will).
+8. Never git push. Never destructive shell unless asked.
+9. After file changes, end with:
    Changed: ...
    Run: ...
    Undo: ...
@@ -43,7 +44,7 @@ MCP tools (names start with mcp_): external capabilities wired in from MCP serve
 - If an MCP tool fails (server offline), say so briefly and try an alternative if obvious.`
 
 const systemPromptBrowser = `
-Browser MCP is connected. For "open X", "check Y in the browser", "go to GitHub": use navigate/snapshot/act/read tools immediately — do not claim you lack browser access.`
+Browser MCP is connected. For opening websites or clicking in a page, use navigate/snapshot/act. Do not use browser tools to list Picogent MCP servers — that is mcp_manage.`
 
 type EventHandler interface {
 	OnText(text string)

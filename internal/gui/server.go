@@ -943,9 +943,13 @@ func (h *guiHandler) endTurn(result agent.Result) {
 		})
 	}
 	if len(result.FilesChanged) > 0 || h.edits > 0 {
+		label := fmt.Sprintf("Edited %d files", h.edits)
+		if h.edits == 1 {
+			label = "Edited 1 file"
+		}
 		h.s.emit(event{
 			Type:    "changes_summary",
-			Text:    fmt.Sprintf("Edited %d files", h.edits),
+			Text:    label,
 			Count:   h.edits,
 			Added:   h.added,
 			Removed: h.removed,
