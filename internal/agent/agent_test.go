@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/agent"
@@ -44,6 +45,34 @@ func TestWritesFileThenStops(t *testing.T) {
 	}
 	if string(got) != "picogent" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestAutoVerifyAfterWrite(t *testing.T) {
+	dir := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "hello.txt", "content": "picogent"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "1", Name: "write_file", Arguments: string(args)},
+		}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: dir,
+		Verify:    func(context.Context) (string, error) { return "verify PASS (go test ./...)", nil },
+	})
+	gate := perm.New(config.ModeFast, dir, nil)
+	a := agent.New(cfg, fake, reg, gate)
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "write hello"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Verified, "PASS") {
+		t.Fatalf("verified=%q", res.Verified)
 	}
 }
 

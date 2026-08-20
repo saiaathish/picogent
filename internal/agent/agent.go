@@ -59,6 +59,7 @@ type Result struct {
 	ToolRounds   int
 	Context      ctxmgr.Stats
 	GoalDone     bool
+	Verified     string
 }
 
 type Agent struct {
@@ -134,6 +135,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	res.Context = ctxStats
 	changed := map[string]struct{}{}
 	lastToolKind := ""
+	calledVerify := false
 
 	for round := 0; round < a.CFG.MaxToolRounds; round++ {
 		if r, ok := a.LLM.(*llm.Router); ok {
@@ -168,10 +170,11 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			res.Text = text
 			res.ToolRounds = round
 			res.GoalDone = goal.LooksComplete(text)
-			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
 			for p := range changed {
 				res.FilesChanged = append(res.FilesChanged, p)
 			}
+			res.Verified = a.maybeVerify(ctx, ev, len(changed) > 0, calledVerify)
+			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
 			final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
 			res.Context = stats
 			return final, res, nil
@@ -187,6 +190,9 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		var pending []executed
 
 		for _, call := range msg.ToolCalls {
+			if call.Name == "verify" {
+				calledVerify = true
+			}
 			ev.OnToolStart(call)
 			_ = a.Trace.Append("tool_start", call.Name, call.Arguments, nil, 0)
 			if blocked, reason := a.TaskMode.BlockTool(call.Name); blocked {
@@ -263,6 +269,41 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
 	res.Context = stats
 	return final, res, err
+}
+
+func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, filesChanged, already bool) string {
+	if already || !filesChanged || a.Tools == nil || a.Tools.Ctx.Verify == nil {
+		return ""
+	}
+	tool, ok := a.Tools.Get("verify")
+	if !ok {
+		return ""
+	}
+	call := llm.ToolCall{ID: "verify-auto", Name: "verify", Arguments: "{}"}
+	ev.OnToolStart(call)
+	req := tool.Permission("{}", a.Tools.Ctx)
+	req.Hint = perm.EnrichHint(req, "{}")
+	dec, err := a.Gate.Check(ctx, req)
+	if err != nil || dec == perm.Deny {
+		msg := "verify skipped"
+		if err != nil {
+			msg = err.Error()
+		} else {
+			msg = "verify denied"
+		}
+		ev.OnToolEnd(call, msg, err)
+		okv := false
+		_ = a.Trace.Append("verify", "verify", msg, &okv, 0)
+		return msg
+	}
+	out, err := tool.Run(ctx, "{}", a.Tools.Ctx)
+	if err != nil {
+		out = "error: " + err.Error()
+	}
+	ev.OnToolEnd(call, out, err)
+	okv := err == nil && !strings.Contains(strings.ToLower(out), "fail")
+	_ = a.Trace.Append("verify", "verify", out, &okv, 0)
+	return out
 }
 
 type NopHandler struct{}

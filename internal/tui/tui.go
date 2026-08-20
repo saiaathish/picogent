@@ -360,7 +360,7 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 	case payload == "goal:show":
 		g, _ := goal.Load(m.cfg.Workspace)
 		if g == "" {
-			m.lines = append(m.lines, logLine{Kind: "system", Text: "no active goal (/goal <objective> to set one)"})
+			m.lines = append(m.lines, logLine{Kind: "system", Text: "no active goal"})
 		} else {
 			m.lines = append(m.lines, logLine{Kind: "system", Text: "goal: " + g})
 		}
@@ -380,7 +380,7 @@ func (m *model) slash(line string) tea.Cmd {
 	case "/quit", "/exit", "/q":
 		return tea.Quit
 	case "/help":
-		help := "Task modes: /agent /ask /plan /debug\nGoal: /goal <objective>  /goal  /goal clear\nClaude Code-style: /commit /review /clear /compact /status /diff /memory /resume /commands\n/safe /fast /model /provider /reset /mcp /quit\nCustom: .claude/commands/foo.md → /foo"
+		help := "Type what you want. Safe asks before edits.\nOptional: /commit /review /clear /quit"
 		if m.ag.Tools != nil && m.ag.Tools.HasMCP() {
 			help += fmt.Sprintf("\nConnected: %d MCP tools.", len(m.ag.Tools.MCP.Tools()))
 		}
