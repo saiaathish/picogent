@@ -8,7 +8,7 @@ This is **not** [MiniCode](https://github.com/LiuMengxuan04/MiniCode) (a Claude 
 
 ## Install
 
-Needs [Go 1.24+](https://go.dev/dl/).
+Needs [Go 1.25+](https://go.dev/dl/).
 
 ```bash
 git clone https://github.com/saiaathish/picogent.git
