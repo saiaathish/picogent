@@ -42,20 +42,31 @@ type RouterConfig struct {
 	LastReason      string `yaml:"last_reason,omitempty"`
 }
 
+// ExtensionsConfig tracks installed extensions and permission preferences.
+type ExtensionsConfig struct {
+	AlwaysAllowTools []string `yaml:"always_allow_tools"`
+	Dismissed        []string `yaml:"dismissed"`
+	InstalledSkills  []string `yaml:"installed_skills"`
+	InstalledPlugins []string `yaml:"installed_plugins"`
+	EssentialPlugins []string `yaml:"essential_plugins"`
+	ActiveTransient  []string `yaml:"active_transient"`
+}
+
 type Config struct {
-	Workspace      string       `yaml:"workspace"`
-	Mode           Mode         `yaml:"mode"`
-	Provider       Provider     `yaml:"provider"`
-	BaseURL        string       `yaml:"base_url"`
-	APIKey         string       `yaml:"api_key"`
-	AnthropicKey   string       `yaml:"anthropic_api_key"`
-	Model          string       `yaml:"model"`
-	OllamaURL      string       `yaml:"ollama_url"`
-	MaxToolRounds  int          `yaml:"max_tool_rounds"`
-	LLMTimeoutSec  int          `yaml:"llm_timeout_sec"`
-	BashTimeoutSec int          `yaml:"bash_timeout_sec"`
-	SetupComplete  bool         `yaml:"setup_complete"`
-	Router         RouterConfig `yaml:"router"`
+	Workspace      string           `yaml:"workspace"`
+	Mode           Mode             `yaml:"mode"`
+	Provider       Provider         `yaml:"provider"`
+	BaseURL        string           `yaml:"base_url"`
+	APIKey         string           `yaml:"api_key"`
+	AnthropicKey   string           `yaml:"anthropic_api_key"`
+	Model          string           `yaml:"model"`
+	OllamaURL      string           `yaml:"ollama_url"`
+	MaxToolRounds  int              `yaml:"max_tool_rounds"`
+	LLMTimeoutSec  int              `yaml:"llm_timeout_sec"`
+	BashTimeoutSec int              `yaml:"bash_timeout_sec"`
+	SetupComplete  bool             `yaml:"setup_complete"`
+	Router         RouterConfig     `yaml:"router"`
+	Extensions     ExtensionsConfig `yaml:"extensions"`
 }
 
 func Default() Config {

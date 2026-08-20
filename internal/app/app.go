@@ -9,6 +9,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/extensions"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/mcpbridge"
 	"github.com/saiaathish/picogent/internal/perm"
@@ -57,8 +58,11 @@ func Build(cfg config.Config) (*agent.Agent, error) {
 		reg.AttachMCP(mgr)
 	}
 	gate := perm.New(cfg.Mode, cfg.Workspace, nil)
+	gate.SetAlwaysAllowed(cfg.Extensions.AlwaysAllowTools)
 	a := agent.New(cfg, client, reg, gate)
 	a.ProjectRules = projectctx.Load(cfg.Workspace)
+	skills := extensions.LoadDeveloperExtensions(cfg.Extensions.InstalledSkills)
+	a.SkillRules = extensions.SkillsPrompt(skills)
 	return a, nil
 }
 

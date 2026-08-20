@@ -31,6 +31,7 @@
       <nav class="thread-list" id="thread-list" aria-label="Chat history"></nav>
       <div class="drawer-foot">
         <a href="/settings.html">Settings</a>
+        <a href="/settings.html#extensions">Extensions</a>
         <a href="/setup.html">Setup</a>
       </div>
     </aside>
@@ -100,6 +101,7 @@
           </div>
         </div>
         <div id="reasoning" class="reasoning" hidden aria-live="polite"></div>
+        <div id="ext-recs" class="ext-recs" hidden aria-label="Suggested extensions"></div>
         <div id="log" class="log"></div>
         <div id="thinking" class="think" aria-live="polite">
           <span class="pixels" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
@@ -108,12 +110,14 @@
       </main>
 
       <footer class="dock">
+        <div id="ext-toasts" class="ext-toasts" aria-live="polite"></div>
         <div id="perm" class="approve">
-          <p>Allow this?</p>
+          <p id="perm-title">Allow this?</p>
           <code id="perm-text"></code>
           <div class="approve-row">
             <button type="button" data-allow="0">Deny</button>
             <button type="button" data-turn="1">This turn</button>
+            <button type="button" data-always="1">Always allow</button>
             <button type="button" class="yes" data-allow="1">Allow</button>
           </div>
         </div>

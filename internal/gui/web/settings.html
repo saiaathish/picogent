@@ -3,68 +3,92 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>Settings — Picogent</title>
+  <title>Picogent</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
   <div class="page-settings">
     <a class="back-link" href="/">← Back to chat</a>
-    <header class="settings-head">
-      <h1>Settings</h1>
-      <p class="lede">The basics — where Picogent works and how it behaves.</p>
-    </header>
 
-    <form class="settings-card" id="form">
-      <div class="field">
-        <label for="workspace">Project folder</label>
-        <p class="field-hint">Files here can be read and edited by the agent.</p>
-        <div class="field-row">
-          <input id="workspace" type="text" readonly autocomplete="off" placeholder="Select a folder…" />
-          <button type="button" class="ghost-btn" id="workspace-pick">Select folder</button>
+    <nav class="settings-nav" role="tablist" aria-label="Settings panels">
+      <button type="button" class="settings-nav-btn is-on" data-tab="settings" role="tab" aria-selected="true">Settings</button>
+      <button type="button" class="settings-nav-btn" data-tab="extensions" role="tab" aria-selected="false">Extensions</button>
+    </nav>
+
+    <div id="panel-settings" class="settings-panel" role="tabpanel">
+      <p class="panel-lede">Where Picogent works and how it behaves.</p>
+      <form class="settings-card" id="form">
+        <div class="field">
+          <label for="workspace">Project folder</label>
+          <div class="field-row">
+            <input id="workspace" type="text" readonly autocomplete="off" placeholder="Select a folder…" />
+            <button type="button" class="ghost-btn" id="workspace-pick">Browse</button>
+          </div>
         </div>
+
+        <div class="field">
+          <label for="mode">Safety mode</label>
+          <select id="mode">
+            <option value="safe">Safe — ask before changes</option>
+            <option value="fast">Fast — auto-edit in folder</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="provider">Provider</label>
+          <select id="provider" class="picker">
+            <option value="codex">Codex</option>
+            <option value="quadcode">Claude Code</option>
+          </select>
+        </div>
+
+        <div class="field model-field">
+          <label for="model">Model</label>
+          <select id="model" class="picker"></select>
+          <p class="model-desc" id="model-desc" aria-live="polite"></p>
+        </div>
+
+        <div class="field" id="anthropic-block" hidden>
+          <label for="anthropic-key">Anthropic API key</label>
+          <input id="anthropic-key" type="password" autocomplete="off" placeholder="sk-ant-…" />
+        </div>
+
+        <div class="router-last" id="router-last" hidden>
+          <p class="router-last-kicker">Last auto route</p>
+          <p class="router-last-main" id="router-last-main"></p>
+          <p class="router-last-reason" id="router-last-reason"></p>
+        </div>
+
+        <div class="settings-actions">
+          <button type="submit" class="btn btn-accent" id="save">Save</button>
+          <span class="settings-status" id="status" aria-live="polite"></span>
+        </div>
+      </form>
+    </div>
+
+    <div id="panel-extensions" class="settings-panel" role="tabpanel" hidden>
+      <p class="panel-lede">Claude Code library — extensions load on demand, not all at once.</p>
+
+      <div class="ext-assistant">
+        <label class="sr-only" for="ext-assistant-input">Describe your workflow</label>
+        <textarea id="ext-assistant-input" rows="2" placeholder="What are you building? e.g. “web scraping with browser automation”"></textarea>
+        <button type="button" class="btn btn-accent" id="ext-assistant-btn">Find</button>
+      </div>
+      <p class="ext-assistant-reply" id="ext-assistant-reply" hidden></p>
+
+      <div class="ext-toolbar">
+        <div class="ext-kind-tabs" role="group" aria-label="Extension type">
+          <button type="button" class="ext-kind is-on" data-kind="">All</button>
+          <button type="button" class="ext-kind" data-kind="mcp">MCP</button>
+          <button type="button" class="ext-kind" data-kind="plugin">Plugins</button>
+          <button type="button" class="ext-kind" data-kind="skill">Skills</button>
+        </div>
+        <p class="ext-stats" id="ext-stats"></p>
       </div>
 
-      <div class="field">
-        <label for="mode">Safety mode</label>
-        <p class="field-hint">Safe asks before changes. Fast edits automatically inside your folder.</p>
-        <select id="mode">
-          <option value="safe">Safe — ask before changes</option>
-          <option value="fast">Fast — auto-edit in folder</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label for="provider">Provider</label>
-        <p class="field-hint">Codex uses ChatGPT login. Claude Code uses an Anthropic API key.</p>
-        <select id="provider" class="picker">
-          <option value="codex">Codex</option>
-          <option value="quadcode">Claude Code</option>
-        </select>
-      </div>
-
-      <div class="field model-field">
-        <label for="model">Model</label>
-        <select id="model" class="picker"></select>
-        <p class="model-desc" id="model-desc" aria-live="polite"></p>
-      </div>
-
-      <div class="field" id="anthropic-block" hidden>
-        <label for="anthropic-key">Anthropic API key</label>
-        <p class="field-hint">Required for Claude Code models.</p>
-        <input id="anthropic-key" type="password" autocomplete="off" placeholder="sk-ant-…" />
-      </div>
-
-      <div class="router-last" id="router-last" hidden>
-        <p class="router-last-kicker">Last auto route</p>
-        <p class="router-last-main" id="router-last-main"></p>
-        <p class="router-last-reason" id="router-last-reason"></p>
-      </div>
-
-      <div class="settings-actions">
-        <button type="submit" class="btn btn-accent" id="save">Save</button>
-        <span class="settings-status" id="status" aria-live="polite"></span>
-      </div>
-    </form>
+      <div class="ext-list" id="ext-list"></div>
+      <button type="button" class="ghost-btn ext-more" id="ext-more" hidden>Load more</button>
+    </div>
 
     <p class="settings-foot" id="connection"></p>
   </div>

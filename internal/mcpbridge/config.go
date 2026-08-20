@@ -163,3 +163,92 @@ func sanitizePart(s string) string {
 func publicName(server, tool string) string {
 	return "mcp_" + sanitizePart(server) + "_" + sanitizePart(tool)
 }
+
+// SaveServer writes or updates a server in ~/.picogent/mcp.yaml.
+func SaveServer(name string, cfg ServerConfig) error {
+	home, err := picogentHome()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(home, "mcp.yaml")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return err
+	}
+	existing := map[string]ServerConfig{}
+	if batch, err := loadYAML(path); err != nil {
+		return err
+	} else if batch != nil {
+		existing = batch
+	}
+	existing[name] = cfg
+	var f fileYAML
+	f.Servers = existing
+	data, err := yaml.Marshal(&f)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+// RemoveServer deletes a server from ~/.picogent/mcp.yaml.
+func RemoveServer(name string) error {
+	home, err := picogentHome()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(home, "mcp.yaml")
+	existing, err := loadYAML(path)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return nil
+	}
+	delete(existing, name)
+	if len(existing) == 0 {
+		return os.Remove(path)
+	}
+	var f fileYAML
+	f.Servers = existing
+	data, err := yaml.Marshal(&f)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
+
+// RemoveServersWithPrefix deletes servers whose names start with prefix.
+func RemoveServersWithPrefix(prefix string) error {
+	home, err := picogentHome()
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(home, "mcp.yaml")
+	existing, err := loadYAML(path)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return nil
+	}
+	changed := false
+	for name := range existing {
+		if strings.HasPrefix(name, prefix) {
+			delete(existing, name)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	if len(existing) == 0 {
+		return os.Remove(path)
+	}
+	var f fileYAML
+	f.Servers = existing
+	data, err := yaml.Marshal(&f)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o600)
+}
