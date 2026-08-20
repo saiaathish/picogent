@@ -29,6 +29,7 @@ type Tool struct {
 // Manager holds live MCP sessions and discovered tools.
 type conn struct {
 	name  string
+	fp    string
 	close func()
 }
 
@@ -50,9 +51,17 @@ func Connect(ctx context.Context, servers map[string]ServerConfig) (*Manager, er
 func ConnectBestEffort(ctx context.Context, servers map[string]ServerConfig) (*Manager, []string) {
 	m := &Manager{}
 	var warns []string
+	seen := map[string]string{}
 	for name, cfg := range servers {
+		fp := fingerprint(cfg)
+		if other, ok := seen[fp]; ok {
+			warns = append(warns, fmt.Sprintf("%q skipped (same endpoint as %q)", name, other))
+			continue
+		}
+		seen[fp] = name
 		if err := m.ConnectServer(ctx, name, cfg); err != nil {
 			warns = append(warns, fmt.Sprintf("%q: %v", name, err))
+			delete(seen, fp)
 		}
 	}
 	return m, warns
@@ -64,6 +73,7 @@ func (m *Manager) ConnectServer(ctx context.Context, name string, cfg ServerConf
 		return fmt.Errorf("no manager")
 	}
 	m.DropServer(name)
+	m.dropFingerprint(fingerprint(cfg))
 	sctx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
 	session, cleanup, err := dial(sctx, name, cfg)
@@ -97,7 +107,7 @@ func (m *Manager) ConnectServer(ctx context.Context, name string, cfg ServerConf
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.conns = append(m.conns, conn{name: name, close: cleanup})
+	m.conns = append(m.conns, conn{name: name, fp: fingerprint(cfg), close: cleanup})
 	m.tools = append(m.tools, added...)
 	return nil
 }
@@ -109,6 +119,35 @@ func (m *Manager) DropServer(name string) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.dropLocked(name)
+}
+
+func fingerprint(cfg ServerConfig) string {
+	u := strings.TrimRight(strings.ToLower(strings.TrimSpace(cfg.URL)), "/")
+	if u != "" {
+		return "url:" + u
+	}
+	return "cmd:" + cfg.Command + "\x00" + strings.Join(cfg.Args, "\x00")
+}
+
+func (m *Manager) dropFingerprint(fp string) {
+	if m == nil || fp == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var names []string
+	for _, c := range m.conns {
+		if c.fp == fp {
+			names = append(names, c.name)
+		}
+	}
+	for _, name := range names {
+		m.dropLocked(name)
+	}
+}
+
+func (m *Manager) dropLocked(name string) {
 	filtered := m.tools[:0]
 	for _, t := range m.tools {
 		if t.Server != name {

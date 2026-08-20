@@ -16,6 +16,17 @@ func TestDropServerKeepsOthers(t *testing.T) {
 	}
 }
 
+func TestDropFingerprintSameURL(t *testing.T) {
+	m := &Manager{
+		tools: []Tool{{PublicName: "mcp_neo_tabs", Server: "neo"}},
+		conns: []conn{{name: "neo", fp: "url:http://127.0.0.1:9010/mcp"}},
+	}
+	m.dropFingerprint("url:http://127.0.0.1:9010/mcp")
+	if len(m.Tools()) != 0 {
+		t.Fatalf("still have tools: %+v", m.Tools())
+	}
+}
+
 func TestDropServerEmpty(t *testing.T) {
 	var m *Manager
 	m.DropServer("x")
