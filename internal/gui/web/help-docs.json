@@ -16,7 +16,7 @@
       "title": "Getting started",
       "blurb": "Open a folder and chat.",
       "keywords": ["start", "begin", "setup", "first", "install", "login", "codex", "claude", "ollama", "gui", "tui"],
-      "body": "## Getting started\n\n1. Run `picogent gui` (or `picogent` for the terminal UI).\n2. Tap **Select folder** and open the project you want edited.\n3. Type what you want in the chat bar — e.g. “fix the failing tests”.\n4. In **Safe** mode, Picogent asks before writing files or running shell.\n\n**First-time setup:** `picogent` opens a browser setup page to install Codex / Claude CLIs and log in.\n\n**Logins:**\n- `picogent login` — ChatGPT Codex (default)\n- `picogent login claude` — Claude Code subscription (no API key)\n- `picogent init --ollama` — local models via Ollama\n\nNo extra app: the GUI is a local page at `127.0.0.1`."
+      "body": "## Getting started\n\n1. Run `picogent gui` once after install.\n2. Tap **Select folder** and open the project you want edited.\n3. If you see **Log in**, tap it — Picogent opens the browser or Terminal for you.\n4. Type what you want in the chat bar — e.g. “fix the failing tests”.\n5. In **Safe** mode, Picogent asks before writing files or running shell.\n\nYou should not need the Terminal again after the install one-liner. Provider logins are started from the **Log in** button in chat or Settings."
     },
     {
       "id": "modes",
@@ -29,8 +29,8 @@
       "id": "models",
       "title": "Models & Auto",
       "blurb": "The Auto picker next to Send.",
-      "keywords": ["model", "auto", "router", "gpt", "claude", "luna", "provider", "codex", "openai"],
-      "body": "## Models & Auto\n\nThe **Auto** control next to the send button picks which model runs.\n\n- **Auto** lets Picogent route the task (light vs heavy models when available).\n- Pick a specific model to lock the turn to that choice.\n\nProviders live in **Settings**: Codex (default), Claude Code, Ollama, or any OpenAI-compatible base URL.\n\nSet `PICOGENT_API_KEY` when using your own key / OpenRouter."
+      "keywords": ["model", "auto", "router", "gpt", "claude", "luna", "provider", "codex", "openai", "opencode", "antigravity", "zen", "agy"],
+      "body": "## Models & Auto\n\nThe **Auto** control next to the send button picks which model runs.\n\n- **Auto** lets Picogent route the task (light vs heavy models when available).\n- Pick a specific model to lock the turn to that choice.\n\nProviders live in **Settings**: Codex, Claude Code, OpenCode (Zen/Go), Antigravity.\n\nIf a provider needs login, tap **Log in** — Picogent opens the browser or Terminal for you. You should not type login commands yourself."
     },
     {
       "id": "chat",

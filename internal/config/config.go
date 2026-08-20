@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/saiaathish/picogent/internal/agyauth"
 	"github.com/saiaathish/picogent/internal/claudeauth"
 	"github.com/saiaathish/picogent/internal/codexauth"
+	"github.com/saiaathish/picogent/internal/opencodeauth"
 	"gopkg.in/yaml.v3"
 )
 
@@ -22,10 +24,12 @@ const (
 type Provider string
 
 const (
-	ProviderCodex    Provider = "codex"
-	ProviderQuadCode Provider = "quadcode"
-	ProviderOpenAI   Provider = "openai"
-	ProviderOllama   Provider = "ollama"
+	ProviderCodex       Provider = "codex"
+	ProviderQuadCode    Provider = "quadcode"
+	ProviderOpenCode    Provider = "opencode"
+	ProviderAntigravity Provider = "antigravity"
+	ProviderOpenAI      Provider = "openai"
+	ProviderOllama      Provider = "ollama"
 )
 
 // ModelAuto enables the auto model router (default for new users).
@@ -122,6 +126,16 @@ func (c Config) MissingAuth() error {
 			return nil
 		}
 		return fmt.Errorf("Problem: Claude Code is not logged in.\nCause:   no Claude Code CLI session and no Anthropic API key.\nFix:     run `claude auth login` (or picogent setup → Log in to Claude), or set ANTHROPIC_API_KEY")
+	case ProviderOpenCode:
+		if opencodeauth.LoggedIn() {
+			return nil
+		}
+		return fmt.Errorf("Problem: OpenCode is not logged in.\nCause:   no Zen/Go key in ~/.local/share/opencode/auth.json.\nFix:     run `opencode auth login` (or picogent login opencode)")
+	case ProviderAntigravity:
+		if agyauth.LoggedIn() {
+			return nil
+		}
+		return fmt.Errorf("Problem: Antigravity is not logged in.\nCause:   no `agy` session and no GEMINI_API_KEY.\nFix:     run `agy` to sign in, or picogent login antigravity, or set GEMINI_API_KEY")
 	default:
 		if c.APIKeyResolved() != "" {
 			return nil
@@ -230,6 +244,10 @@ func (c Config) RouterEcosystem() string {
 	switch c.Provider {
 	case ProviderQuadCode:
 		return "quadcode"
+	case ProviderOpenCode:
+		return "opencode"
+	case ProviderAntigravity:
+		return "antigravity"
 	default:
 		return "codex"
 	}
@@ -248,7 +266,13 @@ func (c Config) AutoTaskModeOn() bool {
 }
 
 // AutoRouter reports whether the auto model router should run.
+// Only Codex and Claude Code use Auto; OpenCode / Antigravity / Ollama / OpenAI
+// always require an explicit model.
 func (c Config) AutoRouter() bool {
+	switch c.Provider {
+	case ProviderOpenCode, ProviderAntigravity, ProviderOllama, ProviderOpenAI:
+		return false
+	}
 	if c.Model == ModelAuto {
 		return true
 	}
@@ -271,12 +295,24 @@ func (c Config) BackendModel() string {
 	switch c.Provider {
 	case ProviderQuadCode:
 		return "claude-sonnet-5"
+	case ProviderOpenCode:
+		return opencodeauth.DefaultModel()
+	case ProviderAntigravity:
+		return agyauth.DefaultModel()
 	default:
 		return codexauth.DefaultModel()
 	}
 }
 
 func normalizeModel(cfg Config) Config {
+	switch cfg.Provider {
+	case ProviderOpenCode, ProviderAntigravity, ProviderOllama, ProviderOpenAI:
+		if cfg.Model == "" || cfg.Model == ModelAuto {
+			cfg.Model = cfg.BackendModel()
+		}
+		cfg.Router.Enabled = false
+		return cfg
+	}
 	if cfg.Model == "" {
 		cfg.Model = ModelAuto
 	}
@@ -329,6 +365,10 @@ func overlayEnv(cfg Config) Config {
 		cfg.Provider = ProviderCodex
 	case "quadcode", "claude", "claude-code":
 		cfg.Provider = ProviderQuadCode
+	case "opencode", "opencode-zen", "zen", "opencode-go":
+		cfg.Provider = ProviderOpenCode
+	case "antigravity", "agy", "gemini":
+		cfg.Provider = ProviderAntigravity
 	case "openai":
 		cfg.Provider = ProviderOpenAI
 	case "ollama":

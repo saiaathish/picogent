@@ -39,7 +39,17 @@
           <select id="provider" class="picker">
             <option value="codex">Codex</option>
             <option value="quadcode">Claude Code</option>
+            <option value="opencode">OpenCode (Zen/Go)</option>
+            <option value="antigravity">Antigravity</option>
           </select>
+        </div>
+
+        <div class="settings-auth" id="provider-auth" hidden>
+          <p>
+            <strong id="provider-auth-title">Log in required</strong>
+            <span id="provider-auth-detail"></span>
+          </p>
+          <button type="button" id="provider-auth-btn">Log in</button>
         </div>
 
         <div class="field model-field">

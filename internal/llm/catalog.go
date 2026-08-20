@@ -86,6 +86,16 @@ func defaultCatalog() Catalog {
 			{ID: "claude-sonnet-5", Display: "Sonnet 5", Tier: TierStandard, Ecosystem: EcoQuadCode, Description: "Daily coding — best speed vs quality balance", Patterns: []string{`claude-sonnet-5`, `claude-.*sonnet-5`}},
 			{ID: "claude-opus-5", Display: "Opus 5", Tier: TierHeavy, Ecosystem: EcoQuadCode, Description: "Complex agentic work and deep reasoning", Patterns: []string{`claude-opus-5`, `claude-.*opus-5`}},
 			{ID: "claude-fable-5", Display: "Fable 5", Tier: TierPremium, Ecosystem: EcoQuadCode, Description: "Premium tier — API billing required", Patterns: []string{`claude-fable-5`, `claude-.*fable`}, Gated: true},
+
+			// OpenCode Zen / Go defaults (CLI refresh expands the list).
+			{ID: "opencode/big-pickle", Display: "Big Pickle", Tier: TierLight, Ecosystem: EcoOpenCode, Description: "Free OpenCode Zen model"},
+			{ID: "opencode-go/kimi-k2.6", Display: "Kimi K2.6", Tier: TierStandard, Ecosystem: EcoOpenCodeGo, Description: "OpenCode Go daily coding"},
+			{ID: "opencode-go/glm-5.2", Display: "GLM 5.2", Tier: TierHeavy, Ecosystem: EcoOpenCodeGo, Description: "OpenCode Go strong open model"},
+
+			// Antigravity defaults (CLI `agy models` expands the list).
+			{ID: "gemini-3.5-flash-medium", Display: "Gemini 3.5 Flash", Tier: TierLight, Ecosystem: EcoAntigravity, Description: "Antigravity fast default"},
+			{ID: "claude-sonnet-4-6", Display: "Claude Sonnet 4.6", Tier: TierStandard, Ecosystem: EcoAntigravity, Description: "Antigravity daily coding"},
+			{ID: "gemini-3.1-pro-high", Display: "Gemini 3.1 Pro", Tier: TierHeavy, Ecosystem: EcoAntigravity, Description: "Antigravity heavy reasoning"},
 		},
 	}
 }
@@ -100,6 +110,12 @@ func EcosystemForProvider(provider string) Ecosystem {
 	switch strings.ToLower(provider) {
 	case "quadcode", "claude", "claude-code":
 		return EcoQuadCode
+	case "opencode", "opencode-zen", "zen":
+		return EcoOpenCode
+	case "opencode-go", "go":
+		return EcoOpenCodeGo
+	case "antigravity", "agy", "gemini":
+		return EcoAntigravity
 	default:
 		return EcoCodex
 	}
@@ -128,6 +144,24 @@ func TierLabel(eco Ecosystem, tier Tier) string {
 			return "Sol"
 		case TierPremium:
 			return "Sol"
+		}
+	case EcoOpenCode, EcoOpenCodeGo:
+		switch tier {
+		case TierLight:
+			return "Fast"
+		case TierStandard:
+			return "Standard"
+		case TierHeavy:
+			return "Heavy"
+		}
+	case EcoAntigravity:
+		switch tier {
+		case TierLight:
+			return "Flash"
+		case TierStandard:
+			return "Standard"
+		case TierHeavy:
+			return "Pro"
 		}
 	}
 	return string(tier)

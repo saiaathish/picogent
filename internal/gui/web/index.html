@@ -112,6 +112,14 @@
 
       <footer class="dock">
         <div id="ext-toasts" class="ext-toasts" aria-live="polite"></div>
+        <div id="auth-banner" class="auth-banner" hidden>
+          <div class="auth-banner-copy">
+            <strong id="auth-banner-title">Log in to continue</strong>
+            <p id="auth-banner-detail"></p>
+            <p id="auth-banner-status" class="auth-banner-status" hidden></p>
+          </div>
+          <button type="button" class="auth-banner-btn" id="auth-banner-btn">Log in</button>
+        </div>
         <div id="perm" class="approve">
           <p id="perm-title">Allow this?</p>
           <code id="perm-text"></code>

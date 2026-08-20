@@ -86,6 +86,54 @@
         "supported": ["high", "xhigh", "max", "ultra"],
         "default": "high"
       }
+    },
+    {
+      "id": "opencode/big-pickle",
+      "display": "Big Pickle",
+      "tier": "light",
+      "ecosystem": "opencode",
+      "description": "Free OpenCode Zen model",
+      "patterns": ["big-pickle"]
+    },
+    {
+      "id": "opencode-go/kimi-k2.6",
+      "display": "Kimi K2.6",
+      "tier": "standard",
+      "ecosystem": "opencode-go",
+      "description": "OpenCode Go daily coding",
+      "patterns": ["kimi-k2\\.6"]
+    },
+    {
+      "id": "opencode-go/glm-5.2",
+      "display": "GLM 5.2",
+      "tier": "heavy",
+      "ecosystem": "opencode-go",
+      "description": "OpenCode Go strong open model",
+      "patterns": ["glm-5\\.2"]
+    },
+    {
+      "id": "gemini-3.5-flash-medium",
+      "display": "Gemini 3.5 Flash",
+      "tier": "light",
+      "ecosystem": "antigravity",
+      "description": "Antigravity fast default",
+      "patterns": ["gemini-3\\.5-flash"]
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "display": "Claude Sonnet 4.6",
+      "tier": "standard",
+      "ecosystem": "antigravity",
+      "description": "Antigravity daily coding",
+      "patterns": ["claude-sonnet-4-6"]
+    },
+    {
+      "id": "gemini-3.1-pro-high",
+      "display": "Gemini 3.1 Pro",
+      "tier": "heavy",
+      "ecosystem": "antigravity",
+      "description": "Antigravity heavy reasoning",
+      "patterns": ["gemini-3\\.1-pro"]
     }
   ]
 }

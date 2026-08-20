@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
+	"github.com/saiaathish/picogent/internal/agyauth"
 	"github.com/saiaathish/picogent/internal/claudeauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/evolve"
@@ -15,6 +16,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/mcpbridge"
+	"github.com/saiaathish/picogent/internal/opencodeauth"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/projectctx"
 	"github.com/saiaathish/picogent/internal/tools"
@@ -155,9 +157,19 @@ func newBackend(cfg config.Config) (llm.Client, error) {
 			return llm.NewClaudeCode(cfg.BackendModel(), timeout), nil
 		}
 		return nil, fmt.Errorf("Claude Code is not logged in (run `claude auth login` or picogent setup), and no Anthropic API key is set")
+	case config.ProviderOpenCode:
+		if !opencodeauth.LoggedIn() {
+			return nil, fmt.Errorf("OpenCode is not logged in (run `opencode auth login` or picogent login opencode)")
+		}
+		return llm.NewOpenCode(timeout), nil
+	case config.ProviderAntigravity:
+		if !agyauth.LoggedIn() {
+			return nil, fmt.Errorf("Antigravity is not logged in (run `agy` or picogent login antigravity, or set GEMINI_API_KEY)")
+		}
+		return llm.NewAntigravity(cfg.BackendModel(), timeout), nil
 	case config.ProviderOllama, config.ProviderOpenAI:
 		return llm.NewOpenAI(cfg.ChatBaseURL(), cfg.APIKeyResolved(), cfg.Model, timeout), nil
 	default:
-		return nil, fmt.Errorf("unknown provider %q (codex, claude-code, openai, ollama)", cfg.Provider)
+		return nil, fmt.Errorf("unknown provider %q (codex, claude-code, opencode, antigravity, openai, ollama)", cfg.Provider)
 	}
 }

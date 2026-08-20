@@ -116,7 +116,10 @@ function paint(st) {
       modelSel.appendChild(o);
     }
   }
-  modelSel.value = st.model || "auto";
+  modelSel.value = st.model || modelSel.options[0]?.value || "";
+  if (![...modelSel.options].some((o) => o.value === modelSel.value) && modelSel.options.length) {
+    modelSel.value = modelSel.options[0].value;
+  }
   updateSetupModelDesc();
   if (st.log) {
     logEl.hidden = false;
@@ -188,7 +191,7 @@ async function login(target) {
     location.href = data.url;
     return;
   }
-  showError(data.hint || "Finish login in the browser, then return here.");
+  showError(data.hint || "Finish login in the window that opened, then return here.");
   const tick = setInterval(async () => {
     const st = await refresh();
     const hit = (st.logins || []).find((l) => l.id === target);
