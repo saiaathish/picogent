@@ -4,7 +4,6 @@ package folderpick
 
 import (
 	"errors"
-	"fmt"
 	"os/exec"
 	"strings"
 )
