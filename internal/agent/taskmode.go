@@ -1,6 +1,10 @@
 package agent
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/saiaathish/picogent/internal/perm"
+)
 
 // TaskMode is how the agent approaches a turn (Cursor-style, kept minimal).
 type TaskMode string
@@ -87,19 +91,9 @@ func (m TaskMode) BlockTool(name string) (blocked bool, reason string) {
 	case "write_file", "edit_file", "bash", "verify", "mcp_manage":
 		return true, name + " blocked in " + strings.ToLower(m.Label()) + " mode (read-only)"
 	default:
-		if strings.HasPrefix(name, "mcp_") && looksWriteMCP(name) {
+		if strings.HasPrefix(name, "mcp_") && perm.LooksWriteMCP(name) {
 			return true, "write MCP tools blocked in " + strings.ToLower(m.Label()) + " mode"
 		}
 	}
 	return false, ""
-}
-
-func looksWriteMCP(name string) bool {
-	lower := strings.ToLower(name)
-	for _, w := range []string{"write", "edit", "create", "delete", "send", "post", "push", "commit"} {
-		if strings.Contains(lower, w) {
-			return true
-		}
-	}
-	return false
 }
