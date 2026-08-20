@@ -1,11 +1,12 @@
 {
   "product": "Picogent",
   "tagline": "A tiny coding agent — 80% of the useful loop, 20% of the machinery.",
-  "starters": [
+      "starters": [
     "How do I get started?",
     "What's the difference between Safe and Fast?",
     "How do I pick a model?",
     "What are slash commands?",
+    "How does self-evolution work?",
     "How do MCP tools work?",
     "How do I attach files?"
   ],
@@ -42,8 +43,8 @@
       "id": "slash",
       "title": "Slash commands",
       "blurb": "Type / for shortcuts.",
-      "keywords": ["slash", "command", "/", "commit", "review", "clear", "status", "diff", "compact", "goal", "plan", "ask"],
-      "body": "## Slash commands\n\nType `/` in the chat bar to open the command menu.\n\nBuilt-ins include:\n- `/commit` — prepare a commit\n- `/review` — review changes\n- `/clear` — reset the chat\n- `/status` — session status\n- `/diff` — show git diff\n- `/compact` — shrink context\n- `/agent` `/ask` `/plan` `/debug` — task modes\n- `/goal …` — set or clear a goal\n\n**Custom commands:** add `.claude/commands/deploy.md` in your project, then type `/deploy`."
+      "keywords": ["slash", "command", "/", "commit", "review", "clear", "status", "diff", "compact", "goal", "plan", "ask", "memory"],
+      "body": "## Slash commands\n\nType `/` in the chat bar to open the command menu.\n\nBuilt-ins include:\n- `/commit` — prepare a commit\n- `/review` — review changes\n- `/clear` — reset the chat\n- `/status` — session status\n- `/diff` — show git diff\n- `/compact` — shrink context\n- `/memory` — project rules + learned habits/playbooks\n- `/agent` `/ask` `/plan` `/debug` — task modes\n- `/goal …` — set or clear a goal\n\n**Custom commands:** add `.claude/commands/deploy.md` in your project, then type `/deploy`."
     },
     {
       "id": "review",
@@ -65,6 +66,13 @@
       "blurb": "AGENTS.md and CLAUDE.md.",
       "keywords": ["agents.md", "claude.md", "rules", "project", "memory", "context", "system"],
       "body": "## Project rules\n\nDrop `AGENTS.md` or `CLAUDE.md` in your repo. Picogent injects them into the system prompt (same idea as Claude Code).\n\nUse them for house style, test commands, “never touch X”, and repo-specific conventions."
+    },
+    {
+      "id": "evolve",
+      "title": "Self-evolution",
+      "blurb": "Picogent remembers what works.",
+      "keywords": ["evolve", "evolution", "learn", "memory", "habit", "playbook", "remember", "assistant", "self"],
+      "body": "## Self-evolution\n\nPicogent is already your assistant — you do not command it to “be helpful.” After meaningful turns it quietly remembers:\n\n- **Habits** — short preferences (how you like tests run, style, safety)\n- **Playbooks** — tiny reusable procedures for a class of task\n\nThese live in `~/.picogent/evolve/` and load into the next turn automatically, with a **hard prompt budget (≤720 chars)** and relevance filtering so self-evolution never erases Picogent’s TokenTamer / soft-budget savings. Reflection is **heuristic by default** (zero extra model tokens); set `PICOGENT_EVOLVE_LLM=1` only if you want a light-model review.\n\nYou will see a short line like “Remembered — habit: …” when something new sticks.\n\nInspired by Hermes Agent’s skill + curator ideas, but kept tiny: no separate evolution CLI, no DSPy stack, no PR workflow.\n\nUse `/memory` to peek at project rules plus what Picogent has learned."
     },
     {
       "id": "context",

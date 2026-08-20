@@ -23,6 +23,7 @@ import (
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
+	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/extensions"
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/learn"
@@ -104,7 +105,7 @@ func Run() error {
 		a.SetTaskMode(agent.TaskAgent)
 	}
 	sessID, hist := initialSession(cfg.Workspace)
-	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
+	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
 	s.ensureProject()
 	addr := "127.0.0.1:7420"
@@ -166,6 +167,7 @@ func (s *server) Handler() http.Handler {
 	mux.HandleFunc("/api/files/pick", s.filesPickAPI)
 	mux.HandleFunc("/api/files/read", s.filesReadAPI)
 	mux.HandleFunc("/api/overview", s.overviewAPI)
+	mux.HandleFunc("/api/evolve", s.evolveAPI)
 	mux.HandleFunc("/api/test", s.testAPI)
 	mux.HandleFunc("/api/diff", s.diffAPI)
 	mux.HandleFunc("/api/extensions", s.extensionsAPI)
@@ -286,6 +288,19 @@ func (s *server) snapshot() map[string]any {
 	}
 	if store, err := learn.Load(cfg.Workspace); err == nil {
 		out["overview"] = store
+	}
+	if ev, err := evolve.Load(cfg.Workspace); err == nil {
+		active := 0
+		for _, p := range ev.Playbooks {
+			if !p.Archived {
+				active++
+			}
+		}
+		out["evolve"] = map[string]any{
+			"summary":   evolve.Summary(ev),
+			"habits":    len(ev.Habits),
+			"playbooks": active,
+		}
 	}
 	if g, err := goal.Load(cfg.Workspace); err == nil && g != "" {
 		out["goal"] = g
@@ -1014,6 +1029,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 
 type guiHandler struct {
 	s        *server
+	prompt   string
 	learn    learn.Store
 	explore  int
 	searches int
@@ -1033,6 +1049,7 @@ func newGUIHandler(s *server) *guiHandler {
 }
 
 func (h *guiHandler) beginTurn(prompt string) {
+	h.prompt = prompt
 	h.learn.RecordTurn()
 	h.s.emit(event{Type: "think", Text: summarizePrompt(prompt), Kind: "plan", Status: "start"})
 	h.s.emit(event{Type: "activity", Kind: "reset"})
@@ -1078,6 +1095,7 @@ func (h *guiHandler) endTurn(result agent.Result) {
 	_ = learn.Save(h.learn)
 	h.s.emit(event{Type: "overview", Text: "refresh"})
 	h.s.cleanupExtensionPool()
+	h.s.reflectAfterTurn(h.prompt, result)
 }
 
 func summarizePrompt(prompt string) string {
@@ -1211,8 +1229,14 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 	h.s.emit(permissionEvent(req))
 	select {
 	case <-ctx.Done():
+		h.s.mu.Lock()
+		h.s.pendingPerm = perm.Request{}
+		h.s.mu.Unlock()
 		return perm.Deny, ctx.Err()
 	case d := <-h.s.permCh:
+		h.s.mu.Lock()
+		h.s.pendingPerm = perm.Request{}
+		h.s.mu.Unlock()
 		return d, nil
 	}
 }

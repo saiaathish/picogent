@@ -8,6 +8,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
+	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
@@ -15,9 +16,9 @@ import (
 	"github.com/saiaathish/picogent/internal/trace"
 )
 
-const systemPromptBase = `You are Picogent — a small coding agent.
+const systemPromptBase = `You are Picogent — the user's coding assistant.
 
-Do the work yourself. Never tell the user to type /goal, /plan, /debug, /mcp, or to edit config files.
+You already are their assistant: do the work yourself, reuse what you have learned in this workspace, and keep going. Never wait to be told to "be an assistant." Never tell the user to type /goal, /plan, /debug, /mcp, or to edit config files.
 
 1. Explore with glob/grep/read_file, then edit.
 2. For long jobs, keep going until done. When fully done, start with "Goal complete:".
@@ -27,10 +28,11 @@ Do the work yourself. Never tell the user to type /goal, /plan, /debug, /mcp, or
 6. If a task needs GitHub, a browser, Slack, Postgres, or web search and it is not connected yet, mcp_manage add (user must approve). Remove it when finished.
 7. After code changes, call verify (or Picogent will).
 8. Never git push. Never destructive shell unless asked.
-9. After file changes, end with:
+9. After successful file changes, end with:
    Changed: ...
    Run: ...
    Undo: ...
+   If nothing was written (denied, blocked, or read-only), do not invent a Changed/Run/Undo footer.
 
 Tools: read_file, list_dir, write_file, edit_file, glob, grep, bash, git, web_fetch, todo_write, mcp_manage, verify.
 Be direct. No filler.`
@@ -72,6 +74,7 @@ type Agent struct {
 	Gate         *perm.Gate
 	ProjectRules string
 	SkillRules   string
+	Memory       evolve.Store // learned habits/playbooks; injected per-turn with a hard byte budget
 	TaskMode     TaskMode
 	Goal         string
 	Trace        *trace.Log
@@ -88,7 +91,7 @@ func (a *Agent) SetTaskMode(m TaskMode) {
 	}
 }
 
-func (a *Agent) systemPrompt() string {
+func (a *Agent) systemPrompt(userHint string) string {
 	p := systemPromptBase
 	if a.Tools != nil && a.Tools.HasMCP() {
 		p += systemPromptMCP
@@ -98,6 +101,9 @@ func (a *Agent) systemPrompt() string {
 	}
 	if rules := strings.TrimSpace(a.ProjectRules); rules != "" {
 		p += "\n\nProject rules (follow these):\n" + rules
+	}
+	if mem := strings.TrimSpace(evolve.PromptFor(a.Memory, userHint)); mem != "" {
+		p += "\n\n" + mem
 	}
 	if skills := strings.TrimSpace(a.SkillRules); skills != "" {
 		p += "\n\n" + skills
@@ -126,7 +132,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	userText := strings.TrimSpace(user.Content)
 	// Always refresh the system prompt so mid-chat task mode / goal changes take effect.
 	msgs := make([]llm.Message, 0, len(history)+3)
-	msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt()})
+	msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt(userText)})
 	for i, m := range history {
 		if i == 0 && m.Role == "system" {
 			continue
@@ -274,8 +280,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		wg.Wait()
 
 		for _, ex := range pending {
-			if ex.call.Name == "write_file" || ex.call.Name == "edit_file" {
-				changed[ex.req.Path] = struct{}{}
+			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
+				if p := strings.TrimSpace(ex.req.Path); p != "" {
+					changed[p] = struct{}{}
+				}
 			}
 			content := ex.text
 			if content == "" && ex.err != nil {
@@ -354,6 +362,34 @@ func explainFooter(paths []string) string {
 		return ""
 	}
 	return "Changed: " + strings.Join(paths, ", ") + "\nRun: check the files above\nUndo: git checkout -- " + strings.Join(paths, " ")
+}
+
+// toolWriteSucceeded reports whether a write/edit tool call actually ran and
+// succeeded. Denied, blocked, or failed calls must not enter FilesChanged or
+// the "Changed:" footer (and must not trigger auto-verify).
+func toolWriteSucceeded(name, path, text string, err error) bool {
+	if name != "write_file" && name != "edit_file" {
+		return false
+	}
+	if err != nil {
+		return false
+	}
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	t := strings.TrimSpace(text)
+	if t == "" || t == "denied by user" {
+		return false
+	}
+	if strings.HasPrefix(t, "error:") {
+		return false
+	}
+	// Task-mode / policy blocks set a reason string without running the tool.
+	low := strings.ToLower(t)
+	if strings.Contains(low, "not allowed") || strings.Contains(low, "read-only") || strings.Contains(low, "blocked") {
+		return false
+	}
+	return true
 }
 
 func userErr(problem string, err error) error {

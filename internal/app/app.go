@@ -10,6 +10,7 @@ import (
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/claudeauth"
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/extensions"
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
@@ -65,9 +66,26 @@ func Build(cfg config.Config) (*agent.Agent, error) {
 	a.ProjectRules = projectctx.Load(cfg.Workspace)
 	skills := extensions.LoadDeveloperExtensions(cfg.Extensions.InstalledSkills)
 	a.SkillRules = extensions.SkillsPrompt(skills)
+	syncMemory(a, cfg.Workspace)
 	syncGoal(a, cfg.Workspace)
 	wireRuntime(a)
 	return a, nil
+}
+
+func syncMemory(a *agent.Agent, workspace string) {
+	if a == nil {
+		return
+	}
+	store, err := evolve.Load(workspace)
+	if err != nil {
+		return
+	}
+	a.Memory = store
+}
+
+// RefreshMemory reloads learned habits/playbooks into the live agent.
+func RefreshMemory(a *agent.Agent, workspace string) {
+	syncMemory(a, workspace)
 }
 
 func syncGoal(a *agent.Agent, workspace string) {
