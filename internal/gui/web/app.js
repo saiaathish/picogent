@@ -256,7 +256,12 @@ function renderOverview(ov) {
   }
   overviewCard.hidden = false;
   const pct = ov.knowledge || 0;
-  overviewPct.textContent = pct + "% explored";
+  let label = pct + "% explored";
+  const ev = ov.evolve;
+  if (ev && (ev.habits > 0 || ev.playbooks > 0)) {
+    label += " · " + (ev.habits || 0) + " habits · " + (ev.playbooks || 0) + " playbooks";
+  }
+  overviewPct.textContent = label;
   overviewBar.style.width = pct + "%";
 }
 
@@ -777,7 +782,10 @@ async function refresh() {
     fillModelPick(s.model_options, userModelChoice);
   }
 
-  renderOverview(s.overview);
+  renderOverview({
+    ...(s.overview || {}),
+    evolve: s.evolve,
+  });
   renderContext(s.context);
   if (s.pending_perm) {
     showPermission(s.pending_perm);
@@ -1677,6 +1685,10 @@ function connectEvents() {
         promptEl.value = "Fix the failing tests";
         promptEl.focus();
       }
+      return;
+    }
+    if (e.type === "evolve") {
+      add("system", e.text || "Picogent remembered something for this folder.");
       return;
     }
     if (e.type === "overview") {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -14,6 +15,7 @@ import (
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/commands"
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
@@ -51,7 +53,13 @@ type permAskMsg perm.Request
 type logMsg logLine
 type doneMsg struct {
 	history []llm.Message
+	result  agent.Result
+	prompt  string
 	err     error
+}
+
+type evolveMsg struct {
+	text string
 }
 
 type handler struct {
@@ -230,6 +238,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.lines = append(m.lines, logLine{Kind: "error", Text: msg.err.Error()})
 		}
 		m.refresh()
+		var cmds []tea.Cmd
+		if msg.err == nil {
+			cmds = append(cmds, m.reflectCmd(msg.prompt, msg.result))
+		}
+		return m, tea.Batch(cmds...)
+	case evolveMsg:
+		if msg.text != "" {
+			m.lines = append(m.lines, logLine{Kind: "system", Text: msg.text})
+			m.refresh()
+		}
 		return m, nil
 	}
 	var cmds []tea.Cmd
@@ -334,7 +352,40 @@ func (m *model) runAgent(prompt string) tea.Cmd {
 			_ = goal.Clear(ag.CFG.Workspace)
 			ag.Goal = ""
 		}
-		return doneMsg{history: hist, err: err}
+		return doneMsg{history: hist, result: res, prompt: prompt, err: err}
+	}
+}
+
+func (m *model) reflectCmd(prompt string, result agent.Result) tea.Cmd {
+	ws := m.cfg.Workspace
+	ag := m.ag
+	cfg := m.cfg
+	return func() tea.Msg {
+		sig := evolve.Signal{
+			Workspace:     ws,
+			UserPrompt:    prompt,
+			AssistantText: result.Text,
+			FilesChanged:  result.FilesChanged,
+			ToolRounds:    result.ToolRounds,
+			GoalDone:      result.GoalDone,
+			Verified:      result.Verified,
+		}
+		if !evolve.WorthReflecting(sig) {
+			return evolveMsg{}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		client := ag.LLM
+		if r, ok := client.(*llm.Router); ok && r.Backend != nil {
+			client = r.Backend
+		}
+		model := evolve.LightModel(cfg.Model, cfg.RouterEcosystem(), cfg.FableAllowed())
+		delta, err := evolve.Reflect(ctx, client, model, sig)
+		if err != nil || delta.Message == "" {
+			return evolveMsg{}
+		}
+		app.RefreshMemory(ag, ws)
+		return evolveMsg{text: delta.Message}
 	}
 }
 

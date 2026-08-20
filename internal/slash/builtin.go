@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/commands"
+	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/projectctx"
 )
 
@@ -47,7 +48,16 @@ func Resolve(workspace, line string) (Kind, string) {
 	case "diff":
 		return Local, "diff"
 	case "memory":
-		return Local, "memory:" + projectctx.Load(workspace)
+		mem := projectctx.Load(workspace)
+		if store, err := evolve.Load(workspace); err == nil {
+			if summary := evolve.Summary(store); summary != "" {
+				if mem != "" {
+					mem += "\n\n"
+				}
+				mem += summary
+			}
+		}
+		return Local, "memory:" + mem
 	case "resume":
 		return Local, "resume"
 	case "commands":
@@ -86,6 +96,7 @@ func Catalog(workspace string) []Item {
 		{Name: "commit", Hint: "Commit current changes"},
 		{Name: "review", Hint: "Review uncommitted diffs"},
 		{Name: "status", Hint: "Mode, model, workspace"},
+		{Name: "memory", Hint: "Project rules + what Picogent learned"},
 		{Name: "clear", Hint: "New chat"},
 	}
 	for _, name := range commands.List(workspace) {

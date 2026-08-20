@@ -103,17 +103,18 @@ Picogent implements the **useful core** of [Claude Code](https://github.com/anth
 | MCP (Cursor-compatible config) | yes |
 | Parallel tool calls | yes |
 | Project rules (`AGENTS.md`, `CLAUDE.md`) | yes |
+| Self-evolution (habits + playbooks, automatic, ≤720-char budget) | yes |
 | Custom slash commands (`.claude/commands/*.md`) | yes |
 | Built-in `/commit`, `/review`, `/compact`, `/diff`, `/memory`, `/resume` | yes |
 | Session save/resume (`~/.picogent/sessions/`) | yes |
 | Safe / Fast permissions | yes |
 | Subagents, LSP, skills, plugins, voice | no (on purpose) |
 
-**Workflow:** say what you want → Picogent plans, uses tools, asks before risky work, then reports what changed. You do not need `/goal`, `/plan`, or MCP commands.
+**Workflow:** say what you want → Picogent plans, uses tools, asks before risky work, then reports what changed. You do not need `/goal`, `/plan`, or MCP commands. After useful turns it quietly remembers habits and short playbooks for this folder (self-evolution) — check with `/memory`.
 
 ### Optional slash commands (TUI + GUI)
 
-`/commit` `/review` `/clear` `/status`
+`/commit` `/review` `/clear` `/status` `/memory`
 
 Custom: add `.claude/commands/deploy.md` → type `/deploy`.
 

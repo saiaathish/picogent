@@ -8,6 +8,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
+	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
@@ -15,9 +16,9 @@ import (
 	"github.com/saiaathish/picogent/internal/trace"
 )
 
-const systemPromptBase = `You are Picogent — a small coding agent.
+const systemPromptBase = `You are Picogent — the user's coding assistant.
 
-Do the work yourself. Never tell the user to type /goal, /plan, /debug, /mcp, or to edit config files.
+You already are their assistant: do the work yourself, reuse what you have learned in this workspace, and keep going. Never wait to be told to "be an assistant." Never tell the user to type /goal, /plan, /debug, /mcp, or to edit config files.
 
 1. Explore with glob/grep/read_file, then edit.
 2. For long jobs, keep going until done. When fully done, start with "Goal complete:".
@@ -72,6 +73,7 @@ type Agent struct {
 	Gate         *perm.Gate
 	ProjectRules string
 	SkillRules   string
+	Memory       evolve.Store // learned habits/playbooks; injected per-turn with a hard byte budget
 	TaskMode     TaskMode
 	Goal         string
 	Trace        *trace.Log
@@ -88,7 +90,7 @@ func (a *Agent) SetTaskMode(m TaskMode) {
 	}
 }
 
-func (a *Agent) systemPrompt() string {
+func (a *Agent) systemPrompt(userHint string) string {
 	p := systemPromptBase
 	if a.Tools != nil && a.Tools.HasMCP() {
 		p += systemPromptMCP
@@ -98,6 +100,9 @@ func (a *Agent) systemPrompt() string {
 	}
 	if rules := strings.TrimSpace(a.ProjectRules); rules != "" {
 		p += "\n\nProject rules (follow these):\n" + rules
+	}
+	if mem := strings.TrimSpace(evolve.PromptFor(a.Memory, userHint)); mem != "" {
+		p += "\n\n" + mem
 	}
 	if skills := strings.TrimSpace(a.SkillRules); skills != "" {
 		p += "\n\n" + skills
@@ -126,7 +131,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	userText := strings.TrimSpace(user.Content)
 	// Always refresh the system prompt so mid-chat task mode / goal changes take effect.
 	msgs := make([]llm.Message, 0, len(history)+3)
-	msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt()})
+	msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt(userText)})
 	for i, m := range history {
 		if i == 0 && m.Role == "system" {
 			continue

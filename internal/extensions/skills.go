@@ -47,6 +47,7 @@ func LocalSkillResults(query string, installed map[string]bool) []SearchResult {
 }
 
 // SkillsPrompt loads installed skill summaries for the system prompt.
+// Hard-capped: skills must not erase Picogent's context savings.
 func SkillsPrompt(skillNames []string) string {
 	if len(skillNames) == 0 {
 		return ""
@@ -56,8 +57,15 @@ func SkillsPrompt(skillNames []string) string {
 		return ""
 	}
 	root := filepath.Join(home, ".cursor", "skills-cursor")
+	const maxSkills = 2
+	const maxBody = 400
+	const maxTotal = 900
 	var parts []string
-	for _, name := range skillNames {
+	total := 0
+	for i, name := range skillNames {
+		if i >= maxSkills {
+			break
+		}
 		skillMD := filepath.Join(root, name, "SKILL.md")
 		data, err := os.ReadFile(skillMD)
 		if err != nil {
@@ -67,10 +75,15 @@ func SkillsPrompt(skillNames []string) string {
 		if body == "" {
 			continue
 		}
-		if len(body) > 1200 {
-			body = body[:1200] + "\n…"
+		if len(body) > maxBody {
+			body = body[:maxBody] + "…"
 		}
-		parts = append(parts, "### Skill: "+name+"\n"+body)
+		block := "### Skill: " + name + "\n" + body
+		if total+len(block) > maxTotal {
+			break
+		}
+		parts = append(parts, block)
+		total += len(block)
 	}
 	if len(parts) == 0 {
 		return ""
