@@ -74,6 +74,37 @@ func TestAutoVerifyAfterWrite(t *testing.T) {
 	if !strings.Contains(res.Verified, "PASS") {
 		t.Fatalf("verified=%q", res.Verified)
 	}
+	if !strings.Contains(res.Text, "Changed:") || !strings.Contains(res.Text, "Undo:") {
+		t.Fatalf("expected explain footer, got %q", res.Text)
+	}
+}
+
+func TestExplainFooterInjectedWhenMissing(t *testing.T) {
+	dir := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "a.txt", "content": "x"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "1", Name: "write_file", Arguments: string(args)},
+		}}},
+		{Message: llm.Message{Role: "assistant", Content: "all set"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{Workspace: dir})
+	gate := perm.New(config.ModeFast, dir, nil)
+	a := agent.New(cfg, fake, reg, gate)
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "write a.txt"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Text, "Changed:") || !strings.Contains(res.Text, "Run:") || !strings.Contains(res.Text, "Undo:") {
+		t.Fatalf("footer missing: %q", res.Text)
+	}
+	if !strings.Contains(res.Text, "a.txt") {
+		t.Fatalf("path missing from footer: %q", res.Text)
+	}
 }
 
 func TestSafeModeDeniesWriteWithoutPromptAllow(t *testing.T) {

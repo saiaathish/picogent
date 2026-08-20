@@ -170,15 +170,23 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 
 		if len(msg.ToolCalls) == 0 {
 			text := strings.TrimSpace(msg.Content)
+			for p := range changed {
+				res.FilesChanged = append(res.FilesChanged, p)
+			}
+			if footer := explainFooter(res.FilesChanged); footer != "" && !hasExplainFooter(text) {
+				if text != "" {
+					text += "\n\n"
+				}
+				text += footer
+				msg.Content = text
+				msgs[len(msgs)-1] = msg
+			}
 			if text != "" {
 				ev.OnText(text)
 			}
 			res.Text = text
 			res.ToolRounds = round
 			res.GoalDone = goal.LooksComplete(text)
-			for p := range changed {
-				res.FilesChanged = append(res.FilesChanged, p)
-			}
 			res.Verified = a.maybeVerify(ctx, ev, len(changed) > 0, calledVerify)
 			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
 			final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
@@ -321,6 +329,18 @@ func (NopHandler) OnNeedPermission(context.Context, perm.Request) (perm.Decision
 	return perm.Deny, nil
 }
 func (NopHandler) OnError(error) {}
+
+func hasExplainFooter(text string) bool {
+	low := strings.ToLower(text)
+	return strings.Contains(low, "changed:") && strings.Contains(low, "run:") && strings.Contains(low, "undo:")
+}
+
+func explainFooter(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return "Changed: " + strings.Join(paths, ", ") + "\nRun: check the files above\nUndo: git checkout -- " + strings.Join(paths, " ")
+}
 
 func userErr(problem string, err error) error {
 	cause := err.Error()
