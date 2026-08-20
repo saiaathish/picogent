@@ -73,6 +73,7 @@ type server struct {
 	undoStack   []extensions.UndoEntry
 	pendingPerm perm.Request
 	liveTask    agent.TaskMode
+	turnGen     uint64 // bumped on cancel/new chat so stale turns cannot rewrite hist
 }
 
 func Run() error {
@@ -601,6 +602,24 @@ func (s *server) popSteer() (string, []llm.Part, bool) {
 	return p, parts, true
 }
 
+func (s *server) abortTurnLocked() {
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
+	s.turnGen++
+	s.busy = false
+	s.pendingPerm = perm.Request{}
+	select {
+	case s.permCh <- perm.Deny:
+	default:
+	}
+	s.steerMu.Lock()
+	s.steerPrompt = ""
+	s.steerParts = nil
+	s.steerMu.Unlock()
+}
+
 func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 	s.mu.Lock()
 	if s.busy {
@@ -609,6 +628,8 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 	}
 	s.busy = true
 	hist := s.hist
+	s.turnGen++
+	myGen := s.turnGen
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.mu.Unlock()
@@ -620,9 +641,15 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 				fmt.Fprintf(os.Stderr, "picogent: agent panic: %v\n", rec)
 			}
 			s.mu.Lock()
-			s.busy = false
-			s.cancel = nil
+			live := s.turnGen == myGen
+			if live {
+				s.busy = false
+				s.cancel = nil
+			}
 			s.mu.Unlock()
+			if !live {
+				return
+			}
 			s.emit(event{Type: "done"})
 			if p, pts, ok := s.popSteer(); ok {
 				s.startAgentTurn(p, pts)
@@ -642,6 +669,12 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 		s.maybeRecommendExtensions(prompt)
 		userMsg := llm.Message{Role: "user", Content: prompt, Parts: parts}
 		next, result, err := s.ag.Run(ctx, hist, userMsg, h)
+		s.mu.Lock()
+		stale := s.turnGen != myGen
+		s.mu.Unlock()
+		if stale {
+			return
+		}
 		for i := len(next) - 1; i >= 0; i-- {
 			if next[i].Role == "user" && len(next[i].Parts) > 0 {
 				next[i].Content = attachments.SummaryLine(next[i].Parts) + next[i].Content
@@ -654,6 +687,10 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 			_ = s.clearGoal()
 		}
 		s.mu.Lock()
+		if s.turnGen != myGen {
+			s.mu.Unlock()
+			return
+		}
 		if s.liveTask.Valid() && s.ag != nil {
 			s.ag.SetTaskMode(s.liveTask)
 		}
@@ -708,10 +745,16 @@ func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	if len(s.hist) > 0 {
 		_ = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
 	}
+	s.abortTurnLocked()
 	s.sessionID = session.New(s.cfg.Workspace).ID
 	s.hist = nil
+	s.liveTask = agent.TaskAgent
+	if s.ag != nil {
+		s.ag.SetTaskMode(agent.TaskAgent)
+	}
 	id := s.sessionID
 	s.mu.Unlock()
+	s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
 }
@@ -807,10 +850,9 @@ func (s *server) cancelChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	if s.cancel != nil {
-		s.cancel()
-	}
+	s.abortTurnLocked()
 	s.mu.Unlock()
+	s.emit(event{Type: "done"})
 	w.WriteHeader(204)
 }
 
@@ -1243,6 +1285,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			if len(s.hist) > 0 {
 				_ = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
 			}
+			s.abortTurnLocked()
 			s.sessionID = session.New(s.cfg.Workspace).ID
 			s.hist = nil
 			s.liveTask = agent.TaskAgent
@@ -1251,6 +1294,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			}
 			id := s.sessionID
 			s.mu.Unlock()
+			s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"id": id})
 		case "load":
