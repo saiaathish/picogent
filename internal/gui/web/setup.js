@@ -1,11 +1,73 @@
+const STAGES = ["Welcome", "Core tools", "Log in", "Your agent"];
+const TOTAL = STAGES.length;
+
+let current = 0;
+let status = {};
+
 const compsEl = document.getElementById("comps");
 const loginsEl = document.getElementById("logins");
 const logEl = document.getElementById("install-log");
 const installBtn = document.getElementById("install");
-const startBtn = document.getElementById("start");
+const backBtn = document.getElementById("back");
+const nextBtn = document.getElementById("next");
 const errEl = document.getElementById("finish-err");
+const stageErr = document.getElementById("stage-err");
+
+function showError(msg) {
+  const el = current === TOTAL - 1 ? errEl : stageErr;
+  errEl.hidden = el !== errEl;
+  stageErr.hidden = el !== stageErr;
+  el.hidden = false;
+  el.textContent = msg;
+}
+
+function clearError() {
+  errEl.hidden = true;
+  stageErr.hidden = true;
+}
+const dots = [...document.querySelectorAll(".step-dot")];
+const panels = [...document.querySelectorAll(".stage")];
+
+function toolsReady(st) {
+  const required = (st.components || []).filter(
+    (c) => c.id === "home" || c.id === "git" || c.id === "codex-cli" || c.id === "claude-cli"
+  );
+  return required.every((c) => c.ok);
+}
+
+function firstIncomplete(st) {
+  if (!toolsReady(st)) return 1;
+  if (!st.logged_in) return 2;
+  return 0;
+}
+
+function canAdvance(st, stage) {
+  if (stage === 0) return true;
+  if (stage === 1) return toolsReady(st);
+  if (stage === 2) return !!st.logged_in;
+  return true;
+}
+
+function showStage(n) {
+  current = Math.max(0, Math.min(TOTAL - 1, n));
+  panels.forEach((p, i) => {
+    p.hidden = i !== current;
+  });
+  dots.forEach((d, i) => {
+    d.classList.toggle("active", i === current);
+    d.classList.toggle("done", i < current || (i === 1 && toolsReady(status)) || (i === 2 && status.logged_in));
+  });
+  backBtn.disabled = current === 0;
+  const onLast = current === TOTAL - 1;
+  nextBtn.textContent = onLast ? "Start chatting" : "Next";
+  nextBtn.disabled = !canAdvance(status, current);
+  if (current === 1 && !toolsReady(status)) {
+    autoInstallIfNeeded();
+  }
+}
 
 function paint(st) {
+  status = st;
   compsEl.innerHTML = "";
   (st.components || []).forEach((c) => {
     const li = document.createElement("li");
@@ -13,12 +75,13 @@ function paint(st) {
     li.innerHTML = `<strong>${c.name}</strong><span>${c.ok ? "ready" : c.detail}</span>`;
     compsEl.appendChild(li);
   });
+
   loginsEl.innerHTML = "";
   (st.logins || []).forEach((l) => {
     const card = document.createElement("div");
     card.className = "login-card" + (l.ok ? " on" : "");
     const p = document.createElement("p");
-    p.innerHTML = `<strong>Log in to ${l.name}</strong><br>${l.detail}`;
+    p.innerHTML = `<strong>${l.name}</strong><br><span class="login-detail">${l.detail}</span>`;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = l.ok ? "Connected" : l.button;
@@ -28,6 +91,7 @@ function paint(st) {
     card.appendChild(btn);
     loginsEl.appendChild(card);
   });
+
   if (st.workspace) document.getElementById("workspace").value = st.workspace;
   if (st.mode) document.getElementById("mode").value = st.mode;
   if (st.model) document.getElementById("model").value = st.model;
@@ -35,7 +99,11 @@ function paint(st) {
     logEl.hidden = false;
     logEl.textContent = st.log;
   }
-  startBtn.disabled = !st.logged_in;
+
+  installBtn.disabled = st.busy || toolsReady(st);
+  installBtn.textContent = toolsReady(st) ? "All tools ready" : st.busy ? "Installing…" : "Install missing pieces";
+
+  showStage(current);
 }
 
 async function refresh() {
@@ -44,21 +112,38 @@ async function refresh() {
   return st;
 }
 
+let installStarted = false;
+
+async function autoInstallIfNeeded() {
+  if (installStarted || toolsReady(status)) return;
+  const missing = (status.components || []).some((c) => !c.ok && c.can_fix);
+  if (missing) await install();
+}
+
 async function install() {
+  installStarted = true;
   installBtn.disabled = true;
   installBtn.textContent = "Installing…";
   logEl.hidden = false;
-  logEl.textContent = "running install commands…";
+  logEl.textContent = "Running install commands…";
   const res = await fetch("/api/setup/install", { method: "POST" });
   const data = await res.json();
   logEl.textContent = data.log || data.error || "";
   if (data.status) paint(data.status);
   else await refresh();
-  installBtn.disabled = false;
-  installBtn.textContent = "Install missing pieces";
+  installStarted = false;
+}
+
+function canReach(st, n) {
+  if (n <= current) return true;
+  if (n === 1) return true;
+  if (n === 2) return toolsReady(st);
+  if (n === 3) return toolsReady(st) && st.logged_in;
+  return false;
 }
 
 async function login(target) {
+  clearError();
   const returnTo = location.origin + "/setup.html";
   const res = await fetch("/api/setup/login", {
     method: "POST",
@@ -67,27 +152,34 @@ async function login(target) {
   });
   const text = await res.text();
   let data = {};
-  try { data = JSON.parse(text); } catch { data = { error: text }; }
+  try {
+    data = JSON.parse(text);
+  } catch {
+    data = { error: text };
+  }
   if (!res.ok) {
-    errEl.hidden = false;
-    errEl.textContent = data.error || text;
+    showError(data.error || text);
     return;
   }
   if (data.url) {
     location.href = data.url;
     return;
   }
-  errEl.hidden = false;
-  errEl.textContent = data.hint || "Finish login, then this page will update.";
+  showError(data.hint || "Finish login in the browser, then return here.");
   const tick = setInterval(async () => {
     const st = await refresh();
     const hit = (st.logins || []).find((l) => l.id === target);
-    if (hit && hit.ok) clearInterval(tick);
+    if (hit && hit.ok) {
+      clearInterval(tick);
+      showStage(current);
+    }
   }, 2000);
 }
 
-document.getElementById("start").onclick = async () => {
-  errEl.hidden = true;
+async function finish() {
+  clearError();
+  nextBtn.disabled = true;
+  nextBtn.textContent = "Starting…";
   const res = await fetch("/api/setup/finish", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -98,12 +190,31 @@ document.getElementById("start").onclick = async () => {
     }),
   });
   if (!res.ok) {
-    errEl.hidden = false;
-    errEl.textContent = await res.text();
+    showError(await res.text());
+    nextBtn.disabled = false;
+    nextBtn.textContent = "Start chatting";
     return;
   }
   location.href = "/";
+}
+
+backBtn.onclick = () => showStage(current - 1);
+
+nextBtn.onclick = async () => {
+  if (current === TOTAL - 1) {
+    await finish();
+    return;
+  }
+  if (!canAdvance(status, current)) return;
+  showStage(current + 1);
 };
+
+dots.forEach((dot) => {
+  dot.onclick = () => {
+    const target = Number(dot.dataset.step);
+    if (canReach(status, target)) showStage(target);
+  };
+});
 
 installBtn.onclick = install;
 
@@ -112,11 +223,13 @@ if (params.get("login") === "ok") {
   history.replaceState({}, "", "/setup.html");
 }
 if (params.get("error")) {
-  errEl.hidden = false;
-  errEl.textContent = params.get("error");
+  showError(params.get("error"));
 }
 
 refresh().then((st) => {
-  const missing = (st.components || []).some((c) => !c.ok && c.can_fix);
-  if (missing) install();
+  if (params.get("login") === "ok") {
+    showStage(st.logged_in ? 3 : 2);
+  } else {
+    showStage(firstIncomplete(st));
+  }
 });

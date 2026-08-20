@@ -1,14 +1,18 @@
 package app
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/mcpbridge"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/projectctx"
 	"github.com/saiaathish/picogent/internal/tools"
 )
 
@@ -41,8 +45,21 @@ func Build(cfg config.Config) (*agent.Agent, error) {
 		Workspace:   cfg.Workspace,
 		BashTimeout: time.Duration(cfg.BashTimeoutSec) * time.Second,
 	})
+	if servers, err := mcpbridge.LoadServers(cfg.Workspace); err != nil {
+		return nil, err
+	} else if len(servers) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		mgr, warns := mcpbridge.ConnectBestEffort(ctx, servers)
+		cancel()
+		for _, w := range warns {
+			fmt.Fprintf(os.Stderr, "picogent: mcp: %s\n", w)
+		}
+		reg.AttachMCP(mgr)
+	}
 	gate := perm.New(cfg.Mode, cfg.Workspace, nil)
-	return agent.New(cfg, client, reg, gate), nil
+	a := agent.New(cfg, client, reg, gate)
+	a.ProjectRules = projectctx.Load(cfg.Workspace)
+	return a, nil
 }
 
 func NewClient(cfg config.Config) (llm.Client, error) {

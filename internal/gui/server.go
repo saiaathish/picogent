@@ -20,7 +20,9 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/setup"
+	"github.com/saiaathish/picogent/internal/slash"
 )
 
 type event struct {
@@ -30,14 +32,15 @@ type event struct {
 }
 
 type server struct {
-	cfg    config.Config
-	ag     *agent.Agent
-	mu     sync.Mutex
-	hist   []llm.Message
-	permCh chan perm.Decision
-	subs   []chan event
-	busy   bool
-	cancel context.CancelFunc
+	cfg       config.Config
+	ag        *agent.Agent
+	mu        sync.Mutex
+	hist      []llm.Message
+	sessionID string
+	permCh    chan perm.Decision
+	subs      []chan event
+	busy      bool
+	cancel    context.CancelFunc
 }
 
 func Run() error {
@@ -45,7 +48,7 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1)}
+	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: session.New(cfg.Workspace).ID}
 	addr := "127.0.0.1:7420"
 	if v := os.Getenv("PICOGENT_GUI_ADDR"); v != "" {
 		addr = v
@@ -93,6 +96,7 @@ func (s *server) Handler() http.Handler {
 	mux.HandleFunc("/api/chat", s.chat)
 	mux.HandleFunc("/api/permission", s.permission)
 	mux.HandleFunc("/api/mode", s.setMode)
+	mux.HandleFunc("/api/cancel", s.cancelChat)
 	mux.HandleFunc("/api/reset", s.reset)
 	mux.HandleFunc("/api/events", s.events)
 	mux.Handle("/", http.FileServer(http.FS(static)))
@@ -127,7 +131,15 @@ func (s *server) snapshot() map[string]any {
 		"busy":      s.busy,
 		"hint":      hint,
 		"setup":     !s.cfg.SetupComplete,
+		"mcp_tools": mcpToolCount(s.ag),
 	}
+}
+
+func mcpToolCount(a *agent.Agent) int {
+	if a == nil || a.Tools == nil || a.Tools.MCP == nil {
+		return 0
+	}
+	return len(a.Tools.MCP.Tools())
 }
 
 func (s *server) setupStatus(w http.ResponseWriter, _ *http.Request) {
@@ -324,6 +336,19 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *server) cancelChat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	s.mu.Lock()
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.mu.Unlock()
+	w.WriteHeader(204)
+}
+
 func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Prompt string `json:"prompt"`
@@ -332,7 +357,55 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	prompt := in.Prompt
+	prompt := strings.TrimSpace(in.Prompt)
+	if prompt == "" {
+		http.Error(w, "empty prompt", 400)
+		return
+	}
+
+	kind, payload := slash.Resolve(s.cfg.Workspace, prompt)
+	if kind == slash.Local {
+		switch payload {
+		case "clear":
+			s.mu.Lock()
+			s.hist = nil
+			s.mu.Unlock()
+			s.emit(event{Type: "system", Text: "cleared"})
+		case "compact":
+			s.mu.Lock()
+			if len(s.hist) > 16 {
+				head := s.hist[0]
+				if head.Role != "system" {
+					head = llm.Message{}
+				}
+				s.hist = append([]llm.Message{head}, s.hist[len(s.hist)-15:]...)
+			}
+			s.mu.Unlock()
+			s.emit(event{Type: "system", Text: "context compacted"})
+		case "status":
+			st := fmt.Sprintf("mode=%s model=%s workspace=%s", s.cfg.Mode, s.cfg.Model, s.cfg.Workspace)
+			if s.ag.Tools != nil && s.ag.Tools.HasMCP() {
+				st += fmt.Sprintf(" · %d MCP tools", len(s.ag.Tools.MCP.Tools()))
+			}
+			s.emit(event{Type: "system", Text: st})
+		case "diff":
+			s.emit(event{Type: "system", Text: slash.GitDiff()})
+		default:
+			if strings.HasPrefix(payload, "memory:") {
+				text := strings.TrimPrefix(payload, "memory:")
+				if text == "" {
+					text = "(no project rules files)"
+				}
+				s.emit(event{Type: "system", Text: text})
+			}
+		}
+		w.WriteHeader(204)
+		return
+	}
+	if kind == slash.Prompt {
+		prompt = payload
+	}
+
 	s.mu.Lock()
 	if s.busy {
 		s.mu.Unlock()
@@ -357,6 +430,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		next, _, err := s.ag.Run(ctx, hist, prompt, h)
 		s.mu.Lock()
 		s.hist = next
+		_ = session.SaveMessages(s.cfg.Workspace, s.sessionID, next)
 		s.mu.Unlock()
 		if err != nil && ctx.Err() == nil {
 			s.emit(event{Type: "error", Text: err.Error()})

@@ -15,6 +15,9 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/session"
+	"github.com/saiaathish/picogent/internal/slash"
+	"github.com/saiaathish/picogent/internal/commands"
 )
 
 var (
@@ -78,10 +81,11 @@ func (h *handler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.
 func (h *handler) OnError(err error) { h.send(logMsg{Kind: "error", Text: err.Error()}) }
 
 type model struct {
-	cfg     config.Config
-	ag      *agent.Agent
-	history []llm.Message
-	lines   []logLine
+	cfg       config.Config
+	ag        *agent.Agent
+	history   []llm.Message
+	sessionID string
+	lines     []logLine
 	vp      viewport.Model
 	ta      textarea.Model
 	busy    bool
@@ -115,8 +119,8 @@ func newModel(cfg config.Config, a *agent.Agent) *model {
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 	vp := viewport.New(80, 20)
 	h := &handler{permCh: make(chan perm.Decision, 1), send: func(tea.Msg) {}}
-	m := &model{cfg: cfg, ag: a, ta: ta, vp: vp, h: h}
-	m.lines = []logLine{{Kind: "system", Text: greeting(cfg)}}
+	m := &model{cfg: cfg, ag: a, ta: ta, vp: vp, h: h, sessionID: session.New(cfg.Workspace).ID}
+	m.lines = []logLine{{Kind: "system", Text: greeting(cfg, a)}}
 	if err := cfg.MissingAuth(); err != nil {
 		m.lines = append(m.lines, logLine{Kind: "error", Text: err.Error()})
 	}
@@ -124,11 +128,15 @@ func newModel(cfg config.Config, a *agent.Agent) *model {
 	return m
 }
 
-func greeting(cfg config.Config) string {
+func greeting(cfg config.Config, a *agent.Agent) string {
+	base := "picogent · " + string(cfg.Provider) + " · " + cfg.Model
 	if cfg.Provider == config.ProviderCodex && codexauth.LoggedIn() {
-		return "Codex connected · " + cfg.Model + " · type a task, or /help"
+		base = "Codex connected · " + cfg.Model
 	}
-	return "picogent · " + string(cfg.Provider) + " · " + cfg.Model + " · type a task, or /help"
+	if a != nil && a.Tools != nil && a.Tools.HasMCP() {
+		base += fmt.Sprintf(" · %d MCP tools", len(a.Tools.MCP.Tools()))
+	}
+	return base + " · type a task, or /help"
 }
 
 func (m *model) Init() tea.Cmd { return textarea.Blink }
@@ -192,6 +200,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cancel = nil
 		if msg.history != nil {
 			m.history = msg.history
+			_ = session.SaveMessages(m.cfg.Workspace, m.sessionID, m.history)
 		}
 		if msg.err != nil && !strings.Contains(strings.ToLower(msg.err.Error()), "context canceled") {
 			m.lines = append(m.lines, logLine{Kind: "error", Text: msg.err.Error()})
@@ -232,20 +241,84 @@ func (m *model) stop() {
 
 func (m *model) submit(line string) tea.Cmd {
 	if strings.HasPrefix(line, "/") {
-		return m.slash(line)
+		kind, payload := slash.Resolve(m.cfg.Workspace, line)
+		switch kind {
+		case slash.Prompt:
+			m.lines = append(m.lines, logLine{Kind: "user", Text: line})
+			m.refresh()
+			return m.runAgent(payload)
+		case slash.Local:
+			return m.slashLocal(payload)
+		case slash.Unknown:
+			return m.slash(line)
+		}
 	}
+	return m.runAgent(line)
+}
+
+func (m *model) runAgent(prompt string) tea.Cmd {
 	m.busy = true
-	m.lines = append(m.lines, logLine{Kind: "user", Text: line})
-	m.refresh()
+	if !strings.HasPrefix(prompt, "/") {
+		m.lines = append(m.lines, logLine{Kind: "user", Text: prompt})
+		m.refresh()
+	}
 	h := m.h
 	ag := m.ag
 	hist := m.history
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	return func() tea.Msg {
-		hist, _, err := ag.Run(ctx, hist, line, h)
+		hist, _, err := ag.Run(ctx, hist, prompt, h)
 		return doneMsg{history: hist, err: err}
 	}
+}
+
+func (m *model) slashLocal(payload string) tea.Cmd {
+	switch {
+	case payload == "clear":
+		m.history = nil
+		m.lines = []logLine{{Kind: "system", Text: "cleared"}}
+	case payload == "compact":
+		if len(m.history) > 16 {
+			head := m.history[0]
+			if head.Role != "system" {
+				head = llm.Message{}
+			}
+			m.history = append([]llm.Message{head}, m.history[len(m.history)-15:]...)
+		}
+		m.lines = append(m.lines, logLine{Kind: "system", Text: "context compacted"})
+	case payload == "status":
+		st := fmt.Sprintf("mode=%s provider=%s model=%s\n%s", m.cfg.Mode, m.cfg.Provider, m.cfg.Model, m.cfg.Workspace)
+		if m.ag.Tools != nil && m.ag.Tools.HasMCP() {
+			st += fmt.Sprintf("\n%d MCP tools", len(m.ag.Tools.MCP.Tools()))
+		}
+		m.lines = append(m.lines, logLine{Kind: "system", Text: st})
+	case payload == "diff":
+		m.lines = append(m.lines, logLine{Kind: "system", Text: slash.GitDiff()})
+	case strings.HasPrefix(payload, "memory:"):
+		text := strings.TrimPrefix(payload, "memory:")
+		if text == "" {
+			text = "(no AGENTS.md / CLAUDE.md / .picogent/rules.md)"
+		}
+		m.lines = append(m.lines, logLine{Kind: "system", Text: text})
+	case payload == "resume":
+		if prev, err := session.Latest(m.cfg.Workspace); err == nil {
+			m.history = prev.Messages
+			m.sessionID = prev.ID
+			m.lines = append(m.lines, logLine{Kind: "system", Text: "resumed " + prev.ID})
+		} else {
+			m.lines = append(m.lines, logLine{Kind: "error", Text: "no saved session"})
+		}
+	case payload == "commands":
+		cmds := commands.List(m.cfg.Workspace)
+		if len(cmds) == 0 {
+			m.lines = append(m.lines, logLine{Kind: "system", Text: "no custom commands (.claude/commands/*.md)"})
+		} else {
+			m.lines = append(m.lines, logLine{Kind: "system", Text: "custom: /" + strings.Join(cmds, "  /")})
+		}
+	}
+	m.refresh()
+	return nil
 }
 
 func (m *model) slash(line string) tea.Cmd {
@@ -255,7 +328,19 @@ func (m *model) slash(line string) tea.Cmd {
 	case "/quit", "/exit", "/q":
 		return tea.Quit
 	case "/help":
-		m.lines = append(m.lines, logLine{Kind: "system", Text: "enter send · y/n allow tools · /safe /fast /model [name] /provider codex|ollama|openai /reset /quit\nSafe asks before writes and shell. Fast auto-edits inside this folder. Codex uses ~/.codex/auth.json."})
+		help := "Claude Code-style: /commit /review /clear /compact /status /diff /memory /resume /commands\n/safe /fast /model /provider /reset /mcp /quit\nCustom: .claude/commands/foo.md → /foo"
+		if m.ag.Tools != nil && m.ag.Tools.HasMCP() {
+			help += fmt.Sprintf("\nConnected: %d MCP tools.", len(m.ag.Tools.MCP.Tools()))
+		}
+		m.lines = append(m.lines, logLine{Kind: "system", Text: help})
+	case "/mcp":
+		if m.ag.Tools == nil || !m.ag.Tools.HasMCP() {
+			m.lines = append(m.lines, logLine{Kind: "system", Text: "no MCP tools connected (check ~/.cursor/mcp.json or picogent mcp list)"})
+			break
+		}
+		for _, line := range m.ag.Tools.MCP.Report() {
+			m.lines = append(m.lines, logLine{Kind: "system", Text: line})
+		}
 	case "/safe":
 		m.cfg.Mode = config.ModeSafe
 		m.ag.CFG.Mode = config.ModeSafe
@@ -365,6 +450,9 @@ func (m *model) View() string {
 	}
 	left := brandStyle.Render("PICOGENT")
 	right := fmt.Sprintf("%s  %s  %s", mode, conn, metaStyle.Render(m.cfg.Model))
+	if m.ag != nil && m.ag.Tools != nil && m.ag.Tools.HasMCP() {
+		right += "  " + chipOn.Render(fmt.Sprintf("%d MCP", len(m.ag.Tools.MCP.Tools())))
+	}
 	head := lipgloss.JoinHorizontal(lipgloss.Center, left, "  ", right)
 	ws := metaStyle.Render(clip(m.cfg.Workspace, max(20, m.width-4)))
 	body := m.vp.View()

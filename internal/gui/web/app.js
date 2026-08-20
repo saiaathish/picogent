@@ -1,4 +1,5 @@
 const logEl = document.getElementById("log");
+const emptyEl = document.getElementById("empty");
 const permEl = document.getElementById("perm");
 const permText = document.getElementById("perm-text");
 const promptEl = document.getElementById("prompt");
@@ -7,6 +8,10 @@ const badge = document.getElementById("badge");
 const hintEl = document.getElementById("hint");
 let ready = false;
 let busy = false;
+
+function syncEmpty() {
+  emptyEl.hidden = logEl.children.length > 0;
+}
 
 function add(kind, text) {
   const li = document.createElement("li");
@@ -19,6 +24,7 @@ function add(kind, text) {
   if (kind !== "tool") li.appendChild(who);
   li.appendChild(body);
   logEl.appendChild(li);
+  syncEmpty();
   logEl.scrollTop = logEl.scrollHeight;
   logEl.parentElement.scrollTop = logEl.parentElement.scrollHeight;
 }
@@ -26,7 +32,8 @@ function add(kind, text) {
 async function refresh() {
   const s = await (await fetch("/api/state")).json();
   document.getElementById("toggle-mode").textContent = s.mode === "fast" ? "Fast" : "Safe";
-  document.getElementById("model").textContent = s.model || "";
+  document.getElementById("model").textContent =
+    (s.model || "") + (s.mcp_tools ? ` · ${s.mcp_tools} MCP` : "");
   document.getElementById("workspace").textContent = s.workspace || "";
   if (s.codex) {
     badge.textContent = "Codex connected";
@@ -66,6 +73,7 @@ document.getElementById("toggle-mode").onclick = async () => {
 document.getElementById("reset").onclick = async () => {
   await fetch("/api/reset", { method: "POST" });
   logEl.innerHTML = "";
+  syncEmpty();
   add("system", "New chat.");
 };
 
@@ -96,6 +104,11 @@ document.getElementById("composer").onsubmit = async (e) => {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ prompt }),
   });
+  if (res.status === 204) {
+    busy = false;
+    sendBtn.disabled = !ready;
+    return;
+  }
   if (!res.ok) {
     add("error", await res.text());
     busy = false;
@@ -130,6 +143,10 @@ ev.onmessage = (m) => {
     refresh();
     return;
   }
+  if (e.type === "system") {
+    add("system", e.text || "");
+    return;
+  }
   add(e.type, e.text || e.summary || e.type);
 };
 ev.onerror = () => {
@@ -139,4 +156,5 @@ ev.onerror = () => {
 };
 ev.onopen = () => refresh();
 
+syncEmpty();
 refresh();
