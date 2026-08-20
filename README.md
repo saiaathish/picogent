@@ -101,17 +101,17 @@ Picogent implements the **useful core** of [Claude Code](https://github.com/anth
 | Safe / Fast permissions | yes |
 | Subagents, LSP, skills, plugins, voice | no (on purpose) |
 
-**Workflow:** ask or `/commit` → Picogent runs tools → reports what changed. Not manual instructions.
+**Workflow:** say what you want → Picogent plans, uses tools, asks before risky work, then reports what changed. You do not need `/goal`, `/plan`, or MCP commands.
 
-### Slash commands (TUI + GUI)
+### Optional slash commands (TUI + GUI)
 
-`/commit` `/review` `/clear` `/compact` `/status` `/diff` `/memory` `/resume` `/commands` `/mcp` `/safe` `/fast`
+`/commit` `/review` `/clear` `/status`
 
-Custom: add `.claude/commands/deploy.md` → type `/deploy` (same as Claude Code).
+Custom: add `.claude/commands/deploy.md` → type `/deploy`.
 
 ### MCP
 
-Picogent loads the same MCP config as Cursor and exposes every tool to the model (`mcp_<server>_<tool>`):
+Ask in chat to connect GitHub, a browser, or search — Picogent uses `mcp_manage` and waits for Allow. Config is Cursor-compatible (`mcp_<server>_<tool>`):
 
 1. `~/.cursor/mcp.json`
 2. `~/.picogent/mcp.yaml`

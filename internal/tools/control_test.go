@@ -4,7 +4,31 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/saiaathish/picogent/internal/mcpbridge"
 )
+
+func TestAttachMCPKeepsManage(t *testing.T) {
+	r := NewRegistry(Context{})
+	if _, ok := r.Get("mcp_manage"); !ok {
+		t.Fatal("mcp_manage missing before AttachMCP")
+	}
+	r.AttachMCP(&mcpbridge.Manager{})
+	if _, ok := r.Get("mcp_manage"); !ok {
+		t.Fatal("AttachMCP dropped builtin mcp_manage")
+	}
+	names := r.Specs()
+	found := false
+	for _, s := range names {
+		if s.Name == "mcp_manage" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("mcp_manage missing from Specs after AttachMCP")
+	}
+}
 
 func TestMCPManageList(t *testing.T) {
 	c := Context{

@@ -67,9 +67,9 @@ These are decided. Do not re-litigate during v1.
    - **Fast** — auto-apply inside the workspace; still ask for deletes, `rm -rf`, and anything that escapes the folder.
 6. **Auth v1:** ChatGPT Codex subscription via `~/.codex/auth.json` (same file as Codex CLI / OpenClaw / kestrel) is the default. Also BYOK OpenAI-compatible endpoints and Ollama. Keys live in `~/.picogent/config.yaml` or env vars. Never in the repo.
 7. **Auth later:** Claude Code / Antigravity / OpenCode session login. Unofficial, can break, ToS-sensitive.
-8. **Resource policy:** no embeddings index, no background watcher, no subagents, no MCP in v1. Small system prompt. Cap tool rounds. Truncate tool output. Default to small models.
-9. **Cut from v1:** MCP, subagents, browser tool, skills marketplace, plugin system, slash-command universe, IDE extension.
-10. **Keep (80/20):** chat, streaming-ish updates, file tools, bash, search, git status/diff/commit, Explain-what-changed footer, undo hint (`git checkout` / copy of preimage when not a git repo).
+8. **Resource policy:** no embeddings index, no background watcher, no subagents. Small system prompt. Cap tool rounds. Truncate tool output. Default to small models. The agent may list/add/remove catalog MCP servers via `mcp_manage` (user approves add/remove).
+9. **Cut from v1:** parallel subagents, skills marketplace, plugin universe, slash-command universe, IDE extension.
+10. **Keep (80/20):** chat, streaming-ish updates, file tools, bash, search, git, auto plan/debug/goal from the message (beginners never need `/goal` or `/mcp`), Safe/Fast permissions, verify after edits, Explain-what-changed footer.
 11. **Distribution:** `brew install picogent` (tap later) and a signed-later unsigned-ok-for-now macOS `.dmg`.
 12. **License:** MIT.
 
