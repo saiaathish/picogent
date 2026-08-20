@@ -44,6 +44,8 @@ type ChatRequest struct {
 	ReadOnly     bool
 	LastToolKind string
 	Reasoning    ReasoningLevel // set by router; forwarded to provider
+	// OnDelta, if set, receives streamed text tokens as they arrive.
+	OnDelta func(delta string)
 }
 
 type ChatResponse struct {

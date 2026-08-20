@@ -59,7 +59,15 @@ type handler struct {
 	permCh chan perm.Decision
 }
 
-func (h *handler) OnText(text string) { h.send(logMsg{Kind: "assistant", Text: text}) }
+func (h *handler) OnText(text string) {
+	if text == "" {
+		return
+	}
+	h.send(logMsg{Kind: "assistant", Text: text})
+}
+func (h *handler) OnTextDelta(delta string) {
+	h.send(logMsg{Kind: "assistant_delta", Text: delta})
+}
 func (h *handler) OnToolStart(call llm.ToolCall) {
 	h.send(logMsg{Kind: "tool", Text: "→  " + call.Name + "  " + clip(call.Arguments, 100)})
 }
@@ -199,7 +207,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 		return m, nil
 	case logMsg:
-		m.lines = append(m.lines, logLine(msg))
+		if msg.Kind == "assistant_delta" {
+			n := len(m.lines)
+			if n > 0 && m.lines[n-1].Kind == "assistant" {
+				m.lines[n-1].Text += msg.Text
+			} else {
+				m.lines = append(m.lines, logLine{Kind: "assistant", Text: msg.Text})
+			}
+		} else {
+			m.lines = append(m.lines, logLine(msg))
+		}
 		m.refresh()
 		return m, nil
 	case doneMsg:

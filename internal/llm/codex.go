@@ -148,7 +148,7 @@ func (c *Codex) chatOnce(ctx context.Context, req ChatRequest, retried bool) (Ch
 		payload, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 		return ChatResponse{}, fmt.Errorf("codex http %d: %s", res.StatusCode, truncate(string(payload), 400))
 	}
-	msg, err := readResponsesStream(res.Body)
+	msg, err := readResponsesStream(res.Body, req.OnDelta)
 	if err != nil {
 		return ChatResponse{}, err
 	}
@@ -265,7 +265,7 @@ func responsesUserContent(text string, parts []Part) []map[string]any {
 	return content
 }
 
-func readResponsesStream(r io.Reader) (Message, error) {
+func readResponsesStream(r io.Reader, onDelta func(string)) (Message, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
 	var event, data string
@@ -293,6 +293,9 @@ func readResponsesStream(r io.Reader) (Message, error) {
 		case "response.output_text.delta":
 			if d, _ := payload["delta"].(string); d != "" {
 				text.WriteString(d)
+				if onDelta != nil {
+					onDelta(d)
+				}
 			}
 		case "response.failed", "error", "response.error":
 			msg := "codex stream error"

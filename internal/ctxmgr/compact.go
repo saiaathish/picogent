@@ -11,13 +11,13 @@ import (
 )
 
 const (
-	DefaultBudget   = 128_000
-	WarningPct      = 0.72
-	AutoCompactPct  = 0.82
-	KeepRecent      = 12
-	KeepAfterCompact = 20
-	ToolKeepChars   = 1200
-	ToolMaskChars   = 80
+	DefaultBudget    = 128_000
+	WarningPct       = 0.45 // start watching earlier (Headroom-style)
+	AutoCompactPct   = 0.55 // was 0.82 — too late for agent loops
+	KeepRecent       = 8
+	KeepAfterCompact = 14
+	ToolKeepChars    = 800
+	ToolMaskChars    = 60
 )
 
 type Stats struct {
@@ -165,19 +165,24 @@ func Summarize(ctx context.Context, client llm.Client, model string, msgs []llm.
 }
 
 // Manage applies tiered compaction when approaching the token budget.
+// Always runs ToolAwareCompact (TokenTamer) first — cheap and high-leverage.
 func Manage(ctx context.Context, client llm.Client, model string, msgs []llm.Message, budget int) ([]llm.Message, Stats, error) {
 	if budget <= 0 {
 		budget = DefaultBudget
 	}
-	out := MicroCompact(msgs)
+	out := ToolAwareCompact(msgs)
+	out = MicroCompact(out)
 	st := StatsFor(out, budget)
 
 	if st.Pct < AutoCompactPct {
-		if len(out) > 40 {
-			out = TruncateTail(out, 30)
+		if len(out) > 28 {
+			out = TruncateTail(out, 22)
 			st = StatsFor(out, budget)
 			st.Compacted = true
-			st.Method = "truncate"
+			st.Method = "truncate+tame"
+		} else if st.Tokens < EstimateTokens(msgs) {
+			st.Compacted = true
+			st.Method = "tokentamer"
 		}
 		return out, st, nil
 	}

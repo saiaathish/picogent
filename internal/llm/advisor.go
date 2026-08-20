@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"fmt"
 	"strings"
 )
 
@@ -31,6 +32,9 @@ type RouteDecision struct {
 	Reasoning ReasoningLevel `json:"reasoning"`
 	TaskKind  TaskKind       `json:"task_kind"`
 	RouteMode RouteMode      `json:"route_mode"`
+	// TokenSaveX ≈ how many times fewer effective tokens vs plain Sol/Opus@high.
+	TokenSaveX float64 `json:"token_save_x,omitempty"`
+	EstTokens  int     `json:"est_tokens,omitempty"`
 }
 
 // Advisor classifies task complexity.
@@ -51,16 +55,18 @@ func NewAdvisor(cat Catalog, llm Client, advisorModel string) *Advisor {
 }
 
 func (a *Advisor) Decide(ctx context.Context, in RouteInput) RouteDecision {
-	if in.Escalate || in.ToolRound >= 8 {
+	// RouteLLM weak-preferring cascade: stay on light as long as possible.
+	// Only escalate on explicit failure or very late stuck rounds.
+	if in.Escalate || in.ToolRound >= 12 {
 		return a.finish(in, TierHeavy, "escalation", "Worker stuck — escalating to heavy tier", 9, "heuristic")
 	}
-	if in.ToolRound >= 4 {
-		score := a.scorePrompt(in.Prompt) + 2
+	if in.ToolRound >= 8 {
+		score := a.scorePrompt(in.Prompt) + 1
 		tier := tierFromScore(score)
 		if tierRank(tier) < tierRank(TierStandard) {
 			tier = TierStandard
 		}
-		return a.finish(in, tier, "mid-run", "Multi-step task — using standard tier or above", score, "heuristic")
+		return a.finish(in, tier, "mid-run", "Long loop — bumping toward standard tier", score, "heuristic")
 	}
 
 	score := a.scorePrompt(in.Prompt)
@@ -72,6 +78,10 @@ func (a *Advisor) Decide(ctx context.Context, in RouteInput) RouteDecision {
 	}
 	if in.HasFiles && !in.HasImages {
 		score += 1
+	}
+	// Mid-loop explore/implement rounds stay light unless the prompt is hard.
+	if in.ToolRound >= 1 && in.ToolRound < 8 && score < 7 {
+		score = maxInt(0, score-1)
 	}
 	tier := tierFromScore(score)
 
@@ -105,29 +115,53 @@ func (a *Advisor) finish(in RouteInput, tier Tier, kind, reason string, score in
 }
 
 func (a *Advisor) buildDecision(in RouteInput, tier Tier, m ModelEntry, reason, kind string, score int, advisor string, taskKind TaskKind, routeMode RouteMode, reasoning ReasoningLevel) RouteDecision {
+	saveX := EstimateTokenSaveX(tier, reasoning, in.ToolRound)
+	est := EstimateRoundTokens(tier, reasoning, in.ToolRound)
 	fullReason := reason + " (" + kind + ")"
 	if routeMode != RouteSolo {
 		fullReason += "; route=" + string(routeMode)
 	}
 	fullReason += "; task=" + string(taskKind) + "; effort=" + string(reasoning)
+	fullReason += "; ~" + formatSaveX(saveX) + "x vs plain flagship"
 	return RouteDecision{
-		Tier:      tier,
-		Model:     m.ID,
-		Label:     ReasoningLabel(m.Display, reasoning),
-		Reason:    fullReason,
-		Score:     score,
-		Advisor:   advisor,
-		Reasoning: reasoning,
-		TaskKind:  taskKind,
-		RouteMode: routeMode,
+		Tier:       tier,
+		Model:      m.ID,
+		Label:      ReasoningLabel(m.Display, reasoning),
+		Reason:     fullReason,
+		Score:      score,
+		Advisor:    advisor,
+		Reasoning:  reasoning,
+		TaskKind:   taskKind,
+		RouteMode:  routeMode,
+		TokenSaveX: saveX,
+		EstTokens:  est,
 	}
 }
 
+func formatSaveX(x float64) string {
+	if x >= 100 {
+		return "100+"
+	}
+	if x >= 10 {
+		return fmt.Sprintf("%.0f", x)
+	}
+	return fmt.Sprintf("%.1f", x)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// tierFromScore is deliberately biased toward light (RouteLLM weak-preferring).
+// Plain Claude Code / Codex defaults to heavy; we require clear complexity signal.
 func tierFromScore(score int) Tier {
 	switch {
-	case score <= 2:
+	case score <= 4:
 		return TierLight
-	case score <= 5:
+	case score <= 7:
 		return TierStandard
 	default:
 		return TierHeavy
@@ -135,7 +169,7 @@ func tierFromScore(score int) Tier {
 }
 
 func ambiguous(score int) bool {
-	return score >= 4 && score <= 6
+	return score >= 5 && score <= 7
 }
 
 func (a *Advisor) scorePrompt(prompt string) int {
@@ -167,10 +201,17 @@ func (a *Advisor) scorePrompt(prompt string) int {
 		"describe the image", "look at this", "attached image", "see the photo",
 	}
 	heavy := []string{
-		"architect", "architecture", "design system", "refactor entire", "migrate",
-		"plan", "roadmap", "strategy", "complex", "multi-file", "across the codebase",
+		"design system", "refactor entire", "migrate",
+		"roadmap", "strategy", "complex", "multi-file", "across the codebase",
 		"review all", "security audit", "performance audit", "rewrite", "from scratch",
 		"debug deeply", "root cause", "race condition", "concurrency",
+	}
+	// Architecture/planning — strong signal for heavy tier.
+	if strings.Contains(p, "architecture") || strings.Contains(p, "architect") || strings.Contains(p, "system design") {
+		score += 5
+	}
+	if strings.Contains(p, "planning") || strings.HasPrefix(p, "plan ") || strings.HasPrefix(p, "plan a") {
+		score += 2
 	}
 	premium := []string{"fable", "maximum quality", "best possible", "highest tier"}
 
@@ -214,9 +255,9 @@ func (a *Advisor) scorePrompt(prompt string) int {
 func reasonForScore(score int, prompt string) string {
 	p := strings.ToLower(prompt)
 	switch {
-	case score <= 2:
-		return "Simple task — routing to light tier"
-	case score <= 5:
+	case score <= 4:
+		return "Simple/routine — routing to light tier (token-efficient)"
+	case score <= 7:
 		return "Standard coding task — routing to standard tier"
 	default:
 		if strings.Contains(p, "architect") || strings.Contains(p, "plan") {
