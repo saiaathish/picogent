@@ -34,6 +34,7 @@ const overviewBar = $("overview-bar");
 const projectList = $("project-list");
 const changesList = $("changes-list");
 const changesSummary = $("changes-summary");
+const activityList = $("activity-list");
 const extRecsEl = $("ext-recs");
 const extToastsEl = $("ext-toasts");
 const permTitle = $("perm-title");
@@ -252,6 +253,40 @@ function showReviewTab(tab) {
   });
   $("panel-review").hidden = tab !== "review";
   $("panel-changes").hidden = tab !== "changes";
+  if ($("panel-activity")) $("panel-activity").hidden = tab !== "activity";
+  if (tab === "activity") refreshActivity();
+}
+
+async function refreshActivity() {
+  if (!activityList) return;
+  try {
+    const data = await (await fetch("/api/trace")).json();
+    const events = data.events || [];
+    if (!events.length) {
+      activityList.innerHTML = '<p class="review-empty">No activity yet.</p>';
+      return;
+    }
+    activityList.innerHTML = "";
+    for (const ev of events.slice().reverse()) {
+      const row = document.createElement("div");
+      row.className = "activity-row";
+      const kind = ev.kind || "";
+      const tool = ev.tool || "";
+      const ok = ev.ok === true ? "ok" : ev.ok === false ? "fail" : "";
+      const title = document.createElement("strong");
+      title.textContent = tool ? kind + " · " + tool : kind;
+      const detail = document.createElement("span");
+      detail.textContent = (ev.detail || "").slice(0, 160);
+      const meta = document.createElement("small");
+      meta.textContent = [ev.ts, ok, ev.ms ? ev.ms + "ms" : ""].filter(Boolean).join(" · ");
+      row.appendChild(title);
+      if (detail.textContent) row.appendChild(detail);
+      row.appendChild(meta);
+      activityList.appendChild(row);
+    }
+  } catch (err) {
+    activityList.innerHTML = '<p class="review-empty">Could not load activity.</p>';
+  }
 }
 
 document.querySelectorAll(".review-tab").forEach((b) => {
@@ -1371,6 +1406,7 @@ function connectEvents() {
         permHint.textContent = "";
       }
       finishTurnUI();
+      if ($("panel-activity") && !$("panel-activity").hidden) refreshActivity();
       return;
     }
     if (e.type === "think") {

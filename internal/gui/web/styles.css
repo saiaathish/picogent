@@ -1252,7 +1252,7 @@ button, input, textarea { font: inherit; color: inherit; }
   overflow: hidden;
 }
 #panel-review .review-scroll { flex: 1; }
-#panel-changes[hidden], #panel-review[hidden] { display: none !important; }
+#panel-changes[hidden], #panel-review[hidden], #panel-activity[hidden] { display: none !important; }
 #panel-review .drawer-kicker { padding: 0 14px 8px; margin: 0; }
 .changes-summary {
   padding: 8px 14px;
@@ -1261,6 +1261,33 @@ button, input, textarea { font: inherit; color: inherit; }
   border-bottom: 1px solid var(--line);
 }
 .changes-list { flex: 1; overflow: auto; }
+.activity-list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px 0;
+}
+.activity-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.activity-row strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+.activity-row span {
+  font-size: 12px;
+  color: var(--ink);
+  opacity: 0.85;
+  word-break: break-word;
+}
+.activity-row small {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--mute);
+}
 .change-row {
   width: 100%;
   display: flex;
