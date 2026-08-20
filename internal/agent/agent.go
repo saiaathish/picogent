@@ -122,11 +122,15 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	a.Gate.Prompt = ev.OnNeedPermission
 
 	userText := strings.TrimSpace(user.Content)
+	// Always refresh the system prompt so mid-chat task mode / goal changes take effect.
 	msgs := make([]llm.Message, 0, len(history)+3)
-	if len(history) == 0 || history[0].Role != "system" {
-		msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt()})
+	msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt()})
+	for i, m := range history {
+		if i == 0 && m.Role == "system" {
+			continue
+		}
+		msgs = append(msgs, m)
 	}
-	msgs = append(msgs, history...)
 	msgs = append(msgs, user)
 	budget := ctxmgr.BudgetForModel(a.CFG.Model)
 	compactMsgs, ctxStats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
