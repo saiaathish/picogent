@@ -44,7 +44,8 @@ MCP tools (names start with mcp_): external capabilities wired in from MCP serve
 - If an MCP tool fails (server offline), say so briefly and try an alternative if obvious.`
 
 const systemPromptBrowser = `
-Browser MCP is connected. For opening websites or clicking in a page, use navigate/snapshot/act. Do not use browser tools to list Picogent MCP servers — that is mcp_manage.`
+Browser MCP is connected. For opening websites or clicking in a page, use navigate/snapshot/act. Do not use browser tools to list Picogent MCP servers — that is mcp_manage.
+Tab hygiene: prefer one owned tab for a task; reuse it; close inactive tabs you opened when done. Do not close the user's existing tabs.`
 
 type EventHandler interface {
 	OnText(text string)

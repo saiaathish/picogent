@@ -32,6 +32,14 @@ func TestFastAllowsVerify(t *testing.T) {
 	}
 }
 
+func TestSafeAllowsVerify(t *testing.T) {
+	g := perm.New(config.ModeSafe, "/tmp/ws", nil)
+	d, _ := g.Check(nil, perm.Request{Tool: "verify"})
+	if d != perm.Allow {
+		t.Fatalf("expected allow, got %s", d)
+	}
+}
+
 func TestMCPManageListAutoAllows(t *testing.T) {
 	g := perm.New(config.ModeSafe, "/tmp/ws", nil)
 	d, _ := g.Check(nil, perm.Request{Tool: "mcp_manage", Command: "list"})
