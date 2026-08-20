@@ -40,6 +40,18 @@ func TestSafeAllowsVerify(t *testing.T) {
 	}
 }
 
+func TestFastMCPAsksForWriteTools(t *testing.T) {
+	g := perm.New(config.ModeFast, "/tmp/ws", nil)
+	d, _ := g.Check(nil, perm.Request{Tool: "mcp_github_create_issue"})
+	if d != perm.Deny {
+		t.Fatalf("write-like MCP should ask in Fast, got %s", d)
+	}
+	d, _ = g.Check(nil, perm.Request{Tool: "mcp_browseros_neo_tabs"})
+	if d != perm.Allow {
+		t.Fatalf("read-like MCP should auto-allow in Fast, got %s", d)
+	}
+}
+
 func TestMCPManageListAutoAllows(t *testing.T) {
 	g := perm.New(config.ModeSafe, "/tmp/ws", nil)
 	d, _ := g.Check(nil, perm.Request{Tool: "mcp_manage", Command: "list"})

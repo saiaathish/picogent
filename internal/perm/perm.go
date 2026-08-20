@@ -111,13 +111,28 @@ func autoAllow(mode config.Mode, req Request) bool {
 	}
 	if strings.HasPrefix(req.Tool, "mcp_") {
 		if mode == config.ModeFast {
-			return true
+			// Fast: read/list/navigate MCP tools auto-allow; write/act-style still ask.
+			return !LooksWriteMCP(req.Tool)
 		}
 		return false
 	}
 	if mode == config.ModeFast {
 		switch req.Tool {
 		case "write_file", "edit_file", "bash", "web_fetch", "verify":
+			return true
+		}
+	}
+	return false
+}
+
+// LooksWriteMCP reports whether an MCP tool name looks mutating (write/act/send…).
+func LooksWriteMCP(tool string) bool {
+	lower := strings.ToLower(tool)
+	for _, w := range []string{
+		"write", "edit", "create", "delete", "remove", "drop", "send", "post", "push", "commit",
+		"act", "click", "type", "fill", "upload", "download", "drag",
+	} {
+		if strings.Contains(lower, w) {
 			return true
 		}
 	}
