@@ -71,7 +71,7 @@
       "title": "Context bar",
       "blurb": "How full the window is.",
       "keywords": ["context", "tokens", "budget", "compact", "window", "memory", "usage"],
-      "body": "## Context bar\n\nThe top context meter estimates how full the conversation window is.\n\nWhen it climbs, Picogent may compact older turns. You can also run `/compact`.\n\nLong tool outputs are trimmed so the agent stays focused on the current task."
+      "body": "## Context window\n\nCodex models get a **256k** hard ceiling. Picogent does **not** try to fill it.\n\nEvery tool round runs soft compaction (TokenTamer + digests + soft-fit) so the live working set stays near a small soft target and the ring grows slowly — Cursor-style headroom, not a race to the limit.\n\nWhen pressure still climbs, older turns are windowed or summarized. You can also run `/compact`."
     },
     {
       "id": "cli",

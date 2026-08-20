@@ -242,9 +242,9 @@ function renderContext(ctx) {
     } else if (level === "warning") {
       contextPopNote.textContent = "Getting full — older tool output will be trimmed soon.";
     } else if (ctx.status) {
-      contextPopNote.textContent = "Recently compacted (" + ctx.status + "). Ring shrinks as context is tamed.";
+      contextPopNote.textContent = "Recently compacted (" + ctx.status + "). Soft-fit keeps the ring low on a 256k Codex ceiling.";
     } else {
-      contextPopNote.textContent = "Estimated tokens in the live agent window.";
+      contextPopNote.textContent = "256k Codex ceiling — soft compaction keeps the live set small so this grows slowly.";
     }
   }
 }

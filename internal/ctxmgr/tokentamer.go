@@ -18,12 +18,14 @@ import (
 // Refs: ayala3/TokenTamer, buildparafin/headroom, lm-sys/RouteLLM (routing half)
 
 const (
-	KeepRecentTools   = 4
-	StaleToolMaxChars = 240
-	FreshToolMaxChars = 6000
-	BashMaxChars      = 2500
-	SearchMaxChars    = 3500
-	SkeletonMinChars  = 900
+	// Tighter ingress caps so each tool round adds less to the soft working set
+	// (Headroom/tooltrim: compress before the transcript bloats).
+	KeepRecentTools   = 3
+	StaleToolMaxChars = 160
+	FreshToolMaxChars = 3500
+	BashMaxChars      = 1400
+	SearchMaxChars    = 2000
+	SkeletonMinChars  = 700
 )
 
 var (

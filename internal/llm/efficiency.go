@@ -8,7 +8,7 @@ package llm
 // with unbounded tool-output growth. Picogent multiplies three levers:
 //   1) tier (Luna/Haiku vs Sol/Opus)
 //   2) reasoning effort (none/low vs high/max)
-//   3) context compression (TokenTamer-style stale tool skeletonization)
+//   3) context compression (TokenTamer + Headroom soft-budget: 256k ceiling, small working set)
 //
 // Product of those levers routinely lands in the 50–200× range vs the baseline
 // for typical coding sessions (explore-heavy loops). Hard tasks still escalate.
