@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Settings — Picogent</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="page-settings">
+    <a class="back-link" href="/">← Back to chat</a>
+    <header class="settings-head">
+      <h1>Settings</h1>
+      <p class="lede">The basics — where Picogent works and how it behaves.</p>
+    </header>
+
+    <form class="settings-card" id="form">
+      <div class="field">
+        <label for="workspace">Project folder</label>
+        <p class="field-hint">Files here can be read and edited by the agent.</p>
+        <input id="workspace" type="text" autocomplete="off" placeholder="/Users/you/projects/my-app" />
+      </div>
+
+      <div class="field">
+        <label for="mode">Safety mode</label>
+        <p class="field-hint">Safe asks before changes. Fast edits automatically inside your folder.</p>
+        <select id="mode">
+          <option value="safe">Safe — ask before changes</option>
+          <option value="fast">Fast — auto-edit in folder</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="model">Model</label>
+        <p class="field-hint">Usually fine to leave as-is. Change only if you prefer a different model.</p>
+        <input id="model" type="text" placeholder="gpt-5.6-luna" />
+      </div>
+
+      <div class="settings-actions">
+        <button type="submit" class="btn btn-accent" id="save">Save</button>
+        <span class="settings-status" id="status" aria-live="polite"></span>
+      </div>
+    </form>
+
+    <p class="settings-foot" id="connection"></p>
+  </div>
+  <script src="/settings.js"></script>
+</body>
+</html>
