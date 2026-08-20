@@ -26,7 +26,7 @@ Picogent is a **daily-driver pocket agent**: one folder, two modes, files + shel
 
 ### One-line pitch
 
-> `picogent` — a small Go coding agent. Two modes. Your key or a local model. It edits the folder you are in and tells you what it did.
+> `picogent` — a small Go coding agent. Two modes. Codex subscription, a key, or a local model. It edits the folder you are in and tells you what it did.
 
 ---
 
@@ -65,8 +65,8 @@ These are decided. Do not re-litigate during v1.
 5. **Modes (only two):**
    - **Safe** — ask before writes and before shell.
    - **Fast** — auto-apply inside the workspace; still ask for deletes, `rm -rf`, and anything that escapes the folder.
-6. **Auth v1:** BYOK OpenAI-compatible endpoint **and** first-class Ollama. Keys live in `~/.picogent/config.yaml` or env vars. Never in the repo.
-7. **Auth v1.1 (not v1):** optional login with an existing Claude Code / Codex / Antigravity / OpenCode session. Unofficial, can break, ToS-sensitive. Do not block v1 on it. Document the risk when we add it.
+6. **Auth v1:** ChatGPT Codex subscription via `~/.codex/auth.json` (same file as Codex CLI / OpenClaw / kestrel) is the default. Also BYOK OpenAI-compatible endpoints and Ollama. Keys live in `~/.picogent/config.yaml` or env vars. Never in the repo.
+7. **Auth later:** Claude Code / Antigravity / OpenCode session login. Unofficial, can break, ToS-sensitive.
 8. **Resource policy:** no embeddings index, no background watcher, no subagents, no MCP in v1. Small system prompt. Cap tool rounds. Truncate tool output. Default to small models.
 9. **Cut from v1:** MCP, subagents, browser tool, skills marketplace, plugin system, slash-command universe, IDE extension.
 10. **Keep (80/20):** chat, streaming-ish updates, file tools, bash, search, git status/diff/commit, Explain-what-changed footer, undo hint (`git checkout` / copy of preimage when not a git repo).
@@ -105,16 +105,14 @@ These are decided. Do not re-litigate during v1.
 picogent
 ```
 
-If no config:
+If no config, open the **browser setup**:
 
-1. “Where should I work?” → current directory (shown, confirm).
-2. “How should I talk to a model?”
-   - OpenAI-compatible (base URL + key + model)
-   - Ollama (discover local models)
-3. “Safe or Fast?” → default **Safe**.
+1. Install missing cores (Git check, `~/.picogent`, Codex CLI, optional Claude Code CLI).
+2. **Log in to ChatGPT Codex** (OAuth in the same browser). Optional: Log in to Claude.
+3. Pick folder + Safe/Fast.
 4. Drop into chat.
 
-No account, no cloud of ours, no telemetry in v1.
+No extra desktop app. The GUI is a local page.
 
 ### TUI (must be boring)
 

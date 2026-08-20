@@ -7,16 +7,20 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/app"
+	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/setup"
 )
 
 type event struct {
@@ -32,6 +36,8 @@ type server struct {
 	hist   []llm.Message
 	permCh chan perm.Decision
 	subs   []chan event
+	busy   bool
+	cancel context.CancelFunc
 }
 
 func Run() error {
@@ -40,29 +46,57 @@ func Run() error {
 		return err
 	}
 	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1)}
-	static, err := fs.Sub(webFS, "web")
-	if err != nil {
-		return err
+	addr := "127.0.0.1:7420"
+	if v := os.Getenv("PICOGENT_GUI_ADDR"); v != "" {
+		addr = v
 	}
-	mux := http.NewServeMux()
-	mux.Handle("/", http.FileServer(http.FS(static)))
-	mux.HandleFunc("/api/state", s.state)
-	mux.HandleFunc("/api/chat", s.chat)
-	mux.HandleFunc("/api/permission", s.permission)
-	mux.HandleFunc("/api/mode", s.setMode)
-	mux.HandleFunc("/api/events", s.events)
-
-	ln, err := net.Listen("tcp", "127.0.0.1:7420")
+	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		ln, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return err
 		}
 	}
-	url := "http://" + ln.Addr().String() + "/"
+	path := "/"
+	if config.NeedsSetup() {
+		path = "/setup.html"
+	}
+	url := "http://" + ln.Addr().String() + path
 	fmt.Println("picogent gui", url)
-	go openBrowser(url)
-	return http.Serve(ln, mux)
+	if os.Getenv("PICOGENT_NO_BROWSER") == "" {
+		go openBrowser(url)
+	}
+	return http.Serve(ln, s.Handler())
+}
+
+func RunSetup() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	cfg.SetupComplete = false
+	_ = config.Save(cfg)
+	return Run()
+}
+
+func (s *server) Handler() http.Handler {
+	static, err := fs.Sub(webFS, "web")
+	if err != nil {
+		panic(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/state", s.state)
+	mux.HandleFunc("/api/setup", s.setupStatus)
+	mux.HandleFunc("/api/setup/install", s.setupInstall)
+	mux.HandleFunc("/api/setup/login", s.setupLogin)
+	mux.HandleFunc("/api/setup/finish", s.setupFinish)
+	mux.HandleFunc("/api/chat", s.chat)
+	mux.HandleFunc("/api/permission", s.permission)
+	mux.HandleFunc("/api/mode", s.setMode)
+	mux.HandleFunc("/api/reset", s.reset)
+	mux.HandleFunc("/api/events", s.events)
+	mux.Handle("/", http.FileServer(http.FS(static)))
+	return mux
 }
 
 func (s *server) emit(e event) {
@@ -77,16 +111,124 @@ func (s *server) emit(e event) {
 	}
 }
 
-func (s *server) state(w http.ResponseWriter, _ *http.Request) {
+func (s *server) snapshot() map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	hint := ""
+	if err := s.cfg.MissingAuth(); err != nil {
+		hint = err.Error()
+	}
+	return map[string]any{
 		"mode":      s.cfg.Mode,
 		"model":     s.cfg.Model,
 		"workspace": s.cfg.Workspace,
 		"provider":  s.cfg.Provider,
-	})
+		"codex":     s.cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
+		"busy":      s.busy,
+		"hint":      hint,
+		"setup":     !s.cfg.SetupComplete,
+	}
+}
+
+func (s *server) setupStatus(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	cfg := s.cfg
+	s.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(setup.Snapshot(cfg))
+}
+
+func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	log, err := setup.InstallCores()
+	w.Header().Set("Content-Type", "application/json")
+	out := map[string]any{"log": log, "ok": err == nil}
+	if err != nil {
+		out["error"] = err.Error()
+		w.WriteHeader(500)
+	}
+	s.mu.Lock()
+	st := setup.Snapshot(s.cfg)
+	s.mu.Unlock()
+	out["status"] = st
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	var in struct {
+		Target   string `json:"target"`
+		ReturnTo string `json:"return_to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	switch strings.ToLower(in.Target) {
+	case "claude":
+		if err := setup.StartClaudeLogin(); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "hint": "Finish login in the window that opened, then come back here."})
+	default:
+		if in.ReturnTo == "" {
+			in.ReturnTo = "http://127.0.0.1:7420/setup.html"
+		}
+		authURL, err := codexauth.BeginBrowserLogin(in.ReturnTo)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": authURL})
+	}
+}
+
+func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", 405)
+		return
+	}
+	var in struct {
+		Workspace string `json:"workspace"`
+		Mode      string `json:"mode"`
+		Model     string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	s.mu.Lock()
+	cfg := s.cfg
+	s.mu.Unlock()
+	next, err := setup.Apply(cfg, in.Workspace, in.Mode, in.Model)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	a, err := app.Build(next)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	s.mu.Lock()
+	s.cfg = next
+	s.ag = a
+	s.hist = nil
+	s.mu.Unlock()
+	w.WriteHeader(204)
+}
+
+func (s *server) state(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(s.snapshot())
 }
 
 func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
@@ -110,10 +252,17 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	s.hist = nil
+	s.mu.Unlock()
+	w.WriteHeader(204)
+}
+
 func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Allow bool   `json:"allow"`
-		Turn  bool   `json:"turn"`
+		Allow bool `json:"allow"`
+		Turn  bool `json:"turn"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -138,16 +287,35 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no flush", 500)
 		return
 	}
-	ch := make(chan event, 16)
+	ch := make(chan event, 32)
 	s.mu.Lock()
 	s.subs = append(s.subs, ch)
 	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		for i, c := range s.subs {
+			if c == ch {
+				s.subs = append(s.subs[:i], s.subs[i+1:]...)
+				break
+			}
+		}
+		s.mu.Unlock()
+	}()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	fmt.Fprintf(w, "data: {\"type\":\"hello\"}\n\n")
+	fl.Flush()
+	tick := time.NewTicker(15 * time.Second)
+	defer tick.Stop()
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-tick.C:
+			fmt.Fprintf(w, ": ping\n\n")
+			fl.Flush()
 		case e := <-ch:
 			b, _ := json.Marshal(e)
 			fmt.Fprintf(w, "data: %s\n\n", b)
@@ -164,19 +332,39 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
+	prompt := in.Prompt
 	s.mu.Lock()
-	hist := s.hist
-	s.mu.Unlock()
-	h := &guiHandler{s: s}
-	next, _, err := s.ag.Run(r.Context(), hist, in.Prompt, h)
-	s.mu.Lock()
-	s.hist = next
-	s.mu.Unlock()
-	if err != nil {
-		http.Error(w, err.Error(), 500)
+	if s.busy {
+		s.mu.Unlock()
+		http.Error(w, "already running", 409)
 		return
 	}
-	w.WriteHeader(204)
+	s.busy = true
+	hist := s.hist
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	s.mu.Unlock()
+
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.busy = false
+			s.cancel = nil
+			s.mu.Unlock()
+			s.emit(event{Type: "done"})
+		}()
+		h := &guiHandler{s: s}
+		next, _, err := s.ag.Run(ctx, hist, prompt, h)
+		s.mu.Lock()
+		s.hist = next
+		s.mu.Unlock()
+		if err != nil && ctx.Err() == nil {
+			s.emit(event{Type: "error", Text: err.Error()})
+		}
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 type guiHandler struct{ s *server }
@@ -192,7 +380,7 @@ func (h *guiHandler) OnToolEnd(_ llm.ToolCall, result string, err error) {
 		h.s.emit(event{Type: "error", Text: err.Error()})
 		return
 	}
-	h.s.emit(event{Type: "tool", Text: result})
+	h.s.emit(event{Type: "tool", Text: clip(result, 400)})
 }
 func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error) {
 	h.s.emit(event{Type: "permission", Summary: req.Summary})
@@ -205,6 +393,13 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 }
 func (h *guiHandler) OnError(err error) {
 	h.s.emit(event{Type: "error", Text: err.Error()})
+}
+
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 func openBrowser(url string) {

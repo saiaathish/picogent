@@ -6,14 +6,17 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/app"
+	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/gui"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
-	"github.com/saiaathish/picogent/internal/tui")
+	"github.com/saiaathish/picogent/internal/tui"
+)
 
 var version = "0.1.0"
 
@@ -26,15 +29,24 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
+		if config.NeedsSetup() {
+			return gui.Run()
+		}
 		return tui.Run()
 	}
 	switch args[0] {
 	case "gui":
 		return gui.Run()
+	case "setup":
+		return gui.RunSetup()
+	case "tui":
+		return tui.Run()
 	case "run":
 		return runOnce(args[1:])
 	case "init":
 		return runInitArgs(args[1:])
+	case "login":
+		return runLogin()
 	case "version", "-v", "--version":
 		fmt.Println("picogent", version)
 		return nil
@@ -54,11 +66,18 @@ func printHelp() {
 	fmt.Print(`picogent — tiny coding agent
 
 Usage:
-  picogent              start the TUI
-  picogent gui          start the local web GUI
+  picogent              first run: install cores + browser setup; later: TUI
+  picogent gui          browser chat (setup first if needed)
+  picogent setup        open the browser setup again
+  picogent tui          terminal UI
   picogent run "..."    one-shot prompt (headless)
+  picogent login        connect ChatGPT Codex (~/.codex/auth.json)
   picogent init         write ~/.picogent/config.yaml
   picogent version
+
+No extra app. The GUI is a local page in your browser.
+
+Default backend is your Codex subscription (same auth file as Codex CLI).
 
 Init flags:
   --ollama              use local Ollama
@@ -70,6 +89,25 @@ Run flags:
   --yes                 Fast mode and auto-approve in-workspace writes/shell
   --model NAME          override model
 `)
+}
+
+func runLogin() error {
+	codex, err := exec.LookPath("codex")
+	if err != nil {
+		return fmt.Errorf("Problem: Codex CLI is not installed.\nCause:   `codex` is not on PATH.\nFix:     install the Codex CLI, then run picogent login")
+	}
+	cmd := exec.Command(codex, "login")
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	if !codexauth.LoggedIn() {
+		return fmt.Errorf("login finished, but ~/.codex/auth.json is still empty")
+	}
+	fmt.Println("Codex connected. Run picogent or picogent gui.")
+	return nil
 }
 
 func runInitArgs(args []string) error {
@@ -102,11 +140,19 @@ func runInitArgs(args []string) error {
 	}
 	path, _ := config.Path()
 	fmt.Println("wrote", path)
-	if cfg.Provider == config.ProviderOllama {
+	switch cfg.Provider {
+	case config.ProviderOllama:
 		fmt.Println("next: ollama serve && ollama pull", cfg.Model)
-		return nil
+	case config.ProviderCodex:
+		if codexauth.LoggedIn() {
+			fmt.Println("Codex already connected via ~/.codex/auth.json")
+			fmt.Println("next: picogent   or   picogent gui")
+		} else {
+			fmt.Println("next: picogent login")
+		}
+	default:
+		fmt.Println("next: export PICOGENT_API_KEY=sk-...   (or set api_key in the yaml)")
 	}
-	fmt.Println("next: export PICOGENT_API_KEY=sk-...   (or set api_key in the yaml)")
 	return nil
 }
 
