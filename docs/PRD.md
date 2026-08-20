@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | Hardening toward production harness |
+| Status | Production-ready pocket harness (GUI + TUI + headless) |
 | Owner | Sai |
 | License | MIT (open source, BYOK) |
 | Binary | `picogent` |
