@@ -224,7 +224,7 @@ func (s *server) snapshot() map[string]any {
 	ag := s.ag
 	busy := s.busy
 	sessionID := s.sessionID
-	hist := s.hist
+	hist := append([]llm.Message(nil), s.hist...)
 	pend := s.pendingPerm
 	liveTask := s.liveTask
 	s.mu.Unlock()
