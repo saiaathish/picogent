@@ -2,48 +2,79 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Set up Picogent</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body class="setup-page">
-  <header>
-    <div class="brand">Picogent</div>
-    <div class="meta">Setup</div>
-  </header>
-  <div class="setup-wrap">
-    <h1>Get this folder ready</h1>
-    <p class="lede">No extra app. Picogent installs the CLIs itself, then you log in here.</p>
+  <div class="setup-shell">
+    <header class="setup-header">
+      <div class="brand">Picogent</div>
+      <p class="setup-tagline">First-time setup</p>
+    </header>
 
-    <section>
-      <h2>Core pieces</h2>
-      <ul id="comps" class="comps"></ul>
-      <pre id="install-log" class="install-log" hidden></pre>
-      <button type="button" id="install" class="big">Install missing pieces</button>
-    </section>
+    <main class="setup-main">
+      <p id="stage-err" class="error-line setup-error" hidden></p>
 
-    <section>
-      <h2>Log in</h2>
-      <div id="logins" class="login-grid"></div>
-    </section>
+      <!-- Stage 1: Welcome -->
+      <section class="stage" data-stage="0">
+        <h1>Welcome</h1>
+        <p class="stage-lede">Picogent runs on your machine. We'll install the CLIs, connect your account, and pick a folder — about two minutes.</p>
+        <ul class="stage-checklist">
+          <li><span class="check-icon">1</span> Install Codex &amp; Claude Code CLIs</li>
+          <li><span class="check-icon">2</span> Log in with ChatGPT</li>
+          <li><span class="check-icon">3</span> Choose folder &amp; mode</li>
+        </ul>
+      </section>
 
-    <section>
-      <h2>This agent</h2>
-      <label>Folder
-        <input id="workspace" type="text" />
-      </label>
-      <label>Mode
-        <select id="mode">
-          <option value="safe">Safe — ask before writes</option>
-          <option value="fast">Fast — auto-edit inside the folder</option>
-        </select>
-      </label>
-      <label>Model
-        <input id="model" type="text" />
-      </label>
-      <button type="button" id="start" class="big">Start chatting</button>
-      <p id="finish-err" class="error-line" hidden></p>
-    </section>
+      <!-- Stage 2: CLI tools -->
+      <section class="stage" data-stage="1" hidden>
+        <h1>Core tools</h1>
+        <p class="stage-lede">Picogent installs missing command-line tools for you. Git must already be on your system.</p>
+        <ul id="comps" class="comps"></ul>
+        <pre id="install-log" class="install-log" hidden></pre>
+        <button type="button" id="install" class="stage-action">Install missing pieces</button>
+      </section>
+
+      <!-- Stage 3: Login -->
+      <section class="stage" data-stage="2" hidden>
+        <h1>Log in</h1>
+        <p class="stage-lede">Connect ChatGPT so Picogent can use Codex. You'll be redirected and come back here.</p>
+        <div id="logins" class="login-stack"></div>
+      </section>
+
+      <!-- Stage 4: Agent config -->
+      <section class="stage" data-stage="3" hidden>
+        <h1>Your agent</h1>
+        <p class="stage-lede">Pick the folder Picogent works in and how cautious it should be.</p>
+        <div class="form-grid">
+          <label>Folder
+            <input id="workspace" type="text" />
+          </label>
+          <label>Mode
+            <select id="mode">
+              <option value="safe">Safe — ask before writes</option>
+              <option value="fast">Fast — auto-edit inside the folder</option>
+            </select>
+          </label>
+          <label>Model
+            <input id="model" type="text" />
+          </label>
+        </div>
+        <p id="finish-err" class="error-line" hidden></p>
+      </section>
+    </main>
+
+    <footer class="setup-footer">
+      <button type="button" id="back" class="ghost nav-btn" disabled>Back</button>
+      <ol class="step-track" aria-label="Setup progress">
+        <li class="step-dot active" data-step="0"><span>1</span></li>
+        <li class="step-dot" data-step="1"><span>2</span></li>
+        <li class="step-dot" data-step="2"><span>3</span></li>
+        <li class="step-dot" data-step="3"><span>4</span></li>
+      </ol>
+      <button type="button" id="next" class="nav-btn">Next</button>
+    </footer>
   </div>
   <script src="/setup.js"></script>
 </body>

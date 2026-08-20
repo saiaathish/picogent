@@ -2,40 +2,54 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>Picogent</title>
   <link rel="stylesheet" href="/styles.css" />
 </head>
-<body>
-  <header>
-    <div class="brand">Picogent</div>
-    <div class="status">
-      <span id="badge" class="badge off">connecting</span>
-      <span id="model" class="meta"></span>
+<body class="chat-page">
+  <div class="chat-shell">
+    <header class="chat-header">
+      <div class="chat-header-left">
+        <div class="brand">Picogent</div>
+        <p id="workspace" class="workspace"></p>
+      </div>
+      <div class="status">
+        <span id="badge" class="badge off">connecting</span>
+        <span id="model" class="meta"></span>
+      </div>
+      <div class="actions">
+        <button type="button" id="toggle-mode" class="ghost sm">Safe</button>
+        <button type="button" id="reset" class="ghost sm">New chat</button>
+        <a class="ghost linkbtn sm" href="/setup.html">Setup</a>
+      </div>
+    </header>
+
+    <p id="hint" class="hint" hidden></p>
+
+    <main class="chat-main">
+      <div id="empty" class="chat-empty">
+        <p class="chat-empty-title">What should we work on?</p>
+        <p class="chat-empty-sub">Ask Picogent to read, edit, or run things in your folder.</p>
+      </div>
+      <ol id="log"></ol>
+    </main>
+
+    <div id="perm" class="perm-bar" hidden>
+      <p id="perm-text">Allow this?</p>
+      <div class="perm-btns">
+        <button type="button" class="yes sm" data-allow="1">Yes</button>
+        <button type="button" class="no sm" data-allow="0">No</button>
+        <button type="button" class="turn ghost sm" data-turn="1">This turn</button>
+      </div>
     </div>
-    <div class="actions">
-      <button type="button" id="toggle-mode" class="ghost">Safe</button>
-      <button type="button" id="reset" class="ghost">New chat</button>
-      <a class="ghost linkbtn" href="/setup.html">Setup</a>
-    </div>
-  </header>
-  <p id="workspace" class="workspace"></p>
-  <p id="hint" class="hint" hidden></p>
-  <main>
-    <ol id="log"></ol>
-  </main>
-  <div id="perm" hidden>
-    <p id="perm-text">Allow this?</p>
-    <div class="perm-btns">
-      <button type="button" class="yes" data-allow="1">Yes</button>
-      <button type="button" class="no" data-allow="0">No</button>
-      <button type="button" class="turn" data-turn="1">Yes this turn</button>
-    </div>
+
+    <footer class="chat-dock">
+      <form id="composer" class="composer-bar">
+        <textarea id="prompt" rows="1" placeholder="Message Picogent…"></textarea>
+        <button type="submit" id="send" aria-label="Send">↑</button>
+      </form>
+    </footer>
   </div>
-  <form id="composer">
-    <textarea id="prompt" rows="3" placeholder="What should Picogent do?"></textarea>
-    <button type="submit" id="send">Send</button>
-  </form>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -84,13 +84,62 @@ picogent version
 
 TUI commands: `/safe` `/fast` `/model` `/provider codex|ollama|openai` `/reset` `/quit`
 
-## What it can do
+## What it can do (80/20 Claude Code harness)
 
-Read, write, and edit files. Glob and grep. Bash in the project folder. Git status / diff / commit (never push).
+Picogent implements the **useful core** of [Claude Code](https://github.com/anthropics/claude-code) and [tanbiralam/claude-code](https://github.com/tanbiralam/claude-code) (tool/command reference), without the 512k-line machinery.
+
+| Feature | Picogent |
+|---|---|
+| Read / Write / Edit / Glob / Grep / Bash | yes |
+| `list_dir`, `web_fetch`, `todo_write` | yes |
+| MCP (Cursor-compatible config) | yes |
+| Parallel tool calls | yes |
+| Project rules (`AGENTS.md`, `CLAUDE.md`) | yes |
+| Custom slash commands (`.claude/commands/*.md`) | yes |
+| Built-in `/commit`, `/review`, `/compact`, `/diff`, `/memory`, `/resume` | yes |
+| Session save/resume (`~/.picogent/sessions/`) | yes |
+| Safe / Fast permissions | yes |
+| Subagents, LSP, skills, plugins, voice | no (on purpose) |
+
+**Workflow:** ask or `/commit` → Picogent runs tools → reports what changed. Not manual instructions.
+
+### Slash commands (TUI + GUI)
+
+`/commit` `/review` `/clear` `/compact` `/status` `/diff` `/memory` `/resume` `/commands` `/mcp` `/safe` `/fast`
+
+Custom: add `.claude/commands/deploy.md` → type `/deploy` (same as Claude Code).
+
+### MCP
+
+Picogent loads the same MCP config as Cursor and exposes every tool to the model (`mcp_<server>_<tool>`):
+
+1. `~/.cursor/mcp.json`
+2. `~/.picogent/mcp.yaml`
+3. `{project}/.cursor/mcp.json`
+4. `{project}/.mcp.json`
+
+```yaml
+# ~/.picogent/mcp.yaml
+servers:
+  browseros-neo:
+    url: http://127.0.0.1:9010/mcp
+    type: http
+  github:
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "..."
+```
+
+`picogent mcp list` shows what's connected. **Fast mode** auto-runs MCP tools; **Safe mode** asks first.
+
+### Project rules
+
+Drop `AGENTS.md` or `CLAUDE.md` in your repo — Picogent injects them into the system prompt (like Claude Code).
 
 ## What it will not do (v1)
 
-MCP, subagents, browser driving, skills, plugins, embedding indexes.
+Subagents, skills marketplace, plugins, embedding indexes.
 
 ## Docs
 

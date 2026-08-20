@@ -67,18 +67,31 @@ func autoAllow(mode config.Mode, req Request) bool {
 		return false
 	}
 	switch req.Tool {
-	case "read_file", "glob", "grep":
+	case "read_file", "glob", "grep", "list_dir", "todo_write":
 		return true
 	case "git":
 		return req.Command == "status" || req.Command == "diff"
 	}
+	if strings.HasPrefix(req.Tool, "mcp_") {
+		if mode == config.ModeFast {
+			return true
+		}
+		return false
+	}
 	if mode == config.ModeFast {
 		switch req.Tool {
-		case "write_file", "edit_file", "bash":
+		case "write_file", "edit_file", "bash", "web_fetch":
 			return true
 		}
 	}
 	return false
+}
+
+func ClassifyMCP(tool, summary string) Request {
+	return Request{
+		Tool:    tool,
+		Summary: summary,
+	}
 }
 
 var destructiveRe = regexp.MustCompile(`(?i)(^|[;&|]\s*)(rm|sudo|mkfs|dd|shutdown|reboot)\b`)

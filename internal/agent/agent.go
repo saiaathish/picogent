@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
@@ -11,18 +12,34 @@ import (
 	"github.com/saiaathish/picogent/internal/tools"
 )
 
-const systemPrompt = `You are Picogent, a small coding agent. You work in one project folder.
+const systemPromptBase = `You are Picogent — a coding agent in the Claude Code mold, kept simple (80/20).
 
-Rules:
-- Inspect with glob/grep/read_file before you edit.
-- Prefer edit_file for small changes. Use write_file for new files.
-- Keep diffs small. Do not invent files you have not seen.
-- Never git push. Never run destructive commands unless the user asked.
-- After any file change, end with three short lines:
-  Changed: ...
-  Run: ...
-  Undo: ... (git checkout -- <file> or delete the new file)
-Be direct. No filler.`
+Core workflow:
+1. When the user asks you to do something, DO it with tools. Do not tell them to run commands, open apps, or click links if you have a tool for it.
+2. Explore before you edit: glob/grep/read_file first.
+3. Prefer edit_file for small changes; write_file for new files.
+4. Keep diffs small. Do not invent files you have not read.
+5. Never git push. Never run destructive shell unless the user asked.
+6. After file changes, end with three short lines:
+   Changed: ...
+   Run: ...
+   Undo: ... (git checkout -- <file> or delete the new file)
+
+Built-in tools: read_file, list_dir, write_file, edit_file, glob, grep, bash, git, web_fetch, todo_write.
+Use todo_write for multi-step tasks (like Claude Code).
+
+Be direct. No filler. No "you can run..." — just run it.`
+
+const systemPromptMCP = `
+
+MCP tools (names start with mcp_): external capabilities wired in from MCP servers — browsers, GitHub, Slack, databases, APIs, etc.
+- Use MCP for anything outside plain files/shell in the workspace.
+- Read each tool's description; pick the right one.
+- Chain tools: navigate → snapshot/read → act, like a harness agent.
+- If an MCP tool fails (server offline), say so briefly and try an alternative if obvious.`
+
+const systemPromptBrowser = `
+Browser MCP is connected. For "open X", "check Y in the browser", "go to GitHub": use navigate/snapshot/act/read tools immediately — do not claim you lack browser access.`
 
 type EventHandler interface {
 	OnText(text string)
@@ -39,14 +56,29 @@ type Result struct {
 }
 
 type Agent struct {
-	CFG   config.Config
-	LLM   llm.Client
-	Tools *tools.Registry
-	Gate  *perm.Gate
+	CFG          config.Config
+	LLM          llm.Client
+	Tools        *tools.Registry
+	Gate         *perm.Gate
+	ProjectRules string
 }
 
 func New(cfg config.Config, client llm.Client, reg *tools.Registry, gate *perm.Gate) *Agent {
 	return &Agent{CFG: cfg, LLM: client, Tools: reg, Gate: gate}
+}
+
+func (a *Agent) systemPrompt() string {
+	p := systemPromptBase
+	if a.Tools != nil && a.Tools.HasMCP() {
+		p += systemPromptMCP
+		if a.Tools.HasBrowserMCP() {
+			p += systemPromptBrowser
+		}
+	}
+	if rules := strings.TrimSpace(a.ProjectRules); rules != "" {
+		p += "\n\nProject rules (follow these):\n" + rules
+	}
+	return p
 }
 
 func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev EventHandler) ([]llm.Message, Result, error) {
@@ -62,7 +94,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 
 	msgs := make([]llm.Message, 0, len(history)+3)
 	if len(history) == 0 || history[0].Role != "system" {
-		msgs = append(msgs, llm.Message{Role: "system", Content: systemPrompt})
+		msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt()})
 	}
 	msgs = append(msgs, history...)
 	msgs = append(msgs, llm.Message{Role: "user", Content: user})
@@ -102,13 +134,21 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 		}
 
 		res.ToolRounds = round + 1
+		type executed struct {
+			call llm.ToolCall
+			req  perm.Request
+			text string
+			err  error
+		}
+		var pending []executed
+
 		for _, call := range msg.ToolCalls {
 			ev.OnToolStart(call)
 			tool, ok := a.Tools.Get(call.Name)
 			if !ok {
 				err := fmt.Errorf("unknown tool %s", call.Name)
 				ev.OnToolEnd(call, "", err)
-				msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: call.ID, Name: call.Name, Content: err.Error()})
+				pending = append(pending, executed{call: call, text: err.Error(), err: err})
 				continue
 			}
 			req := tool.Permission(call.Arguments, a.Tools.Ctx)
@@ -118,22 +158,43 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user string, ev 
 				return msgs, res, err
 			}
 			if dec == perm.Deny {
-				content := "denied by user"
-				ev.OnToolEnd(call, content, nil)
-				msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: call.ID, Name: call.Name, Content: content})
+				ev.OnToolEnd(call, "denied by user", nil)
+				pending = append(pending, executed{call: call, req: req, text: "denied by user"})
 				continue
 			}
-			outText, err := tool.Run(ctx, call.Arguments, a.Tools.Ctx)
-			if err != nil {
+			pending = append(pending, executed{call: call, req: req})
+		}
+
+		var wg sync.WaitGroup
+		for i := range pending {
+			if pending[i].text != "" {
+				continue
+			}
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				call := pending[i].call
+				tool, _ := a.Tools.Get(call.Name)
+				outText, err := tool.Run(ctx, call.Arguments, a.Tools.Ctx)
+				pending[i].text = outText
+				pending[i].err = err
+				if err != nil {
+					pending[i].text = "error: " + err.Error()
+				}
 				ev.OnToolEnd(call, outText, err)
-				msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: call.ID, Name: call.Name, Content: "error: " + err.Error()})
-				continue
+			}(i)
+		}
+		wg.Wait()
+
+		for _, ex := range pending {
+			if ex.call.Name == "write_file" || ex.call.Name == "edit_file" {
+				changed[ex.req.Path] = struct{}{}
 			}
-			if call.Name == "write_file" || call.Name == "edit_file" {
-				changed[req.Path] = struct{}{}
+			content := ex.text
+			if content == "" && ex.err != nil {
+				content = ex.err.Error()
 			}
-			ev.OnToolEnd(call, outText, nil)
-			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: call.ID, Name: call.Name, Content: outText})
+			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
 		}
 	}
 	err := fmt.Errorf("stopped after %d tool rounds (limit)", a.CFG.MaxToolRounds)

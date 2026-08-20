@@ -8,12 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/gui"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/mcpbridge"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/tui"
 )
@@ -47,6 +49,8 @@ func run(args []string) error {
 		return runInitArgs(args[1:])
 	case "login":
 		return runLogin()
+	case "mcp":
+		return runMCP(args[1:])
 	case "version", "-v", "--version":
 		fmt.Println("picogent", version)
 		return nil
@@ -72,6 +76,7 @@ Usage:
   picogent tui          terminal UI
   picogent run "..."    one-shot prompt (headless)
   picogent login        connect ChatGPT Codex (~/.codex/auth.json)
+  picogent mcp          list connected MCP tools
   picogent init         write ~/.picogent/config.yaml
   picogent version
 
@@ -107,6 +112,47 @@ func runLogin() error {
 		return fmt.Errorf("login finished, but ~/.codex/auth.json is still empty")
 	}
 	fmt.Println("Codex connected. Run picogent or picogent gui.")
+	return nil
+}
+
+func runMCP(args []string) error {
+	sub := "list"
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	if sub != "list" {
+		return fmt.Errorf("unknown mcp subcommand %q (try: picogent mcp list)", sub)
+	}
+	wd, _ := os.Getwd()
+	servers, err := mcpbridge.LoadServers(wd)
+	if err != nil {
+		return err
+	}
+	if len(servers) == 0 {
+		fmt.Println("No MCP servers configured.")
+		fmt.Println("Add ~/.picogent/mcp.yaml or use ~/.cursor/mcp.json (same format as Cursor).")
+		return nil
+	}
+	fmt.Printf("Configured servers (%d):\n", len(servers))
+	for name := range servers {
+		fmt.Println(" ", name)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	mgr, warns := mcpbridge.ConnectBestEffort(ctx, servers)
+	defer mgr.Close()
+	for _, w := range warns {
+		fmt.Fprintln(os.Stderr, "warning:", w)
+	}
+	lines := mgr.Report()
+	if len(lines) == 0 {
+		fmt.Println("No tools connected (servers may be offline).")
+		return nil
+	}
+	fmt.Println("\nConnected tools:")
+	for _, line := range lines {
+		fmt.Println(line)
+	}
 	return nil
 }
 
