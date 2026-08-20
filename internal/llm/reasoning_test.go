@@ -193,6 +193,33 @@ func TestReasoningScaleForCodex(t *testing.T) {
 	if scale[0].Display != "Luna" {
 		t.Fatalf("first=%s", scale[0].Display)
 	}
+	for _, s := range scale[0].Supported {
+		if s == "minimal" {
+			t.Fatal("Luna must not include minimal")
+		}
+	}
+	terra := scale[1].Supported
+	sol := scale[2].Supported
+	hasUltra := func(levels []llm.ReasoningLevel) bool {
+		for _, l := range levels {
+			if l == llm.ReasonUltra {
+				return true
+			}
+		}
+		return false
+	}
+	if hasUltra(scale[0].Supported) {
+		t.Fatal("Luna should not include ultra")
+	}
+	if !hasUltra(terra) || !hasUltra(sol) {
+		t.Fatalf("Terra/Sol must include ultra; terra=%v sol=%v", terra, sol)
+	}
+	wantOrder := []llm.ReasoningLevel{llm.ReasonNone, llm.ReasonLow, llm.ReasonMedium, llm.ReasonHigh, llm.ReasonXHigh, llm.ReasonMax}
+	for i, w := range wantOrder {
+		if terra[i] != w {
+			t.Fatalf("terra[%d]=%s want %s", i, terra[i], w)
+		}
+	}
 }
 
 func TestCatalogEmbedsReasoningProfiles(t *testing.T) {

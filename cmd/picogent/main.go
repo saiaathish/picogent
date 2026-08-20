@@ -17,6 +17,7 @@ import (
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/mcpbridge"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/setup"
 	"github.com/saiaathish/picogent/internal/tui"
 )
 
@@ -48,7 +49,7 @@ func run(args []string) error {
 	case "init":
 		return runInitArgs(args[1:])
 	case "login":
-		return runLogin()
+		return runLogin(os.Args[2:])
 	case "mcp":
 		return runMCP(args[1:])
 	case "version", "-v", "--version":
@@ -76,6 +77,7 @@ Usage:
   picogent tui          terminal UI
   picogent run "..."    one-shot prompt (headless)
   picogent login        connect ChatGPT Codex (~/.codex/auth.json)
+  picogent login claude connect Claude Code CLI (subscription, no API key)
   picogent mcp          list connected MCP tools
   picogent init         write ~/.picogent/config.yaml
   picogent version
@@ -83,6 +85,7 @@ Usage:
 No extra app. The GUI is a local page in your browser.
 
 Default backend is your Codex subscription (same auth file as Codex CLI).
+Claude Code provider uses the same login as the claude CLI — no Anthropic API key.
 
 Init flags:
   --ollama              use local Ollama
@@ -96,7 +99,22 @@ Run flags:
 `)
 }
 
-func runLogin() error {
+func runLogin(args []string) error {
+	target := "codex"
+	if len(args) > 0 {
+		target = strings.ToLower(args[0])
+	}
+	switch target {
+	case "claude", "quadcode", "anthropic":
+		return runClaudeLogin()
+	case "codex", "chatgpt", "":
+		return runCodexLogin()
+	default:
+		return fmt.Errorf("unknown login target %q (try: picogent login  or  picogent login claude)", args[0])
+	}
+}
+
+func runCodexLogin() error {
 	codex, err := exec.LookPath("codex")
 	if err != nil {
 		return fmt.Errorf("Problem: Codex CLI is not installed.\nCause:   `codex` is not on PATH.\nFix:     install the Codex CLI, then run picogent login")
@@ -112,6 +130,18 @@ func runLogin() error {
 		return fmt.Errorf("login finished, but ~/.codex/auth.json is still empty")
 	}
 	fmt.Println("Codex connected. Run picogent or picogent gui.")
+	return nil
+}
+
+func runClaudeLogin() error {
+	if err := setup.StartClaudeLogin(); err != nil {
+		return err
+	}
+	if setup.ClaudeLoggedIn() {
+		fmt.Println("Claude Code already connected. In Settings pick provider Claude Code.")
+		return nil
+	}
+	fmt.Println("Finish Claude login in the window that opened, then pick Claude Code in Settings.")
 	return nil
 }
 

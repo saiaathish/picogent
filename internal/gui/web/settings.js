@@ -58,8 +58,12 @@ function updateModelDesc() {
 }
 
 function syncProviderUI() {
-  document.getElementById("anthropic-block").hidden =
-    document.getElementById("provider").value !== "quadcode";
+  const isClaude = document.getElementById("provider").value === "quadcode";
+  document.getElementById("anthropic-block").hidden = !isClaude;
+  const hint = document.getElementById("claude-cli-hint");
+  if (hint) {
+    hint.hidden = !(isClaude && state?.claude_cli);
+  }
 }
 
 function renderLast(router) {

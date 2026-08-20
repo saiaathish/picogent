@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/saiaathish/picogent/internal/claudeauth"
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
@@ -140,33 +141,14 @@ func codexLogin() LoginTarget {
 
 func claudeLogin() LoginTarget {
 	if ClaudeLoggedIn() {
-		return LoginTarget{ID: "claude", Name: "Claude Code", OK: true, Detail: "Claude is already signed in", Button: "Connected"}
+		return LoginTarget{ID: "claude", Name: "Claude Code", OK: true, Detail: "connected via Claude Code CLI", Button: "Connected"}
 	}
 	okCLI := look("claude") != ""
-	return LoginTarget{ID: "claude", Name: "Claude Code", Detail: "optional", Button: "Log in to Claude", NeedOAuth: okCLI}
+	return LoginTarget{ID: "claude", Name: "Claude Code", Detail: "uses your Claude subscription (same as `claude` CLI)", Button: "Log in to Claude", NeedOAuth: okCLI}
 }
 
 func ClaudeLoggedIn() bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
-	}
-	candidates := []string{
-		filepath.Join(home, ".claude", ".credentials.json"),
-		filepath.Join(home, ".claude.json"),
-		filepath.Join(home, ".config", "claude", ".credentials.json"),
-	}
-	for _, p := range candidates {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		s := string(b)
-		if strings.Contains(s, "accessToken") || strings.Contains(s, "access_token") || strings.Contains(s, "oauth") || strings.Contains(s, "sessionKey") {
-			return true
-		}
-	}
-	return false
+	return claudeauth.LoggedIn()
 }
 
 func look(name string) string {

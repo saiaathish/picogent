@@ -4,16 +4,17 @@ import "strings"
 
 // ReasoningLevel is the scalar reasoning-effort scale shared by Codex and Claude Code.
 // Codex maps this to reasoning.effort; Anthropic maps to output_config.effort.
+// Scale: none → low → medium → high → xhigh → max → ultra (ultra only on Terra/Sol).
 type ReasoningLevel string
 
 const (
-	ReasonNone    ReasoningLevel = "none"
-	ReasonMinimal ReasoningLevel = "minimal"
-	ReasonLow     ReasoningLevel = "low"
-	ReasonMedium  ReasoningLevel = "medium"
-	ReasonHigh    ReasoningLevel = "high"
-	ReasonXHigh   ReasoningLevel = "xhigh"
-	ReasonMax     ReasoningLevel = "max"
+	ReasonNone   ReasoningLevel = "none"
+	ReasonLow    ReasoningLevel = "low"
+	ReasonMedium ReasoningLevel = "medium"
+	ReasonHigh   ReasoningLevel = "high"
+	ReasonXHigh  ReasoningLevel = "xhigh"
+	ReasonMax    ReasoningLevel = "max"
+	ReasonUltra  ReasoningLevel = "ultra"
 )
 
 // TaskKind is what the agent is doing in this LLM round.
@@ -52,26 +53,34 @@ func reasoningRank(l ReasoningLevel) int {
 	switch l {
 	case ReasonNone:
 		return 0
-	case ReasonMinimal:
-		return 1
 	case ReasonLow:
-		return 2
+		return 1
 	case ReasonMedium:
-		return 3
+		return 2
 	case ReasonHigh:
-		return 4
+		return 3
 	case ReasonXHigh:
-		return 5
+		return 4
 	case ReasonMax:
+		return 5
+	case ReasonUltra:
 		return 6
 	default:
-		return 3
+		// Legacy "minimal" maps between none and low.
+		if l == "minimal" {
+			return 1
+		}
+		return 2
 	}
 }
 
 func clampReasoning(level ReasoningLevel, profile ReasoningProfile) ReasoningLevel {
-	if level == "" {
-		level = profile.Default
+	if level == "" || level == "minimal" {
+		if level == "minimal" {
+			level = ReasonLow
+		} else {
+			level = profile.Default
+		}
 	}
 	if len(profile.Supported) == 0 {
 		return level
@@ -107,19 +116,19 @@ func ProfileFor(eco Ecosystem, tier Tier) ReasoningProfile {
 
 func codexReasoningProfile(tier Tier) ReasoningProfile {
 	switch tier {
-	case TierLight:
+	case TierLight: // Luna
 		return ReasoningProfile{
-			Supported: []ReasoningLevel{ReasonNone, ReasonMinimal, ReasonLow, ReasonMedium, ReasonHigh, ReasonMax},
+			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax},
 			Default:   ReasonLow,
 		}
-	case TierStandard:
+	case TierStandard: // Terra — ultra is highest
 		return ReasoningProfile{
-			Supported: []ReasoningLevel{ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh},
+			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra},
 			Default:   ReasonMedium,
 		}
-	case TierHeavy, TierPremium:
+	case TierHeavy, TierPremium: // Sol — ultra is highest
 		return ReasoningProfile{
-			Supported: []ReasoningLevel{ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax},
+			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra},
 			Default:   ReasonHigh,
 		}
 	default:
@@ -131,22 +140,22 @@ func quadReasoningProfile(tier Tier) ReasoningProfile {
 	switch tier {
 	case TierLight:
 		return ReasoningProfile{
-			Supported: []ReasoningLevel{ReasonLow, ReasonMedium},
+			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium},
 			Default:   ReasonLow,
 		}
 	case TierStandard:
 		return ReasoningProfile{
-			Supported: []ReasoningLevel{ReasonLow, ReasonMedium, ReasonHigh},
+			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax},
 			Default:   ReasonHigh,
 		}
 	case TierHeavy:
 		return ReasoningProfile{
-			Supported: []ReasoningLevel{ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax},
+			Supported: []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra},
 			Default:   ReasonHigh,
 		}
 	case TierPremium:
 		return ReasoningProfile{
-			Supported: []ReasoningLevel{ReasonHigh, ReasonXHigh, ReasonMax},
+			Supported: []ReasoningLevel{ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra},
 			Default:   ReasonMax,
 		}
 	default:

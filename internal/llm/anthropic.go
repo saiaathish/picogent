@@ -10,14 +10,22 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/saiaathish/picogent/internal/claudeauth"
 )
 
 const defaultAnthropicURL = "https://api.anthropic.com/v1/messages"
 
-// Anthropic is a Quad Code / Claude API client.
+// Claude Code OAuth requires this exact first system block + beta headers.
+const claudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Claude."
+const claudeCodeOAuthBeta = "claude-code-20250219,oauth-2025-04-20"
+const claudeCodeUserAgent = "claude-cli/1.0.0 (external, picogent)"
+
+// Anthropic is a Quad Code / Claude API client (API key or Claude Code CLI OAuth).
 type Anthropic struct {
 	BaseURL string
-	APIKey  string
+	APIKey  string // x-api-key (Console key); empty when using Claude Code OAuth
+	UseOAuth bool  // Authorization: Bearer from Claude Code CLI login
 	Model   string
 	Timeout time.Duration
 	HTTP    *http.Client
@@ -28,7 +36,7 @@ func NewAnthropic(apiKey, model string, timeout time.Duration) *Anthropic {
 		timeout = 180 * time.Second
 	}
 	if model == "" {
-		model = "claude-sonnet-4-5"
+		model = "claude-sonnet-5"
 	}
 	return &Anthropic{
 		BaseURL: defaultAnthropicURL,
@@ -39,10 +47,18 @@ func NewAnthropic(apiKey, model string, timeout time.Duration) *Anthropic {
 	}
 }
 
+// NewClaudeCode builds a client that uses Claude Code CLI subscription auth
+// (same credentials as `claude /login`) — no Anthropic API key required.
+func NewClaudeCode(model string, timeout time.Duration) *Anthropic {
+	c := NewAnthropic("", model, timeout)
+	c.UseOAuth = true
+	return c
+}
+
 type anthropicReq struct {
 	Model        string                 `json:"model"`
 	MaxTokens    int                    `json:"max_tokens"`
-	System       string                 `json:"system,omitempty"`
+	System       any                    `json:"system,omitempty"`
 	Messages     []anthropicMsg         `json:"messages"`
 	Tools        []anthropicTool        `json:"tools,omitempty"`
 	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
@@ -90,15 +106,15 @@ func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, er
 		model = c.Model
 	}
 
-	var system strings.Builder
+	var systemText strings.Builder
 	var msgs []anthropicMsg
 	for _, m := range req.Messages {
 		switch m.Role {
 		case "system":
-			if system.Len() > 0 {
-				system.WriteString("\n\n")
+			if systemText.Len() > 0 {
+				systemText.WriteString("\n\n")
 			}
-			system.WriteString(m.Content)
+			systemText.WriteString(m.Content)
 		case "user":
 			if len(m.Parts) > 0 {
 				msgs = append(msgs, anthropicMsg{Role: "user", Content: anthropicUserParts(m.Content, m.Parts)})
@@ -140,11 +156,20 @@ func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, er
 	body := anthropicReq{
 		Model:     model,
 		MaxTokens: 8192,
-		System:    system.String(),
 		Messages:  msgs,
 	}
-	if req.Reasoning != "" {
-		body.OutputConfig = &anthropicOutputConfig{Effort: string(req.Reasoning)}
+	if c.UseOAuth {
+		// OAuth path requires the Claude Code identity as the first system block.
+		blocks := []map[string]any{{"type": "text", "text": claudeCodeIdentity}}
+		if t := strings.TrimSpace(systemText.String()); t != "" {
+			blocks = append(blocks, map[string]any{"type": "text", "text": t})
+		}
+		body.System = blocks
+	} else if t := strings.TrimSpace(systemText.String()); t != "" {
+		body.System = t
+	}
+	if req.Reasoning != "" && req.Reasoning != ReasonNone {
+		body.OutputConfig = &anthropicOutputConfig{Effort: anthropicEffort(req.Reasoning)}
 	}
 	for _, t := range req.Tools {
 		body.Tools = append(body.Tools, anthropicTool{
@@ -164,8 +189,22 @@ func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, er
 		return ChatResponse{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("x-api-key", c.APIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	if c.UseOAuth {
+		tok, err := claudeauth.Token()
+		if err != nil {
+			return ChatResponse{}, err
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+tok)
+		httpReq.Header.Set("anthropic-beta", claudeCodeOAuthBeta)
+		httpReq.Header.Set("User-Agent", claudeCodeUserAgent)
+		httpReq.Header.Set("x-app", "cli")
+	} else {
+		if c.APIKey == "" {
+			return ChatResponse{}, fmt.Errorf("anthropic: missing API key")
+		}
+		httpReq.Header.Set("x-api-key", c.APIKey)
+	}
 
 	res, err := c.HTTP.Do(httpReq)
 	if err != nil {
@@ -208,6 +247,20 @@ func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, er
 		PromptTokens:     out.Usage.InputTokens,
 		CompletionTokens: out.Usage.OutputTokens,
 	}, nil
+}
+
+// anthropicEffort maps Picogent's scale onto Anthropic output_config.effort.
+func anthropicEffort(r ReasoningLevel) string {
+	switch r {
+	case ReasonNone, ReasonLow, "minimal":
+		return "low"
+	case ReasonMedium:
+		return "medium"
+	case ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra:
+		return "high"
+	default:
+		return "medium"
+	}
 }
 
 func anthropicUserParts(text string, parts []Part) []map[string]any {

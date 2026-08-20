@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/saiaathish/picogent/internal/claudeauth"
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"gopkg.in/yaml.v3"
 )
@@ -117,7 +118,10 @@ func (c Config) MissingAuth() error {
 		if c.AnthropicKeyResolved() != "" {
 			return nil
 		}
-		return fmt.Errorf("Problem: Claude Code needs an Anthropic API key.\nCause:   anthropic_api_key / ANTHROPIC_API_KEY are empty.\nFix:     add your key in Settings or export ANTHROPIC_API_KEY=sk-ant-...")
+		if claudeauth.LoggedIn() {
+			return nil
+		}
+		return fmt.Errorf("Problem: Claude Code is not logged in.\nCause:   no Claude Code CLI session and no Anthropic API key.\nFix:     run `claude auth login` (or picogent setup → Log in to Claude), or set ANTHROPIC_API_KEY")
 	default:
 		if c.APIKeyResolved() != "" {
 			return nil
@@ -232,7 +236,7 @@ func (c Config) RouterEcosystem() string {
 }
 
 func (c Config) FableAllowed() bool {
-	return c.Router.AllowFable && c.Router.FableConfirmed && c.AnthropicKeyResolved() != ""
+	return c.Router.AllowFable && c.Router.FableConfirmed && (c.AnthropicKeyResolved() != "" || claudeauth.LoggedIn())
 }
 
 // AutoTaskModeOn reports whether Picogent should infer plan/debug/ask/goal from messages.

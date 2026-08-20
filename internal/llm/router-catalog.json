@@ -1,6 +1,6 @@
 {
-  "version": "2026.3",
-  "updated": "2026-08-19T00:00:00Z",
+  "version": "2026.4",
+  "updated": "2026-08-20T00:00:00Z",
   "models": [
     {
       "id": "gpt-5.6-luna",
@@ -10,7 +10,7 @@
       "description": "Fast & affordable — linting, tests, docs, bounded subtasks",
       "patterns": ["gpt-5\\.\\d+-luna", "gpt-\\d+\\.\\d+-luna"],
       "reasoning": {
-        "supported": ["none", "minimal", "low", "medium", "high", "max"],
+        "supported": ["none", "low", "medium", "high", "xhigh", "max"],
         "default": "low"
       }
     },
@@ -22,7 +22,7 @@
       "description": "Balanced daily coding — implementation & judgment-heavy work",
       "patterns": ["gpt-5\\.\\d+-terra", "gpt-\\d+\\.\\d+-terra"],
       "reasoning": {
-        "supported": ["low", "medium", "high", "xhigh"],
+        "supported": ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
         "default": "medium"
       }
     },
@@ -34,7 +34,7 @@
       "description": "Flagship orchestrator — planning, architecture, audit/review",
       "patterns": ["gpt-5\\.\\d+-sol", "gpt-5\\.\\d+-soul", "gpt-\\d+\\.\\d+-sol", "^gpt-5\\.\\d+$"],
       "reasoning": {
-        "supported": ["medium", "high", "xhigh", "max"],
+        "supported": ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
         "default": "high"
       }
     },
@@ -46,7 +46,7 @@
       "description": "Fast loops — quick edits, exploration, delegate subtasks",
       "patterns": ["claude-.*haiku", "haiku-\\d"],
       "reasoning": {
-        "supported": ["low", "medium"],
+        "supported": ["none", "low", "medium"],
         "default": "low"
       }
     },
@@ -58,7 +58,7 @@
       "description": "Daily coding — best speed vs quality balance",
       "patterns": ["claude-sonnet-5", "claude-.*sonnet-5"],
       "reasoning": {
-        "supported": ["low", "medium", "high"],
+        "supported": ["none", "low", "medium", "high", "xhigh", "max"],
         "default": "high"
       }
     },
@@ -70,7 +70,7 @@
       "description": "Complex agentic work, orchestration, deep reasoning",
       "patterns": ["claude-opus-5", "claude-.*opus-5"],
       "reasoning": {
-        "supported": ["low", "medium", "high", "xhigh", "max"],
+        "supported": ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
         "default": "high"
       }
     },
@@ -83,7 +83,7 @@
       "patterns": ["claude-fable-5", "claude-.*fable"],
       "gated": true,
       "reasoning": {
-        "supported": ["high", "xhigh", "max"],
+        "supported": ["high", "xhigh", "max", "ultra"],
         "default": "max"
       }
     }
