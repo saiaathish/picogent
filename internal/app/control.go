@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -17,7 +18,10 @@ func wireRuntime(a *agent.Agent) {
 	if a == nil || a.Tools == nil {
 		return
 	}
-	log, _ := trace.Open(a.CFG.Workspace)
+	log, err := trace.Open(a.CFG.Workspace)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "picogent: trace: %v\n", err)
+	}
 	a.Trace = log
 	ws := a.CFG.Workspace
 	a.Tools.Ctx.MCPList = func() string {
