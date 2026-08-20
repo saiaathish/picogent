@@ -223,6 +223,7 @@ func (s *server) snapshot() map[string]any {
 	busy := s.busy
 	sessionID := s.sessionID
 	hist := s.hist
+	pend := s.pendingPerm
 	s.mu.Unlock()
 
 	hint := ""
@@ -258,6 +259,19 @@ func (s *server) snapshot() map[string]any {
 	}
 	if len(hist) > 0 {
 		out["messages"] = messagesToTranscript(hist)
+	}
+	if pend.Tool != "" {
+		kind := pend.Tool
+		if strings.HasPrefix(kind, "mcp_") || kind == "mcp_manage" {
+			kind = "mcp"
+		}
+		out["pending_perm"] = map[string]any{
+			"tool":    pend.Tool,
+			"summary": pend.Summary,
+			"hint":    pend.Hint,
+			"kind":    kind,
+			"status":  permStatus(pend),
+		}
 	}
 	budget := ctxmgr.BudgetForModel(cfg.Model)
 	ctxStats := ctxmgr.StatsFor(hist, budget)
@@ -697,15 +711,15 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	case s.permCh <- d:
 	case <-time.After(2 * time.Second):
 	}
-	if d == perm.AllowAlways {
-		s.mu.Lock()
-		if s.ag != nil && s.ag.Gate != nil {
-			s.cfg.Extensions.AlwaysAllowTools = appendUnique(s.cfg.Extensions.AlwaysAllowTools, s.pendingPerm.Tool)
-			s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
-			_ = config.Save(s.cfg)
-		}
-		s.mu.Unlock()
+	s.mu.Lock()
+	tool := s.pendingPerm.Tool
+	s.pendingPerm = perm.Request{}
+	if d == perm.AllowAlways && s.ag != nil && s.ag.Gate != nil && tool != "" {
+		s.cfg.Extensions.AlwaysAllowTools = appendUnique(s.cfg.Extensions.AlwaysAllowTools, tool)
+		s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
+		_ = config.Save(s.cfg)
 	}
+	s.mu.Unlock()
 	w.WriteHeader(204)
 }
 
@@ -735,6 +749,14 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	fmt.Fprintf(w, "data: {\"type\":\"hello\"}\n\n")
 	fl.Flush()
+	s.mu.Lock()
+	pend := s.pendingPerm
+	s.mu.Unlock()
+	if pend.Tool != "" {
+		b, _ := json.Marshal(permissionEvent(pend))
+		fmt.Fprintf(w, "data: %s\n\n", b)
+		fl.Flush()
+	}
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()
 	for {
@@ -921,9 +943,13 @@ func (h *guiHandler) endTurn(result agent.Result) {
 		})
 	}
 	if len(result.FilesChanged) > 0 || h.edits > 0 {
+		label := fmt.Sprintf("Edited %d files", h.edits)
+		if h.edits == 1 {
+			label = "Edited 1 file"
+		}
 		h.s.emit(event{
 			Type:    "changes_summary",
-			Text:    fmt.Sprintf("Edited %d files", h.edits),
+			Text:    label,
 			Count:   h.edits,
 			Added:   h.added,
 			Removed: h.removed,
@@ -931,6 +957,16 @@ func (h *guiHandler) endTurn(result agent.Result) {
 		})
 	}
 	h.s.emit(event{Type: "think", Text: "Done", Kind: "plan", Status: "done"})
+	if result.Verified != "" {
+		failed := strings.Contains(strings.ToLower(result.Verified), "fail")
+		h.s.emit(event{
+			Type:    "test",
+			Text:    result.Verified,
+			Summary: clip(result.Verified, 2000),
+			Status:  ternary(failed, "fail", "done"),
+			Kind:    "test",
+		})
+	}
 	_ = learn.Save(h.learn)
 	h.s.emit(event{Type: "overview", Text: "refresh"})
 	h.s.cleanupExtensionPool()
@@ -1055,20 +1091,24 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 	h.s.mu.Lock()
 	h.s.pendingPerm = req
 	h.s.mu.Unlock()
-	kind := req.Tool
-	if strings.HasPrefix(kind, "mcp_") || kind == "mcp_manage" {
-		kind = "mcp"
-	}
 	if h.s.ag != nil {
 		_ = h.s.ag.Trace.Append("perm", req.Tool, req.Summary, nil, 0)
 	}
-	h.s.emit(event{Type: "permission", Summary: req.Summary, Hint: req.Hint, Text: req.Tool, Kind: kind, Status: permStatus(req)})
+	h.s.emit(permissionEvent(req))
 	select {
 	case <-ctx.Done():
 		return perm.Deny, ctx.Err()
 	case d := <-h.s.permCh:
 		return d, nil
 	}
+}
+
+func permissionEvent(req perm.Request) event {
+	kind := req.Tool
+	if strings.HasPrefix(kind, "mcp_") || kind == "mcp_manage" {
+		kind = "mcp"
+	}
+	return event{Type: "permission", Summary: req.Summary, Hint: req.Hint, Text: req.Tool, Kind: kind, Status: permStatus(req)}
 }
 
 func permStatus(req perm.Request) string {

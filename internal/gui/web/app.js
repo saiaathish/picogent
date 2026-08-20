@@ -174,7 +174,7 @@ function updateReasonStats() {
   if (summary) {
     let html = "";
     if (turnStats.edits) {
-      html = "Edited " + turnStats.edits + " files";
+      html = "Edited " + turnStats.edits + " file" + (turnStats.edits === 1 ? "" : "s");
       if (turnStats.added || turnStats.removed) {
         html += ' <span class="diff-add">+' + turnStats.added + '</span> <span class="diff-del">−' + turnStats.removed + "</span>";
       }
@@ -568,6 +568,11 @@ async function refresh() {
 
   renderOverview(s.overview);
   renderContext(s.context);
+  if (s.pending_perm) {
+    showPermission(s.pending_perm);
+  } else if (!s.busy) {
+    permEl.classList.remove("is-on");
+  }
   if (logEl.children.length === 0 && s.messages?.length) {
     replayMessages(s.messages);
   }
@@ -1260,6 +1265,24 @@ function finishTurnUI() {
 
 /* ─── SSE ─── */
 let ev;
+function showPermission(e) {
+  if (!e) return;
+  permText.textContent = e.summary || e.text || "";
+  if (permHint) {
+    const hint = e.hint || "";
+    permHint.textContent = hint;
+    permHint.hidden = !hint;
+  }
+  if (permTitle) {
+    if (e.status === "terminal") permTitle.textContent = "Allow terminal command?";
+    else if (e.status === "destructive") permTitle.textContent = "Allow risky action?";
+    else if (e.kind === "mcp") permTitle.textContent = "Allow MCP tool?";
+    else permTitle.textContent = "Allow this change?";
+  }
+  permEl.classList.add("is-on");
+  setThinking(false);
+}
+
 function connectEvents() {
   if (ev) ev.close();
   ev = new EventSource("/api/events");
@@ -1274,20 +1297,7 @@ function connectEvents() {
       return;
     }
     if (e.type === "permission") {
-      permText.textContent = e.summary || e.text || "";
-      if (permHint) {
-        const hint = e.hint || "";
-        permHint.textContent = hint;
-        permHint.hidden = !hint;
-      }
-      if (permTitle) {
-        if (e.status === "terminal") permTitle.textContent = "Allow terminal command?";
-        else if (e.status === "destructive") permTitle.textContent = "Allow risky action?";
-        else if (e.kind === "mcp") permTitle.textContent = "Allow MCP tool?";
-        else permTitle.textContent = "Allow this change?";
-      }
-      permEl.classList.add("is-on");
-      setThinking(false);
+      showPermission(e);
       return;
     }
     if (e.type === "extension_recommend") {

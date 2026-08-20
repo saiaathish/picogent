@@ -14,7 +14,7 @@ type mcpManage struct{}
 func (mcpManage) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "mcp_manage",
-		Description: "List, add, or remove MCP servers from the built-in catalog. Use this yourself when a task needs GitHub, browser, Slack, Postgres, search, etc. Never tell the user to edit MCP config. Add and remove always require user approval.",
+		Description: "List, add, or remove Picogent MCP servers from the catalog. For listing connected servers you MUST use action=list. Never use browser MCP tools to inspect MCP config.",
 		Parameters: schema(map[string]any{
 			"action": map[string]any{"type": "string", "description": "list | suggest | add | remove"},
 			"id":     map[string]any{"type": "string", "description": "Catalog id for add/remove, e.g. mcp-github"},

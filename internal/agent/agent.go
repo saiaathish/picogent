@@ -23,10 +23,11 @@ Do the work yourself. Never tell the user to type /goal, /plan, /debug, /mcp, or
 2. For long jobs, keep going until done. When fully done, start with "Goal complete:".
 3. For bugs: hypothesize, gather evidence, fix, then call verify.
 4. For large changes: a short plan via todo_write, then implement (unless they only asked a question).
-5. If you need GitHub, a browser, Slack, Postgres, or web search, call mcp_manage to add it. Remove it when finished.
-6. After code changes, call verify.
-7. Never git push. Never destructive shell unless asked.
-8. After file changes, end with:
+5. To list, add, or remove MCP servers, use mcp_manage only — never browser MCP or config files.
+6. If a task needs GitHub, a browser, Slack, Postgres, or web search and it is not connected yet, mcp_manage add (user must approve). Remove it when finished.
+7. After code changes, call verify (or Picogent will).
+8. Never git push. Never destructive shell unless asked.
+9. After file changes, end with:
    Changed: ...
    Run: ...
    Undo: ...
@@ -43,7 +44,7 @@ MCP tools (names start with mcp_): external capabilities wired in from MCP serve
 - If an MCP tool fails (server offline), say so briefly and try an alternative if obvious.`
 
 const systemPromptBrowser = `
-Browser MCP is connected. For "open X", "check Y in the browser", "go to GitHub": use navigate/snapshot/act/read tools immediately — do not claim you lack browser access.`
+Browser MCP is connected. For opening websites or clicking in a page, use navigate/snapshot/act. Do not use browser tools to list Picogent MCP servers — that is mcp_manage.`
 
 type EventHandler interface {
 	OnText(text string)
@@ -59,6 +60,7 @@ type Result struct {
 	ToolRounds   int
 	Context      ctxmgr.Stats
 	GoalDone     bool
+	Verified     string
 }
 
 type Agent struct {
@@ -134,6 +136,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	res.Context = ctxStats
 	changed := map[string]struct{}{}
 	lastToolKind := ""
+	calledVerify := false
 
 	for round := 0; round < a.CFG.MaxToolRounds; round++ {
 		if r, ok := a.LLM.(*llm.Router); ok {
@@ -168,10 +171,11 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			res.Text = text
 			res.ToolRounds = round
 			res.GoalDone = goal.LooksComplete(text)
-			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
 			for p := range changed {
 				res.FilesChanged = append(res.FilesChanged, p)
 			}
+			res.Verified = a.maybeVerify(ctx, ev, len(changed) > 0, calledVerify)
+			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
 			final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
 			res.Context = stats
 			return final, res, nil
@@ -187,6 +191,9 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		var pending []executed
 
 		for _, call := range msg.ToolCalls {
+			if call.Name == "verify" {
+				calledVerify = true
+			}
 			ev.OnToolStart(call)
 			_ = a.Trace.Append("tool_start", call.Name, call.Arguments, nil, 0)
 			if blocked, reason := a.TaskMode.BlockTool(call.Name); blocked {
@@ -263,6 +270,41 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
 	res.Context = stats
 	return final, res, err
+}
+
+func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, filesChanged, already bool) string {
+	if already || !filesChanged || a.Tools == nil || a.Tools.Ctx.Verify == nil {
+		return ""
+	}
+	tool, ok := a.Tools.Get("verify")
+	if !ok {
+		return ""
+	}
+	call := llm.ToolCall{ID: "verify-auto", Name: "verify", Arguments: "{}"}
+	ev.OnToolStart(call)
+	req := tool.Permission("{}", a.Tools.Ctx)
+	req.Hint = perm.EnrichHint(req, "{}")
+	dec, err := a.Gate.Check(ctx, req)
+	if err != nil || dec == perm.Deny {
+		msg := "verify skipped"
+		if err != nil {
+			msg = err.Error()
+		} else {
+			msg = "verify denied"
+		}
+		ev.OnToolEnd(call, msg, err)
+		okv := false
+		_ = a.Trace.Append("verify", "verify", msg, &okv, 0)
+		return msg
+	}
+	out, err := tool.Run(ctx, "{}", a.Tools.Ctx)
+	if err != nil {
+		out = "error: " + err.Error()
+	}
+	ev.OnToolEnd(call, out, err)
+	okv := err == nil && !strings.Contains(strings.ToLower(out), "fail")
+	_ = a.Trace.Append("verify", "verify", out, &okv, 0)
+	return out
 }
 
 type NopHandler struct{}
