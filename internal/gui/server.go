@@ -19,6 +19,7 @@ import (
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/attachments"
+	"github.com/saiaathish/picogent/internal/claudeauth"
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
@@ -1422,6 +1423,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			"bash_timeout_sec":       cfg.BashTimeoutSec,
 			"has_api_key":            cfg.APIKeyResolved() != "",
 			"has_anthropic_key":      cfg.AnthropicKeyResolved() != "",
+			"claude_cli":             claudeauth.LoggedIn(),
 			"codex":                  cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
 			"model_options":          llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
 			"model_options_codex":    llm.ModelChoices(llm.EcoCodex, false),

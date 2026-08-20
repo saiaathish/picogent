@@ -49,8 +49,9 @@
         </div>
 
         <div class="field" id="anthropic-block" hidden>
-          <label for="anthropic-key">Anthropic API key</label>
-          <input id="anthropic-key" type="password" autocomplete="off" placeholder="sk-ant-…" />
+          <label for="anthropic-key">Anthropic API key (optional)</label>
+          <p class="field-hint" id="claude-cli-hint" hidden>Claude Code CLI is signed in — no API key needed.</p>
+          <input id="anthropic-key" type="password" autocomplete="off" placeholder="sk-ant-… (only if not using Claude CLI login)" />
         </div>
 
         <div class="router-last" id="router-last" hidden>

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
+	"github.com/saiaathish/picogent/internal/claudeauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/extensions"
 	"github.com/saiaathish/picogent/internal/goal"
@@ -129,11 +130,13 @@ func newBackend(cfg config.Config) (llm.Client, error) {
 	case config.ProviderCodex:
 		return llm.NewCodex(cfg.BackendModel()), nil
 	case config.ProviderQuadCode:
-		key := cfg.AnthropicKeyResolved()
-		if key == "" {
-			return nil, fmt.Errorf("Claude Code requires an Anthropic API key (Settings → API key or ANTHROPIC_API_KEY)")
+		if key := cfg.AnthropicKeyResolved(); key != "" {
+			return llm.NewAnthropic(key, cfg.BackendModel(), timeout), nil
 		}
-		return llm.NewAnthropic(key, cfg.BackendModel(), timeout), nil
+		if claudeauth.LoggedIn() {
+			return llm.NewClaudeCode(cfg.BackendModel(), timeout), nil
+		}
+		return nil, fmt.Errorf("Claude Code is not logged in (run `claude auth login` or picogent setup), and no Anthropic API key is set")
 	case config.ProviderOllama, config.ProviderOpenAI:
 		return llm.NewOpenAI(cfg.ChatBaseURL(), cfg.APIKeyResolved(), cfg.Model, timeout), nil
 	default:

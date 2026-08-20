@@ -161,7 +161,7 @@ func AdjustTierForRoute(eco Ecosystem, tier Tier, mode RouteMode, kind TaskKind,
 }
 
 func bump(level ReasoningLevel, steps int) ReasoningLevel {
-	order := []ReasoningLevel{ReasonNone, ReasonMinimal, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax}
+	order := []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra}
 	idx := 0
 	for i, l := range order {
 		if l == level {
@@ -177,7 +177,7 @@ func bump(level ReasoningLevel, steps int) ReasoningLevel {
 }
 
 func drop(level ReasoningLevel, steps int) ReasoningLevel {
-	order := []ReasoningLevel{ReasonNone, ReasonMinimal, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax}
+	order := []ReasoningLevel{ReasonNone, ReasonLow, ReasonMedium, ReasonHigh, ReasonXHigh, ReasonMax, ReasonUltra}
 	idx := 0
 	for i, l := range order {
 		if l == level {

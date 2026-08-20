@@ -34,7 +34,7 @@ brew install --build-from-source ./contrib/homebrew/picogent.rb
 ./picogent
 ```
 
-If this is a new machine, Picogent opens a **browser setup page**. It installs missing Codex / Claude Code CLIs itself, then you tap **Log in to ChatGPT Codex**. ChatGPT OAuth opens, then you bounce back to setup.
+If this is a new machine, Picogent opens a **browser setup page**. It installs missing Codex / Claude Code CLIs itself, then you tap **Log in to ChatGPT Codex** (and optionally **Log in to Claude**). OAuth opens in the browser, then you bounce back to setup.
 
 Already set up:
 
@@ -42,6 +42,13 @@ Already set up:
 picogent          # TUI
 picogent gui      # browser chat
 picogent setup    # open setup again
+```
+
+**Claude Code subscription** (no Anthropic API key — same login as the `claude` CLI):
+
+```bash
+picogent login claude
+# then in Settings → provider → Claude Code
 ```
 
 **Local model:**
@@ -70,6 +77,7 @@ In **Safe** mode (default) it will ask before writing. Press `y` or the giant Ye
 picogent                  # TUI
 picogent gui              # local window in your browser (127.0.0.1)
 picogent login            # Codex CLI login → ~/.codex/auth.json
+picogent login claude     # Claude Code CLI login (subscription)
 picogent run --yes "create hello.txt that says picogent"
 picogent init --ollama
 picogent version
