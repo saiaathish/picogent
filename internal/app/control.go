@@ -87,8 +87,14 @@ func mcpAdd(a *agent.Agent, id string) (string, error) {
 		msg += " — needs auth: " + res.AuthHint
 	}
 	if a.Tools != nil {
-		if err := ReloadMCP(a); err != nil {
-			msg += " (reload warning: " + err.Error() + ")"
+		cfg := *it.MCP
+		if servers, err := mcpbridge.LoadServers(a.CFG.Workspace); err == nil {
+			if saved, ok := servers[res.MCPName]; ok {
+				cfg = saved
+			}
+		}
+		if err := connectOne(a, res.MCPName, cfg); err != nil {
+			msg += " (connect warning: " + err.Error() + ")"
 		}
 	}
 	_ = a.Trace.Append("mcp_add", "mcp_manage", id, trace.Bool(true), 0)
@@ -105,13 +111,27 @@ func mcpRemove(a *agent.Agent, id string) (string, error) {
 		return "", err
 	}
 	if a.Tools != nil {
-		if err := ReloadMCP(a); err != nil {
-			_ = a.Trace.Append("mcp_remove", "mcp_manage", id, trace.Bool(false), 0)
-			return "removed " + name + " (reload warning: " + err.Error() + ")", nil
+		if a.Tools.MCP != nil {
+			a.Tools.MCP.DropServer(name)
+			a.Tools.AttachMCP(a.Tools.MCP)
 		}
 	}
 	_ = a.Trace.Append("mcp_remove", "mcp_manage", id, trace.Bool(true), 0)
 	return "removed " + name, nil
+}
+
+func connectOne(a *agent.Agent, name string, cfg mcpbridge.ServerConfig) error {
+	if a == nil || a.Tools == nil || name == "" {
+		return nil
+	}
+	if a.Tools.MCP == nil {
+		a.Tools.MCP = &mcpbridge.Manager{}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 22*time.Second)
+	defer cancel()
+	err := a.Tools.MCP.ConnectServer(ctx, name, cfg)
+	a.Tools.AttachMCP(a.Tools.MCP)
+	return err
 }
 
 // ReloadMCP reconnects MCP servers onto the live registry.

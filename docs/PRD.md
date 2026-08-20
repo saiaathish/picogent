@@ -8,7 +8,7 @@
 | Owner | Sai |
 | License | MIT (open source, BYOK) |
 | Binary | `picogent` |
-| Platforms | macOS first (Homebrew + `.dmg`), then Linux |
+| Platforms | macOS, Linux, Windows — one Go binary; GUI is a local browser page |
 
 This document is the source of truth. If code disagrees with this file, change the code.
 
@@ -22,7 +22,7 @@ Claude Code, Codex, OpenCode, and Google Antigravity are powerful and heavy. The
 
 Not a teaching clone of Claude Code. There is already a project named MiniCode ([LiuMengxuan04/MiniCode](https://github.com/LiuMengxuan04/MiniCode), 1k+ stars) that ports Claude Code’s architecture across TypeScript / Python / Rust / Go. We do not compete with that name or that mission.
 
-Picogent is a **daily-driver pocket agent**: one folder, two modes, files + shell + search, TUI and a real macOS app, cheap by default.
+Picogent is a **daily-driver pocket agent**: one folder, two modes, files + shell + search, TUI and a lightweight browser GUI, cheap by default.
 
 ### One-line pitch
 
@@ -50,7 +50,7 @@ Picogent is a **daily-driver pocket agent**: one folder, two modes, files + shel
 | picocode | Rust CI/codemod agent | Interactive beginner UI + GUI app, not a CI tool |
 | Aider | Git-centric CLI | Fewer git rituals; Safe/Fast instead of many flags |
 
-**Niche we own:** the smallest *complete* coding agent you can install with Homebrew and also open as a `.dmg`, that stays understandable.
+**Niche we own:** the smallest *complete* coding agent you can install with Homebrew or `go install`, open in the terminal or a local browser page, and still understand.
 
 ---
 
@@ -60,7 +60,7 @@ These are decided. Do not re-litigate during v1.
 
 1. **Name:** Picogent. CLI: `picogent`. Config dir: `~/.picogent/`.
 2. **Language:** Go. One static-ish binary. No Node, no Electron, no Python runtime for the app itself.
-3. **Surfaces:** TUI (`picogent`) and GUI (`picogent gui`). Same agent core. macOS `.app` / `.dmg` wraps the GUI.
+3. **Surfaces:** TUI (`picogent`) and GUI (`picogent gui` at `127.0.0.1`). Same agent core. The GUI stays a local browser page — no Electron, no `.dmg`, no extra desktop shell.
 4. **v1 job:** full agent loop over one workspace: read / write / edit files, shell, glob, grep, tiny git helper.
 5. **Modes (only two):**
    - **Safe** — ask before writes and before shell.
@@ -70,7 +70,7 @@ These are decided. Do not re-litigate during v1.
 8. **Resource policy:** no embeddings index, no background watcher, no subagents. Small system prompt. Cap tool rounds. Truncate tool output. Default to small models. The agent may list/add/remove catalog MCP servers via `mcp_manage` (user approves add/remove).
 9. **Cut from v1:** parallel subagents, skills marketplace, plugin universe, slash-command universe, IDE extension.
 10. **Keep (80/20):** chat, streaming-ish updates, file tools, bash, search, git, auto plan/debug/goal from the message (beginners never need `/goal` or `/mcp`), Safe/Fast permissions, verify after edits, Explain-what-changed footer.
-11. **Distribution:** `brew install picogent` (tap later) and a signed-later unsigned-ok-for-now macOS `.dmg`.
+11. **Distribution:** `go build` / `go install`, and `brew install --build-from-source` from this repo. No `.dmg`.
 12. **License:** MIT.
 
 ---
@@ -91,7 +91,7 @@ These are decided. Do not re-litigate during v1.
 1. I install with Homebrew, run `picogent`, paste an OpenRouter/OpenAI/Anthropic-compatible key (or pick Ollama), and it works.
 2. I say “add a README to this folder” and in Safe mode I approve one write, then see the file.
 3. I switch to Fast and it makes several edits without nagging, but it still stops if a command tries to `rm` or leave the folder.
-4. I open `picogent gui` (or the `.dmg` app) and get the same agent in a window, not a different product.
+4. I open `picogent gui` in a browser and get the same agent as the TUI, not a different product.
 5. On an 8GB laptop it stays under **~50MB RSS** for the process (excluding the LLM).
 6. If something fails (bad key, Ollama down, model missing), the error names the problem, the cause, and the fix in one short block.
 
@@ -135,7 +135,7 @@ No extra desktop app. The GUI is a local page.
 - Sticky permission banner when Safe needs a yes/no.
 - Same slash commands as the TUI, plus clickable mode toggle.
 
-macOS `.app` just launches `picogent gui` with a tiny native window or the default browser bound to `127.0.0.1`. Prefer an in-app webview later; **v1 may open the local URL in the default browser** if that ships faster, but the `.dmg` target is a dedicated window.
+`picogent gui` serves the same UI at `127.0.0.1` and opens the default browser. That local page **is** the GUI — keep it light.
 
 ---
 
@@ -245,11 +245,9 @@ Never dump a Go stack to the TUI.
 
 ## 11. Out of scope (v1)
 
-- MCP, skills, plugins, hooks, subagents
-- Browser automation
+- Parallel subagents, Electron, `.dmg` / native app wrapper
 - Embedding / vector index
-- Windows installer (Linux binary is nice-to-have if cheap)
-- Subscription OAuth
+- MSI / signed installers
 - Multi-root workspaces
 - Telemetry
 - Our own hosted models
@@ -278,6 +276,6 @@ TUI and GUI both do that. Tests cover the agent loop with a fake LLM (no network
 4. `picogent run` (headless)
 5. TUI
 6. GUI
-7. Homebrew formula + macOS app wrapper
+7. Homebrew formula from this repo
 
 Ship as soon as 1–5 work. GUI can trail by a day, not a month.

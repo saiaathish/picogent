@@ -27,10 +27,16 @@ type Tool struct {
 }
 
 // Manager holds live MCP sessions and discovered tools.
+type conn struct {
+	name  string
+	fp    string
+	close func()
+}
+
 type Manager struct {
 	mu    sync.Mutex
 	tools []Tool
-	close []func()
+	conns []conn
 }
 
 func Connect(ctx context.Context, servers map[string]ServerConfig) (*Manager, error) {
@@ -45,45 +51,121 @@ func Connect(ctx context.Context, servers map[string]ServerConfig) (*Manager, er
 func ConnectBestEffort(ctx context.Context, servers map[string]ServerConfig) (*Manager, []string) {
 	m := &Manager{}
 	var warns []string
-	if len(servers) == 0 {
-		return m, nil
-	}
+	seen := map[string]string{}
 	for name, cfg := range servers {
-		sctx, cancel := context.WithTimeout(ctx, connectTimeout)
-		session, cleanup, err := dial(sctx, name, cfg)
-		cancel()
-		if err != nil {
+		fp := fingerprint(cfg)
+		if other, ok := seen[fp]; ok {
+			warns = append(warns, fmt.Sprintf("%q skipped (same endpoint as %q)", name, other))
+			continue
+		}
+		seen[fp] = name
+		if err := m.ConnectServer(ctx, name, cfg); err != nil {
 			warns = append(warns, fmt.Sprintf("%q: %v", name, err))
-			continue
-		}
-		m.close = append(m.close, cleanup)
-		list, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-		if err != nil {
-			cleanup()
-			warns = append(warns, fmt.Sprintf("%q list tools: %v", name, err))
-			continue
-		}
-		for _, t := range list.Tools {
-			if t == nil || t.Name == "" {
-				continue
-			}
-			schema := normalizeSchema(t.InputSchema)
-			desc := strings.TrimSpace(t.Description)
-			if desc == "" {
-				desc = t.Name + " via " + name
-			}
-			desc = "[" + name + "] " + desc
-			m.tools = append(m.tools, Tool{
-				PublicName:  publicName(name, t.Name),
-				Server:      name,
-				Original:    t.Name,
-				Description: desc,
-				Parameters:  schema,
-				session:     session,
-			})
+			delete(seen, fp)
 		}
 	}
 	return m, warns
+}
+
+// ConnectServer dials one MCP server and merges its tools. Existing servers stay up.
+func (m *Manager) ConnectServer(ctx context.Context, name string, cfg ServerConfig) error {
+	if m == nil {
+		return fmt.Errorf("no manager")
+	}
+	m.DropServer(name)
+	m.dropFingerprint(fingerprint(cfg))
+	sctx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+	session, cleanup, err := dial(sctx, name, cfg)
+	if err != nil {
+		return err
+	}
+	list, err := session.ListTools(ctx, &mcp.ListToolsParams{})
+	if err != nil {
+		cleanup()
+		return fmt.Errorf("list tools: %w", err)
+	}
+	var added []Tool
+	for _, t := range list.Tools {
+		if t == nil || t.Name == "" {
+			continue
+		}
+		schema := normalizeSchema(t.InputSchema)
+		desc := strings.TrimSpace(t.Description)
+		if desc == "" {
+			desc = t.Name + " via " + name
+		}
+		desc = "[" + name + "] " + desc
+		added = append(added, Tool{
+			PublicName:  publicName(name, t.Name),
+			Server:      name,
+			Original:    t.Name,
+			Description: desc,
+			Parameters:  schema,
+			session:     session,
+		})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.conns = append(m.conns, conn{name: name, fp: fingerprint(cfg), close: cleanup})
+	m.tools = append(m.tools, added...)
+	return nil
+}
+
+// DropServer disconnects one server without touching the others.
+func (m *Manager) DropServer(name string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.dropLocked(name)
+}
+
+func fingerprint(cfg ServerConfig) string {
+	u := strings.TrimRight(strings.ToLower(strings.TrimSpace(cfg.URL)), "/")
+	if u != "" {
+		return "url:" + u
+	}
+	return "cmd:" + cfg.Command + "\x00" + strings.Join(cfg.Args, "\x00")
+}
+
+func (m *Manager) dropFingerprint(fp string) {
+	if m == nil || fp == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var names []string
+	for _, c := range m.conns {
+		if c.fp == fp {
+			names = append(names, c.name)
+		}
+	}
+	for _, name := range names {
+		m.dropLocked(name)
+	}
+}
+
+func (m *Manager) dropLocked(name string) {
+	filtered := m.tools[:0]
+	for _, t := range m.tools {
+		if t.Server != name {
+			filtered = append(filtered, t)
+		}
+	}
+	m.tools = filtered
+	kept := m.conns[:0]
+	for _, c := range m.conns {
+		if c.name == name {
+			if c.close != nil {
+				c.close()
+			}
+			continue
+		}
+		kept = append(kept, c)
+	}
+	m.conns = kept
 }
 
 func dial(ctx context.Context, name string, cfg ServerConfig) (*mcp.ClientSession, func(), error) {
@@ -265,11 +347,11 @@ func (m *Manager) Report() []string {
 func (m *Manager) Close() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, fn := range m.close {
-		if fn != nil {
-			fn()
+	for _, c := range m.conns {
+		if c.close != nil {
+			c.close()
 		}
 	}
-	m.close = nil
+	m.conns = nil
 	m.tools = nil
 }
