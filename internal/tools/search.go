@@ -109,13 +109,14 @@ func globMatch(pattern, rel string) bool {
 	}
 	if strings.Contains(pattern, "**/") {
 		pre, suf, _ := strings.Cut(pattern, "**/")
-		if pre != "" && !strings.HasPrefix(rel, strings.TrimSuffix(pre, "/")) {
-			// still allow prefix match with slash
-			if !strings.HasPrefix(rel, pre) {
+		if pre != "" {
+			if !strings.HasPrefix(rel, strings.TrimSuffix(pre, "/")) && !strings.HasPrefix(rel, pre) {
 				return false
 			}
+			return globMatch("**/"+suf, rel)
 		}
-		return globMatch("**/"+suf, rel)
+		// Leading **/ already handled above; continue with the suffix only.
+		return globMatch(suf, rel)
 	}
 	return false
 }
