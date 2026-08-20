@@ -72,6 +72,7 @@ type server struct {
 	steerParts  []llm.Part
 	undoStack   []extensions.UndoEntry
 	pendingPerm perm.Request
+	liveTask    agent.TaskMode
 }
 
 func Run() error {
@@ -224,19 +225,23 @@ func (s *server) snapshot() map[string]any {
 	sessionID := s.sessionID
 	hist := s.hist
 	pend := s.pendingPerm
+	liveTask := s.liveTask
 	s.mu.Unlock()
 
 	hint := ""
 	if err := cfg.MissingAuth(); err != nil {
 		hint = err.Error()
 	}
-	taskMode := agent.ParseTaskMode(cfg.TaskMode)
-	if ag != nil && ag.TaskMode.Valid() {
+	taskMode := liveTask
+	if !taskMode.Valid() && ag != nil && ag.TaskMode.Valid() {
 		taskMode = ag.TaskMode
+	}
+	if !taskMode.Valid() {
+		taskMode = agent.ParseTaskMode(cfg.TaskMode)
 	}
 	out := map[string]any{
 		"mode":          cfg.Mode,
-		"task_mode":     taskMode,
+		"task_mode":     string(taskMode),
 		"model":         cfg.DisplayModel(),
 		"workspace":     cfg.Workspace,
 		"provider":      cfg.Provider,
@@ -516,6 +521,7 @@ func (s *server) setTaskMode(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	s.cfg.TaskMode = string(m)
+	s.liveTask = m
 	if s.ag != nil {
 		s.ag.SetTaskMode(m)
 	}
@@ -530,6 +536,7 @@ func (s *server) applyTaskMode(payload string) {
 	m := agent.ParseTaskMode(strings.TrimPrefix(payload, "task:"))
 	s.mu.Lock()
 	s.cfg.TaskMode = string(m)
+	s.liveTask = m
 	if s.ag != nil {
 		s.ag.SetTaskMode(m)
 	}
@@ -548,10 +555,12 @@ func (s *server) autoApplyFromUserPrompt(prompt string) {
 	}
 	s.mu.Lock()
 	ag := s.ag
-	cur := agent.TaskAgent
+	cur := s.liveTask
 	goalText := ""
-	if ag != nil {
+	if !cur.Valid() && ag != nil {
 		cur = ag.TaskMode
+	}
+	if ag != nil {
 		goalText = ag.Goal
 	}
 	s.mu.Unlock()
@@ -563,10 +572,11 @@ func (s *server) autoApplyFromUserPrompt(prompt string) {
 	if dec.GoalSet && dec.Goal != goalText {
 		_ = s.setGoal(dec.Goal)
 	}
+	s.mu.Lock()
+	s.liveTask = dec.TaskMode
+	ag.SetTaskMode(dec.TaskMode)
+	s.mu.Unlock()
 	if dec.TaskMode != cur {
-		s.mu.Lock()
-		ag.SetTaskMode(dec.TaskMode)
-		s.mu.Unlock()
 		s.emit(event{Type: "task_mode", Text: string(dec.TaskMode)})
 	}
 }
@@ -631,6 +641,9 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 			_ = s.clearGoal()
 		}
 		s.mu.Lock()
+		if s.liveTask.Valid() && s.ag != nil {
+			s.ag.SetTaskMode(s.liveTask)
+		}
 		s.hist = next
 		ws := s.cfg.Workspace
 		sid := s.sessionID
@@ -841,7 +854,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 			s.emit(event{Type: "system", Text: msg})
 			s.emit(contextEvent(stats))
 		case "status":
-			st := fmt.Sprintf("safe/fast=%s task=%s model=%s workspace=%s", s.cfg.Mode, agent.ParseTaskMode(s.cfg.TaskMode).Label(), s.cfg.Model, s.cfg.Workspace)
+			st := fmt.Sprintf("safe/fast=%s task=%s model=%s workspace=%s", s.cfg.Mode, s.ag.TaskMode.Label(), s.cfg.Model, s.cfg.Workspace)
 			if s.ag != nil && s.ag.Goal != "" {
 				st += " · goal: " + s.ag.Goal
 			}
@@ -1218,6 +1231,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			}
 			s.sessionID = session.New(s.cfg.Workspace).ID
 			s.hist = nil
+			s.liveTask = agent.TaskAgent
 			if s.ag != nil {
 				s.ag.SetTaskMode(agent.TaskAgent)
 			}
