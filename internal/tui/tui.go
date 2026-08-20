@@ -387,7 +387,7 @@ func (m *model) slash(line string) tea.Cmd {
 		m.lines = append(m.lines, logLine{Kind: "system", Text: help})
 	case "/mcp":
 		if m.ag.Tools == nil || !m.ag.Tools.HasMCP() {
-			m.lines = append(m.lines, logLine{Kind: "system", Text: "no MCP tools connected (check ~/.cursor/mcp.json or picogent mcp list)"})
+			m.lines = append(m.lines, logLine{Kind: "system", Text: "no MCP tools connected — ask in chat to add one"})
 			break
 		}
 		for _, line := range m.ag.Tools.MCP.Report() {
