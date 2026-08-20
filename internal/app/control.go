@@ -21,7 +21,7 @@ func wireRuntime(a *agent.Agent) {
 	a.Trace = log
 	ws := a.CFG.Workspace
 	a.Tools.Ctx.MCPList = func() string {
-		return mcpListText(ws)
+		return mcpListText(ws, a.Tools.MCP)
 	}
 	a.Tools.Ctx.MCPSuggest = func(query string) string {
 		return mcpSuggestText(ws, query)
@@ -38,18 +38,31 @@ func wireRuntime(a *agent.Agent) {
 	}
 }
 
-func mcpListText(workspace string) string {
+func mcpListText(workspace string, live *mcpbridge.Manager) string {
 	servers, err := mcpbridge.LoadServers(workspace)
 	if err != nil {
 		return err.Error()
 	}
-	if len(servers) == 0 {
+	liveCount := map[string]int{}
+	if live != nil {
+		for _, t := range live.Tools() {
+			liveCount[t.Server]++
+		}
+	}
+	if len(servers) == 0 && len(liveCount) == 0 {
 		return "no MCP servers configured"
 	}
 	var b strings.Builder
 	for name := range servers {
-		b.WriteString(name)
-		b.WriteByte('\n')
+		if n, ok := liveCount[name]; ok {
+			fmt.Fprintf(&b, "%s — connected (%d tools)\n", name, n)
+			delete(liveCount, name)
+			continue
+		}
+		fmt.Fprintf(&b, "%s — configured (not connected)\n", name)
+	}
+	for name, n := range liveCount {
+		fmt.Fprintf(&b, "%s — connected (%d tools)\n", name, n)
 	}
 	installed, _ := extensions.InstalledSet(workspace, nil)
 	for _, it := range extensions.Catalog() {

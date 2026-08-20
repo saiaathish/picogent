@@ -18,6 +18,7 @@ func TestMCPAddUnknown(t *testing.T) {
 func TestMCPSuggestGitHub(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
 	t.Setenv("PICOGENT_HOME", root)
 	got := mcpSuggestText(t.TempDir(), "github pull request")
 	if !strings.Contains(got, "mcp-github") {
@@ -25,9 +26,27 @@ func TestMCPSuggestGitHub(t *testing.T) {
 	}
 }
 
+func TestMCPListShowsNotConnected(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
+	t.Setenv("PICOGENT_HOME", root)
+	ws := t.TempDir()
+	a := &agent.Agent{}
+	a.CFG.Workspace = ws
+	if _, err := mcpAdd(a, "mcp-browseros"); err != nil {
+		t.Fatal(err)
+	}
+	got := mcpListText(ws, nil)
+	if !strings.Contains(got, "browseros") || !strings.Contains(got, "not connected") {
+		t.Fatalf("list: %q", got)
+	}
+}
+
 func TestMCPAddRemoveWritesConfig(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
 	t.Setenv("PICOGENT_HOME", root)
 	ws := t.TempDir()
 	a := &agent.Agent{}
@@ -39,7 +58,7 @@ func TestMCPAddRemoveWritesConfig(t *testing.T) {
 	if !strings.Contains(strings.ToLower(msg), "browser") && !strings.Contains(msg, "Installed") {
 		t.Fatalf("add msg: %q", msg)
 	}
-	list := mcpListText(ws)
+	list := mcpListText(ws, nil)
 	if !strings.Contains(list, "browseros") {
 		t.Fatalf("list after add: %q", list)
 	}
@@ -50,7 +69,7 @@ func TestMCPAddRemoveWritesConfig(t *testing.T) {
 	if !strings.Contains(out, "removed") {
 		t.Fatalf("remove: %q", out)
 	}
-	if got := mcpListText(ws); got != "no MCP servers configured" {
+	if got := mcpListText(ws, nil); got != "no MCP servers configured" {
 		t.Fatalf("list after remove: %q", got)
 	}
 }
@@ -58,8 +77,9 @@ func TestMCPAddRemoveWritesConfig(t *testing.T) {
 func TestMCPListEmpty(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root)
 	t.Setenv("PICOGENT_HOME", root)
-	got := mcpListText(t.TempDir())
+	got := mcpListText(t.TempDir(), nil)
 	if got != "no MCP servers configured" {
 		t.Fatalf("list: %q", got)
 	}

@@ -3,6 +3,7 @@ package verify
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -21,5 +22,16 @@ func TestDetectNone(t *testing.T) {
 	runner, _, _ := Detect(t.TempDir())
 	if runner != "" {
 		t.Fatal(runner)
+	}
+}
+
+func TestRunNoneIsInconclusive(t *testing.T) {
+	res := Run(t.Context(), t.TempDir())
+	if res.OK || res.Runner != "none" {
+		t.Fatalf("%+v", res)
+	}
+	got := Format(res)
+	if !strings.Contains(got, "INCONCLUSIVE") {
+		t.Fatalf("format: %q", got)
 	}
 }
