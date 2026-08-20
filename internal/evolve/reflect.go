@@ -276,6 +276,10 @@ func heuristicReflect(sig Signal) reflectOut {
 		out.Title = "Verify JS/TS changes"
 		out.Playbook = "Find test/lint script → run smallest → fix → re-run → Changed/Run/Undo."
 	case sig.GoalDone && len(sig.FilesChanged) > 0:
+		// Marker/probe .txt goals are not reusable skills — skip noise.
+		if !meaningfulEvolveFiles(sig.FilesChanged) {
+			break
+		}
 		out.Skip = false
 		out.Class = inferClass(sig)
 		out.Title = defaultPlaybookTitle(sig)
@@ -307,16 +311,66 @@ func inferClass(sig Signal) string {
 }
 
 func defaultPlaybookTitle(sig Signal) string {
+	if title := titleFromChangedExt(sig.FilesChanged); title != "" {
+		return title
+	}
 	p := strings.TrimSpace(sig.UserPrompt)
 	if p == "" {
 		return "Repeatable edit loop"
+	}
+	// Prefer a short class-level label over dumping the raw user prompt.
+	low := strings.ToLower(p)
+	switch {
+	case strings.Contains(low, "test"):
+		return "Get tests green"
+	case strings.Contains(low, "fix") || strings.Contains(low, "bug"):
+		return "Fix a bug end-to-end"
+	case strings.Contains(low, "refactor"):
+		return "Refactor safely"
 	}
 	fields := strings.Fields(p)
 	if len(fields) > 5 {
 		fields = fields[:5]
 	}
 	title := strings.Join(fields, " ")
-	return clip("How: "+title, 48)
+	return clip(title, 48)
+}
+
+func titleFromChangedExt(files []string) string {
+	exts := map[string]bool{}
+	for _, f := range files {
+		exts[strings.ToLower(filepath.Ext(f))] = true
+	}
+	switch {
+	case exts[".go"]:
+		return "Ship a Go change"
+	case exts[".ts"], exts[".tsx"], exts[".js"], exts[".jsx"]:
+		return "Ship a JS/TS change"
+	case exts[".py"]:
+		return "Ship a Python change"
+	case exts[".rs"]:
+		return "Ship a Rust change"
+	}
+	return ""
+}
+
+// meaningfulEvolveFiles reports whether changed paths look like reusable
+// engineering work worth remembering (not one-off marker/probe text files).
+func meaningfulEvolveFiles(files []string) bool {
+	for _, f := range files {
+		base := filepath.Base(f)
+		if base == "" || strings.HasPrefix(base, ".") {
+			continue
+		}
+		switch strings.ToLower(filepath.Ext(f)) {
+		case ".go", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+			".py", ".rs", ".java", ".kt", ".swift", ".rb", ".php",
+			".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".vue", ".svelte",
+			".css", ".scss", ".html", ".sql", ".toml", ".yaml", ".yml":
+			return true
+		}
+	}
+	return false
 }
 
 func formatDeltaMessage(d Delta) string {

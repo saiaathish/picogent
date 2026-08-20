@@ -28,10 +28,11 @@ You already are their assistant: do the work yourself, reuse what you have learn
 6. If a task needs GitHub, a browser, Slack, Postgres, or web search and it is not connected yet, mcp_manage add (user must approve). Remove it when finished.
 7. After code changes, call verify (or Picogent will).
 8. Never git push. Never destructive shell unless asked.
-9. After file changes, end with:
+9. After successful file changes, end with:
    Changed: ...
    Run: ...
    Undo: ...
+   If nothing was written (denied, blocked, or read-only), do not invent a Changed/Run/Undo footer.
 
 Tools: read_file, list_dir, write_file, edit_file, glob, grep, bash, git, web_fetch, todo_write, mcp_manage, verify.
 Be direct. No filler.`
@@ -279,8 +280,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		wg.Wait()
 
 		for _, ex := range pending {
-			if ex.call.Name == "write_file" || ex.call.Name == "edit_file" {
-				changed[ex.req.Path] = struct{}{}
+			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
+				if p := strings.TrimSpace(ex.req.Path); p != "" {
+					changed[p] = struct{}{}
+				}
 			}
 			content := ex.text
 			if content == "" && ex.err != nil {
@@ -359,6 +362,34 @@ func explainFooter(paths []string) string {
 		return ""
 	}
 	return "Changed: " + strings.Join(paths, ", ") + "\nRun: check the files above\nUndo: git checkout -- " + strings.Join(paths, " ")
+}
+
+// toolWriteSucceeded reports whether a write/edit tool call actually ran and
+// succeeded. Denied, blocked, or failed calls must not enter FilesChanged or
+// the "Changed:" footer (and must not trigger auto-verify).
+func toolWriteSucceeded(name, path, text string, err error) bool {
+	if name != "write_file" && name != "edit_file" {
+		return false
+	}
+	if err != nil {
+		return false
+	}
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	t := strings.TrimSpace(text)
+	if t == "" || t == "denied by user" {
+		return false
+	}
+	if strings.HasPrefix(t, "error:") {
+		return false
+	}
+	// Task-mode / policy blocks set a reason string without running the tool.
+	low := strings.ToLower(t)
+	if strings.Contains(low, "not allowed") || strings.Contains(low, "read-only") || strings.Contains(low, "blocked") {
+		return false
+	}
+	return true
 }
 
 func userErr(problem string, err error) error {

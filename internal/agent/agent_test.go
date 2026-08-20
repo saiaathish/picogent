@@ -120,15 +120,27 @@ func TestSafeModeDeniesWriteWithoutPromptAllow(t *testing.T) {
 	cfg.Workspace = dir
 	cfg.Mode = config.ModeSafe
 	cfg.Provider = config.ProviderOllama
-	reg := tools.NewRegistry(tools.Context{Workspace: dir})
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: dir,
+		Verify:    func(context.Context) (string, error) { return "verify PASS", nil },
+	})
 	gate := perm.New(config.ModeSafe, dir, nil)
 	a := agent.New(cfg, fake, reg, gate)
-	_, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "write x.txt"}, denyAll{})
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "write x.txt"}, denyAll{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "x.txt")); !os.IsNotExist(err) {
 		t.Fatal("file should not exist")
+	}
+	if len(res.FilesChanged) != 0 {
+		t.Fatalf("denied write must not mark FilesChanged: %#v", res.FilesChanged)
+	}
+	if strings.Contains(res.Text, "Changed:") {
+		t.Fatalf("denied write must not append Changed footer: %q", res.Text)
+	}
+	if res.Verified != "" {
+		t.Fatalf("denied write must not auto-verify: %q", res.Verified)
 	}
 }
 

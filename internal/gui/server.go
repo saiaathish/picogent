@@ -105,7 +105,7 @@ func Run() error {
 		a.SetTaskMode(agent.TaskAgent)
 	}
 	sessID, hist := initialSession(cfg.Workspace)
-	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
+	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
 	s.ensureProject()
 	addr := "127.0.0.1:7420"
@@ -1229,8 +1229,14 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 	h.s.emit(permissionEvent(req))
 	select {
 	case <-ctx.Done():
+		h.s.mu.Lock()
+		h.s.pendingPerm = perm.Request{}
+		h.s.mu.Unlock()
 		return perm.Deny, ctx.Err()
 	case d := <-h.s.permCh:
+		h.s.mu.Lock()
+		h.s.pendingPerm = perm.Request{}
+		h.s.mu.Unlock()
 		return d, nil
 	}
 }

@@ -156,6 +156,36 @@ func TestHeuristicReflectGo(t *testing.T) {
 	}
 }
 
+func TestHeuristicSkipsTrivialMarkerGoals(t *testing.T) {
+	out := heuristicReflect(Signal{
+		GoalDone:      true,
+		UserPrompt:    "Create file .picogent_qa_probe.txt with exactly qa_probe",
+		FilesChanged:  []string{".picogent_qa_probe.txt"},
+		ToolRounds:    1,
+	})
+	if !out.Skip {
+		t.Fatalf("dotfile probe goals must not create playbooks: %+v", out)
+	}
+	out = heuristicReflect(Signal{
+		GoalDone:     true,
+		UserPrompt:   "Create hello_goal.txt",
+		FilesChanged: []string{"hello_goal.txt"},
+		ToolRounds:   1,
+	})
+	if !out.Skip {
+		t.Fatalf("plain marker txt goals must not create playbooks: %+v", out)
+	}
+	out = heuristicReflect(Signal{
+		GoalDone:     true,
+		UserPrompt:   "Add the handler",
+		FilesChanged: []string{"internal/gui/server.go"},
+		ToolRounds:   2,
+	})
+	if out.Skip || out.Title == "" || strings.HasPrefix(out.Title, "How:") {
+		t.Fatalf("source goal-complete should learn with a clean title: %+v", out)
+	}
+}
+
 func contains(s, sub string) bool {
 	return strings.Contains(s, sub)
 }

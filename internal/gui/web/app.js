@@ -1264,6 +1264,14 @@ const DEFAULT_SLASH = [
   { name: "commit", hint: "Commit current changes" },
   { name: "review", hint: "Review uncommitted diffs" },
   { name: "status", hint: "Mode, model, workspace" },
+  { name: "diff", hint: "Show git diff" },
+  { name: "compact", hint: "Shrink context" },
+  { name: "memory", hint: "Project rules + what Picogent learned" },
+  { name: "goal", hint: "Show, set, or clear goal", insert: "/goal " },
+  { name: "agent", hint: "Default agent task mode" },
+  { name: "ask", hint: "Answer without editing" },
+  { name: "plan", hint: "Plan before building" },
+  { name: "debug", hint: "Investigate a bug" },
   { name: "clear", hint: "New chat" },
 ];
 

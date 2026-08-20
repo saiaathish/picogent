@@ -90,13 +90,20 @@ type Item struct {
 	Insert string `json:"insert,omitempty"`
 }
 
-// Catalog is the / menu in the GUI.
+// Catalog is the / menu in the GUI (keep in sync with Resolve + help-docs).
 func Catalog(workspace string) []Item {
 	out := []Item{
 		{Name: "commit", Hint: "Commit current changes"},
 		{Name: "review", Hint: "Review uncommitted diffs"},
 		{Name: "status", Hint: "Mode, model, workspace"},
+		{Name: "diff", Hint: "Show git diff"},
+		{Name: "compact", Hint: "Shrink context"},
 		{Name: "memory", Hint: "Project rules + what Picogent learned"},
+		{Name: "goal", Hint: "Show, set, or clear goal", Insert: "/goal "},
+		{Name: "agent", Hint: "Default agent task mode"},
+		{Name: "ask", Hint: "Answer without editing"},
+		{Name: "plan", Hint: "Plan before building"},
+		{Name: "debug", Hint: "Investigate a bug"},
 		{Name: "clear", Hint: "New chat"},
 	}
 	for _, name := range commands.List(workspace) {
