@@ -21,16 +21,17 @@ const (
 )
 
 type Context struct {
-	Workspace    string
-	BashTimeout  time.Duration
-	Todos        []TodoItem
-	ClassifyBash func(command, workspace string) perm.Request
-	ClassifyPath func(tool, path, workspace, summary string) perm.Request
-	MCPList      func() string
-	MCPSuggest   func(query string) string
-	MCPAdd       func(ctx context.Context, id string) (string, error)
-	MCPRemove    func(ctx context.Context, id string) (string, error)
-	Verify       func(ctx context.Context) (string, error)
+	Workspace     string
+	BashTimeout   time.Duration
+	Todos         []TodoItem
+	ClassifyBash  func(command, workspace string) perm.Request
+	ClassifyPath  func(tool, path, workspace, summary string) perm.Request
+	MCPList       func() string
+	MCPSuggest    func(query string) string
+	MCPAdd        func(ctx context.Context, id string) (string, error)
+	MCPRemove     func(ctx context.Context, id string) (string, error)
+	Verify        func(ctx context.Context) (string, error)
+	VerifyTargets func(ctx context.Context, targets []string) (string, error)
 }
 
 type Tool interface {
@@ -64,6 +65,7 @@ func NewRegistry(c Context) *Registry {
 		editFile{},
 		globTool{},
 		grepTool{},
+		repoMapTool{},
 		bashTool{},
 		gitTool{},
 		webFetch{},

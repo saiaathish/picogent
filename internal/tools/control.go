@@ -91,8 +91,10 @@ type verifyTool struct{}
 func (verifyTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "verify",
-		Description: "Run the workspace test suite (go test, npm test, or pytest). Call this after code changes to prove they work.",
-		Parameters:  schema(map[string]any{}, []string{}),
+		Description: "Run targeted verification for changed paths, then the broader workspace suite. Returns PASS, FAIL, INCONCLUSIVE, or SKIPPED with command evidence.",
+		Parameters: schema(map[string]any{
+			"targets": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Changed paths relative to the workspace"},
+		}, []string{}),
 	}
 }
 
@@ -100,7 +102,16 @@ func (verifyTool) Permission(_ string, _ Context) perm.Request {
 	return perm.Request{Tool: "verify", Summary: "run workspace tests", Command: "verify"}
 }
 
-func (verifyTool) Run(ctx context.Context, _ string, c Context) (string, error) {
+func (verifyTool) Run(ctx context.Context, args string, c Context) (string, error) {
+	var in struct {
+		Targets []string `json:"targets"`
+	}
+	if err := parseJSON(args, &in); err != nil {
+		return "", err
+	}
+	if c.VerifyTargets != nil {
+		return c.VerifyTargets(ctx, in.Targets)
+	}
 	if c.Verify == nil {
 		return "", fmt.Errorf("verify not wired")
 	}
