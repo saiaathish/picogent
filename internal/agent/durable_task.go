@@ -10,15 +10,57 @@ import (
 
 const durableContinuePrompt = `Internal task-loop instruction: the original request already authorizes the work. Do not ask whether to continue. Take the next obvious safe action with tools. Stop only for permission, a genuine user choice, repeated verification failure, an unavailable resource, or exhausted budget.`
 
+const durableRepairMarker = "Internal verification-repair instruction:"
+
+func durableRepairPrompt(evidence string) string {
+	evidence = strings.TrimSpace(evidence)
+	if len(evidence) > 4000 {
+		evidence = evidence[:4000] + "…"
+	}
+	return durableRepairMarker + ` verification failed. Inspect this evidence, repair the smallest responsible area, and run verify again. Do not ask whether to continue.` + "\n\n" + evidence
+}
+
 func stripDurableInternal(msgs []llm.Message) []llm.Message {
 	out := msgs[:0]
 	for _, msg := range msgs {
-		if msg.Role == "system" && msg.Content == durableContinuePrompt {
+		if msg.Role == "system" && (msg.Content == durableContinuePrompt || strings.HasPrefix(msg.Content, durableRepairMarker)) {
 			continue
 		}
 		out = append(out, msg)
 	}
 	return out
+}
+
+func (a *Agent) continueAfterVerificationFailure(text string, round int, verified string) bool {
+	if round+1 >= a.CFG.MaxToolRounds || strings.Contains(strings.ToLower(text), "blocked:") {
+		return false
+	}
+	if verified != "" {
+		a.noteTaskVerification(verified)
+	}
+	a.taskMu.Lock()
+	defer a.taskMu.Unlock()
+	if a.task == nil || len(a.task.Verification) == 0 {
+		return false
+	}
+	status := verificationStatus(a.task.Verification[len(a.task.Verification)-1].Summary)
+	if status == "INCONCLUSIVE" || status == "SKIPPED" {
+		a.task.Block("verification " + strings.ToLower(status))
+		_ = a.TaskStore.Save(a.task)
+		return false
+	}
+	if status != "FAIL" {
+		return false
+	}
+	if a.task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {
+		a.task.Block("verification repeatedly failed")
+		_ = a.TaskStore.Save(a.task)
+		return false
+	}
+	a.task.NoteAttempt()
+	_ = a.task.SetStatus(taskstate.StatusWorking)
+	_ = a.TaskStore.Save(a.task)
+	return true
 }
 
 // SetTaskSession switches durable task state with the chat session. Task state
@@ -140,10 +182,19 @@ func (a *Agent) noteTaskVerification(output string) {
 	if a.task == nil || strings.TrimSpace(output) == "" {
 		return
 	}
-	low := strings.ToLower(output)
-	passed := strings.Contains(low, "pass") && !strings.Contains(low, "inconclusive") && !strings.Contains(low, "fail")
+	passed := verificationStatus(output) == "PASS"
 	a.task.AddVerification("verify", passed, output)
 	_ = a.TaskStore.Save(a.task)
+}
+
+func verificationStatus(output string) string {
+	upper := strings.ToUpper(strings.TrimSpace(output))
+	for _, status := range []string{"INCONCLUSIVE", "SKIPPED", "FAIL", "PASS"} {
+		if strings.HasPrefix(upper, "VERIFY "+status) {
+			return status
+		}
+	}
+	return "INCONCLUSIVE"
 }
 
 func (a *Agent) blockDurableTask(reason string) {
@@ -156,7 +207,7 @@ func (a *Agent) blockDurableTask(reason string) {
 	_ = a.TaskStore.Save(a.task)
 }
 
-func (a *Agent) finishDurableTask(changed []string, verified, text, blocker string) {
+func (a *Agent) finishDurableTask(changed []string, text, blocker string) {
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
 	if a.task == nil {
@@ -168,10 +219,9 @@ func (a *Agent) finishDurableTask(changed []string, verified, text, blocker stri
 		_ = a.TaskStore.Save(a.task)
 		return
 	}
-	if verified != "" {
-		low := strings.ToLower(verified)
-		passed := strings.Contains(low, "pass") && !strings.Contains(low, "inconclusive") && !strings.Contains(low, "fail")
-		a.task.AddVerification("verify", passed, verified)
+	if a.task.Status == taskstate.StatusBlocked {
+		_ = a.TaskStore.Save(a.task)
+		return
 	}
 	if a.task.ConsecutiveVerificationFailures() > 0 {
 		if a.task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {

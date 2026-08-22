@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/agent"
@@ -79,5 +80,83 @@ func TestDurableTaskContinuesPastRoutineDeferral(t *testing.T) {
 		if msg.Role == "system" && msg.Content == "Internal task-loop instruction: the original request already authorizes the work. Do not ask whether to continue. Take the next obvious safe action with tools. Stop only for permission, a genuine user choice, repeated verification failure, an unavailable resource, or exhausted budget." {
 			t.Fatal("internal continuation prompt persisted in chat history")
 		}
+	}
+}
+
+func TestDurableTaskRepairsFailedVerification(t *testing.T) {
+	workspace := t.TempDir()
+	writeArgs, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "first"})
+	repairArgs, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "repaired"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(writeArgs)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "2", Name: "write_file", Arguments: string(repairArgs)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	checks := 0
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(_ context.Context, targets []string) (string, error) {
+			checks++
+			if len(targets) != 1 || targets[0] != "fixed.txt" {
+				t.Fatalf("targets=%v", targets)
+			}
+			if checks == 1 {
+				return "verify FAIL\ntest failed", nil
+			}
+			return "verify PASS\n1 passed", nil
+		},
+	})
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("session-repair")
+
+	history, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks != 2 || len(fake.Calls) != 4 {
+		t.Fatalf("checks=%d calls=%d", checks, len(fake.Calls))
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone || len(result.Task.Verification) != 2 {
+		t.Fatalf("task=%#v", result.Task)
+	}
+	for _, msg := range history {
+		if msg.Role == "system" && strings.HasPrefix(msg.Content, "Internal verification-repair instruction:") {
+			t.Fatal("repair instruction persisted in chat history")
+		}
+	}
+}
+
+func TestDurableTaskStopsAfterThreeVerificationFailures(t *testing.T) {
+	workspace := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "still broken"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	checks := 0
+	reg := tools.NewRegistry(tools.Context{Workspace: workspace, VerifyTargets: func(context.Context, []string) (string, error) {
+		checks++
+		return "verify FAIL\nstill failing", nil
+	}})
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("session-bounded")
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks != 3 || result.Task == nil || result.Task.Status != taskstate.StatusBlocked || result.Task.BlockedBy != "verification repeatedly failed" {
+		t.Fatalf("checks=%d task=%#v", checks, result.Task)
 	}
 }

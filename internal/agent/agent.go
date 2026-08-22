@@ -2,7 +2,9 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -35,7 +37,7 @@ You already are their assistant: do the work yourself, reuse what you have learn
    Undo: ...
    If nothing was written (denied, blocked, or read-only), do not invent a Changed/Run/Undo footer.
 
-Tools: read_file, list_dir, write_file, edit_file, glob, grep, bash, git, web_fetch, todo_write, mcp_manage, verify.
+Tools: repo_map, read_file, list_dir, write_file, edit_file, glob, grep, bash, git, web_fetch, todo_write, mcp_manage, verify.
 Be direct. No filler.`
 
 const systemPromptMCP = `
@@ -200,8 +202,15 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableContinuePrompt})
 				continue
 			}
+			res.FilesChanged = res.FilesChanged[:0]
 			for p := range changed {
 				res.FilesChanged = append(res.FilesChanged, p)
+			}
+			sort.Strings(res.FilesChanged)
+			res.Verified = a.maybeVerify(ctx, ev, res.FilesChanged, calledVerify)
+			if a.continueAfterVerificationFailure(text, round, res.Verified) {
+				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified)})
+				continue
 			}
 			if footer := explainFooter(res.FilesChanged); footer != "" && !hasExplainFooter(text) {
 				if text != "" {
@@ -222,8 +231,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			res.Text = text
 			res.ToolRounds = round
 			res.GoalDone = goal.LooksComplete(text)
-			res.Verified = a.maybeVerify(ctx, ev, len(changed) > 0, calledVerify)
-			a.finishDurableTask(res.FilesChanged, res.Verified, text, taskBlocker)
+			a.finishDurableTask(res.FilesChanged, text, taskBlocker)
 			res.Task = a.TaskSnapshot()
 			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
 			msgs = stripDurableInternal(msgs)
@@ -332,18 +340,19 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	return final, res, err
 }
 
-func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, filesChanged, already bool) string {
-	if already || !filesChanged || a.Tools == nil || a.Tools.Ctx.Verify == nil {
+func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, filesChanged []string, already bool) string {
+	if already || len(filesChanged) == 0 || a.Tools == nil || (a.Tools.Ctx.Verify == nil && a.Tools.Ctx.VerifyTargets == nil) {
 		return ""
 	}
 	tool, ok := a.Tools.Get("verify")
 	if !ok {
 		return ""
 	}
-	call := llm.ToolCall{ID: "verify-auto", Name: "verify", Arguments: "{}"}
+	args, _ := json.Marshal(map[string]any{"targets": filesChanged})
+	call := llm.ToolCall{ID: "verify-auto", Name: "verify", Arguments: string(args)}
 	ev.OnToolStart(call)
-	req := tool.Permission("{}", a.Tools.Ctx)
-	req.Hint = perm.EnrichHint(req, "{}")
+	req := tool.Permission(call.Arguments, a.Tools.Ctx)
+	req.Hint = perm.EnrichHint(req, call.Arguments)
 	dec, err := a.Gate.Check(ctx, req)
 	if err != nil || dec == perm.Deny {
 		msg := "verify skipped"
@@ -357,7 +366,7 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, filesChanged, 
 		_ = a.Trace.Append("verify", "verify", msg, &okv, 0)
 		return msg
 	}
-	out, err := tool.Run(ctx, "{}", a.Tools.Ctx)
+	out, err := tool.Run(ctx, call.Arguments, a.Tools.Ctx)
 	if err != nil {
 		out = "error: " + err.Error()
 	}

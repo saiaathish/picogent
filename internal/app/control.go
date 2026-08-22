@@ -40,6 +40,10 @@ func wireRuntime(a *agent.Agent) {
 		res := verify.Run(ctx, ws)
 		return verify.Format(res), nil
 	}
+	a.Tools.Ctx.VerifyTargets = func(ctx context.Context, targets []string) (string, error) {
+		res := verify.RunPipeline(ctx, ws, verify.Options{Targets: targets})
+		return verify.FormatPipeline(res), nil
+	}
 }
 
 func mcpListText(workspace string, live *mcpbridge.Manager) string {

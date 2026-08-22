@@ -87,3 +87,18 @@ func TestVerifyTool(t *testing.T) {
 		t.Fatalf("%q %v", out, err)
 	}
 }
+
+func TestVerifyToolPassesTargets(t *testing.T) {
+	var got []string
+	c := Context{VerifyTargets: func(_ context.Context, targets []string) (string, error) {
+		got = append([]string(nil), targets...)
+		return "verify PASS", nil
+	}}
+	out, err := verifyTool{}.Run(context.Background(), `{"targets":["internal/auth/auth.go"]}`, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "verify PASS" || len(got) != 1 || got[0] != "internal/auth/auth.go" {
+		t.Fatalf("out=%q targets=%v", out, got)
+	}
+}
