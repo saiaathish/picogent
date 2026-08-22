@@ -82,6 +82,10 @@ type server struct {
 	pendingPerm perm.Request
 	liveTask    agent.TaskMode
 	turnGen     uint64 // bumped on cancel/new chat so stale turns cannot rewrite hist
+	// beforeAgentRun is test-only synchronization for proving that a turn uses
+	// the agent/session it captured before a session switch. Production leaves
+	// it nil.
+	beforeAgentRun func()
 
 	// Side chat companion (Codex-style)
 	sideHist     []llm.Message
@@ -268,6 +272,54 @@ func initialSession(workspace string) (id string, hist []llm.Message) {
 		return prev.ID, prev.Messages
 	}
 	return session.New(workspace).ID, nil
+}
+
+// cloneAgentForSession gives a newly selected chat its own agent state. In
+// particular, TaskSession and the in-memory durable task must not be changed
+// underneath a turn that is still unwinding after cancellation. The provider,
+// tool registry, and trace log are safe to share; the permission gate is
+// per-agent because a canceled turn may still be finishing while the next
+// session starts.
+func cloneAgentForSession(src *agent.Agent, sessionID string) *agent.Agent {
+	if src == nil {
+		return nil
+	}
+	var gate *perm.Gate
+	if src.Gate != nil {
+		gate = perm.New(src.CFG.Mode, src.CFG.Workspace, nil)
+		gate.SetAlwaysAllowed(src.Gate.AlwaysAllowedTools())
+	} else {
+		gate = perm.New(src.CFG.Mode, src.CFG.Workspace, nil)
+	}
+	clone := agent.New(src.CFG, src.LLM, src.Tools, gate)
+	clone.ProjectRules = src.ProjectRules
+	clone.SkillRules = src.SkillRules
+	clone.Memory = src.Memory
+	clone.Goal = src.Goal
+	clone.Trace = src.Trace
+	clone.TaskStore = src.TaskStore
+	clone.SetTaskMode(src.TaskMode)
+	clone.SetTaskSession(sessionID)
+	return clone
+}
+
+// newSessionLocked rotates the chat and agent together. Callers must hold
+// s.mu. A stale turn retains the old agent pointer and therefore can never
+// create or update durable task state for the new session.
+func (s *server) newSessionLocked() string {
+	if len(s.hist) > 0 {
+		_ = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
+	}
+	s.abortTurnLocked()
+	s.sessionID = session.New(s.cfg.Workspace).ID
+	s.hist = nil
+	s.sideHist = nil
+	s.liveTask = agent.TaskAgent
+	if next := cloneAgentForSession(s.ag, s.sessionID); next != nil {
+		next.SetTaskMode(agent.TaskAgent)
+		s.ag = next
+	}
+	return s.sessionID
 }
 
 func (s *server) snapshot() map[string]any {
@@ -590,8 +642,10 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	s.abortTurnLocked()
 	s.cfg = next
 	s.ag = a
+	a.SetTaskSession(s.sessionID)
 	s.hist = nil
 	s.mu.Unlock()
 	s.attachRouterHook()
@@ -754,8 +808,11 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 	s.busy = true
 	s.activeTurns++
 	hist := s.hist
+	runAgent := s.ag
+	runSession := s.sessionID
 	s.turnGen++
 	myGen := s.turnGen
+	beforeAgentRun := s.beforeAgentRun
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 	s.mu.Unlock()
@@ -786,20 +843,34 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 				s.startAgentTurn(p, pts)
 			}
 		}()
-		if s.ag == nil {
+		if runAgent == nil {
 			s.emit(event{Type: "error", Text: "agent not ready"})
 			return
 		}
-		if s.ag.Trace == nil {
+		if runAgent.Trace == nil {
 			if log, err := trace.Open(s.cfg.Workspace); err == nil {
-				s.ag.Trace = log
+				runAgent.Trace = log
 			}
 		}
-		h := newGUIHandler(s)
+		h := newGUIHandlerAt(s, runSession, myGen)
 		h.beginTurn(prompt)
 		s.maybeRecommendExtensions(prompt)
+		// Extension activation can rebuild the live agent while this turn is
+		// being prepared. Use that replacement only if this turn still owns the
+		// same session; never touch a newer session that won the race with it.
+		s.mu.Lock()
+		if s.sessionID == runSession && s.turnGen == myGen && s.ag != nil {
+			runAgent = s.ag
+			if runAgent.TaskSession != runSession {
+				runAgent.SetTaskSession(runSession)
+			}
+		}
+		s.mu.Unlock()
 		userMsg := llm.Message{Role: "user", Content: prompt, Parts: parts}
-		next, result, err := s.ag.Run(ctx, hist, userMsg, h)
+		if beforeAgentRun != nil {
+			beforeAgentRun()
+		}
+		next, result, err := runAgent.Run(ctx, hist, userMsg, h)
 		s.mu.Lock()
 		stale := s.turnGen != myGen
 		s.mu.Unlock()
@@ -828,8 +899,8 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 		s.hist = next
 		ws := s.cfg.Workspace
 		sid := s.sessionID
-		llmClient := s.ag.LLM
-		model := s.cfg.Model
+		llmClient := runAgent.LLM
+		model := runAgent.CFG.Model
 		_ = config.Save(s.cfg)
 		_ = session.SaveMessages(ws, sid, next)
 		s.mu.Unlock()
@@ -873,19 +944,7 @@ func (s *server) clearGoal() error {
 
 func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
-	if len(s.hist) > 0 {
-		_ = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
-	}
-	s.abortTurnLocked()
-	s.sessionID = session.New(s.cfg.Workspace).ID
-	s.hist = nil
-	s.sideHist = nil
-	s.liveTask = agent.TaskAgent
-	if s.ag != nil {
-		s.ag.SetTaskMode(agent.TaskAgent)
-		s.ag.SetTaskSession(s.sessionID)
-	}
-	id := s.sessionID
+	id := s.newSessionLocked()
 	s.mu.Unlock()
 	s.invalidatePromptRecs()
 	s.emitTaskSnapshot(id)
@@ -1028,8 +1087,11 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		switch payload {
 		case "clear":
 			s.mu.Lock()
-			s.hist = nil
+			id := s.newSessionLocked()
 			s.mu.Unlock()
+			s.emitTaskSnapshot(id)
+			s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
+			s.emit(event{Type: "prompts_refresh", Text: "all"})
 			s.emit(event{Type: "system", Text: "cleared"})
 		case "compact":
 			s.mu.Lock()
@@ -1149,6 +1211,19 @@ func newGUIHandler(s *server) *guiHandler {
 	sessionID := s.sessionID
 	turnGen := s.turnGen
 	s.mu.Unlock()
+	return newGUIHandlerAt(s, sessionID, turnGen, ws)
+}
+
+func newGUIHandlerAt(s *server, sessionID string, turnGen uint64, workspace ...string) *guiHandler {
+	ws := ""
+	if len(workspace) > 0 {
+		ws = workspace[0]
+	}
+	if ws == "" {
+		s.mu.Lock()
+		ws = s.cfg.Workspace
+		s.mu.Unlock()
+	}
 	store, _ := learn.Load(ws)
 	return &guiHandler{s: s, learn: store, sessionID: sessionID, turnGen: turnGen}
 }
@@ -1472,19 +1547,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 		switch in.Action {
 		case "new":
 			s.mu.Lock()
-			if len(s.hist) > 0 {
-				_ = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
-			}
-			s.abortTurnLocked()
-			s.sessionID = session.New(s.cfg.Workspace).ID
-			s.hist = nil
-			s.sideHist = nil
-			s.liveTask = agent.TaskAgent
-			if s.ag != nil {
-				s.ag.SetTaskMode(agent.TaskAgent)
-				s.ag.SetTaskSession(s.sessionID)
-			}
-			id := s.sessionID
+			id := s.newSessionLocked()
 			s.mu.Unlock()
 			s.invalidatePromptRecs()
 			s.emitTaskSnapshot(id)
@@ -1506,8 +1569,8 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			s.abortTurnLocked()
 			s.sessionID = sess.ID
 			s.hist = sess.Messages
-			if s.ag != nil {
-				s.ag.SetTaskSession(sess.ID)
+			if next := cloneAgentForSession(s.ag, sess.ID); next != nil {
+				s.ag = next
 			}
 			s.mu.Unlock()
 			s.emitTaskSnapshot(sess.ID)
@@ -1529,12 +1592,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			}
 			s.mu.Lock()
 			if s.sessionID == in.ID {
-				s.abortTurnLocked()
-				s.sessionID = session.New(s.cfg.Workspace).ID
-				s.hist = nil
-				if s.ag != nil {
-					s.ag.SetTaskSession(s.sessionID)
-				}
+				_ = s.newSessionLocked()
 			}
 			currentID := s.sessionID
 			s.mu.Unlock()

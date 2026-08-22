@@ -10,6 +10,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/tools"
@@ -76,6 +77,67 @@ func TestAutoVerifyAfterWrite(t *testing.T) {
 	}
 	if !strings.Contains(res.Text, "Changed:") || !strings.Contains(res.Text, "Undo:") {
 		t.Fatalf("expected explain footer, got %q", res.Text)
+	}
+}
+
+func TestExplicitVerifyPopulatesResultEvidence(t *testing.T) {
+	dir := t.TempDir()
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "verify", Arguments: `{}`}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: dir,
+		Verify:    func(context.Context) (string, error) { return "verify PASS\ngo test ./...", nil },
+	})
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, dir, nil))
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "verify the auth flow"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Verified, "verify PASS") {
+		t.Fatalf("explicit verify evidence missing from result: %q", result.Verified)
+	}
+}
+
+func TestAutoVerifyAddsRelevantPlaybookTargets(t *testing.T) {
+	dir := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "internal/auth/auth.go", "content": "package auth\n"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	var gotTargets []string
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: dir,
+		VerifyTargets: func(_ context.Context, targets []string) (string, error) {
+			gotTargets = append([]string(nil), targets...)
+			return "verify PASS\n12 passed", nil
+		},
+	})
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, dir, nil))
+	a.Memory = evolve.Store{Workspace: dir, Playbooks: []evolve.Playbook{{
+		Title: "Auth changes", Class: "auth", Hits: 3,
+		Body: "go test ./internal/auth then go test ./internal/session",
+	}}}
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the auth token bug"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Verified, "verify PASS") {
+		t.Fatalf("verification did not run: %q", result.Verified)
+	}
+	joined := strings.Join(gotTargets, "|")
+	for _, want := range []string{"internal/auth/auth.go", "internal/auth", "internal/session"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("targets=%v missing learned target %q", gotTargets, want)
+		}
 	}
 }
 
