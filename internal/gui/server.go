@@ -34,26 +34,29 @@ import (
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/setup"
 	"github.com/saiaathish/picogent/internal/slash"
+	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/trace"
 )
 
 type event struct {
-	Type    string  `json:"type"`
-	Text    string  `json:"text,omitempty"`
-	Summary string  `json:"summary,omitempty"`
-	Hint    string  `json:"hint,omitempty"`
-	Path    string  `json:"path,omitempty"`
-	Line    int     `json:"line,omitempty"`
-	LineEnd int     `json:"line_end,omitempty"`
-	Added   int     `json:"added,omitempty"`
-	Removed int     `json:"removed,omitempty"`
-	Count   int     `json:"count,omitempty"`
-	Kind    string  `json:"kind,omitempty"`
-	Status  string  `json:"status,omitempty"`
-	Tokens  int     `json:"tokens,omitempty"`
-	Budget  int     `json:"budget,omitempty"`
-	Pct     float64 `json:"pct,omitempty"`
-	Level   string  `json:"level,omitempty"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	Summary   string          `json:"summary,omitempty"`
+	Hint      string          `json:"hint,omitempty"`
+	Path      string          `json:"path,omitempty"`
+	Line      int             `json:"line,omitempty"`
+	LineEnd   int             `json:"line_end,omitempty"`
+	Added     int             `json:"added,omitempty"`
+	Removed   int             `json:"removed,omitempty"`
+	Count     int             `json:"count,omitempty"`
+	Kind      string          `json:"kind,omitempty"`
+	Status    string          `json:"status,omitempty"`
+	Tokens    int             `json:"tokens,omitempty"`
+	Budget    int             `json:"budget,omitempty"`
+	Pct       float64         `json:"pct,omitempty"`
+	Level     string          `json:"level,omitempty"`
+	SessionID string          `json:"session_id,omitempty"`
+	Task      *taskstate.Task `json:"task"`
 }
 
 type transcriptLine struct {
@@ -246,6 +249,20 @@ func (s *server) emit(e event) {
 	}
 }
 
+func (s *server) emitTaskSnapshot(sessionID string) {
+	s.mu.Lock()
+	ag := s.ag
+	s.mu.Unlock()
+	var task *taskstate.Task
+	if ag != nil {
+		task = ag.TaskSnapshot()
+		if task != nil && task.SessionID != sessionID {
+			task = nil
+		}
+	}
+	s.emit(event{Type: "task_progress", SessionID: sessionID, Task: task})
+}
+
 func initialSession(workspace string) (id string, hist []llm.Message) {
 	if prev, err := session.Latest(workspace); err == nil {
 		return prev.ID, prev.Messages
@@ -263,6 +280,13 @@ func (s *server) snapshot() map[string]any {
 	pend := s.pendingPerm
 	liveTask := s.liveTask
 	s.mu.Unlock()
+	var task *taskstate.Task
+	if ag != nil {
+		task = ag.TaskSnapshot()
+		if task != nil && task.SessionID != sessionID {
+			task = nil
+		}
+	}
 
 	hint := ""
 	if err := cfg.MissingAuth(); err != nil {
@@ -297,6 +321,7 @@ func (s *server) snapshot() map[string]any {
 		"setup":           !cfg.SetupComplete,
 		"mcp_tools":       mcpToolCount(ag),
 		"session_id":      sessionID,
+		"task":            task,
 		"router":          s.routerSnapshot(),
 		"model_options":   llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
 		"slash":           slash.Catalog(cfg.Workspace),
@@ -863,6 +888,7 @@ func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	id := s.sessionID
 	s.mu.Unlock()
 	s.invalidatePromptRecs()
+	s.emitTaskSnapshot(id)
 	s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
 	s.emit(event{Type: "prompts_refresh", Text: "main"})
 	w.Header().Set("Content-Type", "application/json")
@@ -1103,24 +1129,41 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 }
 
 type guiHandler struct {
-	s        *server
-	prompt   string
-	learn    learn.Store
-	explore  int
-	searches int
-	reads    int
-	edits    int
-	added    int
-	removed  int
-	changes  []event
+	s         *server
+	prompt    string
+	learn     learn.Store
+	explore   int
+	searches  int
+	reads     int
+	edits     int
+	added     int
+	removed   int
+	changes   []event
+	sessionID string
+	turnGen   uint64
 }
 
 func newGUIHandler(s *server) *guiHandler {
 	s.mu.Lock()
 	ws := s.cfg.Workspace
+	sessionID := s.sessionID
+	turnGen := s.turnGen
 	s.mu.Unlock()
 	store, _ := learn.Load(ws)
-	return &guiHandler{s: s, learn: store}
+	return &guiHandler{s: s, learn: store, sessionID: sessionID, turnGen: turnGen}
+}
+
+func (h *guiHandler) OnTaskState(task *taskstate.Task) {
+	if task == nil || task.SessionID != h.sessionID {
+		return
+	}
+	h.s.mu.Lock()
+	live := h.s.sessionID == h.sessionID && h.s.turnGen == h.turnGen
+	h.s.mu.Unlock()
+	if !live {
+		return
+	}
+	h.s.emit(event{Type: "task_progress", SessionID: h.sessionID, Task: task})
 }
 
 func (h *guiHandler) beginTurn(prompt string) {
@@ -1444,6 +1487,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			id := s.sessionID
 			s.mu.Unlock()
 			s.invalidatePromptRecs()
+			s.emitTaskSnapshot(id)
 			s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
 			s.emit(event{Type: "prompts_refresh", Text: "all"})
 			w.Header().Set("Content-Type", "application/json")
@@ -1459,17 +1503,24 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.mu.Lock()
+			s.abortTurnLocked()
 			s.sessionID = sess.ID
 			s.hist = sess.Messages
 			if s.ag != nil {
 				s.ag.SetTaskSession(sess.ID)
 			}
 			s.mu.Unlock()
+			s.emitTaskSnapshot(sess.ID)
+			var task *taskstate.Task
+			if s.ag != nil {
+				task = s.ag.TaskSnapshot()
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":       sess.ID,
 				"title":    sess.Title,
 				"messages": messagesToTranscript(sess.Messages),
+				"task":     task,
 			})
 		case "delete":
 			if in.ID == "" {
@@ -1478,13 +1529,16 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			}
 			s.mu.Lock()
 			if s.sessionID == in.ID {
+				s.abortTurnLocked()
 				s.sessionID = session.New(s.cfg.Workspace).ID
 				s.hist = nil
 				if s.ag != nil {
 					s.ag.SetTaskSession(s.sessionID)
 				}
 			}
+			currentID := s.sessionID
 			s.mu.Unlock()
+			s.emitTaskSnapshot(currentID)
 			if err := session.Delete(in.ID); err != nil && !os.IsNotExist(err) {
 				http.Error(w, err.Error(), 500)
 				return

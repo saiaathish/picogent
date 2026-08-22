@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/agent"
@@ -14,6 +15,32 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 )
+
+type taskRecordingHandler struct {
+	allowAll
+	ag        *agent.Agent
+	mu        sync.Mutex
+	snapshots []*taskstate.Task
+}
+
+func (h *taskRecordingHandler) OnTaskState(task *taskstate.Task) {
+	// A callback must be able to re-enter read-only task APIs. This would
+	// deadlock if Agent invoked it while holding taskMu.
+	_ = h.ag.TaskSnapshot()
+	h.mu.Lock()
+	h.snapshots = append(h.snapshots, task)
+	h.mu.Unlock()
+}
+
+func (h *taskRecordingHandler) statuses() []taskstate.Status {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make([]taskstate.Status, 0, len(h.snapshots))
+	for _, snapshot := range h.snapshots {
+		out = append(out, snapshot.Status)
+	}
+	return out
+}
 
 func TestDurableTaskPersistsOutsideHistoryAndResumes(t *testing.T) {
 	workspace := t.TempDir()
@@ -158,5 +185,53 @@ func TestDurableTaskStopsAfterThreeVerificationFailures(t *testing.T) {
 	}
 	if checks != 3 || result.Task == nil || result.Task.Status != taskstate.StatusBlocked || result.Task.BlockedBy != "verification repeatedly failed" {
 		t.Fatalf("checks=%d task=%#v", checks, result.Task)
+	}
+}
+
+func TestDurableTaskPublishesPersistedProgressSnapshots(t *testing.T) {
+	workspace := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(context.Context, []string) (string, error) {
+			return "verify PASS\n1 passed", nil
+		},
+	})
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("session-progress")
+	h := &taskRecordingHandler{ag: a}
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statuses := h.statuses()
+	for _, want := range []taskstate.Status{taskstate.StatusWorking, taskstate.StatusVerifying, taskstate.StatusDone} {
+		found := false
+		for _, got := range statuses {
+			found = found || got == want
+		}
+		if !found {
+			t.Fatalf("statuses = %v, missing %s", statuses, want)
+		}
+	}
+	if result.Task == nil || len(result.Task.ChangedFiles) != 1 || result.Task.ChangedFiles[0] != "fixed.txt" {
+		t.Fatalf("final task = %#v", result.Task)
+	}
+	if len(h.snapshots) == 0 || h.snapshots[len(h.snapshots)-1].Status != taskstate.StatusDone {
+		t.Fatalf("snapshots = %#v", h.snapshots)
+	}
+	// Handler-owned snapshots must not alias the Agent's persisted state.
+	h.snapshots[len(h.snapshots)-1].ChangedFiles[0] = "tampered.txt"
+	if got := a.TaskSnapshot().ChangedFiles[0]; got != "fixed.txt" {
+		t.Fatalf("agent snapshot was aliased: %q", got)
 	}
 }

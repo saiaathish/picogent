@@ -102,6 +102,24 @@
           </div>
         </div>
         <div id="reasoning" class="reasoning" hidden aria-live="polite"></div>
+        <section id="task-progress" class="task-progress" aria-labelledby="task-progress-title" hidden>
+          <div class="task-progress-head">
+            <div class="task-progress-heading">
+              <p class="task-progress-kicker">Task</p>
+              <h2 id="task-progress-title">Progress</h2>
+            </div>
+            <p class="task-progress-status" id="task-progress-status">Planning</p>
+          </div>
+          <p class="task-progress-goal" id="task-progress-goal"></p>
+          <p class="task-progress-meta" id="task-progress-meta" hidden></p>
+          <ol class="task-progress-steps" id="task-progress-steps"></ol>
+          <p class="task-progress-blocked" id="task-progress-blocked" hidden></p>
+          <div class="task-progress-actions">
+            <button type="button" id="task-progress-files" disabled>Changed files</button>
+            <button type="button" id="task-progress-activity" aria-expanded="false" aria-controls="panel-activity">Show activity</button>
+          </div>
+        </section>
+        <div id="task-progress-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
         <div id="ext-recs" class="ext-recs" hidden aria-label="Suggested extensions"></div>
         <div id="log" class="log"></div>
         <div id="thinking" class="think" aria-live="polite">
@@ -153,13 +171,13 @@
     <aside class="drawer drawer-right" id="rail-review" hidden>
       <div class="drawer-head">
         <div class="review-tabs" role="tablist">
-          <button type="button" class="review-tab is-on" data-tab="review" role="tab">Review</button>
-          <button type="button" class="review-tab" data-tab="changes" role="tab">Changes</button>
-          <button type="button" class="review-tab" data-tab="activity" role="tab">Activity</button>
+          <button type="button" class="review-tab is-on" id="tab-review" data-tab="review" role="tab" aria-selected="true" aria-controls="panel-review">Review</button>
+          <button type="button" class="review-tab" id="tab-changes" data-tab="changes" role="tab" aria-selected="false" aria-controls="panel-changes" tabindex="-1">Changes</button>
+          <button type="button" class="review-tab" id="tab-activity" data-tab="activity" role="tab" aria-selected="false" aria-controls="panel-activity" tabindex="-1">Activity</button>
         </div>
         <button type="button" class="ghost-btn" id="close-review">Close</button>
       </div>
-      <div id="panel-review">
+      <div id="panel-review" role="tabpanel" aria-labelledby="tab-review">
         <p class="drawer-kicker" id="review-path">Review</p>
         <div class="review-note" id="review-note"></div>
         <div class="review-scroll" id="review-scroll">
@@ -170,13 +188,13 @@
           <button type="submit">Ask</button>
         </form>
       </div>
-      <div id="panel-changes" hidden>
+      <div id="panel-changes" role="tabpanel" aria-labelledby="tab-changes" hidden>
         <div class="changes-summary" id="changes-summary"></div>
         <div class="changes-list" id="changes-list">
           <p class="review-empty">File edits appear here with line counts. Click a file to review.</p>
         </div>
       </div>
-      <div id="panel-activity" hidden>
+      <div id="panel-activity" role="tabpanel" aria-labelledby="tab-activity" hidden>
         <div class="activity-list" id="activity-list">
           <p class="review-empty">Tool and turn events from this workspace appear here.</p>
         </div>

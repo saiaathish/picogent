@@ -68,6 +68,12 @@ type FinalTextHandler interface {
 	OnTextFinal(text string)
 }
 
+// TaskStateHandler receives isolated snapshots after durable task state is
+// persisted. Implementations must treat snapshots as read-only.
+type TaskStateHandler interface {
+	OnTaskState(*taskstate.Task)
+}
+
 type Result struct {
 	Text          string
 	FilesChanged  []string
@@ -153,7 +159,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	a.Gate.Prompt = ev.OnNeedPermission
 
 	userText := strings.TrimSpace(user.Content)
-	a.beginDurableTask(userText)
+	a.beginDurableTask(userText, ev)
 	// Always refresh the system prompt so mid-chat task mode / goal changes take effect.
 	msgs := make([]llm.Message, 0, len(history)+3)
 	msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt(userText)})
@@ -214,19 +220,19 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 
 		if len(msg.ToolCalls) == 0 {
 			text := strings.TrimSpace(msg.Content)
-			if a.continueAfterDeferral(text, round) {
+			if a.continueAfterDeferral(text, round, ev) {
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableContinuePrompt})
 				continue
 			}
 			res.FilesChanged = sortedChanged(changed)
 			res.Verified = a.maybeVerify(ctx, ev, res.FilesChanged, calledVerify)
-			if a.continueAfterVerificationFailure(text, round, res.Verified) {
+			if a.continueAfterVerificationFailure(text, round, res.Verified, ev) {
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified)})
 				continue
 			}
 			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 			for _, path := range res.FilesChanged {
-				a.noteTaskChanged(path)
+				a.noteTaskChanged(path, ev)
 			}
 			normalized := normalizeExplainFooter(text, res.FilesChanged, res.UndoAvailable, res.UndoError)
 			oldText := text
@@ -250,7 +256,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			res.Text = text
 			res.ToolRounds = round
 			res.GoalDone = goal.LooksComplete(text)
-			a.finishDurableTask(res.FilesChanged, text, taskBlocker)
+			a.finishDurableTask(res.FilesChanged, text, taskBlocker, ev)
 			res.Task = a.TaskSnapshot()
 			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
 			msgs = stripDurableInternal(msgs)
@@ -272,6 +278,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		for _, call := range msg.ToolCalls {
 			if call.Name == "verify" {
 				calledVerify = true
+				a.setTaskStatus(taskstate.StatusVerifying, ev)
 			}
 			ev.OnToolStart(call)
 			_ = a.Trace.Append("tool_start", call.Name, call.Arguments, nil, 0)
@@ -349,7 +356,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 				nativeWriteRan = true
 			}
 			if ex.call.Name == "verify" {
-				a.noteTaskVerification(ex.text)
+				a.setTaskStatus(taskstate.StatusVerifying, ev)
+				a.noteTaskVerification(ex.text, ev)
+			} else if ex.ran {
+				a.setTaskStatus(taskstate.StatusWorking, ev)
 			}
 			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
@@ -373,7 +383,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	err := fmt.Errorf("stopped after %d tool rounds (limit)", a.CFG.MaxToolRounds)
 	res.FilesChanged = sortedChanged(changed)
 	a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
-	a.blockDurableTask("task budget exhausted")
+	a.blockDurableTask("task budget exhausted", ev)
 	res.Task = a.TaskSnapshot()
 	ev.OnError(err)
 	msgs = stripDurableInternal(msgs)
@@ -392,6 +402,7 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, filesChanged [
 	}
 	args, _ := json.Marshal(map[string]any{"targets": filesChanged})
 	call := llm.ToolCall{ID: "verify-auto", Name: "verify", Arguments: string(args)}
+	a.setTaskStatus(taskstate.StatusVerifying, ev)
 	ev.OnToolStart(call)
 	req := tool.Permission(call.Arguments, a.Tools.Ctx)
 	req.Hint = perm.EnrichHint(req, call.Arguments)

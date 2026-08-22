@@ -31,35 +31,45 @@ func stripDurableInternal(msgs []llm.Message) []llm.Message {
 	return out
 }
 
-func (a *Agent) continueAfterVerificationFailure(text string, round int, verified string) bool {
+func (a *Agent) continueAfterVerificationFailure(text string, round int, verified string, ev EventHandler) bool {
 	if round+1 >= a.CFG.MaxToolRounds || strings.Contains(strings.ToLower(text), "blocked:") {
 		return false
 	}
 	if verified != "" {
-		a.noteTaskVerification(verified)
+		a.noteTaskVerification(verified, ev)
 	}
 	a.taskMu.Lock()
-	defer a.taskMu.Unlock()
 	if a.task == nil || len(a.task.Verification) == 0 {
+		a.taskMu.Unlock()
 		return false
 	}
 	status := verificationStatus(a.task.Verification[len(a.task.Verification)-1].Summary)
 	if status == "INCONCLUSIVE" || status == "SKIPPED" {
 		a.task.Block("verification " + strings.ToLower(status))
 		_ = a.TaskStore.Save(a.task)
+		snapshot := cloneTask(a.task)
+		a.taskMu.Unlock()
+		emitTaskState(ev, snapshot)
 		return false
 	}
 	if status != "FAIL" {
+		a.taskMu.Unlock()
 		return false
 	}
 	if a.task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {
 		a.task.Block("verification repeatedly failed")
 		_ = a.TaskStore.Save(a.task)
+		snapshot := cloneTask(a.task)
+		a.taskMu.Unlock()
+		emitTaskState(ev, snapshot)
 		return false
 	}
 	a.task.NoteAttempt()
 	_ = a.task.SetStatus(taskstate.StatusWorking)
 	_ = a.TaskStore.Save(a.task)
+	snapshot := cloneTask(a.task)
+	a.taskMu.Unlock()
+	emitTaskState(ev, snapshot)
 	return true
 }
 
@@ -82,25 +92,19 @@ func (a *Agent) SetTaskSession(sessionID string) {
 func (a *Agent) TaskSnapshot() *taskstate.Task {
 	a.taskMu.RLock()
 	defer a.taskMu.RUnlock()
-	if a.task == nil {
-		return nil
-	}
-	cp := *a.task
-	cp.Steps = append([]taskstate.Step(nil), a.task.Steps...)
-	cp.ChangedFiles = append([]string(nil), a.task.ChangedFiles...)
-	cp.Verification = append([]taskstate.Verification(nil), a.task.Verification...)
-	return &cp
+	return cloneTask(a.task)
 }
 
-func (a *Agent) beginDurableTask(prompt string) {
+func (a *Agent) beginDurableTask(prompt string, ev EventHandler) {
 	a.taskMu.Lock()
-	defer a.taskMu.Unlock()
 	if a.TaskStore == nil || a.TaskSession == "" {
+		a.taskMu.Unlock()
 		return
 	}
 	if a.task == nil || a.task.Status == taskstate.StatusDone || a.task.Status == taskstate.StatusBlocked {
 		task, ok, err := taskstate.NewFromPrompt(a.TaskSession, prompt)
 		if err != nil || !ok {
+			a.taskMu.Unlock()
 			return
 		}
 		a.task = task
@@ -110,6 +114,9 @@ func (a *Agent) beginDurableTask(prompt string) {
 	}
 	a.task.NoteAttempt()
 	_ = a.TaskStore.Save(a.task)
+	snapshot := cloneTask(a.task)
+	a.taskMu.Unlock()
+	emitTaskState(ev, snapshot)
 }
 
 func (a *Agent) taskPromptSuffix() string {
@@ -135,10 +142,10 @@ func (a *Agent) taskPromptSuffix() string {
 	return b.String()
 }
 
-func (a *Agent) noteTaskChanged(path string) {
+func (a *Agent) noteTaskChanged(path string, ev EventHandler) {
 	a.taskMu.Lock()
-	defer a.taskMu.Unlock()
 	if a.task == nil {
+		a.taskMu.Unlock()
 		return
 	}
 	a.task.AddChangedFiles(path)
@@ -146,9 +153,12 @@ func (a *Agent) noteTaskChanged(path string) {
 		a.task.Advance()
 	}
 	_ = a.TaskStore.Save(a.task)
+	snapshot := cloneTask(a.task)
+	a.taskMu.Unlock()
+	emitTaskState(ev, snapshot)
 }
 
-func (a *Agent) continueAfterDeferral(text string, round int) bool {
+func (a *Agent) continueAfterDeferral(text string, round int, ev EventHandler) bool {
 	low := strings.ToLower(strings.TrimSpace(text))
 	if low == "" || round+1 >= a.CFG.MaxToolRounds {
 		return false
@@ -163,28 +173,35 @@ func (a *Agent) continueAfterDeferral(text string, round int) bool {
 		return false
 	}
 	a.taskMu.Lock()
-	defer a.taskMu.Unlock()
 	if a.task == nil {
+		a.taskMu.Unlock()
 		return false
 	}
 	decision := taskstate.ShouldContinue(a.task, taskstate.Signals{SafeNextAction: true})
 	if !decision.Continue {
+		a.taskMu.Unlock()
 		return false
 	}
 	a.task.NoteAttempt()
 	_ = a.TaskStore.Save(a.task)
+	snapshot := cloneTask(a.task)
+	a.taskMu.Unlock()
+	emitTaskState(ev, snapshot)
 	return true
 }
 
-func (a *Agent) noteTaskVerification(output string) {
+func (a *Agent) noteTaskVerification(output string, ev EventHandler) {
 	a.taskMu.Lock()
-	defer a.taskMu.Unlock()
 	if a.task == nil || strings.TrimSpace(output) == "" {
+		a.taskMu.Unlock()
 		return
 	}
 	passed := verificationStatus(output) == "PASS"
 	a.task.AddVerification("verify", passed, output)
 	_ = a.TaskStore.Save(a.task)
+	snapshot := cloneTask(a.task)
+	a.taskMu.Unlock()
+	emitTaskState(ev, snapshot)
 }
 
 func verificationStatus(output string) string {
@@ -197,49 +214,81 @@ func verificationStatus(output string) string {
 	return "INCONCLUSIVE"
 }
 
-func (a *Agent) blockDurableTask(reason string) {
+func (a *Agent) blockDurableTask(reason string, ev EventHandler) {
 	a.taskMu.Lock()
-	defer a.taskMu.Unlock()
 	if a.task == nil {
+		a.taskMu.Unlock()
 		return
 	}
 	a.task.Block(reason)
 	_ = a.TaskStore.Save(a.task)
+	snapshot := cloneTask(a.task)
+	a.taskMu.Unlock()
+	emitTaskState(ev, snapshot)
 }
 
-func (a *Agent) finishDurableTask(changed []string, text, blocker string) {
+func (a *Agent) finishDurableTask(changed []string, text, blocker string, ev EventHandler) {
 	a.taskMu.Lock()
-	defer a.taskMu.Unlock()
 	if a.task == nil {
+		a.taskMu.Unlock()
 		return
 	}
 	a.task.AddChangedFiles(changed...)
 	if blocker != "" {
 		a.task.Block(blocker)
-		_ = a.TaskStore.Save(a.task)
-		return
-	}
-	if a.task.Status == taskstate.StatusBlocked {
-		_ = a.TaskStore.Save(a.task)
-		return
-	}
-	if a.task.ConsecutiveVerificationFailures() > 0 {
+	} else if a.task.Status == taskstate.StatusBlocked {
+		// Preserve the specific blocker recorded earlier in the turn.
+	} else if a.task.ConsecutiveVerificationFailures() > 0 {
 		if a.task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {
 			a.task.Block("verification repeatedly failed")
 		} else {
 			_ = a.task.SetStatus(taskstate.StatusWorking)
 		}
-		_ = a.TaskStore.Save(a.task)
-		return
+	} else {
+		low := strings.ToLower(text)
+		if strings.Contains(low, "blocked:") || strings.Contains(low, "permission needed") {
+			a.task.Block("agent reported a blocker")
+		} else {
+			for a.task.Advance() {
+			}
+			_ = a.task.SetStatus(taskstate.StatusDone)
+		}
 	}
-	low := strings.ToLower(text)
-	if strings.Contains(low, "blocked:") || strings.Contains(low, "permission needed") {
-		a.task.Block("agent reported a blocker")
-		_ = a.TaskStore.Save(a.task)
-		return
-	}
-	for a.task.Advance() {
-	}
-	_ = a.task.SetStatus(taskstate.StatusDone)
 	_ = a.TaskStore.Save(a.task)
+	snapshot := cloneTask(a.task)
+	a.taskMu.Unlock()
+	emitTaskState(ev, snapshot)
+}
+
+func (a *Agent) setTaskStatus(status taskstate.Status, ev EventHandler) {
+	a.taskMu.Lock()
+	if a.task == nil || a.task.Status == status || a.task.Status == taskstate.StatusDone || a.task.Status == taskstate.StatusBlocked {
+		a.taskMu.Unlock()
+		return
+	}
+	if err := a.task.SetStatus(status); err != nil {
+		a.taskMu.Unlock()
+		return
+	}
+	_ = a.TaskStore.Save(a.task)
+	snapshot := cloneTask(a.task)
+	a.taskMu.Unlock()
+	emitTaskState(ev, snapshot)
+}
+
+func cloneTask(task *taskstate.Task) *taskstate.Task {
+	if task == nil {
+		return nil
+	}
+	cp := *task
+	cp.Steps = append([]taskstate.Step(nil), task.Steps...)
+	cp.ChangedFiles = append([]string(nil), task.ChangedFiles...)
+	cp.Verification = append([]taskstate.Verification(nil), task.Verification...)
+	return &cp
+}
+
+func emitTaskState(ev EventHandler, snapshot *taskstate.Task) {
+	if handler, ok := ev.(TaskStateHandler); ok {
+		handler.OnTaskState(cloneTask(snapshot))
+	}
 }

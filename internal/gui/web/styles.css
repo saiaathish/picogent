@@ -11,6 +11,7 @@
   --card: #fffcf6;
   --accent: #c45c26;
   --ok: #2f6f4e;
+  --danger: #9f3027;
   --hi: #ffe08a;
   --drawer: 280px;
   --stage: 680px;
@@ -26,6 +27,7 @@
     --card: #1e1a15;
     --accent: #e07a3d;
     --ok: #7dba95;
+    --danger: #ff8b7d;
     --hi: #6a5420;
   }
 }
@@ -1227,6 +1229,176 @@ button, input, textarea { font: inherit; color: inherit; }
   .hero h1 { font-size: 26px; }
 }
 
+/* Durable task progress — compact, real state beside the turn activity. */
+.task-progress {
+  margin: 0 0 16px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--paper) 64%, var(--card));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent);
+}
+.task-progress[hidden] { display: none !important; }
+.task-progress[data-status="done"] { border-left-color: var(--ok); }
+.task-progress[data-status="blocked"] { border-left-color: var(--danger); }
+.task-progress-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.task-progress-heading { min-width: 0; }
+.task-progress-kicker {
+  margin: 0 0 1px;
+  color: var(--mute);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+.task-progress h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.35;
+}
+.task-progress-status {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--line));
+  border-radius: 999px;
+  color: var(--accent);
+  background: var(--card);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.task-progress[data-status="done"] .task-progress-status {
+  border-color: color-mix(in srgb, var(--ok) 42%, var(--line));
+  color: var(--ok);
+}
+.task-progress[data-status="blocked"] .task-progress-status {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+  color: var(--danger);
+}
+.task-progress-goal {
+  margin: 10px 0 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 550;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.task-progress-meta {
+  margin: 3px 0 0;
+  color: var(--mute);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+.task-progress-steps {
+  display: grid;
+  gap: 2px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.task-progress-steps[hidden] { display: none !important; }
+.task-progress-step {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 4px;
+  border-radius: 8px;
+  color: var(--mute);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.task-progress-step.is-current {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.task-progress-step.is-done { color: var(--mute); }
+.task-progress-marker {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--card);
+  color: inherit;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 650;
+}
+.task-progress-step.is-current .task-progress-marker {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.task-progress-step.is-done .task-progress-marker {
+  border-color: color-mix(in srgb, var(--ok) 45%, var(--line));
+  color: var(--ok);
+}
+.task-progress-description {
+  min-width: 0;
+  padding-top: 2px;
+  overflow-wrap: anywhere;
+}
+.task-progress-step-state {
+  padding-top: 3px;
+  color: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.task-progress-blocked {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-left: 2px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.task-progress-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.task-progress-actions button {
+  flex: 1 1 140px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+.task-progress-actions button:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--line));
+  color: var(--accent);
+}
+.task-progress-actions button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 2px;
+}
+.task-progress-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 /* Reasoning widget — Cursor-style activity summary */
 .reasoning {
   margin-bottom: 16px;
@@ -2010,6 +2182,37 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 @media (max-width: 560px) {
   .side-fab { right: 12px; bottom: 12px; }
+}
+
+@media (max-width: 360px) {
+  .feed { padding-right: 14px; padding-left: 14px; }
+  .task-progress { padding: 12px; }
+  .task-progress-step {
+    grid-template-columns: 24px minmax(0, 1fr);
+  }
+  .task-progress-step-state {
+    grid-column: 2;
+    padding-top: 0;
+  }
+}
+
+@media (forced-colors: active) {
+  .task-progress,
+  .task-progress-status,
+  .task-progress-marker,
+  .task-progress-actions button {
+    border-color: CanvasText;
+  }
+  .task-progress-step.is-current {
+    outline: 1px solid Highlight;
+    background: Canvas;
+  }
+  .task-progress-step.is-current .task-progress-marker,
+  .task-progress-actions button:focus-visible {
+    color: Highlight;
+    outline-color: Highlight;
+  }
+  .task-progress-actions button:disabled { color: GrayText; }
 }
 
 @media (prefers-reduced-motion: reduce) {
