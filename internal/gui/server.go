@@ -107,6 +107,9 @@ func Run() error {
 		a.SetTaskMode(agent.TaskAgent)
 	}
 	sessID, hist := initialSession(cfg.Workspace)
+	if a != nil {
+		a.SetTaskSession(sessID)
+	}
 	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
 	s.ensureProject()
@@ -852,6 +855,7 @@ func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	s.liveTask = agent.TaskAgent
 	if s.ag != nil {
 		s.ag.SetTaskMode(agent.TaskAgent)
+		s.ag.SetTaskSession(s.sessionID)
 	}
 	id := s.sessionID
 	s.mu.Unlock()
@@ -1410,6 +1414,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			s.liveTask = agent.TaskAgent
 			if s.ag != nil {
 				s.ag.SetTaskMode(agent.TaskAgent)
+				s.ag.SetTaskSession(s.sessionID)
 			}
 			id := s.sessionID
 			s.mu.Unlock()
@@ -1431,6 +1436,9 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			s.mu.Lock()
 			s.sessionID = sess.ID
 			s.hist = sess.Messages
+			if s.ag != nil {
+				s.ag.SetTaskSession(sess.ID)
+			}
 			s.mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1447,6 +1455,9 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			if s.sessionID == in.ID {
 				s.sessionID = session.New(s.cfg.Workspace).ID
 				s.hist = nil
+				if s.ag != nil {
+					s.ag.SetTaskSession(s.sessionID)
+				}
 			}
 			s.mu.Unlock()
 			if err := session.Delete(in.ID); err != nil && !os.IsNotExist(err) {

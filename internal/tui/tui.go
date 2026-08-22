@@ -137,6 +137,9 @@ func newModel(cfg config.Config, a *agent.Agent) *model {
 	vp := viewport.New(80, 20)
 	h := &handler{permCh: make(chan perm.Decision, 1), send: func(tea.Msg) {}}
 	m := &model{cfg: cfg, ag: a, ta: ta, vp: vp, h: h, sessionID: session.New(cfg.Workspace).ID}
+	if a != nil {
+		a.SetTaskSession(m.sessionID)
+	}
 	m.lines = []logLine{{Kind: "system", Text: greeting(cfg, a)}}
 	if err := cfg.MissingAuth(); err != nil {
 		m.lines = append(m.lines, logLine{Kind: "error", Text: err.Error()})
@@ -424,6 +427,7 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		if prev, err := session.Latest(m.cfg.Workspace); err == nil {
 			m.history = prev.Messages
 			m.sessionID = prev.ID
+			m.ag.SetTaskSession(prev.ID)
 			m.lines = append(m.lines, logLine{Kind: "system", Text: "resumed " + prev.ID})
 		} else {
 			m.lines = append(m.lines, logLine{Kind: "error", Text: "no saved session"})
