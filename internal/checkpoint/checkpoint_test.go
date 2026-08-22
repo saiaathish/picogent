@@ -115,6 +115,58 @@ func TestRestoreRequiresSealAndRunsOnce(t *testing.T) {
 	}
 }
 
+func TestAddCapturesMorePathsDeduplicatesAndRejectsAfterSeal(t *testing.T) {
+	workspace := t.TempDir()
+	write(t, workspace, "a.txt", "a-before", 0o644)
+	write(t, workspace, "b.txt", "b-before", 0o644)
+	cp, err := checkpoint.Capture(workspace, []string{"a.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, workspace, "a.txt", "a-agent", 0o644)
+	if err := cp.Add([]string{"./a.txt", "b.txt", "b.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := cp.Paths(); !slices.Equal(got, []string{"a.txt", "b.txt"}) {
+		t.Fatalf("paths=%v", got)
+	}
+	write(t, workspace, "b.txt", "b-agent", 0o644)
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := cp.ChangedPaths(); err != nil || !slices.Equal(got, []string{"a.txt", "b.txt"}) {
+		t.Fatalf("changed paths=(%v, %v)", got, err)
+	}
+	if err := cp.Add([]string{"c.txt"}); !errors.Is(err, checkpoint.ErrAlreadySealed) {
+		t.Fatalf("add after seal error=%v", err)
+	}
+	if _, err := cp.Restore(); err != nil {
+		t.Fatal(err)
+	}
+	assertContents(t, workspace, "a.txt", "a-before")
+	assertContents(t, workspace, "b.txt", "b-before")
+}
+
+func TestChangedPathsRequiresSealAndOmitsUnchanged(t *testing.T) {
+	workspace := t.TempDir()
+	write(t, workspace, "changed.txt", "before", 0o644)
+	write(t, workspace, "same.txt", "same", 0o644)
+	cp, err := checkpoint.Capture(workspace, []string{"changed.txt", "same.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cp.ChangedPaths(); !errors.Is(err, checkpoint.ErrNotSealed) {
+		t.Fatalf("unsealed changed paths error=%v", err)
+	}
+	write(t, workspace, "changed.txt", "after", 0o644)
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := cp.ChangedPaths(); err != nil || !slices.Equal(got, []string{"changed.txt"}) {
+		t.Fatalf("changed paths=(%v, %v)", got, err)
+	}
+}
+
 func TestModeOnlyChangesAreRestored(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not preserve Unix permission bits")

@@ -34,7 +34,7 @@ You already are their assistant: do the work yourself, reuse what you have learn
 9. After successful file changes, end with:
    Changed: ...
    Run: ...
-   Undo: ...
+   Undo: /undo
    If nothing was written (denied, blocked, or read-only), do not invent a Changed/Run/Undo footer.
 
 Tools: repo_map, read_file, list_dir, write_file, edit_file, glob, grep, bash, git, web_fetch, todo_write, mcp_manage, verify.
@@ -61,14 +61,23 @@ type EventHandler interface {
 	OnError(err error)
 }
 
+// FinalTextHandler lets streaming surfaces replace the accumulated assistant
+// text with the canonical final response. This is optional so existing event
+// handlers keep working.
+type FinalTextHandler interface {
+	OnTextFinal(text string)
+}
+
 type Result struct {
-	Text         string
-	FilesChanged []string
-	ToolRounds   int
-	Context      ctxmgr.Stats
-	GoalDone     bool
-	Verified     string
-	Task         *taskstate.Task
+	Text          string
+	FilesChanged  []string
+	ToolRounds    int
+	Context       ctxmgr.Stats
+	GoalDone      bool
+	Verified      string
+	Task          *taskstate.Task
+	UndoAvailable bool
+	UndoError     string
 }
 
 type Agent struct {
@@ -86,6 +95,9 @@ type Agent struct {
 	TaskSession  string
 	taskMu       sync.RWMutex
 	task         *taskstate.Task
+	undoMu       sync.Mutex
+	latestUndo   *turnUndo
+	runTool      func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
 }
 
 func New(cfg config.Config, client llm.Client, reg *tools.Registry, gate *perm.Gate) *Agent {
@@ -159,6 +171,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	var res Result
 	res.Context = ctxStats
 	changed := map[string]struct{}{}
+	turnUndo := newTurnUndo(a.Tools.Ctx.Workspace)
+	nativeWriteRan := false
 	lastToolKind := ""
 	calledVerify := false
 	taskBlocker := ""
@@ -188,6 +202,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		if err != nil {
 			wrapped := userErr("the model call failed", err)
 			ev.OnError(wrapped)
+			res.FilesChanged = sortedChanged(changed)
+			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 			return msgs, res, wrapped
 		}
 		msg := out.Message
@@ -202,29 +218,32 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableContinuePrompt})
 				continue
 			}
-			res.FilesChanged = res.FilesChanged[:0]
-			for p := range changed {
-				res.FilesChanged = append(res.FilesChanged, p)
-			}
-			sort.Strings(res.FilesChanged)
+			res.FilesChanged = sortedChanged(changed)
 			res.Verified = a.maybeVerify(ctx, ev, res.FilesChanged, calledVerify)
 			if a.continueAfterVerificationFailure(text, round, res.Verified) {
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified)})
 				continue
 			}
-			if footer := explainFooter(res.FilesChanged); footer != "" && !hasExplainFooter(text) {
-				if text != "" {
-					text += "\n\n"
-				}
-				text += footer
+			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
+			for _, path := range res.FilesChanged {
+				a.noteTaskChanged(path)
+			}
+			normalized := normalizeExplainFooter(text, res.FilesChanged, res.UndoAvailable, res.UndoError)
+			oldText := text
+			if normalized != text {
+				text = normalized
 				msg.Content = text
 				msgs[len(msgs)-1] = msg
-				if streamed {
-					ev.OnTextDelta("\n\n" + footer)
-				}
 			}
 			if streamed {
-				ev.OnText("")
+				if finalizer, ok := ev.(FinalTextHandler); ok {
+					finalizer.OnTextFinal(text)
+				} else {
+					if footer := explainFooter(res.FilesChanged, res.UndoAvailable, res.UndoError); normalized != oldText && footer != "" {
+						ev.OnTextDelta("\n\n" + footer)
+					}
+					ev.OnText("")
+				}
 			} else if text != "" {
 				ev.OnText(text)
 			}
@@ -246,6 +265,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			req  perm.Request
 			text string
 			err  error
+			ran  bool
 		}
 		var pending []executed
 
@@ -272,6 +292,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			dec, err := a.Gate.Check(ctx, req)
 			if err != nil {
 				ev.OnToolEnd(call, "", err)
+				res.FilesChanged = sortedChanged(changed)
+				a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 				return msgs, res, err
 			}
 			if dec == perm.Deny {
@@ -279,6 +301,15 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 				ev.OnToolEnd(call, "denied by user", nil)
 				pending = append(pending, executed{call: call, req: req, text: "denied by user"})
 				continue
+			}
+			if call.Name == "write_file" || call.Name == "edit_file" {
+				if err := turnUndo.capture(req.Path); err != nil {
+					captureErr := fmt.Errorf("cannot safely checkpoint %s: %w", req.Path, err)
+					taskBlocker = "checkpoint capture failed"
+					ev.OnToolEnd(call, "", captureErr)
+					pending = append(pending, executed{call: call, req: req, text: "error: " + captureErr.Error(), err: captureErr})
+					continue
+				}
 			}
 			pending = append(pending, executed{call: call, req: req})
 		}
@@ -293,7 +324,14 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 				defer wg.Done()
 				call := pending[i].call
 				tool, _ := a.Tools.Get(call.Name)
-				outText, err := tool.Run(ctx, call.Arguments, a.Tools.Ctx)
+				pending[i].ran = true
+				var outText string
+				var err error
+				if a.runTool != nil {
+					outText, err = a.runTool(ctx, call, tool, a.Tools.Ctx)
+				} else {
+					outText, err = tool.Run(ctx, call.Arguments, a.Tools.Ctx)
+				}
 				pending[i].text = outText
 				pending[i].err = err
 				if err != nil {
@@ -307,13 +345,15 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		wg.Wait()
 
 		for _, ex := range pending {
+			if ex.ran && (ex.call.Name == "write_file" || ex.call.Name == "edit_file") {
+				nativeWriteRan = true
+			}
 			if ex.call.Name == "verify" {
 				a.noteTaskVerification(ex.text)
 			}
 			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
 					changed[p] = struct{}{}
-					a.noteTaskChanged(p)
 				}
 			}
 			content := ex.text
@@ -331,6 +371,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		res.Context = stats
 	}
 	err := fmt.Errorf("stopped after %d tool rounds (limit)", a.CFG.MaxToolRounds)
+	res.FilesChanged = sortedChanged(changed)
+	a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 	a.blockDurableTask("task budget exhausted")
 	res.Task = a.TaskSnapshot()
 	ev.OnError(err)
@@ -387,16 +429,59 @@ func (NopHandler) OnNeedPermission(context.Context, perm.Request) (perm.Decision
 }
 func (NopHandler) OnError(error) {}
 
-func hasExplainFooter(text string) bool {
-	low := strings.ToLower(text)
-	return strings.Contains(low, "changed:") && strings.Contains(low, "run:") && strings.Contains(low, "undo:")
-}
-
-func explainFooter(paths []string) string {
+func explainFooter(paths []string, undoAvailable bool, undoErr string) string {
 	if len(paths) == 0 {
 		return ""
 	}
-	return "Changed: " + strings.Join(paths, ", ") + "\nRun: check the files above\nUndo: git checkout -- " + strings.Join(paths, " ")
+	undo := "Undo: /undo"
+	if !undoAvailable {
+		reason := strings.TrimSpace(undoErr)
+		if reason == "" {
+			reason = "checkpoint could not be sealed"
+		}
+		undo = "Undo: unavailable — " + reason
+	}
+	return "Changed: " + strings.Join(paths, ", ") + "\nRun: check the files above\n" + undo
+}
+
+func normalizeExplainFooter(text string, paths []string, undoAvailable bool, undoErr string) string {
+	text = stripExplainFooter(strings.TrimSpace(text))
+	footer := explainFooter(paths, undoAvailable, undoErr)
+	if footer == "" {
+		return text
+	}
+	if text == "" {
+		return footer
+	}
+	return text + "\n\n" + footer
+}
+
+func stripExplainFooter(text string) string {
+	lines := strings.Split(text, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(lines[i])), "changed:") {
+			continue
+		}
+		seenRun, seenUndo := false, false
+		for _, line := range lines[i+1:] {
+			low := strings.ToLower(strings.TrimSpace(line))
+			seenRun = seenRun || strings.HasPrefix(low, "run:")
+			seenUndo = seenUndo || strings.HasPrefix(low, "undo:")
+		}
+		if seenRun && seenUndo {
+			return strings.TrimSpace(strings.Join(lines[:i], "\n"))
+		}
+	}
+	return text
+}
+
+func sortedChanged(changed map[string]struct{}) []string {
+	paths := make([]string, 0, len(changed))
+	for path := range changed {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // toolWriteSucceeded reports whether a write/edit tool call actually ran and

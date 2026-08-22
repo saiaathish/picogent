@@ -76,6 +76,9 @@ func (h *handler) OnText(text string) {
 func (h *handler) OnTextDelta(delta string) {
 	h.send(logMsg{Kind: "assistant_delta", Text: delta})
 }
+func (h *handler) OnTextFinal(text string) {
+	h.send(logMsg{Kind: "assistant_final", Text: text})
+}
 func (h *handler) OnToolStart(call llm.ToolCall) {
 	h.send(logMsg{Kind: "tool", Text: "→  " + call.Name + "  " + clip(call.Arguments, 100)})
 }
@@ -223,6 +226,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if n > 0 && m.lines[n-1].Kind == "assistant" {
 				m.lines[n-1].Text += msg.Text
 			} else {
+				m.lines = append(m.lines, logLine{Kind: "assistant", Text: msg.Text})
+			}
+		} else if msg.Kind == "assistant_final" {
+			n := len(m.lines)
+			if n > 0 && m.lines[n-1].Kind == "assistant" {
+				m.lines[n-1].Text = msg.Text
+			} else if msg.Text != "" {
 				m.lines = append(m.lines, logLine{Kind: "assistant", Text: msg.Text})
 			}
 		} else {
@@ -406,6 +416,14 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 			m.history = append([]llm.Message{head}, m.history[len(m.history)-15:]...)
 		}
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "context compacted"})
+	case payload == "undo":
+		text, err := m.ag.UndoLastTurn()
+		kind := "system"
+		if err != nil {
+			kind = "error"
+			text = err.Error()
+		}
+		m.lines = append(m.lines, logLine{Kind: kind, Text: text})
 	case payload == "status":
 		st := fmt.Sprintf("safe/fast=%s task=%s provider=%s model=%s\n%s", m.cfg.Mode, agent.ParseTaskMode(m.cfg.TaskMode).Label(), m.cfg.Provider, m.cfg.Model, m.cfg.Workspace)
 		if g := m.ag.Goal; g != "" {

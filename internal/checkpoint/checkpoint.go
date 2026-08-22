@@ -49,11 +49,12 @@ type RestoreResult struct {
 // Checkpoint holds the pre-turn state for an explicit set of workspace files.
 // Call Seal after the turn's edits and before offering Restore to the user.
 type Checkpoint struct {
-	mu       sync.Mutex
-	root     string
-	entries  []entry
-	sealed   bool
-	restored bool
+	mu        sync.Mutex
+	rootInput string
+	root      string
+	entries   []entry
+	sealed    bool
+	restored  bool
 }
 
 type entry struct {
@@ -82,25 +83,54 @@ func Capture(workspace string, paths []string) (*Checkpoint, error) {
 		return nil, errors.New("checkpoint requires at least one path")
 	}
 
-	seen := make(map[string]struct{}, len(paths))
+	cp := &Checkpoint{rootInput: rootInput, root: root}
+	if err := cp.add(paths); err != nil {
+		return nil, err
+	}
+	return cp, nil
+}
+
+// Add snapshots additional paths before they are changed. Existing paths are
+// deduplicated by normalized workspace-relative name and retain their original
+// pre-turn snapshot. Paths cannot be added after Seal.
+func (c *Checkpoint) Add(paths []string) error {
+	if c == nil {
+		return errors.New("checkpoint is nil")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sealed {
+		return ErrAlreadySealed
+	}
+	return c.add(paths)
+}
+
+func (c *Checkpoint) add(paths []string) error {
+	if len(paths) == 0 {
+		return errors.New("checkpoint requires at least one path")
+	}
+	seen := make(map[string]struct{}, len(c.entries)+len(paths))
+	for i := range c.entries {
+		seen[c.entries[i].path] = struct{}{}
+	}
 	entries := make([]entry, 0, len(paths))
 	for _, requested := range paths {
-		rel, err := normalizePath(rootInput, root, requested)
+		rel, err := normalizePath(c.rootInput, c.root, requested)
 		if err != nil {
-			return nil, fmt.Errorf("checkpoint path %q: %w", requested, err)
+			return fmt.Errorf("checkpoint path %q: %w", requested, err)
 		}
 		if _, ok := seen[rel]; ok {
 			continue
 		}
 		seen[rel] = struct{}{}
-
-		state, err := readWorkspaceFile(root, rel)
+		state, err := readWorkspaceFile(c.root, rel)
 		if err != nil {
-			return nil, fmt.Errorf("checkpoint path %q: %w", requested, err)
+			return fmt.Errorf("checkpoint path %q: %w", requested, err)
 		}
 		entries = append(entries, entry{path: rel, before: state})
 	}
-	return &Checkpoint{root: root, entries: entries}, nil
+	c.entries = append(c.entries, entries...)
+	return nil
 }
 
 // Paths returns the normalized workspace-relative paths in this checkpoint.
@@ -142,6 +172,27 @@ func (c *Checkpoint) Seal() error {
 	}
 	c.sealed = true
 	return nil
+}
+
+// ChangedPaths returns paths whose sealed state differs from their captured
+// pre-turn state. It is valid only after Seal.
+func (c *Checkpoint) ChangedPaths() ([]string, error) {
+	if c == nil {
+		return nil, ErrNotSealed
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.sealed {
+		return nil, ErrNotSealed
+	}
+	paths := make([]string, 0, len(c.entries))
+	for i := range c.entries {
+		if c.entries[i].before.sum != c.entries[i].expected {
+			paths = append(paths, filepath.ToSlash(c.entries[i].path))
+		}
+	}
+	sort.Strings(paths)
+	return paths, nil
 }
 
 // Restore puts every checkpointed path back to its pre-turn state. It first
