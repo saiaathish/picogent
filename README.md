@@ -153,4 +153,5 @@ Subagents, skills marketplace, plugins, embedding indexes.
 ## Docs
 
 - Product spec: [docs/PRD.md](docs/PRD.md)
+- v0.2 finish-the-loop guide: [docs/V0.2.md](docs/V0.2.md)
 - License: MIT
