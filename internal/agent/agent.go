@@ -181,6 +181,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	nativeWriteRan := false
 	lastToolKind := ""
 	calledVerify := false
+	lastVerification := ""
 	taskBlocker := ""
 
 	for round := 0; round < a.CFG.MaxToolRounds; round++ {
@@ -225,7 +226,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 				continue
 			}
 			res.FilesChanged = sortedChanged(changed)
-			res.Verified = a.maybeVerify(ctx, ev, res.FilesChanged, calledVerify)
+			if autoVerified := a.maybeVerify(ctx, ev, userText, res.FilesChanged, calledVerify); autoVerified != "" {
+				lastVerification = autoVerified
+			}
+			res.Verified = lastVerification
 			if a.continueAfterVerificationFailure(text, round, res.Verified, ev) {
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified)})
 				continue
@@ -357,6 +361,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			}
 			if ex.call.Name == "verify" {
 				a.setTaskStatus(taskstate.StatusVerifying, ev)
+				lastVerification = ex.text
 				a.noteTaskVerification(ex.text, ev)
 			} else if ex.ran {
 				a.setTaskStatus(taskstate.StatusWorking, ev)
@@ -392,7 +397,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	return final, res, err
 }
 
-func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, filesChanged []string, already bool) string {
+func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint string, filesChanged []string, already bool) string {
 	if already || len(filesChanged) == 0 || a.Tools == nil || (a.Tools.Ctx.Verify == nil && a.Tools.Ctx.VerifyTargets == nil) {
 		return ""
 	}
@@ -400,7 +405,19 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, filesChanged [
 	if !ok {
 		return ""
 	}
-	args, _ := json.Marshal(map[string]any{"targets": filesChanged})
+	targets := append([]string(nil), filesChanged...)
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		seen[target] = struct{}{}
+	}
+	for _, target := range evolve.VerificationTargets(a.Memory, userHint) {
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		targets = append(targets, target)
+	}
+	args, _ := json.Marshal(map[string]any{"targets": targets})
 	call := llm.ToolCall{ID: "verify-auto", Name: "verify", Arguments: string(args)}
 	a.setTaskStatus(taskstate.StatusVerifying, ev)
 	ev.OnToolStart(call)

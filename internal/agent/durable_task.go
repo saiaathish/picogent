@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,12 +13,37 @@ const durableContinuePrompt = `Internal task-loop instruction: the original requ
 
 const durableRepairMarker = "Internal verification-repair instruction:"
 
+// errTaskMutationSkipped is an internal signal for callers that decide a
+// task update is no longer applicable. It is deliberately not reported as a
+// persistence failure to the user.
+var errTaskMutationSkipped = errors.New("durable task mutation skipped")
+
 func durableRepairPrompt(evidence string) string {
 	evidence = strings.TrimSpace(evidence)
 	if len(evidence) > 4000 {
 		evidence = evidence[:4000] + "…"
 	}
-	return durableRepairMarker + ` verification failed. Inspect this evidence, repair the smallest responsible area, and run verify again. Do not ask whether to continue.` + "\n\n" + evidence
+	prompt := durableRepairMarker + ` verification failed. Inspect this evidence, repair the smallest responsible area, and run verify again. Do not ask whether to continue.`
+	if hint := durableRecoveryHint(evidence); hint != "" {
+		prompt += "\nRecovery hint: " + hint
+	}
+	return prompt + "\n\n" + evidence
+}
+
+func durableRecoveryHint(evidence string) string {
+	low := strings.ToLower(evidence)
+	switch {
+	case strings.Contains(low, "old_string found") && strings.Contains(low, "times"):
+		return "the edit matched multiple regions; reread the file and choose a unique exact replacement."
+	case strings.Contains(low, "old_string not found"), strings.Contains(low, "no such file"), strings.Contains(low, "file does not exist"):
+		return "the file or context is stale; reread the relevant path before recomputing the edit."
+	case strings.Contains(low, "truncated"), strings.Contains(low, "output limit"):
+		return "the evidence is truncated; narrow the command or inspect the relevant lines before deciding."
+	case strings.Contains(low, "command not found"), strings.Contains(low, "executable file not found"):
+		return "the runner is unavailable; inspect the repo map and package-manager manifests for the supported command."
+	default:
+		return ""
+	}
 }
 
 func stripDurableInternal(msgs []llm.Message) []llm.Message {
@@ -38,39 +64,37 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, verifie
 	if verified != "" {
 		a.noteTaskVerification(verified, ev)
 	}
-	a.taskMu.Lock()
+	a.taskMu.RLock()
 	if a.task == nil || len(a.task.Verification) == 0 {
-		a.taskMu.Unlock()
+		a.taskMu.RUnlock()
 		return false
 	}
 	status := verificationStatus(a.task.Verification[len(a.task.Verification)-1].Summary)
+	a.taskMu.RUnlock()
 	if status == "INCONCLUSIVE" || status == "SKIPPED" {
-		a.task.Block("verification " + strings.ToLower(status))
-		_ = a.TaskStore.Save(a.task)
-		snapshot := cloneTask(a.task)
-		a.taskMu.Unlock()
-		emitTaskState(ev, snapshot)
+		a.mutateTask(ev, func(task *taskstate.Task) error {
+			task.Block("verification " + strings.ToLower(status))
+			return nil
+		})
 		return false
 	}
 	if status != "FAIL" {
-		a.taskMu.Unlock()
 		return false
 	}
-	if a.task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {
-		a.task.Block("verification repeatedly failed")
-		_ = a.TaskStore.Save(a.task)
-		snapshot := cloneTask(a.task)
-		a.taskMu.Unlock()
-		emitTaskState(ev, snapshot)
+	a.taskMu.RLock()
+	tooMany := a.task != nil && a.task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures
+	a.taskMu.RUnlock()
+	if tooMany {
+		a.mutateTask(ev, func(task *taskstate.Task) error {
+			task.Block("verification repeatedly failed")
+			return nil
+		})
 		return false
 	}
-	a.task.NoteAttempt()
-	_ = a.task.SetStatus(taskstate.StatusWorking)
-	_ = a.TaskStore.Save(a.task)
-	snapshot := cloneTask(a.task)
-	a.taskMu.Unlock()
-	emitTaskState(ev, snapshot)
-	return true
+	return a.mutateTask(ev, func(task *taskstate.Task) error {
+		task.NoteAttempt()
+		return task.SetStatus(taskstate.StatusWorking)
+	})
 }
 
 // SetTaskSession switches durable task state with the chat session. Task state
@@ -101,20 +125,31 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) {
 		a.taskMu.Unlock()
 		return
 	}
+	var candidate *taskstate.Task
 	if a.task == nil || a.task.Status == taskstate.StatusDone || a.task.Status == taskstate.StatusBlocked {
 		task, ok, err := taskstate.NewFromPrompt(a.TaskSession, prompt)
 		if err != nil || !ok {
 			a.taskMu.Unlock()
 			return
 		}
-		a.task = task
+		candidate = task
+	} else {
+		candidate = cloneTask(a.task)
 	}
-	if a.task.Status == taskstate.StatusPlanning {
-		_ = a.task.SetStatus(taskstate.StatusWorking)
+	if candidate.Status == taskstate.StatusPlanning {
+		if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
+			a.taskMu.Unlock()
+			a.reportTaskUpdateError(ev, err)
+			return
+		}
 	}
-	a.task.NoteAttempt()
-	_ = a.TaskStore.Save(a.task)
-	snapshot := cloneTask(a.task)
+	candidate.NoteAttempt()
+	snapshot, err := a.persistTaskCandidateLocked(candidate)
+	if err != nil {
+		a.taskMu.Unlock()
+		a.reportTaskPersistenceError(ev, err)
+		return
+	}
 	a.taskMu.Unlock()
 	emitTaskState(ev, snapshot)
 }
@@ -143,19 +178,13 @@ func (a *Agent) taskPromptSuffix() string {
 }
 
 func (a *Agent) noteTaskChanged(path string, ev EventHandler) {
-	a.taskMu.Lock()
-	if a.task == nil {
-		a.taskMu.Unlock()
-		return
-	}
-	a.task.AddChangedFiles(path)
-	for current := a.task.Current(); current != nil && !strings.Contains(strings.ToLower(current.Description), "verif"); current = a.task.Current() {
-		a.task.Advance()
-	}
-	_ = a.TaskStore.Save(a.task)
-	snapshot := cloneTask(a.task)
-	a.taskMu.Unlock()
-	emitTaskState(ev, snapshot)
+	a.mutateTask(ev, func(task *taskstate.Task) error {
+		task.AddChangedFiles(path)
+		for current := task.Current(); current != nil && !strings.Contains(strings.ToLower(current.Description), "verif"); current = task.Current() {
+			task.Advance()
+		}
+		return nil
+	})
 }
 
 func (a *Agent) continueAfterDeferral(text string, round int, ev EventHandler) bool {
@@ -172,36 +201,25 @@ func (a *Agent) continueAfterDeferral(text string, round int, ev EventHandler) b
 	if !deferred {
 		return false
 	}
-	a.taskMu.Lock()
-	if a.task == nil {
-		a.taskMu.Unlock()
-		return false
-	}
-	decision := taskstate.ShouldContinue(a.task, taskstate.Signals{SafeNextAction: true})
-	if !decision.Continue {
-		a.taskMu.Unlock()
-		return false
-	}
-	a.task.NoteAttempt()
-	_ = a.TaskStore.Save(a.task)
-	snapshot := cloneTask(a.task)
-	a.taskMu.Unlock()
-	emitTaskState(ev, snapshot)
-	return true
+	return a.mutateTask(ev, func(task *taskstate.Task) error {
+		decision := taskstate.ShouldContinue(task, taskstate.Signals{SafeNextAction: true})
+		if !decision.Continue {
+			return errTaskMutationSkipped
+		}
+		task.NoteAttempt()
+		return nil
+	})
 }
 
 func (a *Agent) noteTaskVerification(output string, ev EventHandler) {
-	a.taskMu.Lock()
-	if a.task == nil || strings.TrimSpace(output) == "" {
-		a.taskMu.Unlock()
+	if strings.TrimSpace(output) == "" {
 		return
 	}
 	passed := verificationStatus(output) == "PASS"
-	a.task.AddVerification("verify", passed, output)
-	_ = a.TaskStore.Save(a.task)
-	snapshot := cloneTask(a.task)
-	a.taskMu.Unlock()
-	emitTaskState(ev, snapshot)
+	a.mutateTask(ev, func(task *taskstate.Task) error {
+		task.AddVerification("verify", passed, output)
+		return nil
+	})
 }
 
 func verificationStatus(output string) string {
@@ -215,65 +233,108 @@ func verificationStatus(output string) string {
 }
 
 func (a *Agent) blockDurableTask(reason string, ev EventHandler) {
-	a.taskMu.Lock()
-	if a.task == nil {
-		a.taskMu.Unlock()
-		return
-	}
-	a.task.Block(reason)
-	_ = a.TaskStore.Save(a.task)
-	snapshot := cloneTask(a.task)
-	a.taskMu.Unlock()
-	emitTaskState(ev, snapshot)
+	a.mutateTask(ev, func(task *taskstate.Task) error {
+		task.Block(reason)
+		return nil
+	})
 }
 
 func (a *Agent) finishDurableTask(changed []string, text, blocker string, ev EventHandler) {
-	a.taskMu.Lock()
-	if a.task == nil {
-		a.taskMu.Unlock()
-		return
-	}
-	a.task.AddChangedFiles(changed...)
-	if blocker != "" {
-		a.task.Block(blocker)
-	} else if a.task.Status == taskstate.StatusBlocked {
-		// Preserve the specific blocker recorded earlier in the turn.
-	} else if a.task.ConsecutiveVerificationFailures() > 0 {
-		if a.task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {
-			a.task.Block("verification repeatedly failed")
-		} else {
-			_ = a.task.SetStatus(taskstate.StatusWorking)
-		}
-	} else {
-		low := strings.ToLower(text)
-		if strings.Contains(low, "blocked:") || strings.Contains(low, "permission needed") {
-			a.task.Block("agent reported a blocker")
-		} else {
-			for a.task.Advance() {
+	a.mutateTask(ev, func(task *taskstate.Task) error {
+		task.AddChangedFiles(changed...)
+		if blocker != "" {
+			task.Block(blocker)
+		} else if task.Status == taskstate.StatusBlocked {
+			// Preserve the specific blocker recorded earlier in the turn.
+		} else if task.ConsecutiveVerificationFailures() > 0 {
+			if task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {
+				task.Block("verification repeatedly failed")
+			} else if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+				return err
 			}
-			_ = a.task.SetStatus(taskstate.StatusDone)
+		} else {
+			low := strings.ToLower(text)
+			if strings.Contains(low, "blocked:") || strings.Contains(low, "permission needed") {
+				task.Block("agent reported a blocker")
+			} else {
+				for task.Advance() {
+				}
+				if err := task.SetStatus(taskstate.StatusDone); err != nil {
+					return err
+				}
+			}
 		}
-	}
-	_ = a.TaskStore.Save(a.task)
-	snapshot := cloneTask(a.task)
-	a.taskMu.Unlock()
-	emitTaskState(ev, snapshot)
+		return nil
+	})
 }
 
 func (a *Agent) setTaskStatus(status taskstate.Status, ev EventHandler) {
+	a.mutateTask(ev, func(task *taskstate.Task) error {
+		if task.Status == status || task.Status == taskstate.StatusDone || task.Status == taskstate.StatusBlocked {
+			return errTaskMutationSkipped
+		}
+		return task.SetStatus(status)
+	})
+}
+
+// mutateTask applies a durable task update to an isolated candidate, persists
+// it, and only then publishes the candidate as the new in-memory state. A
+// failed Save therefore cannot produce a task snapshot that looks persisted;
+// the last successfully persisted state remains available for resume.
+func (a *Agent) mutateTask(ev EventHandler, mutate func(*taskstate.Task) error) bool {
+	if mutate == nil {
+		return false
+	}
 	a.taskMu.Lock()
-	if a.task == nil || a.task.Status == status || a.task.Status == taskstate.StatusDone || a.task.Status == taskstate.StatusBlocked {
+	if a.task == nil || a.TaskStore == nil {
 		a.taskMu.Unlock()
-		return
+		return false
 	}
-	if err := a.task.SetStatus(status); err != nil {
+	candidate := cloneTask(a.task)
+	if err := mutate(candidate); err != nil {
 		a.taskMu.Unlock()
-		return
+		if !errors.Is(err, errTaskMutationSkipped) {
+			a.reportTaskUpdateError(ev, err)
+		}
+		return false
 	}
-	_ = a.TaskStore.Save(a.task)
-	snapshot := cloneTask(a.task)
+	snapshot, err := a.persistTaskCandidateLocked(candidate)
+	if err != nil {
+		a.taskMu.Unlock()
+		a.reportTaskPersistenceError(ev, err)
+		return false
+	}
 	a.taskMu.Unlock()
 	emitTaskState(ev, snapshot)
+	return true
+}
+
+// persistTaskCandidateLocked is the single commit point for durable task
+// mutations. The caller must hold taskMu; no in-memory state or event snapshot
+// is changed until Save succeeds.
+func (a *Agent) persistTaskCandidateLocked(candidate *taskstate.Task) (*taskstate.Task, error) {
+	if candidate == nil || a.TaskStore == nil {
+		return nil, errors.New("durable task store is not configured")
+	}
+	if err := a.TaskStore.Save(candidate); err != nil {
+		return nil, err
+	}
+	a.task = candidate
+	return cloneTask(candidate), nil
+}
+
+func (a *Agent) reportTaskPersistenceError(ev EventHandler, err error) {
+	if ev == nil || err == nil {
+		return
+	}
+	ev.OnError(fmt.Errorf("durable task state was not saved: %w", err))
+}
+
+func (a *Agent) reportTaskUpdateError(ev EventHandler, err error) {
+	if ev == nil || err == nil {
+		return
+	}
+	ev.OnError(fmt.Errorf("durable task state update failed: %w", err))
 }
 
 func cloneTask(task *taskstate.Task) *taskstate.Task {

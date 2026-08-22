@@ -50,49 +50,93 @@ var (
 
 type logLine struct{ Kind, Text string }
 
-type permAskMsg perm.Request
-type logMsg logLine
-type taskProgressMsg struct{ task *taskstate.Task }
+type permAskMsg struct {
+	perm.Request
+	turnID    uint64
+	sessionID string
+}
+type logMsg struct {
+	Kind      string
+	Text      string
+	turnID    uint64
+	sessionID string
+}
+type taskProgressMsg struct {
+	task      *taskstate.Task
+	turnID    uint64
+	sessionID string
+}
 type doneMsg struct {
-	history []llm.Message
-	result  agent.Result
-	prompt  string
-	err     error
+	history   []llm.Message
+	result    agent.Result
+	prompt    string
+	err       error
+	turnID    uint64
+	sessionID string
 }
 
 type evolveMsg struct {
-	text string
+	text      string
+	turnID    uint64
+	sessionID string
 }
 
 type handler struct {
-	send   func(tea.Msg)
-	permCh chan perm.Decision
+	send      func(tea.Msg)
+	permCh    chan perm.Decision
+	turnID    uint64
+	sessionID string
+}
+
+// sendMsg tags every event emitted by a turn. A canceled turn can still
+// finish unwinding after the user starts another turn, so the model must be
+// able to discard those late events without changing current UI state.
+func (h *handler) sendMsg(msg tea.Msg) {
+	if h == nil || h.send == nil {
+		return
+	}
+	switch msg := msg.(type) {
+	case logMsg:
+		msg.turnID = h.turnID
+		msg.sessionID = h.sessionID
+		h.send(msg)
+	case permAskMsg:
+		msg.turnID = h.turnID
+		msg.sessionID = h.sessionID
+		h.send(msg)
+	case taskProgressMsg:
+		msg.turnID = h.turnID
+		msg.sessionID = h.sessionID
+		h.send(msg)
+	default:
+		h.send(msg)
+	}
 }
 
 func (h *handler) OnText(text string) {
 	if text == "" {
 		return
 	}
-	h.send(logMsg{Kind: "assistant", Text: text})
+	h.sendMsg(logMsg{Kind: "assistant", Text: text})
 }
 func (h *handler) OnTextDelta(delta string) {
-	h.send(logMsg{Kind: "assistant_delta", Text: delta})
+	h.sendMsg(logMsg{Kind: "assistant_delta", Text: delta})
 }
 func (h *handler) OnTextFinal(text string) {
-	h.send(logMsg{Kind: "assistant_final", Text: text})
+	h.sendMsg(logMsg{Kind: "assistant_final", Text: text})
 }
 func (h *handler) OnToolStart(call llm.ToolCall) {
-	h.send(logMsg{Kind: "tool", Text: "→  " + call.Name + "  " + clip(call.Arguments, 100)})
+	h.sendMsg(logMsg{Kind: "tool", Text: "→  " + call.Name + "  " + clip(call.Arguments, 100)})
 }
 func (h *handler) OnToolEnd(_ llm.ToolCall, result string, err error) {
 	if err != nil {
-		h.send(logMsg{Kind: "error", Text: "   " + err.Error()})
+		h.sendMsg(logMsg{Kind: "error", Text: "   " + err.Error()})
 		return
 	}
-	h.send(logMsg{Kind: "tool", Text: "   " + clip(result, 180)})
+	h.sendMsg(logMsg{Kind: "tool", Text: "   " + clip(result, 180)})
 }
 func (h *handler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error) {
-	h.send(permAskMsg(req))
+	h.sendMsg(permAskMsg{Request: req})
 	select {
 	case <-ctx.Done():
 		return perm.Deny, ctx.Err()
@@ -100,9 +144,9 @@ func (h *handler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.
 		return d, nil
 	}
 }
-func (h *handler) OnError(err error) { h.send(logMsg{Kind: "error", Text: err.Error()}) }
+func (h *handler) OnError(err error) { h.sendMsg(logMsg{Kind: "error", Text: err.Error()}) }
 func (h *handler) OnTaskState(task *taskstate.Task) {
-	h.send(taskProgressMsg{task: task})
+	h.sendMsg(taskProgressMsg{task: task})
 }
 
 type model struct {
@@ -116,6 +160,7 @@ type model struct {
 	busy      bool
 	perm      *perm.Request
 	h         *handler
+	turnID    uint64
 	width     int
 	height    int
 	cancel    context.CancelFunc
@@ -218,7 +263,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.submit(line)
 		}
 	case permAskMsg:
-		req := perm.Request(msg)
+		if !m.accepts(msg.turnID, msg.sessionID) {
+			return m, nil
+		}
+		req := msg.Request
 		m.perm = &req
 		body := req.Summary
 		if req.Hint != "" {
@@ -228,6 +276,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.layout()
 		return m, nil
 	case logMsg:
+		if !m.accepts(msg.turnID, msg.sessionID) {
+			return m, nil
+		}
 		if msg.Kind == "assistant_delta" {
 			n := len(m.lines)
 			if n > 0 && m.lines[n-1].Kind == "assistant" {
@@ -243,17 +294,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.lines = append(m.lines, logLine{Kind: "assistant", Text: msg.Text})
 			}
 		} else {
-			m.lines = append(m.lines, logLine(msg))
+			m.lines = append(m.lines, logLine{Kind: msg.Kind, Text: msg.Text})
 		}
 		m.refresh()
 		return m, nil
 	case taskProgressMsg:
+		if !m.accepts(msg.turnID, msg.sessionID) {
+			return m, nil
+		}
 		if msg.task != nil && msg.task.SessionID == m.sessionID {
 			m.task = msg.task
 			m.layout()
 		}
 		return m, nil
 	case doneMsg:
+		if !m.accepts(msg.turnID, msg.sessionID) {
+			return m, nil
+		}
 		m.busy = false
 		m.cancel = nil
 		if msg.history != nil {
@@ -269,10 +326,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refresh()
 		var cmds []tea.Cmd
 		if msg.err == nil {
-			cmds = append(cmds, m.reflectCmd(msg.prompt, msg.result))
+			cmds = append(cmds, m.reflectCmd(msg.prompt, msg.result, msg.turnID, msg.sessionID))
 		}
 		return m, tea.Batch(cmds...)
 	case evolveMsg:
+		if !m.accepts(msg.turnID, msg.sessionID) {
+			return m, nil
+		}
 		if msg.text != "" {
 			m.lines = append(m.lines, logLine{Kind: "system", Text: msg.text})
 			m.refresh()
@@ -288,7 +348,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+// accepts reports whether an event belongs to the currently visible turn and
+// session. Zero IDs are accepted for direct, untagged model messages used by
+// local callers and backwards-compatible tests; all real agent events are
+// tagged by handler.sendMsg.
+func (m *model) accepts(turnID uint64, sessionID string) bool {
+	if turnID == 0 && sessionID == "" {
+		return true
+	}
+	return turnID == m.turnID && sessionID == m.sessionID
+}
+
 func (m *model) decide(d perm.Decision) {
+	if m.h == nil {
+		return
+	}
 	select {
 	case m.h.permCh <- d:
 	default:
@@ -324,12 +398,20 @@ func (m *model) stop() {
 		m.cancel()
 		m.cancel = nil
 	}
-	select {
-	case m.h.permCh <- perm.Deny:
-	default:
+	if m.h != nil {
+		permCh := m.h.permCh
+		m.h.permCh = nil
+		select {
+		case permCh <- perm.Deny:
+		default:
+		}
 	}
 	m.perm = nil
 	m.busy = false
+	// Invalidate events already queued by the canceled turn. The next turn
+	// receives a later ID, so a late done/log/task event cannot clear or
+	// overwrite its state.
+	m.turnID++
 }
 
 func (m *model) autoApplyPrompt(prompt string) {
@@ -366,11 +448,22 @@ func (m *model) submit(line string) tea.Cmd {
 
 func (m *model) runAgent(prompt string) tea.Cmd {
 	m.busy = true
+	m.turnID++
+	turnID := m.turnID
+	sessionID := m.sessionID
 	if !strings.HasPrefix(prompt, "/") {
 		m.lines = append(m.lines, logLine{Kind: "user", Text: prompt})
 		m.refresh()
 	}
-	h := m.h
+	permCh := make(chan perm.Decision, 1)
+	if m.h != nil {
+		m.h.permCh = permCh
+	}
+	var send func(tea.Msg)
+	if m.h != nil {
+		send = m.h.send
+	}
+	h := &handler{send: send, permCh: permCh, turnID: turnID, sessionID: sessionID}
 	ag := m.ag
 	hist := m.history
 	ctx, cancel := context.WithCancel(context.Background())
@@ -381,11 +474,11 @@ func (m *model) runAgent(prompt string) tea.Cmd {
 			_ = goal.Clear(ag.CFG.Workspace)
 			ag.Goal = ""
 		}
-		return doneMsg{history: hist, result: res, prompt: prompt, err: err}
+		return doneMsg{history: hist, result: res, prompt: prompt, err: err, turnID: turnID, sessionID: sessionID}
 	}
 }
 
-func (m *model) reflectCmd(prompt string, result agent.Result) tea.Cmd {
+func (m *model) reflectCmd(prompt string, result agent.Result, turnID uint64, sessionID string) tea.Cmd {
 	ws := m.cfg.Workspace
 	ag := m.ag
 	cfg := m.cfg
@@ -400,7 +493,7 @@ func (m *model) reflectCmd(prompt string, result agent.Result) tea.Cmd {
 			Verified:      result.Verified,
 		}
 		if !evolve.WorthReflecting(sig) {
-			return evolveMsg{}
+			return evolveMsg{turnID: turnID, sessionID: sessionID}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
@@ -411,18 +504,17 @@ func (m *model) reflectCmd(prompt string, result agent.Result) tea.Cmd {
 		model := evolve.LightModel(cfg.Model, cfg.RouterEcosystem(), cfg.FableAllowed())
 		delta, err := evolve.Reflect(ctx, client, model, sig)
 		if err != nil || delta.Message == "" {
-			return evolveMsg{}
+			return evolveMsg{turnID: turnID, sessionID: sessionID}
 		}
 		app.RefreshMemory(ag, ws)
-		return evolveMsg{text: delta.Message}
+		return evolveMsg{text: delta.Message, turnID: turnID, sessionID: sessionID}
 	}
 }
 
 func (m *model) slashLocal(payload string) tea.Cmd {
 	switch {
 	case payload == "clear":
-		m.history = nil
-		m.lines = []logLine{{Kind: "system", Text: "cleared"}}
+		m.startNewSession("cleared")
 	case payload == "compact":
 		if len(m.history) > 16 {
 			head := m.history[0]
@@ -458,6 +550,7 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		}
 		m.lines = append(m.lines, logLine{Kind: "system", Text: text})
 	case payload == "resume":
+		m.stop()
 		if prev, err := session.Latest(m.cfg.Workspace); err == nil {
 			m.history = prev.Messages
 			m.sessionID = prev.ID
@@ -588,13 +681,35 @@ func (m *model) slash(line string) tea.Cmd {
 		_ = config.Save(m.cfg)
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "provider: " + string(m.cfg.Provider) + "  model: " + m.cfg.Model})
 	case "/reset":
-		m.history = nil
-		m.lines = []logLine{{Kind: "system", Text: "new session"}}
+		m.startNewSession("new session")
 	default:
 		m.lines = append(m.lines, logLine{Kind: "error", Text: "unknown command " + cmd + "  (try /help)"})
 	}
 	m.refresh()
 	return nil
+}
+
+// startNewSession drops the current chat and durable execution state before
+// assigning a fresh session ID. A canceled turn may still emit late events,
+// so stop invalidates its turn ID before the session switch.
+func (m *model) startNewSession(message string) {
+	m.stop()
+	previous := m.sessionID
+	next := session.New(m.cfg.Workspace).ID
+	if next == previous {
+		// Session.New intentionally uses second precision. Ensure a rapid
+		// /clear followed by /reset cannot reopen the current task state.
+		next = fmt.Sprintf("%s-%d", next, time.Now().UnixNano())
+	}
+	m.history = nil
+	m.sessionID = next
+	if m.ag != nil {
+		m.ag.SetTaskSession(m.sessionID)
+		m.task = m.ag.TaskSnapshot()
+	} else {
+		m.task = nil
+	}
+	m.lines = []logLine{{Kind: "system", Text: message}}
 }
 
 func (m *model) layout() {

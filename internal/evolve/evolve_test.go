@@ -130,6 +130,42 @@ func TestPromptBudgetAndRelevance(t *testing.T) {
 	}
 }
 
+func TestVerificationTargetsUseRelevantPlaybookPathsOnly(t *testing.T) {
+	now := time.Now().UTC()
+	s := Store{Workspace: "/tmp/x", Playbooks: []Playbook{
+		{
+			ID: "auth", Title: "Auth changes", Class: "auth", Hits: 4,
+			Body:      "go test ./internal/auth then go test ./internal/session; go vet ./...",
+			CreatedAt: now, UpdatedAt: now,
+		},
+		{
+			ID: "js", Title: "Frontend changes", Class: "js", Hits: 1,
+			Body: "npm test ./web/components", CreatedAt: now, UpdatedAt: now,
+		},
+	}}
+	got := VerificationTargets(s, "fix the auth token bug")
+	want := []string{"internal/auth", "internal/session"}
+	if len(got) != len(want) {
+		t.Fatalf("targets=%v want=%v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("targets=%v want=%v", got, want)
+		}
+	}
+}
+
+func TestVerificationTargetsSkipUnsafeOrNonPathTokens(t *testing.T) {
+	s := Store{Playbooks: []Playbook{{
+		Title: "Go", Body: "go test ./... go test ./internal/auth, https://example.test/x ../outside ./internal/auth/",
+		Hits: 3,
+	}}}
+	got := VerificationTargets(s, "go auth")
+	if len(got) != 1 || got[0] != "internal/auth" {
+		t.Fatalf("targets=%v", got)
+	}
+}
+
 func TestWorthReflecting(t *testing.T) {
 	if WorthReflecting(Signal{UserPrompt: "hi"}) {
 		t.Fatal("tiny turn should skip")
@@ -158,10 +194,10 @@ func TestHeuristicReflectGo(t *testing.T) {
 
 func TestHeuristicSkipsTrivialMarkerGoals(t *testing.T) {
 	out := heuristicReflect(Signal{
-		GoalDone:      true,
-		UserPrompt:    "Create file .picogent_qa_probe.txt with exactly qa_probe",
-		FilesChanged:  []string{".picogent_qa_probe.txt"},
-		ToolRounds:    1,
+		GoalDone:     true,
+		UserPrompt:   "Create file .picogent_qa_probe.txt with exactly qa_probe",
+		FilesChanged: []string{".picogent_qa_probe.txt"},
+		ToolRounds:   1,
 	})
 	if !out.Skip {
 		t.Fatalf("dotfile probe goals must not create playbooks: %+v", out)
