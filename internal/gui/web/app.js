@@ -44,6 +44,15 @@ const activityList = $("activity-list");
 const extRecsEl = $("ext-recs");
 const extToastsEl = $("ext-toasts");
 const permTitle = $("perm-title");
+const taskProgressEl = $("task-progress");
+const taskStatusEl = $("task-progress-status");
+const taskGoalEl = $("task-progress-goal");
+const taskMetaEl = $("task-progress-meta");
+const taskStepsEl = $("task-progress-steps");
+const taskBlockedEl = $("task-progress-blocked");
+const taskFilesBtn = $("task-progress-files");
+const taskActivityBtn = $("task-progress-activity");
+const taskAnnouncerEl = $("task-progress-announcer");
 let threadsCache = [];
 let chatsOpen = false;
 let sideOpen = false;
@@ -65,7 +74,10 @@ let slashItems = [];
 let slashIndex = 0;
 let reviewOpen = false;
 let reviewFile = "";
+let reviewReturnFocus = null;
 let highlight = { start: 0, end: 0 };
+let activeTask = null;
+let taskAnnouncementKey = "";
 
 const REF_RE = /([`']?)((?:[\w.-]+\/)+[\w.-]+\.[a-zA-Z0-9]+)\1:(\d+)(?:-(\d+))?/g;
 const LINE_RE = /(?:^|\s)(?:line|L)\s*(\d+)(?:\s*[-–]\s*(\d+))?/gi;
@@ -95,6 +107,157 @@ function resetReasoning() {
   reasoningEl.innerHTML = "";
   renderChangesPanel();
 }
+
+const TASK_STATUS_LABELS = Object.freeze({
+  planning: "Planning",
+  working: "Working",
+  verifying: "Verifying",
+  blocked: "Blocked",
+  done: "Done",
+});
+
+function clearTaskProgress() {
+  activeTask = null;
+  taskAnnouncementKey = "";
+  taskProgressEl.hidden = true;
+  taskProgressEl.removeAttribute("data-status");
+  taskGoalEl.textContent = "";
+  taskMetaEl.textContent = "";
+  taskMetaEl.hidden = true;
+  taskStepsEl.replaceChildren();
+  taskBlockedEl.textContent = "";
+  taskBlockedEl.hidden = true;
+  taskFilesBtn.textContent = "Changed files";
+  taskFilesBtn.disabled = true;
+  taskAnnouncerEl.textContent = "";
+}
+
+function taskStepState(task, step, index) {
+  if (step.done) return "Done";
+  if (index === task.current_step) return "Current";
+  return "Queued";
+}
+
+function announceTaskProgress(task, statusLabel) {
+  const currentStep = Number.isInteger(task.current_step) ? task.current_step : 0;
+  const key = [task.session_id, task.id, task.status, currentStep].join(":");
+  if (key === taskAnnouncementKey) return;
+  taskAnnouncementKey = key;
+
+  const step = task.steps?.[currentStep];
+  let message = statusLabel + ".";
+  if (step?.description) message += " Current step: " + step.description;
+  else if (task.status === "done") message += " All recorded steps complete.";
+  taskAnnouncerEl.textContent = message;
+}
+
+function renderTaskProgress(task, sourceSession) {
+  if (sourceSession && sourceSession !== sessionId) return;
+  if (!task) {
+    clearTaskProgress();
+    return;
+  }
+  if (!task.session_id || task.session_id !== sessionId) return;
+
+  activeTask = task;
+  const status = String(task.status || "planning");
+  const statusLabel = TASK_STATUS_LABELS[status] || status;
+  const steps = Array.isArray(task.steps) ? task.steps : [];
+  const currentStep = Number.isInteger(task.current_step) ? task.current_step : 0;
+  const changedFiles = Array.isArray(task.changed_files) ? task.changed_files : [];
+
+  taskProgressEl.hidden = false;
+  taskProgressEl.dataset.status = status;
+  taskStatusEl.textContent = statusLabel;
+  taskGoalEl.textContent = task.goal || "";
+
+  const meta = [];
+  if (steps.length) meta.push(Math.min(currentStep, steps.length) + " of " + steps.length + " steps");
+  if (task.attempts > 0) meta.push("attempt " + task.attempts);
+  taskMetaEl.textContent = meta.join(" · ");
+  taskMetaEl.hidden = meta.length === 0;
+
+  const stepNodes = steps.map((step, index) => {
+    const item = document.createElement("li");
+    const state = taskStepState(task, step, index);
+    item.className = "task-progress-step" + (step.done ? " is-done" : index === currentStep ? " is-current" : "");
+    if (!step.done && index === currentStep) item.setAttribute("aria-current", "step");
+
+    const marker = document.createElement("span");
+    marker.className = "task-progress-marker";
+    marker.setAttribute("aria-hidden", "true");
+    marker.textContent = step.done ? "✓" : String(index + 1);
+
+    const description = document.createElement("span");
+    description.className = "task-progress-description";
+    description.textContent = step.description || "";
+
+    const stateEl = document.createElement("span");
+    stateEl.className = "task-progress-step-state";
+    stateEl.textContent = state;
+
+    item.appendChild(marker);
+    item.appendChild(description);
+    item.appendChild(stateEl);
+    return item;
+  });
+  taskStepsEl.replaceChildren(...stepNodes);
+  taskStepsEl.hidden = stepNodes.length === 0;
+
+  taskBlockedEl.textContent = task.blocked_by ? "Blocked: " + task.blocked_by : "";
+  taskBlockedEl.hidden = !task.blocked_by;
+
+  taskFilesBtn.textContent = "Changed files (" + changedFiles.length + ")";
+  taskFilesBtn.disabled = changedFiles.length === 0;
+  announceTaskProgress(task, statusLabel);
+}
+
+function renderTaskChangedFiles(files) {
+  changesList.replaceChildren();
+  changesSummary.textContent = files.length + " changed file" + (files.length === 1 ? "" : "s") + " in this task";
+  for (const file of files) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "change-row";
+    const path = document.createElement("span");
+    path.className = "change-path";
+    path.textContent = file;
+    row.appendChild(path);
+    row.onclick = () => {
+      showReviewTab("review");
+      openReview(file, 0, 0, "Changed in this task");
+    };
+    changesList.appendChild(row);
+  }
+}
+
+function syncTaskActivityButton() {
+  const expanded = reviewOpen && !$("panel-activity").hidden;
+  taskActivityBtn.setAttribute("aria-expanded", expanded ? "true" : "false");
+  taskActivityBtn.textContent = expanded ? "Hide activity" : "Show activity";
+}
+
+taskFilesBtn.onclick = () => {
+  const files = Array.isArray(activeTask?.changed_files) ? activeTask.changed_files : [];
+  if (!files.length) return;
+  reviewReturnFocus = taskFilesBtn;
+  setReviewOpen(true);
+  showReviewTab("changes");
+  renderTaskChangedFiles(files);
+  $("tab-changes").focus();
+};
+
+taskActivityBtn.onclick = () => {
+  const isOpen = reviewOpen && !$("panel-activity").hidden;
+  if (isOpen) {
+    setReviewOpen(false);
+    return;
+  }
+  reviewReturnFocus = taskActivityBtn;
+  setReviewOpen(true);
+  showReviewTab("activity");
+  $("tab-activity").focus();
+};
 
 function ensureActivityPanel() {
   if (activityPanel) return activityPanel;
@@ -301,12 +464,16 @@ function renderChangesPanel() {
 
 function showReviewTab(tab) {
   document.querySelectorAll(".review-tab").forEach((b) => {
-    b.classList.toggle("is-on", b.dataset.tab === tab);
+    const selected = b.dataset.tab === tab;
+    b.classList.toggle("is-on", selected);
+    b.setAttribute("aria-selected", selected ? "true" : "false");
+    b.tabIndex = selected ? 0 : -1;
   });
   $("panel-review").hidden = tab !== "review";
   $("panel-changes").hidden = tab !== "changes";
   if ($("panel-activity")) $("panel-activity").hidden = tab !== "activity";
   if (tab === "activity") refreshActivity();
+  syncTaskActivityButton();
 }
 
 async function refreshActivity() {
@@ -343,6 +510,15 @@ async function refreshActivity() {
 
 document.querySelectorAll(".review-tab").forEach((b) => {
   b.onclick = () => showReviewTab(b.dataset.tab);
+  b.onkeydown = (e) => {
+    if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+    e.preventDefault();
+    const tabs = [...document.querySelectorAll(".review-tab")];
+    const offset = e.key === "ArrowRight" ? 1 : -1;
+    const next = tabs[(tabs.indexOf(b) + offset + tabs.length) % tabs.length];
+    showReviewTab(next.dataset.tab);
+    next.focus();
+  };
 });
 
 async function loadProjects() {
@@ -370,6 +546,7 @@ async function loadProjects() {
 }
 
 async function applyProjectSwitch(data) {
+  clearTaskProgress();
   sessionId = data.session_id || sessionId;
   if (data.messages) replayMessages(data.messages);
   else clearLog();
@@ -434,6 +611,12 @@ function setReviewOpen(on) {
   shell.classList.toggle("review-open", on);
   if (on) setSideOpen(false);
   syncScrim();
+  syncTaskActivityButton();
+  if (!on && reviewReturnFocus) {
+    const target = reviewReturnFocus;
+    reviewReturnFocus = null;
+    if (target.isConnected) target.focus();
+  }
 }
 
 function setSideOpen(on) {
@@ -729,10 +912,11 @@ async function loadThread(id) {
     })
   ).json();
   if (epoch !== viewEpoch) return;
+  clearTaskProgress();
   sessionId = data.id;
   replayMessages(data.messages || []);
   setChatsOpen(false);
-  await loadThreads();
+  await refresh();
 }
 
 async function newChat() {
@@ -750,6 +934,7 @@ async function newChat() {
     })
   ).json();
   if (epoch !== viewEpoch) return;
+  clearTaskProgress();
   sessionId = data.id;
   clearLog();
   // Starter hero is inside #empty — force it visible before prompts paint.
@@ -760,6 +945,7 @@ async function newChat() {
   try {
     const s = await (await fetch("/api/state")).json();
     if (epoch !== viewEpoch) return;
+    renderTaskProgress(s.task, s.session_id);
     renderOverview({ ...(s.overview || {}), evolve: s.evolve });
     renderAuthBanner(s.auth);
   } catch (_) {}
@@ -801,6 +987,7 @@ async function refresh() {
     evolve: s.evolve,
   });
   renderContext(s.context);
+  renderTaskProgress(s.task, s.session_id);
   if (s.pending_perm) {
     showPermission(s.pending_perm);
   } else if (!s.busy) {
@@ -1670,6 +1857,14 @@ function connectEvents() {
     if (e.type === "hello") {
       ready = true;
       sendBtn.disabled = !ready;
+      return;
+    }
+    if (e.type === "task_progress") {
+      const hasTaskEnvelope = Object.prototype.hasOwnProperty.call(e, "task");
+      const task = hasTaskEnvelope ? e.task : e;
+      const eventSession = task?.session_id || e.session_id || "";
+      if (!eventSession || eventSession !== sessionId) return;
+      renderTaskProgress(task, eventSession);
       return;
     }
     if (e.type === "permission") {

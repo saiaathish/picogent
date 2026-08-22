@@ -21,6 +21,7 @@ import (
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/slash"
+	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
 var (
@@ -51,6 +52,7 @@ type logLine struct{ Kind, Text string }
 
 type permAskMsg perm.Request
 type logMsg logLine
+type taskProgressMsg struct{ task *taskstate.Task }
 type doneMsg struct {
 	history []llm.Message
 	result  agent.Result
@@ -99,6 +101,9 @@ func (h *handler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.
 	}
 }
 func (h *handler) OnError(err error) { h.send(logMsg{Kind: "error", Text: err.Error()}) }
+func (h *handler) OnTaskState(task *taskstate.Task) {
+	h.send(taskProgressMsg{task: task})
+}
 
 type model struct {
 	cfg       config.Config
@@ -114,6 +119,7 @@ type model struct {
 	width     int
 	height    int
 	cancel    context.CancelFunc
+	task      *taskstate.Task
 }
 
 func Run() error {
@@ -142,6 +148,7 @@ func newModel(cfg config.Config, a *agent.Agent) *model {
 	m := &model{cfg: cfg, ag: a, ta: ta, vp: vp, h: h, sessionID: session.New(cfg.Workspace).ID}
 	if a != nil {
 		a.SetTaskSession(m.sessionID)
+		m.task = a.TaskSnapshot()
 	}
 	m.lines = []logLine{{Kind: "system", Text: greeting(cfg, a)}}
 	if err := cfg.MissingAuth(); err != nil {
@@ -240,12 +247,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refresh()
 		return m, nil
+	case taskProgressMsg:
+		if msg.task != nil && msg.task.SessionID == m.sessionID {
+			m.task = msg.task
+			m.layout()
+		}
+		return m, nil
 	case doneMsg:
 		m.busy = false
 		m.cancel = nil
 		if msg.history != nil {
 			m.history = msg.history
 			_ = session.SaveMessages(m.cfg.Workspace, m.sessionID, m.history)
+		}
+		if msg.result.Task != nil && msg.result.Task.SessionID == m.sessionID {
+			m.task = msg.result.Task
 		}
 		if msg.err != nil && !strings.Contains(strings.ToLower(msg.err.Error()), "context canceled") {
 			m.lines = append(m.lines, logLine{Kind: "error", Text: msg.err.Error()})
@@ -446,6 +462,7 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 			m.history = prev.Messages
 			m.sessionID = prev.ID
 			m.ag.SetTaskSession(prev.ID)
+			m.task = m.ag.TaskSnapshot()
 			m.lines = append(m.lines, logLine{Kind: "system", Text: "resumed " + prev.ID})
 		} else {
 			m.lines = append(m.lines, logLine{Kind: "error", Text: "no saved session"})
@@ -582,6 +599,9 @@ func (m *model) slash(line string) tea.Cmd {
 
 func (m *model) layout() {
 	headerH, permH, inputH := 2, 0, 6
+	if formatTaskProgress(m.task) != "" {
+		headerH++
+	}
 	if m.perm != nil {
 		permH = 6
 	}
@@ -641,6 +661,10 @@ func (m *model) View() string {
 	}
 	head := lipgloss.JoinHorizontal(lipgloss.Center, left, "  ", right)
 	ws := metaStyle.Render(clip(m.cfg.Workspace, max(20, m.width-4)))
+	taskProgress := ""
+	if text := formatTaskProgress(m.task); text != "" {
+		taskProgress = metaStyle.Render(clip(text, max(20, m.width-4)))
+	}
 	body := m.vp.View()
 	permBox := ""
 	if m.perm != nil {
@@ -655,7 +679,37 @@ func (m *model) View() string {
 		help = "working…  ctrl-c stops this turn"
 	}
 	box := inputBox.Width(max(m.width-2, 20)).Render(m.ta.View())
-	return lipgloss.JoinVertical(lipgloss.Left, head, ws, "", body, permBox, box, helpStyle.Render(help))
+	sections := []string{head, ws}
+	if taskProgress != "" {
+		sections = append(sections, taskProgress)
+	}
+	sections = append(sections, "", body, permBox, box, helpStyle.Render(help))
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+func formatTaskProgress(task *taskstate.Task) string {
+	if task == nil {
+		return ""
+	}
+	done := 0
+	for _, step := range task.Steps {
+		if step.Done {
+			done++
+		}
+	}
+	detail := "complete"
+	if task.Status == taskstate.StatusBlocked && strings.TrimSpace(task.BlockedBy) != "" {
+		detail = "blocked: " + strings.TrimSpace(task.BlockedBy)
+	} else if task.CurrentStep >= 0 && task.CurrentStep < len(task.Steps) {
+		detail = task.Steps[task.CurrentStep].Description
+	} else if task.Status != taskstate.StatusDone {
+		detail = task.Goal
+	}
+	files := "files"
+	if len(task.ChangedFiles) == 1 {
+		files = "file"
+	}
+	return fmt.Sprintf("task · %s · %d/%d · %s · %d %s", task.Status, done, len(task.Steps), detail, len(task.ChangedFiles), files)
 }
 
 func clip(s string, n int) string {

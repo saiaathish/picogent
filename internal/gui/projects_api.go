@@ -10,12 +10,14 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/folderpick"
 	"github.com/saiaathish/picogent/internal/projects"
+	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
 type projectSwitchResult struct {
-	Project   projects.Project  `json:"project"`
-	SessionID string            `json:"session_id"`
-	Messages  []transcriptLine  `json:"messages"`
+	Project   projects.Project `json:"project"`
+	SessionID string           `json:"session_id"`
+	Messages  []transcriptLine `json:"messages"`
+	Task      *taskstate.Task  `json:"task"`
 }
 
 func (s *server) writeProjectSwitch(w http.ResponseWriter, p projects.Project, res projectSwitchResult) {
@@ -26,6 +28,7 @@ func (s *server) writeProjectSwitch(w http.ResponseWriter, p projects.Project, r
 		"path":       p.Path,
 		"session_id": res.SessionID,
 		"messages":   res.Messages,
+		"task":       res.Task,
 	})
 }
 
@@ -130,8 +133,10 @@ func (s *server) switchWorkspace(path string) (projectSwitchResult, error) {
 	}
 
 	sessID, hist := initialSession(path)
+	a.SetTaskSession(sessID)
 
 	s.mu.Lock()
+	s.abortTurnLocked()
 	s.cfg = cfg
 	s.ag = a
 	s.hist = hist
@@ -141,12 +146,14 @@ func (s *server) switchWorkspace(path string) (projectSwitchResult, error) {
 	_ = config.Save(cfg)
 	_, _, _ = projects.Ensure(path)
 	s.emit(event{Type: "system", Text: "Opened " + projects.NameFromPath(path)})
+	s.emitTaskSnapshot(sessID)
 	s.emit(event{Type: "overview", Text: "refresh"})
 	s.invalidatePromptRecs()
 	s.emit(event{Type: "prompts_refresh", Text: "all"})
 	return projectSwitchResult{
 		SessionID: sessID,
 		Messages:  messagesToTranscript(hist),
+		Task:      a.TaskSnapshot(),
 	}, nil
 }
 
