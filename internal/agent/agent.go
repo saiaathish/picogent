@@ -12,6 +12,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 	"github.com/saiaathish/picogent/internal/trace"
 )
@@ -65,6 +66,7 @@ type Result struct {
 	Context      ctxmgr.Stats
 	GoalDone     bool
 	Verified     string
+	Task         *taskstate.Task
 }
 
 type Agent struct {
@@ -78,6 +80,10 @@ type Agent struct {
 	TaskMode     TaskMode
 	Goal         string
 	Trace        *trace.Log
+	TaskStore    *taskstate.Store
+	TaskSession  string
+	taskMu       sync.RWMutex
+	task         *taskstate.Task
 }
 
 func New(cfg config.Config, client llm.Client, reg *tools.Registry, gate *perm.Gate) *Agent {
@@ -114,6 +120,9 @@ func (a *Agent) systemPrompt(userHint string) string {
 	if suffix := goal.PromptSuffix(a.Goal); suffix != "" {
 		p += suffix
 	}
+	if suffix := a.taskPromptSuffix(); suffix != "" {
+		p += suffix
+	}
 	return p
 }
 
@@ -130,6 +139,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	a.Gate.Prompt = ev.OnNeedPermission
 
 	userText := strings.TrimSpace(user.Content)
+	a.beginDurableTask(userText)
 	// Always refresh the system prompt so mid-chat task mode / goal changes take effect.
 	msgs := make([]llm.Message, 0, len(history)+3)
 	msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt(userText)})
@@ -149,6 +159,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	changed := map[string]struct{}{}
 	lastToolKind := ""
 	calledVerify := false
+	taskBlocker := ""
 
 	for round := 0; round < a.CFG.MaxToolRounds; round++ {
 		if r, ok := a.LLM.(*llm.Router); ok {
@@ -185,6 +196,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 
 		if len(msg.ToolCalls) == 0 {
 			text := strings.TrimSpace(msg.Content)
+			if a.continueAfterDeferral(text, round) {
+				msgs = append(msgs, llm.Message{Role: "system", Content: durableContinuePrompt})
+				continue
+			}
 			for p := range changed {
 				res.FilesChanged = append(res.FilesChanged, p)
 			}
@@ -208,7 +223,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			res.ToolRounds = round
 			res.GoalDone = goal.LooksComplete(text)
 			res.Verified = a.maybeVerify(ctx, ev, len(changed) > 0, calledVerify)
+			a.finishDurableTask(res.FilesChanged, res.Verified, text, taskBlocker)
+			res.Task = a.TaskSnapshot()
 			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
+			msgs = stripDurableInternal(msgs)
 			final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
 			res.Context = stats
 			return final, res, nil
@@ -249,6 +267,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 				return msgs, res, err
 			}
 			if dec == perm.Deny {
+				taskBlocker = "permission needed"
 				ev.OnToolEnd(call, "denied by user", nil)
 				pending = append(pending, executed{call: call, req: req, text: "denied by user"})
 				continue
@@ -280,9 +299,13 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		wg.Wait()
 
 		for _, ex := range pending {
+			if ex.call.Name == "verify" {
+				a.noteTaskVerification(ex.text)
+			}
 			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
 					changed[p] = struct{}{}
+					a.noteTaskChanged(p)
 				}
 			}
 			content := ex.text
@@ -300,7 +323,10 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		res.Context = stats
 	}
 	err := fmt.Errorf("stopped after %d tool rounds (limit)", a.CFG.MaxToolRounds)
+	a.blockDurableTask("task budget exhausted")
+	res.Task = a.TaskSnapshot()
 	ev.OnError(err)
+	msgs = stripDurableInternal(msgs)
 	final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
 	res.Context = stats
 	return final, res, err

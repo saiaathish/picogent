@@ -19,6 +19,8 @@ import (
 	"github.com/saiaathish/picogent/internal/opencodeauth"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/projectctx"
+	"github.com/saiaathish/picogent/internal/projects"
+	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 )
 
@@ -65,6 +67,9 @@ func Build(cfg config.Config) (*agent.Agent, error) {
 	gate := perm.New(cfg.Mode, cfg.Workspace, nil)
 	gate.SetAlwaysAllowed(cfg.Extensions.AlwaysAllowTools)
 	a := agent.New(cfg, client, reg, gate)
+	if root, err := config.Dir(); err == nil {
+		a.TaskStore = taskstate.NewStore(filepath.Join(root, "tasks", projects.IDForPath(cfg.Workspace)))
+	}
 	a.ProjectRules = projectctx.Load(cfg.Workspace)
 	skills := extensions.LoadDeveloperExtensions(cfg.Extensions.InstalledSkills)
 	a.SkillRules = extensions.SkillsPrompt(skills)
