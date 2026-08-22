@@ -70,6 +70,7 @@ type server struct {
 	permCh      chan perm.Decision
 	subs        []chan event
 	busy        bool
+	activeTurns int
 	cancel      context.CancelFunc
 	steerMu     sync.Mutex
 	steerPrompt string
@@ -277,28 +278,28 @@ func (s *server) snapshot() map[string]any {
 	// Auto-refresh CLI model catalogs whenever the chat UI loads state (model picker).
 	llm.RefreshCLIModels(false)
 	out := map[string]any{
-		"mode":          cfg.Mode,
-		"task_mode":     string(taskMode),
-		"model":         cfg.DisplayModel(),
-		"workspace":     cfg.Workspace,
-		"provider":      cfg.Provider,
-		"codex":         cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
-		"codex_cli":     codexauth.LoggedIn(),
-		"quadcode":      cfg.Provider == config.ProviderQuadCode && (cfg.AnthropicKeyResolved() != "" || claudeauth.LoggedIn()),
-		"claude_cli":    claudeauth.LoggedIn(),
-		"opencode":      cfg.Provider == config.ProviderOpenCode && opencodeauth.LoggedIn(),
-		"opencode_cli":  opencodeauth.LoggedIn(),
-		"antigravity":   cfg.Provider == config.ProviderAntigravity && agyauth.LoggedIn(),
+		"mode":            cfg.Mode,
+		"task_mode":       string(taskMode),
+		"model":           cfg.DisplayModel(),
+		"workspace":       cfg.Workspace,
+		"provider":        cfg.Provider,
+		"codex":           cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
+		"codex_cli":       codexauth.LoggedIn(),
+		"quadcode":        cfg.Provider == config.ProviderQuadCode && (cfg.AnthropicKeyResolved() != "" || claudeauth.LoggedIn()),
+		"claude_cli":      claudeauth.LoggedIn(),
+		"opencode":        cfg.Provider == config.ProviderOpenCode && opencodeauth.LoggedIn(),
+		"opencode_cli":    opencodeauth.LoggedIn(),
+		"antigravity":     cfg.Provider == config.ProviderAntigravity && agyauth.LoggedIn(),
 		"antigravity_cli": agyauth.LoggedIn(),
-		"busy":          busy,
-		"hint":          hint,
-		"auth":          setup.ProviderAuthPrompt(cfg),
-		"setup":         !cfg.SetupComplete,
-		"mcp_tools":     mcpToolCount(ag),
-		"session_id":    sessionID,
-		"router":        s.routerSnapshot(),
-		"model_options": llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
-		"slash":         slash.Catalog(cfg.Workspace),
+		"busy":            busy,
+		"hint":            hint,
+		"auth":            setup.ProviderAuthPrompt(cfg),
+		"setup":           !cfg.SetupComplete,
+		"mcp_tools":       mcpToolCount(ag),
+		"session_id":      sessionID,
+		"router":          s.routerSnapshot(),
+		"model_options":   llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
+		"slash":           slash.Catalog(cfg.Workspace),
 	}
 	if store, err := learn.Load(cfg.Workspace); err == nil {
 		out["overview"] = store
@@ -726,6 +727,7 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 		return
 	}
 	s.busy = true
+	s.activeTurns++
 	hist := s.hist
 	s.turnGen++
 	myGen := s.turnGen
@@ -741,6 +743,7 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 				fmt.Fprintf(os.Stderr, "picogent: agent panic: %v\n", rec)
 			}
 			s.mu.Lock()
+			s.activeTurns--
 			live := s.turnGen == myGen
 			if live {
 				s.busy = false
@@ -1016,6 +1019,25 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 			}
 			s.emit(event{Type: "system", Text: msg})
 			s.emit(contextEvent(stats))
+		case "undo":
+			s.mu.Lock()
+			if s.busy || s.activeTurns > 0 {
+				s.mu.Unlock()
+				s.emit(event{Type: "error", Text: "cannot undo while a turn is running; wait for it to finish or stop it first"})
+				break
+			}
+			if s.ag == nil {
+				s.mu.Unlock()
+				s.emit(event{Type: "error", Text: "agent not ready"})
+				break
+			}
+			text, err := s.ag.UndoLastTurn()
+			s.mu.Unlock()
+			if err != nil {
+				s.emit(event{Type: "error", Text: err.Error()})
+			} else {
+				s.emit(event{Type: "system", Text: text})
+			}
 		case "status":
 			st := fmt.Sprintf("safe/fast=%s task=%s model=%s workspace=%s", s.cfg.Mode, s.ag.TaskMode.Label(), s.cfg.Model, s.cfg.Workspace)
 			if s.ag != nil && s.ag.Goal != "" {
@@ -1167,6 +1189,9 @@ func (h *guiHandler) OnText(text string) {
 }
 func (h *guiHandler) OnTextDelta(delta string) {
 	h.s.emit(event{Type: "assistant_delta", Text: delta})
+}
+func (h *guiHandler) OnTextFinal(text string) {
+	h.s.emit(event{Type: "assistant_final", Text: text})
 }
 func (h *guiHandler) OnToolStart(call llm.ToolCall) {
 	h.learn.RecordTool(call.Name)

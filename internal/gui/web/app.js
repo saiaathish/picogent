@@ -1861,6 +1861,19 @@ function connectEvents() {
       }
       return;
     }
+    if (e.type === "assistant_final") {
+      if (stream) {
+        stream.target = e.text || "";
+        stream.shown = Math.min(stream.shown, stream.target.length);
+        stream.finishing = true;
+        stream.live = false;
+        if (stream.shown >= stream.target.length) finalizeStream();
+        else kickTypewriter();
+      } else if (e.text) {
+        typeAssistantFull(e.text);
+      }
+      return;
+    }
     add(e.type === "you" ? "you" : e.type, e.text || e.summary || e.type);
     if (busy && !reasoningEl.querySelector(".reason-thinking") && !stream) {
       const t = document.createElement("div");

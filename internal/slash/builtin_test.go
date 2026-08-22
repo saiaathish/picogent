@@ -7,7 +7,7 @@ import (
 func TestCatalogIncludesDocumentedBuiltins(t *testing.T) {
 	items := Catalog(t.TempDir())
 	want := []string{
-		"commit", "review", "status", "diff", "compact", "memory",
+		"commit", "review", "status", "diff", "undo", "compact", "memory",
 		"goal", "agent", "ask", "plan", "debug", "clear",
 	}
 	got := map[string]Item{}
@@ -21,5 +21,12 @@ func TestCatalogIncludesDocumentedBuiltins(t *testing.T) {
 	}
 	if got["goal"].Insert != "/goal " {
 		t.Fatalf("goal insert=%q, want %q", got["goal"].Insert, "/goal ")
+	}
+}
+
+func TestResolveUndo(t *testing.T) {
+	kind, payload := Resolve(t.TempDir(), "/undo")
+	if kind != Local || payload != "undo" {
+		t.Fatalf("Resolve(/undo) = (%v, %q), want (%v, %q)", kind, payload, Local, "undo")
 	}
 }

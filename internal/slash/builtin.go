@@ -43,6 +43,8 @@ func Resolve(workspace, line string) (Kind, string) {
 		return Local, "clear"
 	case "compact":
 		return Local, "compact"
+	case "undo":
+		return Local, "undo"
 	case "status":
 		return Local, "status"
 	case "diff":
@@ -97,6 +99,7 @@ func Catalog(workspace string) []Item {
 		{Name: "review", Hint: "Review uncommitted diffs"},
 		{Name: "status", Hint: "Mode, model, workspace"},
 		{Name: "diff", Hint: "Show git diff"},
+		{Name: "undo", Hint: "Undo the latest file-changing turn"},
 		{Name: "compact", Hint: "Shrink context"},
 		{Name: "memory", Hint: "Project rules + what Picogent learned"},
 		{Name: "goal", Hint: "Show, set, or clear goal", Insert: "/goal "},
