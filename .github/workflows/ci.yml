@@ -19,6 +19,11 @@ jobs:
           go-version: "1.25.x"
       - name: Test
         run: go test ./...
+      - name: v0.2 release acceptance
+        run: go test ./internal/acceptance -run TestV02ReleaseLoop -count=1
+      - name: Race test (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -race ./internal/agent ./internal/gui ./internal/tui ./internal/taskstate ./internal/acceptance
       - name: Build
         run: go build -o picogent ./cmd/picogent
       - name: GUI listens

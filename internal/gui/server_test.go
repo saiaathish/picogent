@@ -206,9 +206,11 @@ func TestStaleTurnUsesCapturedAgentSessionAfterReset(t *testing.T) {
 	}
 
 	s.startAgentTurn("fix the broken signup flow", nil)
+	// The full cross-platform package run can spend several seconds starting a
+	// provider-backed turn on Windows before it reaches this test barrier.
 	select {
 	case <-beforeRun:
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("turn did not reach the pre-run barrier")
 	}
 	res := httptest.NewRecorder()
@@ -226,7 +228,7 @@ func TestStaleTurnUsesCapturedAgentSessionAfterReset(t *testing.T) {
 	}
 	close(release)
 
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		s.mu.Lock()
 		active := s.activeTurns
