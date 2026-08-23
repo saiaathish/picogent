@@ -125,12 +125,12 @@ Custom: add `.claude/commands/deploy.md` → type `/deploy`.
 
 ### MCP
 
-Ask in chat to connect GitHub, a browser, or search — Picogent uses `mcp_manage` and waits for Allow. Config is Cursor-compatible (`mcp_<server>_<tool>`):
+Ask in chat to connect GitHub, a browser, or search — Picogent uses `mcp_manage` and waits for Allow. Config is Cursor-compatible (`mcp_<server>_<tool>`) and loaded only from user-owned locations:
 
 1. `~/.cursor/mcp.json`
 2. `~/.picogent/mcp.yaml`
-3. `{project}/.cursor/mcp.json`
-4. `{project}/.mcp.json`
+
+Workspace `.cursor/mcp.json` and `.mcp.json` files are never autoloaded: connecting a server can run a command or contact an endpoint before its tools can ask for permission.
 
 ```yaml
 # ~/.picogent/mcp.yaml

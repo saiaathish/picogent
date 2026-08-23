@@ -58,7 +58,7 @@
       "title": "MCP & extensions",
       "blurb": "Connect GitHub, browser, search…",
       "keywords": ["mcp", "extension", "plugin", "github", "browser", "search", "tool", "connect"],
-      "body": "## MCP & extensions\n\nAsk in chat to connect GitHub, a browser, or search — Picogent uses `mcp_manage` and waits for Allow in Safe mode.\n\nConfig is Cursor-compatible, checked in order:\n1. `~/.cursor/mcp.json`\n2. `~/.picogent/mcp.yaml`\n3. `{project}/.cursor/mcp.json`\n4. `{project}/.mcp.json`\n\n`picogent mcp list` shows connected tools. Manage installed extensions under **Settings → Extensions**."
+      "body": "## MCP & extensions\n\nAsk in chat to connect GitHub, a browser, or search — Picogent uses `mcp_manage` and waits for Allow in Safe mode.\n\nConfig is Cursor-compatible and loaded only from user-owned locations:\n1. `~/.cursor/mcp.json`\n2. `~/.picogent/mcp.yaml`\n\nWorkspace `.cursor/mcp.json` and `.mcp.json` files are never autoloaded: connecting a server can run a command or contact an endpoint before its tools can ask for permission.\n\n`picogent mcp list` shows connected tools. Manage installed extensions under **Settings → Extensions**."
     },
     {
       "id": "rules",
