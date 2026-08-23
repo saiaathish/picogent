@@ -2320,7 +2320,11 @@ async function loadSidePrompts(force) {
     row.innerHTML = '<button type="button" class="side-chip is-loading">Updating…</button>';
   }
   try {
-    const res = await fetch("/api/prompts?kind=side" + (force ? "&refresh=1" : ""));
+    const res = await fetch("/api/prompts?kind=side", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "side", refresh: !!force }),
+    });
     const data = await res.json();
     renderSidePromptChips(data.prompts || []);
   } catch {
@@ -2360,7 +2364,11 @@ async function loadHeroPrompts(force) {
   loading.innerHTML = "<span>Recommended</span><small>Tuning to this repo…</small>";
   host.appendChild(loading);
   try {
-    const res = await fetch("/api/prompts?kind=main" + (force ? "&refresh=1" : ""));
+    const res = await fetch("/api/prompts?kind=main", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind: "main", refresh: !!force }),
+    });
     const data = await res.json();
     loading.remove();
     renderHeroPrompts(data.prompts || [], folder);

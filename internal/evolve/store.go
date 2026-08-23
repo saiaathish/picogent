@@ -60,20 +60,27 @@ type Store struct {
 	UpdatedAt time.Time  `json:"updated_at"`
 }
 
-func storePath(workspace string) (string, error) {
+func readPath(workspace string) (string, error) {
 	dir, err := config.Dir()
 	if err != nil {
 		return "", err
 	}
-	sub := filepath.Join(dir, "evolve")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
+	return filepath.Join(dir, "evolve", projects.IDForPath(workspace)+".json"), nil
+}
+
+func storePath(workspace string) (string, error) {
+	path, err := readPath(workspace)
+	if err != nil {
 		return "", err
 	}
-	return filepath.Join(sub, projects.IDForPath(workspace)+".json"), nil
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 func Load(workspace string) (Store, error) {
-	path, err := storePath(workspace)
+	path, err := readPath(workspace)
 	if err != nil {
 		return Store{}, err
 	}
