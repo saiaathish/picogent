@@ -9,21 +9,28 @@ import (
 	"github.com/saiaathish/picogent/internal/projects"
 )
 
-func storePath(workspace string) (string, error) {
+func readPath(workspace string) (string, error) {
 	dir, err := config.Dir()
 	if err != nil {
 		return "", err
 	}
-	sub := filepath.Join(dir, "goals")
-	if err := os.MkdirAll(sub, 0o755); err != nil {
+	return filepath.Join(dir, "goals", projects.IDForPath(workspace)+".txt"), nil
+}
+
+func storePath(workspace string) (string, error) {
+	path, err := readPath(workspace)
+	if err != nil {
 		return "", err
 	}
-	return filepath.Join(sub, projects.IDForPath(workspace)+".txt"), nil
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // Load returns the active goal for a workspace, or "" if none.
 func Load(workspace string) (string, error) {
-	path, err := storePath(workspace)
+	path, err := readPath(workspace)
 	if err != nil {
 		return "", err
 	}

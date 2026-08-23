@@ -44,8 +44,6 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		ws := s.cfg.Workspace
 		s.mu.Unlock()
-		_, _, _ = projects.Ensure(ws)
-		list, current, _ = projects.List()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"projects":   list,

@@ -75,7 +75,7 @@ func (s *server) runTests(workspace, pkg string) {
 				test += " " + t
 			}
 			failures = append(failures, map[string]string{
-				"test":  strings.TrimSpace(test),
+				"test":   strings.TrimSpace(test),
 				"output": clipStr(stringFrom(ev["Output"]), 500),
 			})
 		case "skip":
@@ -152,7 +152,10 @@ func (s *server) diffAPI(w http.ResponseWriter, r *http.Request) {
 	ws := s.cfg.Workspace
 	s.mu.Unlock()
 
-	args := []string{"-C", ws, "diff", "--"}
+	// A workspace controls its Git configuration. Disable external diff and
+	// textconv helpers so this read-only endpoint cannot execute
+	// repository-configured commands.
+	args := []string{"-C", ws, "diff", "--no-ext-diff", "--no-textconv", "--"}
 	if rel != "" {
 		args = append(args, rel)
 	}

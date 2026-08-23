@@ -9,10 +9,12 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -180,14 +182,133 @@ func Run() error {
 }
 
 func loopbackListenAddress(addr string) bool {
-	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
-	if err != nil {
+	_, ok := parseLiteralLoopbackHost(addr)
+	return ok
+}
+
+// literalLoopbackHost is deliberately narrower than net.IP.IsLoopback. The
+// browser GUI is a local trust boundary: accepting a name that merely resolves
+// to loopback would let DNS rebinding turn a hostile origin into a same-origin
+// request. Only the URLs Picogent itself advertises are accepted.
+type literalLoopbackHost struct {
+	host string
+	port string
+}
+
+func parseLiteralLoopbackHost(raw string) (literalLoopbackHost, bool) {
+	if raw == "" || strings.TrimSpace(raw) != raw || strings.ContainsAny(raw, "@/?#") {
+		return literalLoopbackHost{}, false
+	}
+
+	host, port := raw, ""
+	hasPort := false
+	switch {
+	case strings.HasPrefix(raw, "["):
+		end := strings.IndexByte(raw, ']')
+		if end <= 1 {
+			return literalLoopbackHost{}, false
+		}
+		host = raw[1:end]
+		rest := raw[end+1:]
+		switch {
+		case rest == "":
+		case strings.HasPrefix(rest, ":"):
+			port = rest[1:]
+			hasPort = true
+		default:
+			return literalLoopbackHost{}, false
+		}
+	case strings.Count(raw, ":") == 1:
+		host, port, _ = strings.Cut(raw, ":")
+		hasPort = true
+	case strings.Count(raw, ":") > 1 && raw != "::1":
+		// IPv6 hosts with a port must be bracketed. The one unbracketed literal
+		// allowed here is the no-port form required by HTTP Host parsing.
+		return literalLoopbackHost{}, false
+	}
+
+	if host == "" || (hasPort && port == "") {
+		return literalLoopbackHost{}, false
+	}
+	switch {
+	case host == "127.0.0.1", host == "::1":
+	case strings.EqualFold(host, "localhost"):
+		host = "localhost"
+	default:
+		return literalLoopbackHost{}, false
+	}
+	if hasPort {
+		for _, r := range port {
+			if r < '0' || r > '9' {
+				return literalLoopbackHost{}, false
+			}
+		}
+		n, err := strconv.ParseUint(port, 10, 16)
+		if err != nil || n > 65535 {
+			return literalLoopbackHost{}, false
+		}
+		port = strconv.FormatUint(n, 10)
+	}
+	return literalLoopbackHost{host: host, port: port}, true
+}
+
+func (s *server) apiRoute(allowed []string, next http.HandlerFunc) http.Handler {
+	methods := make(map[string]struct{}, len(allowed))
+	for _, method := range allowed {
+		methods[method] = struct{}{}
+	}
+	allow := strings.Join(allowed, ", ")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Report an unsupported verb before evaluating its Origin. This keeps
+		// every route's API contract deterministic and prevents a malformed
+		// request from masking a method regression as an origin failure.
+		if _, ok := methods[r.Method]; !ok {
+			w.Header().Set("Allow", allow)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		host, ok := parseLiteralLoopbackHost(r.Host)
+		if !ok {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if isUnsafeAPIMethod(r.Method) && !sameLoopbackOrigin(r, host) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	})
+}
+
+func isUnsafeAPIMethod(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
 		return false
 	}
-	if strings.EqualFold(host, "localhost") {
-		return true
+}
+
+func sameLoopbackOrigin(r *http.Request, want literalLoopbackHost) bool {
+	origins := r.Header.Values("Origin")
+	if len(origins) != 1 || origins[0] == "" {
+		return false
 	}
-	return net.ParseIP(strings.Trim(host, "[]")).IsLoopback()
+	u, err := url.ParseRequestURI(origins[0])
+	if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil ||
+		u.Path != "" || u.RawPath != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return false
+	}
+	got, ok := parseLiteralLoopbackHost(u.Host)
+	return ok && got.host == want.host && normalizedHTTPPort(got.port) == normalizedHTTPPort(want.port)
+}
+
+func normalizedHTTPPort(port string) string {
+	if port == "" {
+		return "80"
+	}
+	return port
 }
 
 func RunSetup() error {
@@ -206,36 +327,39 @@ func (s *server) Handler() http.Handler {
 		panic(err)
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/state", s.state)
-	mux.HandleFunc("/api/setup", s.setupStatus)
-	mux.HandleFunc("/api/setup/install", s.setupInstall)
-	mux.HandleFunc("/api/setup/login", s.setupLogin)
-	mux.HandleFunc("/api/setup/finish", s.setupFinish)
-	mux.HandleFunc("/api/chat", s.chat)
-	mux.HandleFunc("/api/scope", s.scopeAPI)
-	mux.HandleFunc("/api/permission", s.permission)
-	mux.HandleFunc("/api/mode", s.setMode)
-	mux.HandleFunc("/api/task-mode", s.setTaskMode)
-	mux.HandleFunc("/api/cancel", s.cancelChat)
-	mux.HandleFunc("/api/reset", s.reset)
-	mux.HandleFunc("/api/sessions", s.sessions)
-	mux.HandleFunc("/api/file", s.readFile)
-	mux.HandleFunc("/api/settings", s.settings)
-	mux.HandleFunc("/api/router", s.routerAPI)
-	mux.HandleFunc("/api/projects", s.projectsAPI)
-	mux.HandleFunc("/api/folder/pick", s.folderPickAPI)
-	mux.HandleFunc("/api/files/pick", s.filesPickAPI)
-	mux.HandleFunc("/api/files/read", s.filesReadAPI)
-	mux.HandleFunc("/api/overview", s.overviewAPI)
-	mux.HandleFunc("/api/evolve", s.evolveAPI)
-	mux.HandleFunc("/api/test", s.testAPI)
-	mux.HandleFunc("/api/diff", s.diffAPI)
-	mux.HandleFunc("/api/extensions", s.extensionsAPI)
-	mux.HandleFunc("/api/trace", s.traceAPI)
-	mux.HandleFunc("/api/help", s.helpAPI)
-	mux.HandleFunc("/api/sidechat", s.sidechatAPI)
-	mux.HandleFunc("/api/prompts", s.promptsAPI)
-	mux.HandleFunc("/api/events", s.events)
+	api := func(path string, methods []string, handler http.HandlerFunc) {
+		mux.Handle(path, s.apiRoute(methods, handler))
+	}
+	api("/api/state", []string{http.MethodGet}, s.state)
+	api("/api/setup", []string{http.MethodGet}, s.setupStatus)
+	api("/api/setup/install", []string{http.MethodPost}, s.setupInstall)
+	api("/api/setup/login", []string{http.MethodPost}, s.setupLogin)
+	api("/api/setup/finish", []string{http.MethodPost}, s.setupFinish)
+	api("/api/chat", []string{http.MethodPost}, s.chat)
+	api("/api/scope", []string{http.MethodPost}, s.scopeAPI)
+	api("/api/permission", []string{http.MethodPost}, s.permission)
+	api("/api/mode", []string{http.MethodPost}, s.setMode)
+	api("/api/task-mode", []string{http.MethodPost}, s.setTaskMode)
+	api("/api/cancel", []string{http.MethodPost}, s.cancelChat)
+	api("/api/reset", []string{http.MethodPost}, s.reset)
+	api("/api/sessions", []string{http.MethodGet, http.MethodPost}, s.sessions)
+	api("/api/file", []string{http.MethodGet}, s.readFile)
+	api("/api/settings", []string{http.MethodGet, http.MethodPost}, s.settings)
+	api("/api/router", []string{http.MethodGet, http.MethodPost}, s.routerAPI)
+	api("/api/projects", []string{http.MethodGet, http.MethodPost}, s.projectsAPI)
+	api("/api/folder/pick", []string{http.MethodPost}, s.folderPickAPI)
+	api("/api/files/pick", []string{http.MethodPost}, s.filesPickAPI)
+	api("/api/files/read", []string{http.MethodPost}, s.filesReadAPI)
+	api("/api/overview", []string{http.MethodGet}, s.overviewAPI)
+	api("/api/evolve", []string{http.MethodGet, http.MethodDelete}, s.evolveAPI)
+	api("/api/test", []string{http.MethodPost}, s.testAPI)
+	api("/api/diff", []string{http.MethodGet}, s.diffAPI)
+	api("/api/extensions", []string{http.MethodGet, http.MethodPost}, s.extensionsAPI)
+	api("/api/trace", []string{http.MethodGet}, s.traceAPI)
+	api("/api/help", []string{http.MethodGet, http.MethodPost}, s.helpAPI)
+	api("/api/sidechat", []string{http.MethodGet, http.MethodPost}, s.sidechatAPI)
+	api("/api/prompts", []string{http.MethodGet, http.MethodPost}, s.promptsAPI)
+	api("/api/events", []string{http.MethodGet}, s.events)
 	mux.Handle("/", noCacheStatic(http.FileServer(http.FS(static))))
 	return mux
 }
@@ -428,8 +552,6 @@ func (s *server) snapshot() map[string]any {
 	if !taskMode.Valid() {
 		taskMode = agent.ParseTaskMode(cfg.TaskMode)
 	}
-	// Auto-refresh CLI model catalogs whenever the chat UI loads state (model picker).
-	llm.RefreshCLIModels(false)
 	out := map[string]any{
 		"mode":                cfg.Mode,
 		"task_mode":           string(taskMode),
@@ -611,6 +733,9 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log, err := setup.InstallCores()
+	// Model discovery may invoke installed CLIs and public catalogs, so keep it
+	// on the explicit install action rather than the setup-status GET path.
+	llm.RefreshCLIModels(true)
 	w.Header().Set("Content-Type", "application/json")
 	out := map[string]any{"log": log, "ok": err == nil}
 	if err != nil {
@@ -2172,7 +2297,6 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		cfg := s.cfg
 		s.mu.Unlock()
-		llm.RefreshCLIModels(false)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"workspace":                 cfg.Workspace,

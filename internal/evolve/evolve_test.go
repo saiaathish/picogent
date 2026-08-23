@@ -1,12 +1,32 @@
 package evolve
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestLoadDoesNotCreateStateUntilSave(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "missing", "picogent")
+	t.Setenv("PICOGENT_HOME", home)
+	store, err := Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Load created state directory: %v", err)
+	}
+	if err := Save(store); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "evolve")); err != nil {
+		t.Fatalf("Save did not create state directory: %v", err)
+	}
+}
 
 func TestUpsertHabitPrefersUpdate(t *testing.T) {
 	dir := t.TempDir()

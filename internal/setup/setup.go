@@ -70,7 +70,6 @@ func LastLog() string {
 }
 
 func Snapshot(cfg config.Config) Status {
-	llm.RefreshCLIModels(false)
 	comps := []Component{homeComponent(), gitComponent(), codexCLIComponent(), claudeCLIComponent(), openCodeCLIComponent(), agyCLIComponent()}
 	logins := []LoginTarget{codexLogin(), claudeLogin(), openCodeLogin(), antigravityLogin()}
 	ready := true

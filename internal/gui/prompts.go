@@ -29,8 +29,9 @@ func (s *server) promptsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		force := r.URL.Query().Get("refresh") == "1"
-		recs := s.getPromptRecs(kind, force)
+		// GET is deliberately cache-only: a browser navigation or speculative
+		// preload must never start a model call or mutate recommendation state.
+		recs := s.cachedPromptRecs(kind)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"kind":    kind,
@@ -38,13 +39,14 @@ func (s *server) promptsAPI(w http.ResponseWriter, r *http.Request) {
 		})
 	case http.MethodPost:
 		var req struct {
-			Kind string `json:"kind"`
+			Kind    string `json:"kind"`
+			Refresh bool   `json:"refresh"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req.Kind == "" {
 			req.Kind = kind
 		}
-		recs := s.getPromptRecs(req.Kind, true)
+		recs := s.getPromptRecs(req.Kind, req.Refresh)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"kind":    req.Kind,
@@ -53,6 +55,15 @@ func (s *server) promptsAPI(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "GET or POST", 405)
 	}
+}
+
+func (s *server) cachedPromptRecs(kind string) []promptRec {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if kind == "side" {
+		return append([]promptRec(nil), s.sideRecs...)
+	}
+	return append([]promptRec(nil), s.mainRecs...)
 }
 
 func (s *server) getPromptRecs(kind string, force bool) []promptRec {
