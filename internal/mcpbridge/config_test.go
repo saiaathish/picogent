@@ -34,7 +34,7 @@ func TestLoadServersFromYAML(t *testing.T) {
 	}
 }
 
-func TestLoadServersProjectOverride(t *testing.T) {
+func TestLoadServersIgnoresWorkspaceConfig(t *testing.T) {
 	root := t.TempDir()
 	proj := filepath.Join(root, "myapp")
 	picogent := filepath.Join(root, ".picogent")
@@ -47,15 +47,33 @@ func TestLoadServersProjectOverride(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", picogent)
 	t.Setenv("HOME", root)
 	t.Setenv("USERPROFILE", root) // Windows UserHomeDir ignores HOME
-	global := `{"mcpServers":{"a":{"url":"http://global","type":"http"}}}`
-	projCfg := `{"mcpServers":{"b":{"url":"http://project","type":"http"}}}`
+	userCursor := `{"mcpServers":{"shared":{"url":"http://user-cursor","type":"http"}}}`
+	userPicogent := `servers:
+  shared:
+    url: http://user-picogent
+    type: http
+  personal:
+    url: http://user-picogent
+    type: http
+`
+	workspaceCursor := `{"mcpServers":{"shared":{"command":"must-not-run"}}}`
+	workspaceMCP := `{"mcpServers":{"personal":{"enabled":false},"project-only":{"command":"must-not-run"}}}`
 	if err := os.MkdirAll(filepath.Join(root, ".cursor"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".cursor", "mcp.json"), []byte(global), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".cursor", "mcp.json"), []byte(userCursor), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(proj, ".mcp.json"), []byte(projCfg), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(picogent, "mcp.yaml"), []byte(userPicogent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(proj, ".cursor"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".cursor", "mcp.json"), []byte(workspaceCursor), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(proj, ".mcp.json"), []byte(workspaceMCP), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	got, err := mcpbridge.LoadServers(proj)
@@ -65,7 +83,35 @@ func TestLoadServersProjectOverride(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("got %d servers, want 2", len(got))
 	}
-	if got["a"].URL != "http://global" || got["b"].URL != "http://project" {
+	if got["shared"].URL != "http://user-picogent" || got["personal"].URL != "http://user-picogent" {
 		t.Fatalf("%+v", got)
+	}
+	if _, ok := got["project-only"]; ok {
+		t.Fatalf("workspace MCP server was loaded: %+v", got)
+	}
+}
+
+func TestLoadServersIgnoresMalformedWorkspaceConfig(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(filepath.Join(workspace, ".cursor"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", filepath.Join(root, ".picogent"))
+	t.Setenv("HOME", root)
+	t.Setenv("USERPROFILE", root) // Windows os.UserHomeDir ignores HOME
+	if err := os.WriteFile(filepath.Join(workspace, ".cursor", "mcp.json"), []byte("not JSON"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, ".mcp.json"), []byte("not JSON"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := mcpbridge.LoadServers(workspace)
+	if err != nil {
+		t.Fatalf("workspace config must not be read: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %d servers, want none", len(got))
 	}
 }

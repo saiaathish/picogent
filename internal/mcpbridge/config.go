@@ -36,9 +36,11 @@ type fileCursor struct {
 	MCPServers map[string]ServerConfig `json:"mcpServers"`
 }
 
-// LoadServers merges MCP config from user + project (later sources override).
-// Sources: ~/.cursor/mcp.json → ~/.picogent/mcp.yaml → {workspace}/.cursor/mcp.json → {workspace}/.mcp.json
-func LoadServers(workspace string) (map[string]ServerConfig, error) {
+// LoadServers merges only user-owned MCP config (later sources override).
+// Connecting a server can execute a command or contact an endpoint before an
+// MCP tool reaches the permission gate, so workspace config is never autoloaded.
+// Sources: ~/.cursor/mcp.json → ~/.picogent/mcp.yaml
+func LoadServers(_ string) (map[string]ServerConfig, error) {
 	home, err := picogentHome()
 	if err != nil {
 		return nil, err
@@ -52,15 +54,6 @@ func LoadServers(workspace string) (map[string]ServerConfig, error) {
 	layers := []string{
 		filepath.Join(userHome, ".cursor", "mcp.json"),
 		filepath.Join(home, "mcp.yaml"),
-	}
-	if workspace != "" {
-		ws, err := filepath.Abs(workspace)
-		if err == nil {
-			layers = append(layers,
-				filepath.Join(ws, ".cursor", "mcp.json"),
-				filepath.Join(ws, ".mcp.json"),
-			)
-		}
 	}
 
 	for _, path := range layers {
