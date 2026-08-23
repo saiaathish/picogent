@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -278,7 +279,7 @@ func bashNeedsApproval(command, workspace string) (bool, string) {
 	if strings.IndexByte(command, 0) >= 0 {
 		return true, "shell command contains an invalid byte"
 	}
-	if strings.ContainsAny(command, "\r\n;|&<>`\\") || strings.Contains(command, "$ (") || strings.Contains(command, "$(") {
+	if strings.ContainsAny(command, "\r\n;|&<>`") || (runtime.GOOS != "windows" && strings.Contains(command, "\\")) || strings.Contains(command, "$ (") || strings.Contains(command, "$(") {
 		return true, "shell operators and substitutions require approval"
 	}
 	fields := strings.Fields(command)
@@ -316,7 +317,7 @@ func bashNeedsApproval(command, workspace string) (bool, string) {
 		if eq := strings.IndexByte(candidate, '='); eq >= 0 {
 			candidate = candidate[eq+1:]
 		}
-		if !filepath.IsAbs(candidate) {
+		if !shellPathIsAbsolute(candidate) {
 			continue
 		}
 		if root == "" {
@@ -328,6 +329,18 @@ func bashNeedsApproval(command, workspace string) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+// shellPathIsAbsolute recognizes both the host path form and slash-rooted
+// paths accepted by common shells. On Windows, filepath.IsAbs("/etc/passwd")
+// is false even though a shell may interpret it as a rooted path; do not let
+// that evade the workspace boundary. A leading backslash is similarly rooted
+// on the current Windows volume.
+func shellPathIsAbsolute(path string) bool {
+	if filepath.IsAbs(path) || strings.HasPrefix(path, "/") {
+		return true
+	}
+	return runtime.GOOS == "windows" && strings.HasPrefix(path, `\`)
 }
 
 func ClassifyPath(tool, relOrAbs, workspace, summary string) Request {
