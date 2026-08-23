@@ -389,15 +389,13 @@ func overlayProject(cfg Config) Config {
 		return cfg
 	}
 	var over struct {
-		Mode  Mode   `yaml:"mode"`
 		Model string `yaml:"model"`
 	}
 	if err := yaml.Unmarshal(data, &over); err != nil {
 		return cfg
 	}
-	if over.Mode == ModeSafe || over.Mode == ModeFast {
-		cfg.Mode = over.Mode
-	}
+	// Permission mode belongs to the person running Picogent. A repository can
+	// suggest a model, but must never silently widen Safe/Fast permissions.
 	if over.Model != "" {
 		cfg.Model = over.Model
 	}

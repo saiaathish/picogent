@@ -187,7 +187,7 @@ ollama_url: "http://127.0.0.1:11434"
 max_tool_rounds: 25
 ```
 
-Project overlay (optional): `./.picogent.yaml` may set `mode` and `model` only. Never keys.
+Project overlay (optional): `./.picogent.yaml` may set `model` only. Safe/Fast is a user-global permission choice and cannot be changed by a repository. Never keys.
 
 ### Resource budget (enforced)
 
