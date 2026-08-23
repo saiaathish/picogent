@@ -310,7 +310,7 @@ func bashNeedsApproval(command, workspace string) (bool, string) {
 		}
 		// Parent traversal is unsafe even when the final target happens to
 		// resolve back into the workspace through a symlink.
-		if token == ".." || strings.HasPrefix(token, "../") || strings.HasPrefix(token, `..\\`) || strings.Contains(token, "/../") || strings.Contains(token, `\\..\\`) {
+		if token == ".." || strings.HasPrefix(token, "../") || strings.HasPrefix(token, `..\`) || strings.Contains(token, "/../") || strings.Contains(token, `\..\`) {
 			return true, "parent paths require approval"
 		}
 		candidate := token

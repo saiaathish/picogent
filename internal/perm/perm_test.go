@@ -81,6 +81,22 @@ func TestBashBoundaryAllowsAbsolutePathInsideWorkspace(t *testing.T) {
 	}
 }
 
+func TestBashBoundaryRejectsWindowsEscapingPaths(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("backslashes are shell escapes on POSIX")
+	}
+	workspace := t.TempDir()
+	for _, command := range []string{
+		`cat ..\secrets.txt`,
+		`cat \Windows\System32\drivers\etc\hosts`,
+	} {
+		req := perm.ClassifyBash(command, workspace)
+		if !req.OutsideWorkspace {
+			t.Fatalf("Windows escaping path %q was auto-allowable: %+v", command, req)
+		}
+	}
+}
+
 func TestFastAllowsVerify(t *testing.T) {
 	g := perm.New(config.ModeFast, "/tmp/ws", nil)
 	d, _ := g.Check(nil, perm.Request{Tool: "verify"})
