@@ -10,6 +10,20 @@ type AutoDecision struct {
 	GoalSet  bool
 }
 
+// ScopeTaskMode converts the small preflight's stable choice IDs into the
+// existing task boundaries. It intentionally returns Agent for implementation
+// choices so a scope answer never changes the user's persistent mode.
+func ScopeTaskMode(choiceID string) TaskMode {
+	switch strings.ToLower(strings.TrimSpace(choiceID)) {
+	case "plan":
+		return TaskPlan
+	case "report":
+		return TaskAsk
+	default:
+		return TaskAgent
+	}
+}
+
 // InferAuto reads a user message and suggests task mode / goal adjustments.
 func InferAuto(prompt string, current TaskMode, activeGoal string) AutoDecision {
 	var d AutoDecision

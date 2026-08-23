@@ -110,7 +110,7 @@ func (s *server) buildSideStatus() sideStatus {
 
 	taskMode := string(liveTask)
 	if taskMode == "" && ag != nil {
-		taskMode = string(ag.TaskMode)
+		taskMode = string(ag.TaskModeSnapshot())
 	}
 	if taskMode == "" {
 		taskMode = cfg.TaskMode

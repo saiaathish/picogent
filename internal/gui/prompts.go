@@ -325,13 +325,17 @@ func (s *server) lightClient() llm.Client {
 	s.mu.Lock()
 	ag := s.ag
 	s.mu.Unlock()
-	if ag == nil || ag.LLM == nil {
+	if ag == nil {
 		return nil
 	}
-	if r, ok := ag.LLM.(*llm.Router); ok && r.Backend != nil {
+	client := ag.ClientSnapshot()
+	if client == nil {
+		return nil
+	}
+	if r, ok := client.(*llm.Router); ok && r.Backend != nil {
 		return r.Backend
 	}
-	return ag.LLM
+	return client
 }
 
 // lightChat calls the most token-efficient model directly (no router escalation).

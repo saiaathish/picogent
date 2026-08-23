@@ -3,6 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -10,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
@@ -17,17 +21,30 @@ import (
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/mcpbridge"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/setup"
 	"github.com/saiaathish/picogent/internal/tui"
 )
 
-var version = "0.1.0"
+var version = "1.0.0"
+
+// errHeadlessPermissionDenied is intentionally distinguishable from provider
+// and tool failures. CI callers can treat exit code 2 as "blocked pending
+// approval" without mistaking it for an agent crash.
+var errHeadlessPermissionDenied = errors.New("Problem: permission denied.\nCause:   headless Safe mode could not approve the requested action.\nFix:     rerun interactively and approve it, or use --yes for non-destructive in-workspace work.")
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
+}
+
+func exitCode(err error) int {
+	if errors.Is(err, errHeadlessPermissionDenied) {
+		return 2
+	}
+	return 1
 }
 
 func run(args []string) error {
@@ -49,7 +66,7 @@ func run(args []string) error {
 	case "init":
 		return runInitArgs(args[1:])
 	case "login":
-		return runLogin(os.Args[2:])
+		return runLogin(args[1:])
 	case "mcp":
 		return runMCP(args[1:])
 	case "version", "-v", "--version":
@@ -98,6 +115,7 @@ Run flags:
   --dir PATH            workspace (default: current directory)
   --yes                 Fast mode and auto-approve in-workspace writes/shell
   --model NAME          override model
+  --clarify             ask a quick scope question for broad prompts
 `)
 }
 
@@ -259,10 +277,12 @@ func runOnce(args []string) error {
 	dir := fs.String("dir", ".", "workspace")
 	yes := fs.Bool("yes", false, "auto-approve in-workspace writes and shell")
 	model := fs.String("model", "", "model override")
+	clarify := fs.Bool("clarify", false, "ask a quick scope question for broad prompts")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	prompt := strings.Join(fs.Args(), " ")
+	originalPrompt := prompt
 	if strings.TrimSpace(prompt) == "" {
 		return fmt.Errorf("Problem: missing prompt.\nCause:   picogent run needs text.\nFix:     picogent run \"create hello.txt\"")
 	}
@@ -272,16 +292,75 @@ func runOnce(args []string) error {
 	}
 	if *model != "" {
 		cfg.Model = *model
-		a.CFG.Model = *model
+		a.SetModel(*model)
 	}
 	if *yes {
 		cfg.Mode = config.ModeFast
-		a.CFG.Mode = config.ModeFast
-		a.Gate.Mode = config.ModeFast
+		a.SetMode(config.ModeFast)
 	}
-	h := &stdioHandler{yes: *yes, in: bufio.NewReader(os.Stdin)}
+	// Headless turns do not have a chat UI session, but they still need the
+	// same durable execution checkpoint as TUI/GUI turns.  A stable, prompt-
+	// keyed id lets an interrupted identical invocation resume without making
+	// unrelated prompts share progress.
+	a.SetTaskSession(headlessTaskSessionID(originalPrompt))
+	input := bufio.NewReader(os.Stdin)
+	h := &stdioHandler{yes: *yes, in: input}
+	if preflight, ok := scope.Analyze(prompt); ok {
+		choice := scope.Recommended(preflight)
+		if *clarify {
+			var proceed bool
+			choice, proceed = chooseScope(preflight, input)
+			if !proceed {
+				return nil
+			}
+		}
+		if applied, ok := scope.Apply(prompt, preflight, choice.ID); ok {
+			prompt = applied
+		}
+		mode := agent.ScopeTaskMode(choice.ID)
+		_, _, err = a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{TaskMode: &mode, TracePrompt: originalPrompt, DurablePrompt: originalPrompt})
+		return err
+	}
 	_, _, err = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h)
 	return err
+}
+
+func headlessTaskSessionID(prompt string) string {
+	digest := sha256.Sum256([]byte(strings.TrimSpace(prompt)))
+	return "headless-" + hex.EncodeToString(digest[:8])
+}
+
+func chooseScope(p scope.Prompt, in *bufio.Reader) (scope.Choice, bool) {
+	choice := scope.Recommended(p)
+	fmt.Println()
+	fmt.Println("Quick question:", p.Question)
+	for i, c := range p.Choices {
+		recommended := ""
+		if c.Recommended {
+			recommended = " (recommended)"
+		}
+		fmt.Printf("  %d. %s%s — %s\n", i+1, c.Label, recommended, c.Why)
+	}
+	fmt.Print("Choose 1-", len(p.Choices), " (Enter for recommended, type esc to cancel): ")
+	line, err := in.ReadString('\n')
+	if err != nil {
+		return choice, true
+	}
+	line = strings.TrimSpace(strings.ToLower(line))
+	if line == "esc" || line == "cancel" {
+		fmt.Println("Canceled.")
+		return scope.Choice{}, false
+	}
+	if line == "" {
+		return choice, true
+	}
+	for i, c := range p.Choices {
+		if line == fmt.Sprint(i+1) {
+			return c, true
+		}
+	}
+	fmt.Println("Using the recommended option.")
+	return choice, true
 }
 
 type stdioHandler struct {
@@ -314,17 +393,20 @@ func (h *stdioHandler) OnNeedPermission(_ context.Context, req perm.Request) (pe
 		return perm.Allow, nil
 	}
 	if h.yes && (req.Destructive || req.OutsideWorkspace) {
-		return perm.Deny, nil
+		return perm.Deny, errHeadlessPermissionDenied
 	}
 	fmt.Printf("Allow %s? [y/n] ", req.Summary)
+	if h.in == nil {
+		return perm.Deny, errHeadlessPermissionDenied
+	}
 	line, err := h.in.ReadString('\n')
 	if err != nil {
-		return perm.Deny, err
+		return perm.Deny, errHeadlessPermissionDenied
 	}
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y") {
 		return perm.Allow, nil
 	}
-	return perm.Deny, nil
+	return perm.Deny, errHeadlessPermissionDenied
 }
 func (h *stdioHandler) OnError(err error) { fmt.Fprintln(os.Stderr, err.Error()) }
 

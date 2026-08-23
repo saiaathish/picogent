@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,20 +48,25 @@ func (readFile) Run(_ context.Context, args string, c Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(abs)
+	data, truncated, err := readBoundedFile(abs, maxReadBytes)
 	if err != nil {
 		return "", err
 	}
-	if !utf8.Valid(data) {
+	if truncated {
+		data, err = trimIncompleteUTF8(data)
+		if err != nil {
+			return "", fmt.Errorf("not a utf-8 text file: %s", relDisplay(ws, abs))
+		}
+	} else if !utf8.Valid(data) {
 		return "", fmt.Errorf("not a utf-8 text file: %s", relDisplay(ws, abs))
 	}
 	text := string(data)
-	if len(data) > maxReadBytes {
-		text = text[:maxReadBytes] + "\n… truncated (file larger than 256KiB) …"
-	}
 	lines := strings.Split(text, "\n")
 	if len(lines) > maxReadLines {
 		text = strings.Join(lines[:maxReadLines], "\n") + "\n… truncated (more than 2000 lines) …"
+	}
+	if truncated {
+		return clipWithSuffix(text, "\n… truncated (file larger than 256KiB) …"), nil
 	}
 	return clip(text), nil
 }
@@ -153,9 +159,15 @@ func (editFile) Run(_ context.Context, args string, c Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(abs)
+	data, truncated, err := readBoundedFile(abs, maxReadBytes)
 	if err != nil {
 		return "", err
+	}
+	if truncated {
+		return "", fmt.Errorf("file is larger than 256KiB: %s", relDisplay(ws, abs))
+	}
+	if !utf8.Valid(data) {
+		return "", fmt.Errorf("not a utf-8 text file: %s", relDisplay(ws, abs))
 	}
 	text := string(data)
 	n := strings.Count(text, in.OldString)
@@ -170,4 +182,48 @@ func (editFile) Run(_ context.Context, args string, c Context) (string, error) {
 		return "", err
 	}
 	return "edited " + relDisplay(ws, abs), nil
+}
+
+// readBoundedFile avoids allocating an unbounded workspace file before the
+// tool's output cap can take effect.
+func readBoundedFile(path string, limit int) ([]byte, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(data) <= limit {
+		return data, false, nil
+	}
+	return data[:limit], true, nil
+}
+
+// trimIncompleteUTF8 preserves a valid prefix when the byte cap lands in the
+// middle of a final UTF-8 rune. Invalid data earlier in the file is rejected.
+func trimIncompleteUTF8(data []byte) ([]byte, error) {
+	if utf8.Valid(data) {
+		return data, nil
+	}
+	start := len(data) - utf8.UTFMax + 1
+	if start < 0 {
+		start = 0
+	}
+	for n := len(data) - 1; n >= start; n-- {
+		if utf8.Valid(data[:n]) {
+			return data[:n], nil
+		}
+	}
+	return nil, fmt.Errorf("invalid utf-8")
+}
+
+func clipWithSuffix(text, suffix string) string {
+	if len(text)+len(suffix) <= maxToolOut {
+		return text + suffix
+	}
+	return text[:maxToolOut-len(suffix)] + suffix
 }

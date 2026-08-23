@@ -19,6 +19,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/slash"
 	"github.com/saiaathish/picogent/internal/taskstate"
@@ -150,21 +151,24 @@ func (h *handler) OnTaskState(task *taskstate.Task) {
 }
 
 type model struct {
-	cfg       config.Config
-	ag        *agent.Agent
-	history   []llm.Message
-	sessionID string
-	lines     []logLine
-	vp        viewport.Model
-	ta        textarea.Model
-	busy      bool
-	perm      *perm.Request
-	h         *handler
-	turnID    uint64
-	width     int
-	height    int
-	cancel    context.CancelFunc
-	task      *taskstate.Task
+	cfg           config.Config
+	ag            *agent.Agent
+	history       []llm.Message
+	sessionID     string
+	lines         []logLine
+	vp            viewport.Model
+	ta            textarea.Model
+	busy          bool
+	perm          *perm.Request
+	h             *handler
+	turnID        uint64
+	width         int
+	height        int
+	cancel        context.CancelFunc
+	task          *taskstate.Task
+	turnMode      *agent.TaskMode
+	pendingScope  *scope.Prompt
+	pendingPrompt string
 }
 
 func Run() error {
@@ -209,7 +213,9 @@ func greeting(cfg config.Config, a *agent.Agent) string {
 		base = "Codex connected · " + cfg.Model
 	}
 	if a != nil && a.Tools != nil && a.Tools.HasMCP() {
-		base += fmt.Sprintf(" · %d MCP tools", len(a.Tools.MCP.Tools()))
+		if mcp := a.Tools.MCPManagerSnapshot(); mcp != nil {
+			base += fmt.Sprintf(" · %d MCP tools", len(mcp.Tools()))
+		}
 	}
 	return base + " · type a task, or /help"
 }
@@ -237,6 +243,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				m.decide(perm.Deny)
 				m.stop()
+				return m, tea.Quit
+			}
+			return m, nil
+		}
+		if m.pendingScope != nil {
+			switch msg.String() {
+			case "esc":
+				m.pendingScope = nil
+				m.pendingPrompt = ""
+				m.lines = append(m.lines, logLine{Kind: "system", Text: "scope check canceled"})
+				m.refresh()
+			case "1", "2", "3":
+				index := int(msg.String()[0] - '1')
+				if index < len(m.pendingScope.Choices) {
+					return m, m.chooseScope(index)
+				}
+			case "ctrl+c":
 				return m, tea.Quit
 			}
 			return m, nil
@@ -313,6 +336,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.busy = false
 		m.cancel = nil
+		m.turnMode = nil
 		if msg.history != nil {
 			m.history = msg.history
 			_ = session.SaveMessages(m.cfg.Workspace, m.sessionID, m.history)
@@ -408,6 +432,7 @@ func (m *model) stop() {
 	}
 	m.perm = nil
 	m.busy = false
+	m.turnMode = nil
 	// Invalidate events already queued by the canceled turn. The next turn
 	// receives a later ID, so a late done/log/task event cannot clear or
 	// overwrite its state.
@@ -415,16 +440,30 @@ func (m *model) stop() {
 }
 
 func (m *model) autoApplyPrompt(prompt string) {
-	if !m.cfg.AutoTaskModeOn() || strings.HasPrefix(strings.TrimSpace(prompt), "/") {
+	if m.ag == nil || !m.cfg.AutoTaskModeOn() || strings.HasPrefix(strings.TrimSpace(prompt), "/") {
 		return
 	}
-	dec := agent.InferAuto(prompt, m.ag.TaskMode, m.ag.Goal)
-	if dec.GoalSet && dec.Goal != m.ag.Goal {
+	currentMode := m.ag.TaskModeSnapshot()
+	currentGoal := m.ag.GoalSnapshot()
+	dec := agent.InferAuto(prompt, currentMode, currentGoal)
+	if dec.GoalSet && dec.Goal != currentGoal {
 		_ = goal.Set(m.cfg.Workspace, dec.Goal)
-		m.ag.Goal = dec.Goal
+		m.ag.SetGoal(dec.Goal)
 	}
-	if dec.TaskMode != m.ag.TaskMode {
+	if dec.TaskMode != currentMode {
 		m.ag.SetTaskMode(dec.TaskMode)
+	}
+}
+
+func (m *model) autoApplyGoal(prompt string) {
+	if m.ag == nil || !m.cfg.AutoTaskModeOn() || strings.HasPrefix(strings.TrimSpace(prompt), "/") {
+		return
+	}
+	currentGoal := m.ag.GoalSnapshot()
+	dec := agent.InferAuto(prompt, m.ag.TaskModeSnapshot(), currentGoal)
+	if dec.GoalSet && dec.Goal != currentGoal {
+		_ = goal.Set(m.cfg.Workspace, dec.Goal)
+		m.ag.SetGoal(dec.Goal)
 	}
 }
 
@@ -442,17 +481,81 @@ func (m *model) submit(line string) tea.Cmd {
 			return m.slash(line)
 		}
 	}
-	m.autoApplyPrompt(line)
+	if p, ok := scope.Analyze(line); ok {
+		m.pendingScope = &p
+		m.pendingPrompt = line
+		m.lines = append(m.lines, logLine{Kind: "scope", Text: formatScopePrompt(p)})
+		m.refresh()
+		return nil
+	}
 	return m.runAgent(line)
 }
 
 func (m *model) runAgent(prompt string) tea.Cmd {
+	return m.runAgentAsMode(prompt, prompt, nil)
+}
+
+func (m *model) chooseScope(index int) tea.Cmd {
+	if m.pendingScope == nil || index < 0 || index >= len(m.pendingScope.Choices) {
+		return nil
+	}
+	preflight := *m.pendingScope
+	original := m.pendingPrompt
+	choice := preflight.Choices[index]
+	m.pendingScope = nil
+	m.pendingPrompt = ""
+	mode := agent.ScopeTaskMode(choice.ID)
+	m.lines = append(m.lines, logLine{Kind: "system", Text: "using: " + choice.Label})
+	m.refresh()
+	prompt, ok := scope.Apply(original, preflight, choice.ID)
+	if !ok {
+		m.lines = append(m.lines, logLine{Kind: "error", Text: "that scope choice is no longer available"})
+		m.refresh()
+		return nil
+	}
+	return m.runAgentAsMode(prompt, original, &mode)
+}
+
+func formatScopePrompt(p scope.Prompt) string {
+	var b strings.Builder
+	b.WriteString("Quick check — " + p.Question + "\n")
+	for i, c := range p.Choices {
+		recommended := ""
+		if c.Recommended {
+			recommended = " (recommended)"
+		}
+		fmt.Fprintf(&b, "%d. %s%s — %s\n", i+1, c.Label, recommended, c.Why)
+	}
+	b.WriteString("Choose 1–3, or Esc to cancel.")
+	return strings.TrimSpace(b.String())
+}
+
+func (m *model) runAgentAs(prompt, displayPrompt string) tea.Cmd {
+	return m.runAgentAsMode(prompt, displayPrompt, nil)
+}
+
+func (m *model) runAgentAsMode(prompt, displayPrompt string, mode *agent.TaskMode) tea.Cmd {
 	m.busy = true
+	if mode != nil && mode.Valid() {
+		copyMode := *mode
+		m.turnMode = &copyMode
+	} else {
+		m.turnMode = nil
+	}
+	// Infer persistent state only after this turn is admitted. A scope choice
+	// may infer a goal, but it never changes the configured task mode.
+	if mode != nil {
+		m.autoApplyGoal(displayPrompt)
+	} else {
+		m.autoApplyPrompt(displayPrompt)
+	}
 	m.turnID++
 	turnID := m.turnID
 	sessionID := m.sessionID
-	if !strings.HasPrefix(prompt, "/") {
-		m.lines = append(m.lines, logLine{Kind: "user", Text: prompt})
+	if !strings.HasPrefix(displayPrompt, "/") {
+		if displayPrompt != prompt || len(m.lines) == 0 || m.lines[len(m.lines)-1].Text != displayPrompt {
+			m.lines = append(m.lines, logLine{Kind: "user", Text: displayPrompt})
+		}
 		m.refresh()
 	}
 	permCh := make(chan perm.Decision, 1)
@@ -469,12 +572,21 @@ func (m *model) runAgent(prompt string) tea.Cmd {
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	return func() tea.Msg {
-		hist, res, err := ag.Run(ctx, hist, llm.Message{Role: "user", Content: prompt}, h)
-		if res.GoalDone {
-			_ = goal.Clear(ag.CFG.Workspace)
-			ag.Goal = ""
+		hist, res, err := ag.RunWithOptions(ctx, hist, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{TaskMode: mode, TracePrompt: displayPrompt, DurablePrompt: displayPrompt})
+		if prompt != displayPrompt {
+			for i := len(hist) - 1; i >= 0; i-- {
+				if hist[i].Role == "user" && hist[i].Content == prompt {
+					hist[i].Content = displayPrompt
+					break
+				}
+			}
 		}
-		return doneMsg{history: hist, result: res, prompt: prompt, err: err, turnID: turnID, sessionID: sessionID}
+		if res.GoalDone {
+			workspace := ag.ConfigSnapshot().Workspace
+			_ = goal.Clear(workspace)
+			ag.SetGoal("")
+		}
+		return doneMsg{history: hist, result: res, prompt: displayPrompt, err: err, turnID: turnID, sessionID: sessionID}
 	}
 }
 
@@ -497,7 +609,7 @@ func (m *model) reflectCmd(prompt string, result agent.Result, turnID uint64, se
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
-		client := ag.LLM
+		client := ag.ClientSnapshot()
 		if r, ok := client.(*llm.Router); ok && r.Backend != nil {
 			client = r.Backend
 		}
@@ -534,11 +646,13 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		m.lines = append(m.lines, logLine{Kind: kind, Text: text})
 	case payload == "status":
 		st := fmt.Sprintf("safe/fast=%s task=%s provider=%s model=%s\n%s", m.cfg.Mode, agent.ParseTaskMode(m.cfg.TaskMode).Label(), m.cfg.Provider, m.cfg.Model, m.cfg.Workspace)
-		if g := m.ag.Goal; g != "" {
+		if g := m.ag.GoalSnapshot(); g != "" {
 			st += "\ngoal: " + g
 		}
 		if m.ag.Tools != nil && m.ag.Tools.HasMCP() {
-			st += fmt.Sprintf("\n%d MCP tools", len(m.ag.Tools.MCP.Tools()))
+			if mcp := m.ag.Tools.MCPManagerSnapshot(); mcp != nil {
+				st += fmt.Sprintf("\n%d MCP tools", len(mcp.Tools()))
+			}
 		}
 		m.lines = append(m.lines, logLine{Kind: "system", Text: st})
 	case payload == "diff":
@@ -576,7 +690,7 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 	case strings.HasPrefix(payload, "goal:set:"):
 		text := strings.TrimPrefix(payload, "goal:set:")
 		_ = goal.Set(m.cfg.Workspace, text)
-		m.ag.Goal = text
+		m.ag.SetGoal(text)
 		m.lines = append(m.lines, logLine{Kind: "user", Text: "/goal " + text})
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "goal set"})
 		m.refresh()
@@ -590,7 +704,7 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		}
 	case payload == "goal:clear":
 		_ = goal.Clear(m.cfg.Workspace)
-		m.ag.Goal = ""
+		m.ag.SetGoal("")
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "goal cleared"})
 	}
 	m.refresh()
@@ -606,7 +720,9 @@ func (m *model) slash(line string) tea.Cmd {
 	case "/help":
 		help := "Type what you want. Safe asks before edits.\nOptional: /commit /review /clear /quit"
 		if m.ag.Tools != nil && m.ag.Tools.HasMCP() {
-			help += fmt.Sprintf("\nConnected: %d MCP tools.", len(m.ag.Tools.MCP.Tools()))
+			if mcp := m.ag.Tools.MCPManagerSnapshot(); mcp != nil {
+				help += fmt.Sprintf("\nConnected: %d MCP tools.", len(mcp.Tools()))
+			}
 		}
 		m.lines = append(m.lines, logLine{Kind: "system", Text: help})
 	case "/mcp":
@@ -614,18 +730,18 @@ func (m *model) slash(line string) tea.Cmd {
 			m.lines = append(m.lines, logLine{Kind: "system", Text: "no MCP tools connected — ask in chat to add one"})
 			break
 		}
-		for _, line := range m.ag.Tools.MCP.Report() {
-			m.lines = append(m.lines, logLine{Kind: "system", Text: line})
+		if mcp := m.ag.Tools.MCPManagerSnapshot(); mcp != nil {
+			for _, line := range mcp.Report() {
+				m.lines = append(m.lines, logLine{Kind: "system", Text: line})
+			}
 		}
 	case "/safe":
 		m.cfg.Mode = config.ModeSafe
-		m.ag.CFG.Mode = config.ModeSafe
-		m.ag.Gate.Mode = config.ModeSafe
+		m.ag.SetMode(config.ModeSafe)
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "mode: safe"})
 	case "/fast":
 		m.cfg.Mode = config.ModeFast
-		m.ag.CFG.Mode = config.ModeFast
-		m.ag.Gate.Mode = config.ModeFast
+		m.ag.SetMode(config.ModeFast)
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "mode: fast"})
 	case "/model":
 		if len(parts) < 2 {
@@ -633,7 +749,7 @@ func (m *model) slash(line string) tea.Cmd {
 			break
 		}
 		m.cfg.Model = parts[1]
-		m.ag.CFG.Model = parts[1]
+		m.ag.SetModel(parts[1])
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "model: " + parts[1]})
 	case "/provider":
 		if len(parts) < 2 {
@@ -676,8 +792,8 @@ func (m *model) slash(line string) tea.Cmd {
 			m.lines = append(m.lines, logLine{Kind: "error", Text: err.Error()})
 			break
 		}
-		m.ag.LLM = client
-		m.ag.CFG = m.cfg
+		m.ag.SetClient(client)
+		m.ag.UpdateConfig(func(cfg *config.Config) { *cfg = m.cfg })
 		_ = config.Save(m.cfg)
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "provider: " + string(m.cfg.Provider) + "  model: " + m.cfg.Model})
 	case "/reset":
@@ -764,15 +880,19 @@ func (m *model) View() string {
 	}
 	left := brandStyle.Render("PICOGENT")
 	taskChip := ""
-	if m.ag != nil && m.ag.TaskMode.Valid() && m.ag.TaskMode != agent.TaskAgent {
-		taskChip = "  " + chipOn.Render(m.ag.TaskMode.Label())
+	if m.turnMode != nil && m.turnMode.Valid() && *m.turnMode != agent.TaskAgent {
+		taskChip = "  " + chipOn.Render(m.turnMode.Label()+" · this turn")
+	} else if m.ag != nil && m.ag.TaskModeSnapshot().Valid() && m.ag.TaskModeSnapshot() != agent.TaskAgent {
+		taskChip = "  " + chipOn.Render(m.ag.TaskModeSnapshot().Label())
 	}
-	if m.ag != nil && m.ag.Goal != "" {
+	if m.ag != nil && m.ag.GoalSnapshot() != "" {
 		taskChip += "  " + chipOn.Render("goal")
 	}
 	right := fmt.Sprintf("%s%s  %s  %s", mode, taskChip, conn, metaStyle.Render(m.cfg.Model))
 	if m.ag != nil && m.ag.Tools != nil && m.ag.Tools.HasMCP() {
-		right += "  " + chipOn.Render(fmt.Sprintf("%d MCP", len(m.ag.Tools.MCP.Tools())))
+		if mcp := m.ag.Tools.MCPManagerSnapshot(); mcp != nil {
+			right += "  " + chipOn.Render(fmt.Sprintf("%d MCP", len(mcp.Tools())))
+		}
 	}
 	head := lipgloss.JoinHorizontal(lipgloss.Center, left, "  ", right)
 	ws := metaStyle.Render(clip(m.cfg.Workspace, max(20, m.width-4)))

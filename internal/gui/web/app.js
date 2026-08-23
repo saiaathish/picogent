@@ -5,9 +5,14 @@ const $ = (id) => document.getElementById(id);
 const logEl = $("log");
 const emptyEl = $("empty");
 const thinkingEl = $("thinking");
+const taskModeEl = $("task-mode");
 const permEl = $("perm");
 const permText = $("perm-text");
 const permHint = $("perm-hint");
+const scopeEl = $("scope-card");
+const scopeQuestion = $("scope-question");
+const scopeChoices = $("scope-choices");
+const scopeCancel = $("scope-cancel");
 const promptEl = $("prompt");
 const sendBtn = $("send");
 const attachBtn = $("attach-btn");
@@ -15,6 +20,8 @@ const fileInput = $("file-input");
 const attachTray = $("attach-tray");
 const modelPick = $("model-pick");
 const statusText = $("status-text");
+const topProjectEl = $("top-project");
+const topRuntimeEl = $("top-runtime");
 const contextBar = $("context-bar");
 const contextRing = $("context-ring");
 const contextPop = $("context-pop");
@@ -78,6 +85,24 @@ let reviewReturnFocus = null;
 let highlight = { start: 0, end: 0 };
 let activeTask = null;
 let taskAnnouncementKey = "";
+let pendingScopeRequest = null;
+let currentTaskMode = "agent";
+let taskModeTemporary = false;
+
+const TASK_MODE_LABELS = Object.freeze({
+  agent: "Agent",
+  ask: "Ask",
+  plan: "Plan",
+  debug: "Debug",
+});
+
+function renderTaskMode() {
+  if (!taskModeEl) return;
+  const mode = TASK_MODE_LABELS[currentTaskMode] || currentTaskMode;
+  const visible = !!mode && currentTaskMode !== "agent";
+  taskModeEl.hidden = !visible;
+  taskModeEl.textContent = visible ? mode + (taskModeTemporary ? " · this turn" : "") : "";
+}
 
 const REF_RE = /([`']?)((?:[\w.-]+\/)+[\w.-]+\.[a-zA-Z0-9]+)\1:(\d+)(?:-(\d+))?/g;
 const LINE_RE = /(?:^|\s)(?:line|L)\s*(\d+)(?:\s*[-–]\s*(\d+))?/gi;
@@ -97,6 +122,19 @@ function setThinking(on) {
     reasoningEl.hidden = reasoningEl.children.length === 0;
   }
   if (on) $("chat-scroll").scrollTop = $("chat-scroll").scrollHeight;
+}
+
+function renderTopContext(state) {
+  if (!topProjectEl || !topRuntimeEl) return;
+  const workspace = String(state?.workspace || "").trim();
+  const cleanWorkspace = workspace.replace(/[\\/]+$/, "");
+  const parts = cleanWorkspace.split(/[\\/]/).filter(Boolean);
+  const project = cleanWorkspace && cleanWorkspace !== "." ? parts[parts.length - 1] || cleanWorkspace : "No folder";
+  topProjectEl.textContent = project;
+  topProjectEl.title = cleanWorkspace || "Select a project folder";
+  const mode = String(state?.mode || "safe").toLowerCase() === "fast" ? "Fast" : "Safe";
+  const model = String(state?.model || "auto");
+  topRuntimeEl.textContent = mode + " · " + (model === "auto" ? "Auto" : model);
 }
 
 function resetReasoning() {
@@ -172,7 +210,17 @@ function renderTaskProgress(task, sourceSession) {
   taskGoalEl.textContent = task.goal || "";
 
   const meta = [];
-  if (steps.length) meta.push(Math.min(currentStep, steps.length) + " of " + steps.length + " steps");
+  if (steps.length) {
+    // current_step is the zero-based index of the next step, not a count of
+    // completed steps. Prefer the explicit done markers when present, while
+    // retaining the index as a compatibility fallback for older state.
+    const doneSteps = steps.reduce((count, step) => count + (step?.done ? 1 : 0), 0);
+    const completedSteps = Math.min(
+      steps.length,
+      Math.max(doneSteps, Math.max(0, Math.min(currentStep, steps.length)))
+    );
+    meta.push(completedSteps + " of " + steps.length + " steps");
+  }
   if (task.attempts > 0) meta.push("attempt " + task.attempts);
   taskMetaEl.textContent = meta.join(" · ");
   taskMetaEl.hidden = meta.length === 0;
@@ -347,16 +395,23 @@ function updateReasonStats() {
     };
     reasoningEl.appendChild(summary);
   }
-  if (summary) {
-    let html = "";
-    if (turnStats.edits) {
-      html = "Edited " + turnStats.edits + " file" + (turnStats.edits === 1 ? "" : "s");
-      if (turnStats.added || turnStats.removed) {
-        html += ' <span class="diff-add">+' + turnStats.added + '</span> <span class="diff-del">−' + turnStats.removed + "</span>";
-      }
-    }
-    summary.innerHTML = html || "View changes";
-    summary.hidden = !turnStats.edits;
+	if (summary) {
+		summary.replaceChildren();
+		if (turnStats.edits) {
+			summary.appendChild(document.createTextNode("Edited " + turnStats.edits + " file" + (turnStats.edits === 1 ? "" : "s")));
+			if (turnStats.added || turnStats.removed) {
+				const added = document.createElement("span");
+				added.className = "diff-add";
+				added.textContent = " +" + turnStats.added;
+				const removed = document.createElement("span");
+				removed.className = "diff-del";
+				removed.textContent = " −" + turnStats.removed;
+				summary.append(added, removed);
+			}
+		} else {
+			summary.textContent = "View changes";
+		}
+		summary.hidden = !turnStats.edits;
   }
 }
 
@@ -436,14 +491,15 @@ function renderChangesPanel() {
     changesSummary.textContent = "";
     return;
   }
-  changesSummary.innerHTML =
-    turnStats.edits +
-    " files · " +
-    '<span class="diff-add">+' +
-    turnStats.added +
-    '</span> <span class="diff-del">−' +
-    turnStats.removed +
-    "</span>";
+	changesSummary.replaceChildren();
+	changesSummary.appendChild(document.createTextNode(turnStats.edits + " files · "));
+	const added = document.createElement("span");
+	added.className = "diff-add";
+	added.textContent = "+" + turnStats.added;
+	const removed = document.createElement("span");
+	removed.className = "diff-del";
+	removed.textContent = " −" + turnStats.removed;
+	changesSummary.append(added, removed);
   for (const c of turnChanges) {
     const row = document.createElement("button");
     row.type = "button";
@@ -451,10 +507,15 @@ function renderChangesPanel() {
     const path = document.createElement("span");
     path.className = "change-path";
     path.textContent = c.path;
-    const stats = document.createElement("span");
-    stats.className = "change-stats";
-    stats.innerHTML =
-      '<span class="diff-add">+' + (c.added || 0) + '</span> <span class="diff-del">−' + (c.removed || 0) + "</span>";
+		const stats = document.createElement("span");
+		stats.className = "change-stats";
+		const added = document.createElement("span");
+		added.className = "diff-add";
+		added.textContent = "+" + (c.added || 0);
+		const removed = document.createElement("span");
+		removed.className = "diff-del";
+		removed.textContent = " −" + (c.removed || 0);
+		stats.append(added, removed);
     row.appendChild(path);
     row.appendChild(stats);
     row.onclick = () => openReview(c.path, 0, 0, "Changed this turn");
@@ -849,6 +910,7 @@ function applyRefsFromText(text) {
 function clearLog() {
   stopStreamTimer();
   stream = null;
+  hideScopeCard();
   logEl.innerHTML = "";
   resetReasoning();
   setThinking(false);
@@ -967,8 +1029,12 @@ async function refresh() {
   const epoch = viewEpoch;
   const s = await (await fetch("/api/state")).json();
   if (epoch !== viewEpoch) return;
+  renderTopContext(s);
   sessionId = s.session_id || sessionId;
   currentMode = s.mode || "safe";
+  currentTaskMode = s.task_mode || "agent";
+  taskModeTemporary = !!s.task_mode_temporary;
+  renderTaskMode();
   if (s.slash?.length) slashItems = s.slash;
 
   modeSeg.querySelectorAll("button").forEach((b) => {
@@ -1470,6 +1536,139 @@ promptEl?.addEventListener("paste", (e) => {
   }
 });
 
+function setScopeComposerLocked(locked) {
+  if (promptEl) promptEl.disabled = !!locked;
+  if (attachBtn) attachBtn.disabled = !!locked || busy;
+  if (modelPick) modelPick.disabled = !!locked;
+  if (sendBtn && locked) sendBtn.disabled = true;
+}
+
+function hideScopeCard() {
+  pendingScopeRequest = null;
+  if (scopeEl) scopeEl.hidden = true;
+  scopeChoices?.replaceChildren();
+  setScopeComposerLocked(false);
+  if (sendBtn) sendBtn.disabled = !ready;
+}
+
+function showScopeCard(data, request) {
+  pendingScopeRequest = request;
+  if (!scopeEl || !scopeQuestion || !scopeChoices) return;
+  scopeQuestion.textContent = data.question || "What should I focus on first?";
+  scopeChoices.replaceChildren();
+  (data.choices || []).forEach((choice, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "scope-choice";
+    const number = document.createElement("span");
+    number.className = "scope-choice-number";
+    number.textContent = String(index + 1);
+    const copy = document.createElement("span");
+    copy.className = "scope-choice-copy";
+    const label = document.createElement("span");
+    label.className = "scope-choice-label";
+    label.textContent = choice.label || "Continue";
+    if (choice.recommended) {
+      const badge = document.createElement("span");
+      badge.className = "scope-recommended";
+      badge.textContent = "  Recommended";
+      label.appendChild(badge);
+    }
+    const why = document.createElement("span");
+    why.className = "scope-choice-why";
+    why.textContent = choice.why || "";
+    copy.append(label, why);
+    button.append(number, copy);
+    button.addEventListener("click", () => chooseScope(choice.id));
+    scopeChoices.appendChild(button);
+  });
+  scopeEl.hidden = false;
+  setScopeComposerLocked(true);
+  scopeChoices.querySelector("button")?.focus();
+  scopeEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function chooseScope(choiceID) {
+  const request = pendingScopeRequest;
+  if (!request || !choiceID) return;
+  hideScopeCard();
+  await submitChat(request.prompt, request.attachments, request.sentAttachments, choiceID);
+}
+
+scopeCancel?.addEventListener("click", () => {
+  hideScopeCard();
+  promptEl?.focus();
+});
+document.addEventListener("keydown", (e) => {
+  if (!pendingScopeRequest || e.key !== "Escape") return;
+  e.preventDefault();
+  hideScopeCard();
+  promptEl?.focus();
+});
+
+async function submitChat(prompt, attachments, sentAttachments, scopeChoice = "") {
+  add("you", prompt || "(attached files)", sentAttachments);
+  pendingAttachments = [];
+  renderAttachTray();
+  promptEl.value = "";
+  promptEl.style.height = "auto";
+  const wasBusy = busy;
+  // Mark the local turn immediately. The server may accept a follow-up into
+  // its queue before the next state refresh arrives, and a failed request
+  // should not leave the composer believing it is still working forever.
+  busy = true;
+  if (!wasBusy) setThinking(true);
+  sendBtn.disabled = !ready;
+  const body = { prompt, attachments };
+  if (scopeChoice) body.scope_choice = scopeChoice;
+  let res;
+  try {
+    res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    add("error", err?.message || "Could not reach Picogent.");
+    if (!wasBusy) {
+      busy = false;
+      sendBtn.disabled = !ready;
+      setThinking(false);
+    }
+    return;
+  }
+  if (res.status === 204) {
+    if (!wasBusy) {
+      busy = false;
+      sendBtn.disabled = !ready;
+      setThinking(false);
+    }
+    return;
+  }
+  let data = null;
+  if (res.headers.get("content-type")?.includes("application/json")) {
+    try { data = await res.json(); } catch (_) {}
+  }
+  if (res.status === 409 && data?.error === "scope_required") {
+    if (!wasBusy) {
+      busy = false;
+      setThinking(false);
+    }
+    showScopeCard(data, { prompt, attachments, sentAttachments });
+    return;
+  }
+  if (res.ok) {
+    if (data?.queued) return;
+    return;
+  }
+  add("error", data?.error || "Could not start that task.");
+  if (!wasBusy) {
+    busy = false;
+    sendBtn.disabled = !ready;
+    setThinking(false);
+  }
+}
+
 $("composer").onsubmit = async (e) => {
   e.preventDefault();
   const prompt = promptEl.value.trim();
@@ -1483,48 +1682,29 @@ $("composer").onsubmit = async (e) => {
     data: a.data,
     preview: a.preview,
   }));
-  add("you", prompt || "(attached files)", sentAttachments);
   const attachments = pendingAttachments.map((a) => ({ name: a.name, mime: a.mime, data: a.data }));
-  pendingAttachments = [];
-  renderAttachTray();
-  promptEl.value = "";
-  promptEl.style.height = "auto";
-  const wasBusy = busy;
-  if (!wasBusy) {
-    setThinking(true);
-  }
-  sendBtn.disabled = !ready;
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ prompt, attachments }),
-  });
-  if (res.status === 204) {
-    if (!wasBusy) {
-      busy = false;
-      sendBtn.disabled = !ready;
-      setThinking(false);
-    }
-    return;
-  }
-  let queued = false;
-  if (res.ok) {
+  if (prompt) {
     try {
-      const data = await res.json();
-      queued = !!data.queued;
-    } catch (_) {}
-  }
-  if (queued) {
-    return;
-  }
-  if (!res.ok) {
-    add("error", await res.text());
-    if (!wasBusy) {
-      busy = false;
-      sendBtn.disabled = !ready;
-      setThinking(false);
+      const check = await fetch("/api/scope", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      if (!check.ok) {
+        add("error", await check.text());
+        return;
+      }
+      const data = await check.json();
+      if (data.needed) {
+        showScopeCard(data, { prompt, attachments, sentAttachments });
+        return;
+      }
+    } catch (_) {
+      add("error", "Could not check the task scope. Try again.");
+      return;
     }
   }
+  await submitChat(prompt, attachments, sentAttachments);
 };
 
 promptEl.addEventListener("keydown", (e) => {
@@ -1691,9 +1871,13 @@ async function openReview(path, start, end, note) {
     const data = await (await fetch("/api/file?path=" + encodeURIComponent(path))).json();
     renderReview(data);
     if (highlight.start) scrollToLine(highlight.start);
-  } catch (err) {
-    reviewScroll.innerHTML = '<p class="review-empty">' + err.message + "</p>";
-  }
+	} catch (err) {
+		reviewScroll.replaceChildren();
+		const message = document.createElement("p");
+		message.className = "review-empty";
+		message.textContent = err?.message || "Could not load that file.";
+		reviewScroll.appendChild(message);
+	}
 }
 
 function renderLineJumps() {
@@ -1991,10 +2175,12 @@ function connectEvents() {
       renderChangesPanel();
       return;
     }
-    if (e.type === "test") {
-      const note = document.createElement("div");
-      note.className = "test-result" + (e.status === "fail" ? " is-fail" : " is-pass");
-      note.innerHTML = "<strong>" + (e.text || "Tests") + "</strong>";
+	if (e.type === "test") {
+		const note = document.createElement("div");
+		note.className = "test-result" + (e.status === "fail" ? " is-fail" : " is-pass");
+		const title = document.createElement("strong");
+		title.textContent = e.text || "Tests";
+		note.appendChild(title);
       if (e.summary) {
         const pre = document.createElement("pre");
         pre.textContent = e.summary.slice(0, 1200);
@@ -2028,6 +2214,9 @@ function connectEvents() {
       return;
     }
     if (e.type === "task_mode") {
+      currentTaskMode = e.text || currentTaskMode;
+      taskModeTemporary = e.hint === "this turn";
+      renderTaskMode();
       refresh();
       return;
     }

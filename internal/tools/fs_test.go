@@ -4,8 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/tools"
 )
 
@@ -20,5 +24,70 @@ func TestEditRequiresUniqueString(t *testing.T) {
 	_, err := tool.Run(context.Background(), `{"path":"a.txt","old_string":"aa","new_string":"bb"}`, reg.Ctx)
 	if err == nil {
 		t.Fatal("expected uniqueness error")
+	}
+}
+
+func TestFilesystemToolsClassifyOutsideSymlink(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(workspace, "escape")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation requires privileges on Windows")
+		}
+		t.Fatal(err)
+	}
+
+	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	for _, tt := range []struct {
+		name string
+		args string
+	}{
+		{name: "read_file", args: `{"path":"escape/secret.txt"}`},
+		{name: "write_file", args: `{"path":"escape/secret.txt","content":"owned"}`},
+		{name: "edit_file", args: `{"path":"escape/secret.txt","old_string":"private","new_string":"owned"}`},
+		{name: "list_dir", args: `{"path":"escape"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tool, ok := reg.Get(tt.name)
+			if !ok {
+				t.Fatalf("missing %s", tt.name)
+			}
+			req := tool.Permission(tt.args, reg.Ctx)
+			if !req.OutsideWorkspace {
+				t.Fatalf("permission request = %+v, want outside workspace", req)
+			}
+			gate := perm.New(config.ModeFast, workspace, nil)
+			if got, err := gate.Check(context.Background(), req); err != nil || got != perm.Deny {
+				t.Fatalf("Fast decision = %s, %v; want deny", got, err)
+			}
+		})
+	}
+}
+
+func TestReadFileBoundsLargeFiles(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "large.txt")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", 300<<10)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	read, _ := reg.Get("read_file")
+	got, err := read.Run(context.Background(), `{"path":"large.txt"}`, reg.Ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "file larger than 256KiB") {
+		t.Fatalf("missing truncation marker: %q", got[len(got)-min(len(got), 120):])
+	}
+	if len(got) > 260<<10 {
+		t.Fatalf("read output was not bounded: %d bytes", len(got))
+	}
+
+	edit, _ := reg.Get("edit_file")
+	if _, err := edit.Run(context.Background(), `{"path":"large.txt","old_string":"x","new_string":"y"}`, reg.Ctx); err == nil || !strings.Contains(err.Error(), "larger than 256KiB") {
+		t.Fatalf("large edit error = %v", err)
 	}
 }

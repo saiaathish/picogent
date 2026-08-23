@@ -60,6 +60,29 @@ func TestStoreRoundTripDeleteAndPermissions(t *testing.T) {
 	}
 }
 
+func TestStoreRepeatedSaveReplacesExistingState(t *testing.T) {
+	store := NewStore(t.TempDir())
+	task, err := New("repeat-save", "keep progress", []string{"work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempts := 0; attempts < 4; attempts++ {
+		if attempts > 0 {
+			task.NoteAttempt()
+		}
+		if err := store.Save(task); err != nil {
+			t.Fatalf("save %d: %v", attempts, err)
+		}
+		loaded, err := store.Load(task.SessionID)
+		if err != nil {
+			t.Fatalf("load %d: %v", attempts, err)
+		}
+		if loaded.Attempts != attempts {
+			t.Fatalf("attempts after save %d = %d, want %d", attempts, loaded.Attempts, attempts)
+		}
+	}
+}
+
 func TestWorkspaceStorePathAndSessionSafety(t *testing.T) {
 	root := t.TempDir()
 	store := WorkspaceStore(root)

@@ -308,8 +308,8 @@ func (s *server) rebuildAgent() error {
 	if s.ag != nil && s.ag.Gate != nil {
 		s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
 	}
-	s.attachRouterHook()
 	s.mu.Unlock()
+	s.attachRouterHook()
 	return nil
 }
 

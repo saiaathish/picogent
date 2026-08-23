@@ -10,16 +10,16 @@ type RouteHook func(dec RouteDecision)
 
 // Router implements Client and auto-selects models by task complexity.
 type Router struct {
-	Backend      Client
-	Advisor      *Advisor
-	Ecosystem    Ecosystem
-	AllowFable   bool
-	Enabled      bool
-	OnRoute      RouteHook
-	mu           sync.Mutex
-	last         RouteDecision
-	failures     int
-	userPrompt   string
+	Backend    Client
+	Advisor    *Advisor
+	Ecosystem  Ecosystem
+	AllowFable bool
+	Enabled    bool
+	OnRoute    RouteHook
+	mu         sync.Mutex
+	last       RouteDecision
+	failures   int
+	userPrompt string
 }
 
 func NewRouter(backend Client, advisor *Advisor, eco Ecosystem, allowFable bool, onRoute RouteHook) *Router {
@@ -43,6 +43,26 @@ func (r *Router) SetUserPrompt(p string) {
 	r.mu.Lock()
 	r.userPrompt = p
 	r.mu.Unlock()
+}
+
+// SetOnRoute swaps the UI hook without racing a route that is about to call
+// the previous hook.
+func (r *Router) SetOnRoute(hook RouteHook) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.OnRoute = hook
+	r.mu.Unlock()
+}
+
+func (r *Router) LastRouteHook() RouteHook {
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.OnRoute
 }
 
 func (r *Router) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
@@ -84,9 +104,10 @@ func (r *Router) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error
 
 	r.mu.Lock()
 	r.last = dec
+	hook := r.OnRoute
 	r.mu.Unlock()
-	if r.OnRoute != nil {
-		r.OnRoute(dec)
+	if hook != nil {
+		hook(dec)
 	}
 
 	out, err := r.Backend.Chat(ctx, req)

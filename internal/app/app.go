@@ -68,11 +68,11 @@ func Build(cfg config.Config) (*agent.Agent, error) {
 	gate.SetAlwaysAllowed(cfg.Extensions.AlwaysAllowTools)
 	a := agent.New(cfg, client, reg, gate)
 	if root, err := config.Dir(); err == nil {
-		a.TaskStore = taskstate.NewStore(filepath.Join(root, "tasks", projects.IDForPath(cfg.Workspace)))
+		a.SetTaskStore(taskstate.NewStore(filepath.Join(root, "tasks", projects.IDForPath(cfg.Workspace))))
 	}
-	a.ProjectRules = projectctx.Load(cfg.Workspace)
+	a.SetProjectRules(projectctx.Load(cfg.Workspace))
 	skills := extensions.LoadDeveloperExtensions(cfg.Extensions.InstalledSkills)
-	a.SkillRules = extensions.SkillsPrompt(skills)
+	a.SetSkillRules(extensions.SkillsPrompt(skills))
 	syncMemory(a, cfg.Workspace)
 	syncGoal(a, cfg.Workspace)
 	wireRuntime(a)
@@ -87,7 +87,7 @@ func syncMemory(a *agent.Agent, workspace string) {
 	if err != nil {
 		return
 	}
-	a.Memory = store
+	a.SetMemory(store)
 }
 
 // RefreshMemory reloads learned habits/playbooks into the live agent.
@@ -100,7 +100,7 @@ func syncGoal(a *agent.Agent, workspace string) {
 		return
 	}
 	g, _ := goal.Load(workspace)
-	a.Goal = g
+	a.SetGoal(g)
 }
 
 // RoutePersist saves the last routing decision into config (best-effort).

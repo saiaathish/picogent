@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/llm"
@@ -268,9 +269,9 @@ func (bashTool) Run(ctx context.Context, args string, c Context) (string, error)
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.BashTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", "-lc", in.Command)
+	cmd := shellCommand(ctx, in.Command)
 	cmd.Dir = ws
-	cmd.Env = os.Environ()
+	cmd.Env = sanitizedCommandEnv()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -286,6 +287,72 @@ func (bashTool) Run(ctx context.Context, args string, c Context) (string, error)
 		return "(no output)", nil
 	}
 	return text, nil
+}
+
+func shellCommand(ctx context.Context, command string) *exec.Cmd {
+	if runtime.GOOS == "windows" {
+		shell := os.Getenv("ComSpec")
+		if shell == "" {
+			shell = "cmd.exe"
+		}
+		return exec.CommandContext(ctx, shell, "/D", "/S", "/C", command)
+	}
+	// Do not source a user's shell profile: profiles are arbitrary code and
+	// commonly export credentials or change the working directory.
+	return exec.CommandContext(ctx, "bash", "--noprofile", "--norc", "-lc", command)
+}
+
+// sanitizedCommandEnv preserves normal build/runtime settings while keeping
+// API keys, auth cookies, preload hooks, and shell startup hooks out of model
+// visible command output.  An explicit user-approved command can still opt
+// into its own environment, but Fast/--yes never leaks the parent process's
+// credentials by default.
+func sanitizedCommandEnv() []string {
+	out := make([]string, 0, len(os.Environ()))
+	for _, entry := range os.Environ() {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || unsafeCommandEnvKey(key) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	if os.Getenv("PATH") != "" && !hasEnvKey(out, "PATH") {
+		out = append(out, "PATH="+os.Getenv("PATH"))
+	}
+	return out
+}
+
+func hasEnvKey(env []string, want string) bool {
+	for _, entry := range env {
+		if key, _, ok := strings.Cut(entry, "="); ok && key == want {
+			return true
+		}
+	}
+	return false
+}
+
+func unsafeCommandEnvKey(key string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(key))
+	if upper == "" {
+		return true
+	}
+	for _, marker := range []string{
+		"KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "AUTH", "COOKIE", "CREDENTIAL", "PRIVATE", "OAUTH",
+	} {
+		if strings.Contains(upper, marker) {
+			return true
+		}
+	}
+	for _, exact := range []string{
+		"BASH_ENV", "ENV", "CDPATH", "PROMPT_COMMAND", "SHELLOPTS", "BASHOPTS", "PS4",
+		"LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
+		"NODE_OPTIONS", "PYTHONPATH", "PYTHONSTARTUP", "RUBYOPT", "PERL5OPT", "GIT_EXEC_PATH",
+	} {
+		if upper == exact {
+			return true
+		}
+	}
+	return strings.HasPrefix(upper, "DYLD_") || strings.HasPrefix(upper, "LD_")
 }
 
 type gitTool struct{}

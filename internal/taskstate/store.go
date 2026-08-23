@@ -79,7 +79,7 @@ func (s *Store) Save(task *Task) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close task state: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := replaceFile(tmpName, path); err != nil {
 		return fmt.Errorf("replace task state: %w", err)
 	}
 	return nil

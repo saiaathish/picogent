@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/saiaathish/picogent/internal/llm"
@@ -41,10 +41,24 @@ type Tool interface {
 }
 
 type Registry struct {
-	byName map[string]Tool
-	order  []string
-	Ctx    Context
-	MCP    *mcpbridge.Manager
+	mu         sync.RWMutex
+	mutationMu sync.Mutex
+	byName     map[string]Tool
+	order      []string
+	Ctx        Context
+	MCP        *mcpbridge.Manager
+}
+
+// WithExclusive serializes operations that mutate the live tool topology
+// (notably mcp_manage) across cloned session agents sharing this registry.
+// Ordinary read/edit tools continue to run in parallel.
+func (r *Registry) WithExclusive(fn func()) {
+	if r == nil || fn == nil {
+		return
+	}
+	r.mutationMu.Lock()
+	defer r.mutationMu.Unlock()
+	fn()
 }
 
 func NewRegistry(c Context) *Registry {
@@ -79,6 +93,9 @@ func NewRegistry(c Context) *Registry {
 }
 
 func (r *Registry) AttachMCP(m *mcpbridge.Manager) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	filtered := r.order[:0]
 	for _, name := range r.order {
 		if _, isMCP := r.byName[name].(mcpTool); isMCP {
@@ -93,35 +110,92 @@ func (r *Registry) AttachMCP(m *mcpbridge.Manager) {
 		return
 	}
 	for _, spec := range m.Specs() {
-		r.register(mcpTool{mgr: m, name: spec.Name})
+		r.registerLocked(mcpTool{mgr: m, name: spec.Name})
 	}
 }
 
 func (r *Registry) register(t Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.registerLocked(t)
+}
+
+func (r *Registry) registerLocked(t Tool) {
 	name := t.Spec().Name
 	r.byName[name] = t
 	r.order = append(r.order, name)
 }
 
 func (r *Registry) Specs() []llm.ToolSpec {
-	out := make([]llm.ToolSpec, 0, len(r.order))
+	r.mu.RLock()
+	registered := make([]Tool, 0, len(r.order))
 	for _, name := range r.order {
-		out = append(out, r.byName[name].Spec())
+		if tool, ok := r.byName[name]; ok {
+			registered = append(registered, tool)
+		}
+	}
+	r.mu.RUnlock()
+
+	out := make([]llm.ToolSpec, 0, len(registered))
+	for _, tool := range registered {
+		out = append(out, tool.Spec())
 	}
 	return out
 }
 
 func (r *Registry) Get(name string) (Tool, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	t, ok := r.byName[name]
 	return t, ok
 }
 
+// ContextSnapshot returns the immutable-at-the-call-boundary tool context.
+// Runtime wiring may replace callbacks between turns; a running turn should
+// continue using one coherent copy.
+func (r *Registry) ContextSnapshot() Context {
+	if r == nil {
+		return Context{}
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.Ctx
+}
+
+// UpdateContext changes runtime callbacks without racing a turn that is
+// already using a ContextSnapshot.
+func (r *Registry) UpdateContext(update func(*Context)) {
+	if r == nil || update == nil {
+		return
+	}
+	r.mu.Lock()
+	update(&r.Ctx)
+	r.mu.Unlock()
+}
+
+// MCPManagerSnapshot returns the currently attached manager. The manager owns
+// its own synchronization; callers must treat the pointer as shared.
+func (r *Registry) MCPManagerSnapshot() *mcpbridge.Manager {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.MCP
+}
+
 func (r *Registry) HasMCP() bool {
-	return r.MCP != nil && len(r.MCP.Tools()) > 0
+	r.mu.RLock()
+	mcp := r.MCP
+	r.mu.RUnlock()
+	return mcp != nil && len(mcp.Tools()) > 0
 }
 
 func (r *Registry) HasBrowserMCP() bool {
-	return r.MCP != nil && r.MCP.HasBrowser()
+	r.mu.RLock()
+	mcp := r.MCP
+	r.mu.RUnlock()
+	return mcp != nil && mcp.HasBrowser()
 }
 
 type mcpTool struct {
@@ -172,10 +246,11 @@ func resolvePath(workspace, p string) (string, error) {
 	if p == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	if filepath.IsAbs(p) {
-		return filepath.Clean(p), nil
+	resolved, err := perm.ResolveWorkspacePath(workspace, p)
+	if err != nil {
+		return "", err
 	}
-	return filepath.Abs(filepath.Join(workspace, p))
+	return resolved.Path, nil
 }
 
 func relDisplay(workspace, abs string) string {
@@ -202,18 +277,11 @@ func skipDir(name string) bool {
 }
 
 func mustWorkspace(c Context) (string, error) {
-	ws, err := filepath.Abs(c.Workspace)
+	resolved, err := perm.ResolveWorkspacePath(c.Workspace, ".")
 	if err != nil {
 		return "", err
 	}
-	st, err := os.Stat(ws)
-	if err != nil {
-		return "", err
-	}
-	if !st.IsDir() {
-		return "", fmt.Errorf("workspace is not a directory: %s", ws)
-	}
-	return ws, nil
+	return resolved.Root, nil
 }
 
 func schema(props map[string]any, required []string) map[string]any {

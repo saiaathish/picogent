@@ -10,6 +10,7 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/folderpick"
 	"github.com/saiaathish/picogent/internal/projects"
+	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
@@ -125,25 +126,44 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 func (s *server) switchWorkspace(path string) (projectSwitchResult, error) {
 	s.mu.Lock()
 	cfg := s.cfg
-	cfg.Workspace = path
 	s.mu.Unlock()
+	cfg.Workspace = path
+	res, err := s.replaceWorkspace(cfg)
+	if err != nil {
+		return projectSwitchResult{}, err
+	}
+	_ = config.Save(cfg)
+	return res, nil
+}
+
+// replaceWorkspace rebuilds every project-scoped runtime resource together:
+// task store, project rules, memory, goal, MCP wiring, trace, and session
+// history. The old generation is invalidated at the swap, so a turn that was
+// already running can only finish against its captured old agent/session.
+func (s *server) replaceWorkspace(cfg config.Config) (projectSwitchResult, error) {
 	a, err := app.Build(cfg)
 	if err != nil {
 		return projectSwitchResult{}, err
 	}
 
+	path := cfg.Workspace
 	sessID, hist := initialSession(path)
 	a.SetTaskSession(sessID)
 
 	s.mu.Lock()
+	oldWorkspace := s.cfg.Workspace
+	oldSession := s.sessionID
+	oldHist := s.hist
 	s.abortTurnLocked()
+	if oldSession != "" && len(oldHist) > 0 {
+		_ = session.SaveMessages(oldWorkspace, oldSession, oldHist)
+	}
 	s.cfg = cfg
 	s.ag = a
 	s.hist = hist
 	s.sessionID = sessID
 	s.mu.Unlock()
 	s.attachRouterHook()
-	_ = config.Save(cfg)
 	_, _, _ = projects.Ensure(path)
 	s.emit(event{Type: "system", Text: "Opened " + projects.NameFromPath(path)})
 	s.emitTaskSnapshot(sessID)

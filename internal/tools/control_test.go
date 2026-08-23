@@ -3,7 +3,10 @@ package tools
 import (
 	"context"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/mcpbridge"
 )
@@ -27,6 +30,77 @@ func TestAttachMCPKeepsManage(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("mcp_manage missing from Specs after AttachMCP")
+	}
+}
+
+func TestRegistryConcurrentAttachAndRead(t *testing.T) {
+	r := NewRegistry(Context{})
+	const iterations = 200
+	var wg sync.WaitGroup
+	errCh := make(chan string, 1)
+
+	for writer := 0; writer < 4; writer++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				if i%2 == 0 {
+					r.AttachMCP(&mcpbridge.Manager{})
+				} else {
+					r.AttachMCP(nil)
+				}
+			}
+		}()
+	}
+	for reader := 0; reader < 4; reader++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				_ = r.Specs()
+				if _, ok := r.Get("read_file"); !ok {
+					select {
+					case errCh <- "read_file disappeared":
+					default:
+					}
+				}
+				_ = r.HasMCP()
+				_ = r.HasBrowserMCP()
+			}
+		}()
+	}
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		t.Fatal(err)
+	default:
+	}
+}
+
+func TestRegistryWithExclusiveSerializesMutations(t *testing.T) {
+	r := NewRegistry(Context{})
+	var active, maxActive int32
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.WithExclusive(func() {
+				current := atomic.AddInt32(&active, 1)
+				for {
+					old := atomic.LoadInt32(&maxActive)
+					if current <= old || atomic.CompareAndSwapInt32(&maxActive, old, current) {
+						break
+					}
+				}
+				time.Sleep(time.Millisecond)
+				atomic.AddInt32(&active, -1)
+			})
+		}()
+	}
+	wg.Wait()
+	if got := atomic.LoadInt32(&maxActive); got != 1 {
+		t.Fatalf("maximum concurrent exclusive mutations = %d, want 1", got)
 	}
 }
 

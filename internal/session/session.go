@@ -1,7 +1,11 @@
 package session
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -46,8 +50,15 @@ type Meta struct {
 
 func New(workspace string) *Session {
 	now := time.Now().UTC()
+	id := now.Format("20060102-150405")
+	var suffix [8]byte
+	if _, err := rand.Read(suffix[:]); err == nil {
+		id += "-" + hex.EncodeToString(suffix[:])
+	} else {
+		id += "-" + fmt.Sprintf("%x", now.UnixNano())
+	}
 	return &Session{
-		ID:        now.Format("20060102-150405"),
+		ID:        id,
 		Title:     "New chat",
 		Workspace: workspace,
 		Updated:   now,
@@ -63,6 +74,9 @@ func Dir() (string, error) {
 }
 
 func (s *Session) Path() (string, error) {
+	if s == nil || !validID(s.ID) {
+		return "", errors.New("invalid session id")
+	}
 	dir, err := Dir()
 	if err != nil {
 		return "", err
@@ -87,14 +101,15 @@ func (s *Session) Save() error {
 }
 
 func Load(id string) (*Session, error) {
+	id = strings.TrimSuffix(strings.TrimSpace(id), ".json")
+	if !validID(id) {
+		return nil, errors.New("invalid session id")
+	}
 	dir, err := Dir()
 	if err != nil {
 		return nil, err
 	}
 	path := filepath.Join(dir, id+".json")
-	if !strings.HasSuffix(id, ".json") {
-		path = filepath.Join(dir, id+".json")
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -102,6 +117,9 @@ func Load(id string) (*Session, error) {
 	var s Session
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, err
+	}
+	if s.ID != id {
+		return nil, errors.New("session id mismatch")
 	}
 	return &s, nil
 }
@@ -129,6 +147,9 @@ func List() ([]Session, error) {
 		}
 		var s Session
 		if json.Unmarshal(data, &s) != nil {
+			continue
+		}
+		if !validID(s.ID) {
 			continue
 		}
 		out = append(out, s)
@@ -165,6 +186,9 @@ func ListMeta(workspace string) ([]Meta, error) {
 		if json.Unmarshal(data, &s) != nil {
 			continue
 		}
+		if !validID(s.ID) {
+			continue
+		}
 		sw, _ := filepath.Abs(s.Workspace)
 		if ws != "" && sw != ws {
 			continue
@@ -197,7 +221,9 @@ func Prune(workspace string) error {
 		return err
 	}
 	for _, m := range all[MaxSessions:] {
-		_ = os.Remove(filepath.Join(dir, m.ID+".json"))
+		if validID(m.ID) {
+			_ = os.Remove(filepath.Join(dir, m.ID+".json"))
+		}
 	}
 	return nil
 }
@@ -208,6 +234,9 @@ func Delete(id string) error {
 		return err
 	}
 	id = strings.TrimSuffix(id, ".json")
+	if !validID(id) {
+		return errors.New("invalid session id")
+	}
 	return os.Remove(filepath.Join(dir, id+".json"))
 }
 
@@ -218,6 +247,9 @@ func Latest(workspace string) (*Session, error) {
 	}
 	ws, _ := filepath.Abs(workspace)
 	for _, s := range all {
+		if !validID(s.ID) {
+			continue
+		}
 		sw, _ := filepath.Abs(s.Workspace)
 		if sw == ws && len(s.Messages) > 0 {
 			cp := s
@@ -229,4 +261,17 @@ func Latest(workspace string) (*Session, error) {
 
 func SaveMessages(workspace string, id string, msgs []llm.Message) error {
 	return saveMessagesWithTitle(workspace, id, msgs, "")
+}
+
+func validID(id string) bool {
+	if id == "" || id == "." || id == ".." || len(id) > 200 {
+		return false
+	}
+	for _, r := range id {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }

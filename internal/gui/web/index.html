@@ -48,6 +48,10 @@
           <span class="mark" aria-hidden="true"></span>
           <strong>Picogent</strong>
         </div>
+        <div class="top-context" aria-label="Current project and runtime">
+          <span class="top-project" id="top-project">No folder</span>
+          <span class="top-runtime" id="top-runtime">Safe · Auto</span>
+        </div>
         <div class="context-meter" id="context-bar" hidden>
           <button type="button" class="context-ring" id="context-ring" aria-label="Context window usage" aria-expanded="false" aria-controls="context-pop">
             <svg class="context-svg" viewBox="0 0 36 36" aria-hidden="true">
@@ -125,6 +129,7 @@
         <div id="thinking" class="think" aria-live="polite">
           <span class="work-orb" aria-hidden="true"></span>
           <span class="work-label">Working</span>
+          <span class="work-mode" id="task-mode" hidden aria-live="polite"></span>
         </div>
       </main>
 
@@ -149,6 +154,13 @@
             <button type="button" class="yes" data-allow="1">Allow</button>
           </div>
         </div>
+        <section id="scope-card" class="scope-card" hidden role="region" aria-live="polite" aria-labelledby="scope-question" aria-describedby="scope-help">
+          <p class="scope-kicker">Quick check</p>
+          <h2 id="scope-question"></h2>
+          <p id="scope-help" class="scope-help">Pick one so I can keep the first pass focused.</p>
+          <div id="scope-choices" class="scope-choices" role="group" aria-labelledby="scope-question" aria-describedby="scope-help"></div>
+          <button type="button" id="scope-cancel" class="scope-cancel">Cancel</button>
+        </section>
         <form id="composer" class="prompt">
           <span class="beam" aria-hidden="true"></span>
           <div id="slash-menu" class="slash-menu" hidden role="listbox" aria-label="Commands"></div>

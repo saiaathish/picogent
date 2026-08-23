@@ -2,7 +2,7 @@ class Picogent < Formula
   desc "Tiny coding agent: two modes, BYOK or Ollama"
   homepage "https://github.com/saiaathish/picogent"
   url "https://github.com/saiaathish/picogent.git", branch: "main"
-  version "0.1.0"
+  version "1.0.0"
   license "MIT"
   head "https://github.com/saiaathish/picogent.git", branch: "main"
 

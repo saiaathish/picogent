@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
@@ -99,6 +100,7 @@ type Agent struct {
 	Trace        *trace.Log
 	TaskStore    *taskstate.Store
 	TaskSession  string
+	stateMu      sync.RWMutex
 	taskMu       sync.RWMutex
 	task         *taskstate.Task
 	undoMu       sync.Mutex
@@ -106,63 +108,263 @@ type Agent struct {
 	runTool      func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
 }
 
+// RuntimeState is an immutable-at-the-call-boundary view of the settings that
+// shape a turn. UI requests can update an Agent between turns without racing a
+// turn that is already running or making that turn change halfway through.
+type RuntimeState struct {
+	CFG          config.Config
+	LLM          llm.Client
+	TaskMode     TaskMode
+	Goal         string
+	ProjectRules string
+	SkillRules   string
+	Memory       evolve.Store
+	Tools        *tools.Registry
+	Gate         *perm.Gate
+	Trace        *trace.Log
+}
+
 func New(cfg config.Config, client llm.Client, reg *tools.Registry, gate *perm.Gate) *Agent {
 	return &Agent{CFG: cfg, LLM: client, Tools: reg, Gate: gate, TaskMode: ParseTaskMode(cfg.TaskMode)}
 }
 
+// SetClient replaces the provider client at a turn boundary. A running turn
+// keeps the client captured in its RuntimeSnapshot, so a settings change
+// cannot switch providers halfway through a request.
+func (a *Agent) SetClient(client llm.Client) {
+	a.stateMu.Lock()
+	a.LLM = client
+	a.stateMu.Unlock()
+}
+
+func (a *Agent) ClientSnapshot() llm.Client {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.LLM
+}
+
 func (a *Agent) SetTaskMode(m TaskMode) {
 	if m.Valid() {
+		a.stateMu.Lock()
+		defer a.stateMu.Unlock()
 		a.TaskMode = m
 		a.CFG.TaskMode = string(m)
 	}
 }
 
+func (a *Agent) SetGoal(goalText string) {
+	a.stateMu.Lock()
+	a.Goal = strings.TrimSpace(goalText)
+	a.stateMu.Unlock()
+}
+
+func (a *Agent) SetMemory(memory evolve.Store) {
+	a.stateMu.Lock()
+	a.Memory = memory
+	a.stateMu.Unlock()
+}
+
+func (a *Agent) SetTrace(log *trace.Log) {
+	a.stateMu.Lock()
+	a.Trace = log
+	a.stateMu.Unlock()
+}
+
+func (a *Agent) TraceSnapshot() *trace.Log {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.Trace
+}
+
+func (a *Agent) SetProjectRules(rules string) {
+	a.stateMu.Lock()
+	a.ProjectRules = rules
+	a.stateMu.Unlock()
+}
+
+func (a *Agent) SetSkillRules(rules string) {
+	a.stateMu.Lock()
+	a.SkillRules = rules
+	a.stateMu.Unlock()
+}
+
+func (a *Agent) SetTaskStore(store *taskstate.Store) {
+	a.taskMu.Lock()
+	a.TaskStore = store
+	a.taskMu.Unlock()
+}
+
+func (a *Agent) TaskStoreSnapshot() *taskstate.Store {
+	a.taskMu.RLock()
+	defer a.taskMu.RUnlock()
+	return a.TaskStore
+}
+
+func (a *Agent) UpdateConfig(update func(*config.Config)) {
+	if update == nil {
+		return
+	}
+	a.stateMu.Lock()
+	update(&a.CFG)
+	cfg := a.CFG
+	gate := a.Gate
+	reg := a.Tools
+	a.stateMu.Unlock()
+	if gate != nil {
+		gate.SetMode(cfg.Mode)
+		gate.SetWorkspace(cfg.Workspace)
+	}
+	if reg != nil {
+		timeout := time.Duration(cfg.BashTimeoutSec) * time.Second
+		if timeout <= 0 {
+			timeout = 60 * time.Second
+		}
+		reg.UpdateContext(func(c *tools.Context) {
+			c.Workspace = cfg.Workspace
+			c.BashTimeout = timeout
+		})
+	}
+}
+
+func (a *Agent) SetMode(mode config.Mode) {
+	a.UpdateConfig(func(cfg *config.Config) { cfg.Mode = mode })
+}
+
+func (a *Agent) SetModel(model string) {
+	a.UpdateConfig(func(cfg *config.Config) { cfg.Model = model })
+}
+
+func (a *Agent) ConfigSnapshot() config.Config {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.CFG
+}
+
+func (a *Agent) TaskModeSnapshot() TaskMode {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.TaskMode
+}
+
+func (a *Agent) GoalSnapshot() string {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.Goal
+}
+
+func (a *Agent) RuntimeSnapshot() RuntimeState {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return RuntimeState{
+		CFG:          a.CFG,
+		LLM:          a.LLM,
+		TaskMode:     a.TaskMode,
+		Goal:         a.Goal,
+		ProjectRules: a.ProjectRules,
+		SkillRules:   a.SkillRules,
+		Memory:       a.Memory,
+		Tools:        a.Tools,
+		Gate:         a.Gate,
+		Trace:        a.Trace,
+	}
+}
+
 func (a *Agent) systemPrompt(userHint string) string {
+	return systemPromptFor(a.RuntimeSnapshot(), userHint, a.taskPromptSuffix())
+}
+
+func systemPromptFor(state RuntimeState, userHint, taskSuffix string) string {
 	p := systemPromptBase
-	if a.Tools != nil && a.Tools.HasMCP() {
+	if state.Tools != nil && state.Tools.HasMCP() {
 		p += systemPromptMCP
-		if a.Tools.HasBrowserMCP() {
+		if state.Tools.HasBrowserMCP() {
 			p += systemPromptBrowser
 		}
 	}
-	if rules := strings.TrimSpace(a.ProjectRules); rules != "" {
+	if rules := strings.TrimSpace(state.ProjectRules); rules != "" {
 		p += "\n\nProject rules (follow these):\n" + rules
 	}
-	if mem := strings.TrimSpace(evolve.PromptFor(a.Memory, userHint)); mem != "" {
+	if mem := strings.TrimSpace(evolve.PromptFor(state.Memory, userHint)); mem != "" {
 		p += "\n\n" + mem
 	}
-	if skills := strings.TrimSpace(a.SkillRules); skills != "" {
+	if skills := strings.TrimSpace(state.SkillRules); skills != "" {
 		p += "\n\n" + skills
 	}
-	if a.TaskMode.Valid() && a.TaskMode != TaskAgent {
-		p += a.TaskMode.Prompt()
+	if state.TaskMode.Valid() && state.TaskMode != TaskAgent {
+		p += state.TaskMode.Prompt()
 	}
-	if suffix := goal.PromptSuffix(a.Goal); suffix != "" {
+	if suffix := goal.PromptSuffix(state.Goal); suffix != "" {
 		p += suffix
 	}
-	if suffix := a.taskPromptSuffix(); suffix != "" {
-		p += suffix
+	if taskSuffix != "" {
+		p += taskSuffix
 	}
 	return p
 }
 
+// RunOptions describes per-turn controls that must not become sticky session
+// settings. A nil TaskMode leaves the agent's configured mode unchanged.
+type RunOptions struct {
+	TaskMode      *TaskMode
+	TracePrompt   string
+	DurablePrompt string
+}
+
 func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message, ev EventHandler) ([]llm.Message, Result, error) {
+	return a.RunWithOptions(ctx, history, user, ev, RunOptions{})
+}
+
+// RunWithOptions runs one isolated turn. Scope preflight callers use this to
+// apply a temporary Plan/Ask boundary without mutating the next turn's mode.
+func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user llm.Message, ev EventHandler, opts RunOptions) ([]llm.Message, Result, error) {
 	if ev == nil {
 		ev = NopHandler{}
 	}
-	_ = a.Trace.Append("turn_start", "", user.Content, nil, 0)
-	if err := a.CFG.MissingAuth(); err != nil {
+	state := a.RuntimeSnapshot()
+	cfg := state.CFG
+	taskMode := state.TaskMode
+	if opts.TaskMode != nil && opts.TaskMode.Valid() {
+		taskMode = *opts.TaskMode
+		state.TaskMode = taskMode
+	}
+	reg := state.Tools
+	gate := state.Gate.CloneForTurn()
+	traceLog := state.Trace
+	if traceLog != nil {
+		tracePrompt := strings.TrimSpace(opts.TracePrompt)
+		if tracePrompt == "" {
+			tracePrompt = user.Content
+		}
+		_ = traceLog.Append("turn_start", "", tracePrompt, nil, 0)
+	}
+	if state.LLM == nil || reg == nil || gate == nil {
+		err := fmt.Errorf("agent runtime is not ready")
 		ev.OnError(err)
 		return history, Result{}, err
 	}
-	a.Gate.ResetTurn()
-	a.Gate.Prompt = ev.OnNeedPermission
+	regCtx := reg.ContextSnapshot()
+	if err := cfg.MissingAuth(); err != nil {
+		ev.OnError(err)
+		return history, Result{}, err
+	}
+	gate.ResetTurn()
+	gate.SetPrompt(ev.OnNeedPermission)
 
 	userText := strings.TrimSpace(user.Content)
-	a.beginDurableTask(userText, ev)
+	durablePrompt := strings.TrimSpace(opts.DurablePrompt)
+	if durablePrompt == "" {
+		// Scope-aware callers normally provide DurablePrompt explicitly.  Use
+		// the user-facing trace prompt as a safe fallback so a caller that only
+		// sets TracePrompt cannot persist internal scope guidance as a goal.
+		durablePrompt = strings.TrimSpace(opts.TracePrompt)
+	}
+	if durablePrompt == "" {
+		durablePrompt = userText
+	}
+	a.beginDurableTask(durablePrompt, ev)
 	// Always refresh the system prompt so mid-chat task mode / goal changes take effect.
 	msgs := make([]llm.Message, 0, len(history)+3)
-	msgs = append(msgs, llm.Message{Role: "system", Content: a.systemPrompt(userText)})
+	msgs = append(msgs, llm.Message{Role: "system", Content: systemPromptFor(state, userText, a.taskPromptSuffix())})
 	for i, m := range history {
 		if i == 0 && m.Role == "system" {
 			continue
@@ -170,33 +372,33 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 		msgs = append(msgs, m)
 	}
 	msgs = append(msgs, user)
-	budget := ctxmgr.BudgetForModel(a.CFG.Model)
-	compactMsgs, ctxStats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
+	budget := ctxmgr.BudgetForModel(cfg.Model)
+	compactMsgs, ctxStats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 	msgs = compactMsgs
 
 	var res Result
 	res.Context = ctxStats
 	changed := map[string]struct{}{}
-	turnUndo := newTurnUndo(a.Tools.Ctx.Workspace)
+	turnUndo := newTurnUndo(regCtx.Workspace)
 	nativeWriteRan := false
 	lastToolKind := ""
 	calledVerify := false
 	lastVerification := ""
 	taskBlocker := ""
 
-	for round := 0; round < a.CFG.MaxToolRounds; round++ {
-		if r, ok := a.LLM.(*llm.Router); ok {
+	for round := 0; round < cfg.MaxToolRounds; round++ {
+		if r, ok := state.LLM.(*llm.Router); ok {
 			r.SetUserPrompt(userText)
 		}
 		streamed := false
-		out, err := a.LLM.Chat(ctx, llm.ChatRequest{
-			Model:        a.CFG.Model,
+		out, err := state.LLM.Chat(ctx, llm.ChatRequest{
+			Model:        cfg.Model,
 			Messages:     msgs,
-			Tools:        a.Tools.Specs(),
+			Tools:        reg.Specs(),
 			ToolRound:    round,
 			Escalate:     round >= 10,
-			TaskMode:     string(a.TaskMode),
-			ReadOnly:     a.TaskMode.ReadOnly(),
+			TaskMode:     string(taskMode),
+			ReadOnly:     taskMode.ReadOnly(),
 			LastToolKind: lastToolKind,
 			OnDelta: func(delta string) {
 				if delta == "" {
@@ -221,16 +423,16 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 
 		if len(msg.ToolCalls) == 0 {
 			text := strings.TrimSpace(msg.Content)
-			if a.continueAfterDeferral(text, round, ev) {
+			if a.continueAfterDeferral(text, round, ev, cfg.MaxToolRounds) {
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableContinuePrompt})
 				continue
 			}
 			res.FilesChanged = sortedChanged(changed)
-			if autoVerified := a.maybeVerify(ctx, ev, userText, res.FilesChanged, calledVerify); autoVerified != "" {
+			if autoVerified := a.maybeVerify(ctx, ev, userText, res.FilesChanged, calledVerify, state, gate); autoVerified != "" {
 				lastVerification = autoVerified
 			}
 			res.Verified = lastVerification
-			if a.continueAfterVerificationFailure(text, round, res.Verified, ev) {
+			if a.continueAfterVerificationFailure(text, round, res.Verified, ev, cfg.MaxToolRounds) {
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified)})
 				continue
 			}
@@ -262,9 +464,9 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			res.GoalDone = goal.LooksComplete(text)
 			a.finishDurableTask(res.FilesChanged, text, taskBlocker, ev)
 			res.Task = a.TaskSnapshot()
-			_ = a.Trace.Append("turn_end", "", text, trace.Bool(true), 0)
+			_ = traceLog.Append("turn_end", "", text, trace.Bool(true), 0)
 			msgs = stripDurableInternal(msgs)
-			final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
+			final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 			res.Context = stats
 			return final, res, nil
 		}
@@ -285,22 +487,22 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 				a.setTaskStatus(taskstate.StatusVerifying, ev)
 			}
 			ev.OnToolStart(call)
-			_ = a.Trace.Append("tool_start", call.Name, call.Arguments, nil, 0)
-			if blocked, reason := a.TaskMode.BlockTool(call.Name); blocked {
+			_ = traceLog.Append("tool_start", call.Name, call.Arguments, nil, 0)
+			if blocked, reason := taskMode.BlockTool(call.Name); blocked {
 				ev.OnToolEnd(call, reason, nil)
 				pending = append(pending, executed{call: call, text: reason})
 				continue
 			}
-			tool, ok := a.Tools.Get(call.Name)
+			tool, ok := reg.Get(call.Name)
 			if !ok {
 				err := fmt.Errorf("unknown tool %s", call.Name)
 				ev.OnToolEnd(call, "", err)
 				pending = append(pending, executed{call: call, text: err.Error(), err: err})
 				continue
 			}
-			req := tool.Permission(call.Arguments, a.Tools.Ctx)
+			req := tool.Permission(call.Arguments, regCtx)
 			req.Hint = perm.EnrichHint(req, call.Arguments)
-			dec, err := a.Gate.Check(ctx, req)
+			dec, err := gate.Check(ctx, req)
 			if err != nil {
 				ev.OnToolEnd(call, "", err)
 				res.FilesChanged = sortedChanged(changed)
@@ -334,14 +536,21 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			go func(i int) {
 				defer wg.Done()
 				call := pending[i].call
-				tool, _ := a.Tools.Get(call.Name)
+				tool, _ := reg.Get(call.Name)
 				pending[i].ran = true
 				var outText string
 				var err error
-				if a.runTool != nil {
-					outText, err = a.runTool(ctx, call, tool, a.Tools.Ctx)
+				run := func() {
+					if a.runTool != nil {
+						outText, err = a.runTool(ctx, call, tool, regCtx)
+					} else {
+						outText, err = tool.Run(ctx, call.Arguments, regCtx)
+					}
+				}
+				if call.Name == "mcp_manage" {
+					reg.WithExclusive(run)
 				} else {
-					outText, err = tool.Run(ctx, call.Arguments, a.Tools.Ctx)
+					run()
 				}
 				pending[i].text = outText
 				pending[i].err = err
@@ -350,7 +559,7 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 				}
 				ev.OnToolEnd(call, outText, err)
 				ok := err == nil
-				_ = a.Trace.Append("tool_end", call.Name, outText, &ok, 0)
+				_ = traceLog.Append("tool_end", call.Name, outText, &ok, 0)
 			}(i)
 		}
 		wg.Wait()
@@ -381,27 +590,31 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 			lastToolKind = classifyToolKind(pending[len(pending)-1].call.Name)
 		}
 		// TokenTamer every round — don't wait for message count / budget critical.
-		compactMsgs, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
+		compactMsgs, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 		msgs = compactMsgs
 		res.Context = stats
 	}
-	err := fmt.Errorf("stopped after %d tool rounds (limit)", a.CFG.MaxToolRounds)
+	err := fmt.Errorf("stopped after %d tool rounds (limit)", cfg.MaxToolRounds)
 	res.FilesChanged = sortedChanged(changed)
 	a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 	a.blockDurableTask("task budget exhausted", ev)
 	res.Task = a.TaskSnapshot()
 	ev.OnError(err)
 	msgs = stripDurableInternal(msgs)
-	final, stats, _ := ctxmgr.Manage(ctx, a.LLM, a.CFG.Model, msgs, budget)
+	final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 	res.Context = stats
 	return final, res, err
 }
 
-func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint string, filesChanged []string, already bool) string {
-	if already || len(filesChanged) == 0 || a.Tools == nil || (a.Tools.Ctx.Verify == nil && a.Tools.Ctx.VerifyTargets == nil) {
+func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint string, filesChanged []string, already bool, state RuntimeState, gate *perm.Gate) string {
+	if already || len(filesChanged) == 0 || state.Tools == nil {
 		return ""
 	}
-	tool, ok := a.Tools.Get("verify")
+	regCtx := state.Tools.ContextSnapshot()
+	if regCtx.Verify == nil && regCtx.VerifyTargets == nil {
+		return ""
+	}
+	tool, ok := state.Tools.Get("verify")
 	if !ok {
 		return ""
 	}
@@ -410,7 +623,7 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	for _, target := range targets {
 		seen[target] = struct{}{}
 	}
-	for _, target := range evolve.VerificationTargets(a.Memory, userHint) {
+	for _, target := range evolve.VerificationTargets(state.Memory, userHint) {
 		if _, ok := seen[target]; ok {
 			continue
 		}
@@ -421,9 +634,9 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	call := llm.ToolCall{ID: "verify-auto", Name: "verify", Arguments: string(args)}
 	a.setTaskStatus(taskstate.StatusVerifying, ev)
 	ev.OnToolStart(call)
-	req := tool.Permission(call.Arguments, a.Tools.Ctx)
+	req := tool.Permission(call.Arguments, regCtx)
 	req.Hint = perm.EnrichHint(req, call.Arguments)
-	dec, err := a.Gate.Check(ctx, req)
+	dec, err := gate.Check(ctx, req)
 	if err != nil || dec == perm.Deny {
 		msg := "verify skipped"
 		if err != nil {
@@ -433,16 +646,16 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 		}
 		ev.OnToolEnd(call, msg, err)
 		okv := false
-		_ = a.Trace.Append("verify", "verify", msg, &okv, 0)
+		_ = state.Trace.Append("verify", "verify", msg, &okv, 0)
 		return msg
 	}
-	out, err := tool.Run(ctx, call.Arguments, a.Tools.Ctx)
+	out, err := tool.Run(ctx, call.Arguments, regCtx)
 	if err != nil {
 		out = "error: " + err.Error()
 	}
 	ev.OnToolEnd(call, out, err)
 	okv := err == nil && strings.Contains(strings.ToLower(out), "pass") && !strings.Contains(strings.ToLower(out), "inconclusive")
-	_ = a.Trace.Append("verify", "verify", out, &okv, 0)
+	_ = state.Trace.Append("verify", "verify", out, &okv, 0)
 	return out
 }
 

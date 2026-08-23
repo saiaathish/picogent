@@ -57,8 +57,8 @@ func stripDurableInternal(msgs []llm.Message) []llm.Message {
 	return out
 }
 
-func (a *Agent) continueAfterVerificationFailure(text string, round int, verified string, ev EventHandler) bool {
-	if round+1 >= a.CFG.MaxToolRounds || strings.Contains(strings.ToLower(text), "blocked:") {
+func (a *Agent) continueAfterVerificationFailure(text string, round int, verified string, ev EventHandler, maxToolRounds int) bool {
+	if round+1 >= maxToolRounds || strings.Contains(strings.ToLower(text), "blocked:") {
 		return false
 	}
 	if verified != "" {
@@ -187,9 +187,9 @@ func (a *Agent) noteTaskChanged(path string, ev EventHandler) {
 	})
 }
 
-func (a *Agent) continueAfterDeferral(text string, round int, ev EventHandler) bool {
+func (a *Agent) continueAfterDeferral(text string, round int, ev EventHandler, maxToolRounds int) bool {
 	low := strings.ToLower(strings.TrimSpace(text))
-	if low == "" || round+1 >= a.CFG.MaxToolRounds {
+	if low == "" || round+1 >= maxToolRounds {
 		return false
 	}
 	deferred := strings.Contains(low, "would you like me to") ||

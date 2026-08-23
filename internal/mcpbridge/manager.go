@@ -169,7 +169,7 @@ func (m *Manager) dropLocked(name string) {
 }
 
 func dial(ctx context.Context, name string, cfg ServerConfig) (*mcp.ClientSession, func(), error) {
-	client := mcp.NewClient(&mcp.Implementation{Name: "picogent", Version: "0.1.0"}, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "picogent", Version: "1.0.0"}, nil)
 	var transport mcp.Transport
 	var cmd *exec.Cmd
 

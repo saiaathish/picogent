@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -9,6 +10,7 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 )
@@ -19,6 +21,52 @@ func TestAssistantFinalReplacesStreamedText(t *testing.T) {
 	if len(m.lines) != 1 || m.lines[0].Text != "Undo: /undo" {
 		t.Fatalf("lines = %#v", m.lines)
 	}
+}
+
+func TestBroadPromptShowsScopeChoicesBeforeRunning(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	m := &model{
+		cfg:       cfg,
+		ag:        a,
+		lines:     []logLine{{Kind: "system", Text: "ready"}},
+		vp:        viewport.New(80, 20),
+		h:         &handler{permCh: make(chan perm.Decision, 1)},
+		sessionID: "scope-session",
+	}
+	if cmd := m.submit("build something"); cmd != nil {
+		t.Fatal("broad prompt started before a choice")
+	}
+	if m.pendingScope == nil || len(m.pendingScope.Choices) != 3 {
+		t.Fatalf("pending scope = %#v", m.pendingScope)
+	}
+	if m.busy {
+		t.Fatal("scope prompt marked model busy")
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
+	if m.pendingScope != nil || cmd == nil || !m.busy {
+		t.Fatalf("choice did not start turn: pending=%#v cmd=%v busy=%v", m.pendingScope, cmd != nil, m.busy)
+	}
+}
+
+func TestScopeEscapeCancelsWithoutRunning(t *testing.T) {
+	p := structScopePrompt()
+	m := &model{
+		pendingScope:  &p,
+		pendingPrompt: "build something",
+		lines:         []logLine{{Kind: "user", Text: "build something"}},
+		vp:            viewport.New(80, 20),
+	}
+	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
+	if m.pendingScope != nil || m.pendingPrompt != "" {
+		t.Fatalf("escape left scope pending: %#v %q", m.pendingScope, m.pendingPrompt)
+	}
+}
+
+func structScopePrompt() scope.Prompt {
+	return scope.Prompt{Question: "Pick", Choices: []scope.Choice{{ID: "small", Label: "Small", Recommended: true}, {ID: "full", Label: "Full"}}}
 }
 
 func TestFormatTaskProgress(t *testing.T) {
@@ -55,6 +103,17 @@ func TestFormatTaskProgress(t *testing.T) {
 				t.Fatalf("formatTaskProgress() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTemporaryScopeModeVisibleInHeader(t *testing.T) {
+	mode := agent.TaskPlan
+	m := newModel(config.Default(), nil)
+	m.turnMode = &mode
+	m.width, m.height = 100, 30
+	view := m.View()
+	if !strings.Contains(view, "Plan") || !strings.Contains(view, "this turn") {
+		t.Fatalf("temporary mode missing from header: %q", view)
 	}
 }
 

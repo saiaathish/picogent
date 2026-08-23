@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"sort"
 	"strings"
@@ -120,12 +122,26 @@ func (webFetch) Run(ctx context.Context, args string, _ Context) (string, error)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	parsed, err := parseWebFetchURL(url)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "Picogent/0.1")
-	res, err := http.DefaultClient.Do(req)
+	if err := validateWebFetchURL(ctx, parsed); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "Picogent/1.0.0")
+	client := *http.DefaultClient
+	client.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
+		if err := validateWebFetchURL(next.Context(), next.URL); err != nil {
+			return err
+		}
+		return nil
+	}
+	res, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -142,6 +158,63 @@ func (webFetch) Run(ctx context.Context, args string, _ Context) (string, error)
 		return "", fmt.Errorf("HTTP %d: %s", res.StatusCode, truncate(text, 200))
 	}
 	return clip(text), nil
+}
+
+// parseWebFetchURL is kept separate so the request path has one URL parser and the
+// SSRF guard can be unit-tested without making a network request.
+func parseWebFetchURL(raw string) (*neturl.URL, error) {
+	u, err := neturl.ParseRequestURI(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid URL: %w", err)
+	}
+	if u.Hostname() == "" {
+		return nil, fmt.Errorf("URL host is required")
+	}
+	if u.User != nil {
+		return nil, fmt.Errorf("URL credentials are not allowed")
+	}
+	return u, nil
+}
+
+func validateWebFetchURL(ctx context.Context, u *neturl.URL) error {
+	if u == nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("URL must use http or https")
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	if host == "" {
+		return fmt.Errorf("URL host is required")
+	}
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
+		return fmt.Errorf("refusing private or local URL host %q", host)
+	}
+	ips := net.ParseIP(host)
+	if ips != nil {
+		if blockedWebFetchIP(ips) {
+			return fmt.Errorf("refusing private or local URL host %q", host)
+		}
+		return nil
+	}
+	resolved, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(resolved) == 0 {
+		return fmt.Errorf("URL host %q could not be resolved", host)
+	}
+	for _, ip := range resolved {
+		if blockedWebFetchIP(ip) {
+			return fmt.Errorf("refusing URL host %q because it resolves to a private or local address", host)
+		}
+	}
+	return nil
+}
+
+func blockedWebFetchIP(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+		return true
+	}
+	// Go's IsPrivate intentionally excludes the shared carrier-grade NAT range.
+	if v4 := ip.To4(); v4 != nil && v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127 {
+		return true
+	}
+	return false
 }
 
 func stripHTML(s string) string {

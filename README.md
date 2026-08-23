@@ -83,6 +83,11 @@ picogent init --ollama
 picogent version
 ```
 
+For automation, `picogent run` fails closed when Safe mode cannot get an
+approval: exit `2` means the task is blocked on permission, while exit `1`
+means an actual setup, provider, or tool error. Use `--yes` only for
+non-destructive work that stays inside the workspace.
+
 ### Modes
 
 | Mode | Behavior |

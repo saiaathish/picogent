@@ -110,6 +110,7 @@ func SetTitle(id, title string) error {
 
 // SaveMessages preserves AI titles when saving history.
 func saveMessagesWithTitle(workspace string, id string, msgs []llm.Message, titleOverride string) error {
+	id = strings.TrimSuffix(strings.TrimSpace(id), ".json")
 	s := &Session{ID: id, Workspace: workspace, Messages: msgs}
 	if id == "" {
 		s = New(workspace)

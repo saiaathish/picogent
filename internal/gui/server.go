@@ -3,7 +3,9 @@ package gui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -31,6 +33,7 @@ import (
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/opencodeauth"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/setup"
 	"github.com/saiaathish/picogent/internal/slash"
@@ -57,6 +60,7 @@ type event struct {
 	Level     string          `json:"level,omitempty"`
 	SessionID string          `json:"session_id,omitempty"`
 	Task      *taskstate.Task `json:"task"`
+	turnGen   uint64          `json:"-"`
 }
 
 type transcriptLine struct {
@@ -64,24 +68,52 @@ type transcriptLine struct {
 	Text string `json:"text"`
 }
 
+const maxQueuedTurns = 8
+
+type queuedTurn struct {
+	prompt  string
+	parts   []llm.Part
+	display string
+	mode    *agent.TaskMode
+}
+
+// turnAdmission is the immutable runtime boundary captured when a turn is
+// admitted. A queued follow-up is admitted under the same lock as the
+// completion of the previous turn, so it cannot be lost between busy/done
+// transitions or accidentally run against a newer session.
+type turnAdmission struct {
+	hist           []llm.Message
+	runAgent       *agent.Agent
+	runSession     string
+	workspace      string
+	myGen          uint64
+	beforeAgentRun func()
+	ctx            context.Context
+	turnPermCh     chan perm.Decision
+	temporaryMode  bool
+}
+
 type server struct {
-	cfg         config.Config
-	ag          *agent.Agent
-	mu          sync.Mutex
-	hist        []llm.Message
-	sessionID   string
-	permCh      chan perm.Decision
-	subs        []chan event
-	busy        bool
-	activeTurns int
-	cancel      context.CancelFunc
-	steerMu     sync.Mutex
-	steerPrompt string
-	steerParts  []llm.Part
-	undoStack   []extensions.UndoEntry
-	pendingPerm perm.Request
-	liveTask    agent.TaskMode
-	turnGen     uint64 // bumped on cancel/new chat so stale turns cannot rewrite hist
+	cfg            config.Config
+	ag             *agent.Agent
+	mu             sync.Mutex
+	hist           []llm.Message
+	sessionID      string
+	permCh         chan perm.Decision
+	subs           []chan event
+	busy           bool
+	activeTurns    int
+	cancel         context.CancelFunc
+	steerMu        sync.Mutex
+	steerQueue     []queuedTurn
+	undoStack      []extensions.UndoEntry
+	pendingPerm    perm.Request
+	pendingPermGen uint64
+	liveTask       agent.TaskMode
+	// turnMode is a temporary scope boundary for the admitted turn. It is
+	// exposed in state while the turn runs but never replaces liveTask.
+	turnMode *agent.TaskMode
+	turnGen  uint64 // bumped on cancel/new chat so stale turns cannot rewrite hist
 	// beforeAgentRun is test-only synchronization for proving that a turn uses
 	// the agent/session it captured before a session switch. Production leaves
 	// it nil.
@@ -118,11 +150,14 @@ func Run() error {
 	if a != nil {
 		a.SetTaskSession(sessID)
 	}
-	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision), sessionID: sessID, hist: hist}
+	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
 	s.ensureProject()
 	addr := "127.0.0.1:7420"
 	if v := os.Getenv("PICOGENT_GUI_ADDR"); v != "" {
+		if !loopbackListenAddress(v) {
+			return fmt.Errorf("PICOGENT_GUI_ADDR must bind to loopback (127.0.0.1, ::1, or localhost); refusing %q", v)
+		}
 		addr = v
 	}
 	ln, err := net.Listen("tcp", addr)
@@ -142,6 +177,17 @@ func Run() error {
 		go openBrowser(url)
 	}
 	return http.Serve(ln, s.Handler())
+}
+
+func loopbackListenAddress(addr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	return net.ParseIP(strings.Trim(host, "[]")).IsLoopback()
 }
 
 func RunSetup() error {
@@ -166,6 +212,7 @@ func (s *server) Handler() http.Handler {
 	mux.HandleFunc("/api/setup/login", s.setupLogin)
 	mux.HandleFunc("/api/setup/finish", s.setupFinish)
 	mux.HandleFunc("/api/chat", s.chat)
+	mux.HandleFunc("/api/scope", s.scopeAPI)
 	mux.HandleFunc("/api/permission", s.permission)
 	mux.HandleFunc("/api/mode", s.setMode)
 	mux.HandleFunc("/api/task-mode", s.setTaskMode)
@@ -206,8 +253,13 @@ func (s *server) traceAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var events []trace.Event
-	if s.ag != nil && s.ag.Trace != nil {
-		events = s.ag.Trace.Tail(80)
+	s.mu.Lock()
+	ag := s.ag
+	s.mu.Unlock()
+	if ag != nil {
+		if log := ag.TraceSnapshot(); log != nil {
+			events = log.Tail(80)
+		}
 	}
 	if events == nil {
 		events = []trace.Event{}
@@ -217,15 +269,18 @@ func (s *server) traceAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) attachRouterHook() {
-	if s.ag == nil {
+	s.mu.Lock()
+	ag := s.ag
+	s.mu.Unlock()
+	if ag == nil {
 		return
 	}
-	r, ok := s.ag.LLM.(*llm.Router)
+	r, ok := ag.ClientSnapshot().(*llm.Router)
 	if !ok {
 		return
 	}
-	prev := r.OnRoute
-	r.OnRoute = func(dec llm.RouteDecision) {
+	prev := r.LastRouteHook()
+	r.SetOnRoute(func(dec llm.RouteDecision) {
 		if prev != nil {
 			prev(dec)
 		}
@@ -238,14 +293,26 @@ func (s *server) attachRouterHook() {
 		s.cfg.Router.LastRouteMode = string(dec.RouteMode)
 		s.mu.Unlock()
 		s.emit(event{Type: "route", Text: dec.Label, Summary: dec.Reason, Tokens: dec.EstTokens})
-	}
+	})
 }
 
 func (s *server) emit(e event) {
 	s.mu.Lock()
+	if e.turnGen != 0 && (s.sessionID != e.SessionID || s.turnGen != e.turnGen) {
+		s.mu.Unlock()
+		return
+	}
 	subs := append([]chan event(nil), s.subs...)
 	s.mu.Unlock()
 	for _, ch := range subs {
+		if e.turnGen != 0 {
+			s.mu.Lock()
+			live := s.sessionID == e.SessionID && s.turnGen == e.turnGen
+			s.mu.Unlock()
+			if !live {
+				return
+			}
+		}
 		select {
 		case ch <- e:
 		case <-time.After(2 * time.Second):
@@ -284,21 +351,22 @@ func cloneAgentForSession(src *agent.Agent, sessionID string) *agent.Agent {
 	if src == nil {
 		return nil
 	}
+	state := src.RuntimeSnapshot()
 	var gate *perm.Gate
-	if src.Gate != nil {
-		gate = perm.New(src.CFG.Mode, src.CFG.Workspace, nil)
-		gate.SetAlwaysAllowed(src.Gate.AlwaysAllowedTools())
+	if state.Gate != nil {
+		gate = perm.New(state.CFG.Mode, state.CFG.Workspace, nil)
+		gate.SetAlwaysAllowed(state.Gate.AlwaysAllowedTools())
 	} else {
-		gate = perm.New(src.CFG.Mode, src.CFG.Workspace, nil)
+		gate = perm.New(state.CFG.Mode, state.CFG.Workspace, nil)
 	}
-	clone := agent.New(src.CFG, src.LLM, src.Tools, gate)
-	clone.ProjectRules = src.ProjectRules
-	clone.SkillRules = src.SkillRules
-	clone.Memory = src.Memory
-	clone.Goal = src.Goal
-	clone.Trace = src.Trace
-	clone.TaskStore = src.TaskStore
-	clone.SetTaskMode(src.TaskMode)
+	clone := agent.New(state.CFG, state.LLM, state.Tools, gate)
+	clone.SetProjectRules(state.ProjectRules)
+	clone.SetSkillRules(state.SkillRules)
+	clone.SetMemory(state.Memory)
+	clone.SetGoal(state.Goal)
+	clone.SetTrace(state.Trace)
+	clone.SetTaskStore(src.TaskStoreSnapshot())
+	clone.SetTaskMode(state.TaskMode)
 	clone.SetTaskSession(sessionID)
 	return clone
 }
@@ -331,6 +399,11 @@ func (s *server) snapshot() map[string]any {
 	hist := append([]llm.Message(nil), s.hist...)
 	pend := s.pendingPerm
 	liveTask := s.liveTask
+	var turnMode *agent.TaskMode
+	if s.turnMode != nil {
+		copyMode := *s.turnMode
+		turnMode = &copyMode
+	}
 	s.mu.Unlock()
 	var task *taskstate.Task
 	if ag != nil {
@@ -345,8 +418,12 @@ func (s *server) snapshot() map[string]any {
 		hint = err.Error()
 	}
 	taskMode := liveTask
-	if !taskMode.Valid() && ag != nil && ag.TaskMode.Valid() {
-		taskMode = ag.TaskMode
+	temporaryTaskMode := turnMode != nil && turnMode.Valid()
+	if temporaryTaskMode {
+		taskMode = *turnMode
+	}
+	if !taskMode.Valid() && ag != nil && ag.TaskModeSnapshot().Valid() {
+		taskMode = ag.TaskModeSnapshot()
 	}
 	if !taskMode.Valid() {
 		taskMode = agent.ParseTaskMode(cfg.TaskMode)
@@ -354,29 +431,30 @@ func (s *server) snapshot() map[string]any {
 	// Auto-refresh CLI model catalogs whenever the chat UI loads state (model picker).
 	llm.RefreshCLIModels(false)
 	out := map[string]any{
-		"mode":            cfg.Mode,
-		"task_mode":       string(taskMode),
-		"model":           cfg.DisplayModel(),
-		"workspace":       cfg.Workspace,
-		"provider":        cfg.Provider,
-		"codex":           cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
-		"codex_cli":       codexauth.LoggedIn(),
-		"quadcode":        cfg.Provider == config.ProviderQuadCode && (cfg.AnthropicKeyResolved() != "" || claudeauth.LoggedIn()),
-		"claude_cli":      claudeauth.LoggedIn(),
-		"opencode":        cfg.Provider == config.ProviderOpenCode && opencodeauth.LoggedIn(),
-		"opencode_cli":    opencodeauth.LoggedIn(),
-		"antigravity":     cfg.Provider == config.ProviderAntigravity && agyauth.LoggedIn(),
-		"antigravity_cli": agyauth.LoggedIn(),
-		"busy":            busy,
-		"hint":            hint,
-		"auth":            setup.ProviderAuthPrompt(cfg),
-		"setup":           !cfg.SetupComplete,
-		"mcp_tools":       mcpToolCount(ag),
-		"session_id":      sessionID,
-		"task":            task,
-		"router":          s.routerSnapshot(),
-		"model_options":   llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
-		"slash":           slash.Catalog(cfg.Workspace),
+		"mode":                cfg.Mode,
+		"task_mode":           string(taskMode),
+		"model":               cfg.DisplayModel(),
+		"workspace":           cfg.Workspace,
+		"provider":            cfg.Provider,
+		"codex":               cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
+		"codex_cli":           codexauth.LoggedIn(),
+		"quadcode":            cfg.Provider == config.ProviderQuadCode && (cfg.AnthropicKeyResolved() != "" || claudeauth.LoggedIn()),
+		"claude_cli":          claudeauth.LoggedIn(),
+		"opencode":            cfg.Provider == config.ProviderOpenCode && opencodeauth.LoggedIn(),
+		"opencode_cli":        opencodeauth.LoggedIn(),
+		"antigravity":         cfg.Provider == config.ProviderAntigravity && agyauth.LoggedIn(),
+		"antigravity_cli":     agyauth.LoggedIn(),
+		"busy":                busy,
+		"task_mode_temporary": temporaryTaskMode,
+		"hint":                hint,
+		"auth":                setup.ProviderAuthPrompt(cfg),
+		"setup":               !cfg.SetupComplete,
+		"mcp_tools":           mcpToolCount(ag),
+		"session_id":          sessionID,
+		"task":                task,
+		"router":              s.routerSnapshot(),
+		"model_options":       llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
+		"slash":               slash.Catalog(cfg.Workspace),
 	}
 	if store, err := learn.Load(cfg.Workspace); err == nil {
 		out["overview"] = store
@@ -453,7 +531,7 @@ func (s *server) routerSnapshot() map[string]any {
 		"route_mode": cfg.Router.LastRouteMode,
 	}
 	if ag != nil {
-		if r, ok := ag.LLM.(*llm.Router); ok {
+		if r, ok := ag.ClientSnapshot().(*llm.Router); ok {
 			dec := r.LastDecision()
 			if dec.Model != "" {
 				last = map[string]any{
@@ -509,10 +587,14 @@ func (s *server) routerAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func mcpToolCount(a *agent.Agent) int {
-	if a == nil || a.Tools == nil || a.Tools.MCP == nil {
+	if a == nil || a.Tools == nil {
 		return 0
 	}
-	return len(a.Tools.MCP.Tools())
+	mcp := a.Tools.MCPManagerSnapshot()
+	if mcp == nil {
+		return 0
+	}
+	return len(mcp.Tools())
 }
 
 func (s *server) setupStatus(w http.ResponseWriter, _ *http.Request) {
@@ -673,10 +755,7 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.cfg.Mode = m
 	if s.ag != nil {
-		s.ag.CFG.Mode = m
-		if s.ag.Gate != nil {
-			s.ag.Gate.Mode = m
-		}
+		s.ag.SetMode(m)
 	}
 	_ = config.Save(s.cfg)
 	s.mu.Unlock()
@@ -723,59 +802,124 @@ func (s *server) applyTaskMode(payload string) {
 	s.emit(event{Type: "task_mode", Text: string(m)})
 }
 
-func (s *server) autoApplyFromUserPrompt(prompt string) {
-	if !s.cfg.AutoTaskModeOn() {
-		return
-	}
+func (s *server) autoApplyFromUserPrompt(prompt string, expectedGen uint64) {
 	if strings.HasPrefix(strings.TrimSpace(prompt), "/") {
 		return
 	}
 	s.mu.Lock()
 	ag := s.ag
+	sessionID := s.sessionID
 	cur := s.liveTask
+	cfg := s.cfg
 	goalText := ""
 	if !cur.Valid() && ag != nil {
-		cur = ag.TaskMode
+		cur = ag.TaskModeSnapshot()
 	}
 	if ag != nil {
-		goalText = ag.Goal
+		goalText = ag.GoalSnapshot()
 	}
 	s.mu.Unlock()
-	if ag == nil {
+	if ag == nil || !cfg.AutoTaskModeOn() {
 		return
 	}
 
 	dec := agent.InferAuto(prompt, cur, goalText)
+	goalApplied := false
 	if dec.GoalSet && dec.Goal != goalText {
-		_ = s.setGoal(dec.Goal)
+		// Inference is deterministic but may run across a reset/rebuild. Keep
+		// the side effect attached to the admitted agent and session.
+		s.mu.Lock()
+		if s.ag == ag && s.sessionID == sessionID && s.turnGen == expectedGen {
+			if err := goal.Set(s.cfg.Workspace, dec.Goal); err == nil {
+				ag.SetGoal(dec.Goal)
+				goalApplied = true
+			}
+		}
+		s.mu.Unlock()
 	}
 	s.mu.Lock()
-	s.liveTask = dec.TaskMode
-	ag.SetTaskMode(dec.TaskMode)
+	modeApplied := s.ag == ag && s.sessionID == sessionID && s.turnGen == expectedGen
+	if modeApplied {
+		s.liveTask = dec.TaskMode
+		ag.SetTaskMode(dec.TaskMode)
+	}
 	s.mu.Unlock()
-	if dec.TaskMode != cur {
+	if goalApplied {
+		s.emit(event{Type: "goal", Text: dec.Goal})
+	}
+	if modeApplied && dec.TaskMode != cur {
 		s.emit(event{Type: "task_mode", Text: string(dec.TaskMode)})
 	}
 }
 
-func (s *server) queueSteer(prompt string, parts []llm.Part) {
-	s.steerMu.Lock()
-	s.steerPrompt = prompt
-	s.steerParts = parts
-	s.steerMu.Unlock()
+func (s *server) autoApplyGoalFromUserPrompt(prompt string, expectedGen uint64) {
+	if strings.HasPrefix(strings.TrimSpace(prompt), "/") {
+		return
+	}
+	s.mu.Lock()
+	ag := s.ag
+	sessionID := s.sessionID
+	cfg := s.cfg
+	cur := s.liveTask
+	if !cur.Valid() && ag != nil {
+		cur = ag.TaskModeSnapshot()
+	}
+	goalText := ""
+	if ag != nil {
+		goalText = ag.GoalSnapshot()
+	}
+	s.mu.Unlock()
+	if ag == nil || !cfg.AutoTaskModeOn() {
+		return
+	}
+	dec := agent.InferAuto(prompt, cur, goalText)
+	if dec.GoalSet && dec.Goal != goalText {
+		s.mu.Lock()
+		if s.ag == ag && s.sessionID == sessionID && s.turnGen == expectedGen {
+			if err := goal.Set(s.cfg.Workspace, dec.Goal); err == nil {
+				ag.SetGoal(dec.Goal)
+				s.mu.Unlock()
+				s.emit(event{Type: "goal", Text: dec.Goal})
+				return
+			}
+		}
+		s.mu.Unlock()
+	}
 }
 
-func (s *server) popSteer() (string, []llm.Part, bool) {
+func (s *server) queueSteer(prompt string, parts []llm.Part, display string) bool {
+	return s.queueSteerMode(prompt, parts, display, nil)
+}
+
+func (s *server) queueSteerMode(prompt string, parts []llm.Part, display string, mode *agent.TaskMode) bool {
 	s.steerMu.Lock()
 	defer s.steerMu.Unlock()
-	if s.steerPrompt == "" {
-		return "", nil, false
+	if len(s.steerQueue) >= maxQueuedTurns {
+		return false
 	}
-	p := s.steerPrompt
-	parts := s.steerParts
-	s.steerPrompt = ""
-	s.steerParts = nil
-	return p, parts, true
+	queued := queuedTurn{
+		prompt:  prompt,
+		parts:   append([]llm.Part(nil), parts...),
+		display: display,
+	}
+	if mode != nil {
+		copyMode := *mode
+		queued.mode = &copyMode
+	}
+	s.steerQueue = append(s.steerQueue, queued)
+	return true
+}
+
+func (s *server) popSteer() (string, []llm.Part, string, *agent.TaskMode, bool) {
+	s.steerMu.Lock()
+	defer s.steerMu.Unlock()
+	if len(s.steerQueue) == 0 {
+		return "", nil, "", nil, false
+	}
+	next := s.steerQueue[0]
+	s.steerQueue[0] = queuedTurn{}
+	s.steerQueue = s.steerQueue[1:]
+	return next.prompt, next.parts, next.display, next.mode, true
 }
 
 func (s *server) abortTurnLocked() {
@@ -789,34 +933,104 @@ func (s *server) abortTurnLocked() {
 	s.turnPrompt = ""
 	s.turnReads, s.turnSearches, s.turnEdits = 0, 0, 0
 	s.pendingPerm = perm.Request{}
+	s.pendingPermGen = 0
+	s.turnMode = nil
 	select {
 	case s.permCh <- perm.Deny:
 	default:
 	}
 	s.steerMu.Lock()
-	s.steerPrompt = ""
-	s.steerParts = nil
+	s.steerQueue = nil
 	s.steerMu.Unlock()
 }
 
 func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
+	s.startAgentTurnAsMode(prompt, parts, prompt, nil)
+}
+
+func (s *server) startAgentTurnAs(prompt string, parts []llm.Part, displayPrompt string) {
+	s.startAgentTurnAsMode(prompt, parts, displayPrompt, nil)
+}
+
+func (s *server) startAgentTurnAsMode(prompt string, parts []llm.Part, displayPrompt string, mode *agent.TaskMode) {
+	if strings.TrimSpace(displayPrompt) == "" {
+		displayPrompt = prompt
+	}
 	s.mu.Lock()
-	if s.busy {
-		s.mu.Unlock()
+	admitted, ok := s.admitAgentTurnLocked(mode, false)
+	s.mu.Unlock()
+	if !ok {
 		return
+	}
+	s.runAdmittedTurn(admitted, prompt, parts, displayPrompt, mode)
+}
+
+// admitAgentTurnLocked captures all project/session/runtime state for one
+// turn. Callers must hold s.mu. allowBusy is used only by the atomic queued
+// handoff in runAdmittedTurn; the current turn is still marked busy there.
+func (s *server) admitAgentTurnLocked(mode *agent.TaskMode, allowBusy bool) (turnAdmission, bool) {
+	if s.busy && !allowBusy {
+		return turnAdmission{}, false
 	}
 	s.busy = true
 	s.activeTurns++
-	hist := s.hist
-	runAgent := s.ag
-	runSession := s.sessionID
-	s.turnGen++
-	myGen := s.turnGen
-	beforeAgentRun := s.beforeAgentRun
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
+	s.turnGen++
+	turnPermCh := make(chan perm.Decision, 1)
+	s.permCh = turnPermCh
+	temporaryMode := mode != nil && mode.Valid()
+	if temporaryMode {
+		copyMode := *mode
+		s.turnMode = &copyMode
+	} else {
+		s.turnMode = nil
+	}
+	return turnAdmission{
+		hist:           s.hist,
+		runAgent:       s.ag,
+		runSession:     s.sessionID,
+		workspace:      s.cfg.Workspace,
+		myGen:          s.turnGen,
+		beforeAgentRun: s.beforeAgentRun,
+		ctx:            ctx,
+		turnPermCh:     turnPermCh,
+		temporaryMode:  temporaryMode,
+	}, true
+}
+
+func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []llm.Part, displayPrompt string, mode *agent.TaskMode) {
+	runAgent := admitted.runAgent
+	runSession := admitted.runSession
+	workspace := admitted.workspace
+	myGen := admitted.myGen
+	ctx := admitted.ctx
+	turnPermCh := admitted.turnPermCh
+	temporaryMode := admitted.temporaryMode
+	hist := admitted.hist
+	beforeAgentRun := admitted.beforeAgentRun
+	// Infer persistent state only after this turn is admitted. Queued
+	// follow-ups and canceled requests cannot leave a goal or mode behind.
+	if temporaryMode {
+		s.autoApplyGoalFromUserPrompt(displayPrompt, myGen)
+	} else {
+		s.autoApplyFromUserPrompt(displayPrompt, myGen)
+	}
+	if temporaryMode {
+		if mode != nil {
+			s.emit(event{Type: "task_mode", Text: string(*mode), Hint: "this turn"})
+		}
+	}
+	s.noteTurnStart(displayPrompt)
+	s.mu.Lock()
+	stillLive := s.turnGen == myGen
+	if !stillLive {
+		s.activeTurns--
+	}
 	s.mu.Unlock()
-	s.noteTurnStart(prompt)
+	if !stillLive {
+		return
+	}
 
 	go func() {
 		defer func() {
@@ -824,53 +1038,89 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("agent panic: %v", rec)})
 				fmt.Fprintf(os.Stderr, "picogent: agent panic: %v\n", rec)
 			}
+			var next *turnAdmission
+			var nextPrompt string
+			var nextParts []llm.Part
+			var nextDisplay string
+			var nextMode *agent.TaskMode
 			s.mu.Lock()
-			s.activeTurns--
 			live := s.turnGen == myGen
+			restoreMode := s.liveTask
 			if live {
-				s.busy = false
-				s.cancel = nil
+				// Keep the server busy while handing off. Holding both locks
+				// means the queue entry is removed only after the replacement
+				// turn has already been admitted, so no request can win the
+				// idle window.
+				s.steerMu.Lock()
+				if len(s.steerQueue) > 0 {
+					queued := s.steerQueue[0]
+					s.activeTurns--
+					admittedNext, admittedOK := s.admitAgentTurnLocked(queued.mode, true)
+					if admittedOK {
+						s.steerQueue[0] = queuedTurn{}
+						s.steerQueue = s.steerQueue[1:]
+						next = &admittedNext
+						nextPrompt = queued.prompt
+						nextParts = queued.parts
+						nextDisplay = queued.display
+						nextMode = queued.mode
+					} else {
+						s.activeTurns++
+					}
+				}
+				s.steerMu.Unlock()
+				if next == nil {
+					s.busy = false
+					s.cancel = nil
+					s.turnMode = nil
+					s.activeTurns--
+				}
 			}
 			s.mu.Unlock()
 			if !live {
+				s.mu.Lock()
+				s.activeTurns--
+				s.mu.Unlock()
 				return
 			}
 			s.clearTurnProgress()
-			s.emit(event{Type: "done"})
 			s.invalidatePromptRecs()
 			s.emit(event{Type: "prompts_refresh", Text: "all"})
-			if p, pts, ok := s.popSteer(); ok {
-				s.startAgentTurn(p, pts)
+			if next != nil {
+				s.runAdmittedTurn(*next, nextPrompt, nextParts, nextDisplay, nextMode)
+				return
+			}
+			s.emit(event{Type: "done"})
+			if temporaryMode && restoreMode.Valid() {
+				s.emit(event{Type: "task_mode", Text: string(restoreMode)})
 			}
 		}()
 		if runAgent == nil {
 			s.emit(event{Type: "error", Text: "agent not ready"})
 			return
 		}
-		if runAgent.Trace == nil {
-			if log, err := trace.Open(s.cfg.Workspace); err == nil {
-				runAgent.Trace = log
+		if runAgent.TraceSnapshot() == nil {
+			if log, err := trace.Open(workspace); err == nil {
+				runAgent.SetTrace(log)
 			}
 		}
-		h := newGUIHandlerAt(s, runSession, myGen)
-		h.beginTurn(prompt)
-		s.maybeRecommendExtensions(prompt)
+		h := newGUIHandlerAtWithPerm(s, runSession, myGen, turnPermCh)
+		h.beginTurn(displayPrompt)
+		s.maybeRecommendExtensions(displayPrompt)
 		// Extension activation can rebuild the live agent while this turn is
 		// being prepared. Use that replacement only if this turn still owns the
 		// same session; never touch a newer session that won the race with it.
 		s.mu.Lock()
 		if s.sessionID == runSession && s.turnGen == myGen && s.ag != nil {
 			runAgent = s.ag
-			if runAgent.TaskSession != runSession {
-				runAgent.SetTaskSession(runSession)
-			}
+			runAgent.SetTaskSession(runSession)
 		}
 		s.mu.Unlock()
 		userMsg := llm.Message{Role: "user", Content: prompt, Parts: parts}
 		if beforeAgentRun != nil {
 			beforeAgentRun()
 		}
-		next, result, err := runAgent.Run(ctx, hist, userMsg, h)
+		next, result, err := runAgent.RunWithOptions(ctx, hist, userMsg, h, agent.RunOptions{TaskMode: mode, TracePrompt: displayPrompt, DurablePrompt: displayPrompt})
 		s.mu.Lock()
 		stale := s.turnGen != myGen
 		s.mu.Unlock()
@@ -878,11 +1128,20 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 			return
 		}
 		for i := len(next) - 1; i >= 0; i-- {
-			if next[i].Role == "user" && len(next[i].Parts) > 0 {
-				next[i].Content = attachments.SummaryLine(next[i].Parts) + next[i].Content
-				next[i].Parts = nil
-				break
+			if next[i].Role != "user" {
+				continue
 			}
+			scopedPrompt := next[i].Content == prompt
+			attachmentSummary := ""
+			if len(next[i].Parts) > 0 {
+				attachmentSummary = attachments.SummaryLine(next[i].Parts)
+				next[i].Content = attachmentSummary + next[i].Content
+				next[i].Parts = nil
+			}
+			if scopedPrompt && displayPrompt != "" {
+				next[i].Content = attachmentSummary + displayPrompt
+			}
+			break
 		}
 		h.endTurn(result)
 		if result.GoalDone {
@@ -899,8 +1158,8 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 		s.hist = next
 		ws := s.cfg.Workspace
 		sid := s.sessionID
-		llmClient := runAgent.LLM
-		model := runAgent.CFG.Model
+		llmClient := runAgent.ClientSnapshot()
+		model := runAgent.ConfigSnapshot().Model
 		_ = config.Save(s.cfg)
 		_ = session.SaveMessages(ws, sid, next)
 		s.mu.Unlock()
@@ -917,12 +1176,15 @@ func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 
 func (s *server) setGoal(text string) error {
 	text = strings.TrimSpace(text)
-	if err := goal.Set(s.cfg.Workspace, text); err != nil {
+	s.mu.Lock()
+	workspace := s.cfg.Workspace
+	s.mu.Unlock()
+	if err := goal.Set(workspace, text); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	if s.ag != nil {
-		s.ag.Goal = text
+		s.ag.SetGoal(text)
 	}
 	s.mu.Unlock()
 	s.emit(event{Type: "goal", Text: text})
@@ -930,12 +1192,15 @@ func (s *server) setGoal(text string) error {
 }
 
 func (s *server) clearGoal() error {
-	if err := goal.Clear(s.cfg.Workspace); err != nil {
+	s.mu.Lock()
+	workspace := s.cfg.Workspace
+	s.mu.Unlock()
+	if err := goal.Clear(workspace); err != nil {
 		return err
 	}
 	s.mu.Lock()
 	if s.ag != nil {
-		s.ag.Goal = ""
+		s.ag.SetGoal("")
 	}
 	s.mu.Unlock()
 	s.emit(event{Type: "goal", Text: ""})
@@ -972,13 +1237,31 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	} else if in.Allow {
 		d = perm.Allow
 	}
+	s.mu.Lock()
+	permCh := s.permCh
+	tool := s.pendingPerm.Tool
+	pendingGen := s.pendingPermGen
+	turnGen := s.turnGen
+	s.mu.Unlock()
+	if permCh == nil || tool == "" {
+		w.WriteHeader(204)
+		return
+	}
 	select {
-	case s.permCh <- d:
+	case permCh <- d:
 	case <-time.After(2 * time.Second):
 	}
 	s.mu.Lock()
-	tool := s.pendingPerm.Tool
+	// Only the request that was visible when the user clicked may be cleared
+	// or promoted to Always. A reset/new turn can replace pendingPerm while the
+	// HTTP request is waiting on the old turn's channel.
+	if s.pendingPermGen != pendingGen || s.turnGen != turnGen {
+		s.mu.Unlock()
+		w.WriteHeader(204)
+		return
+	}
 	s.pendingPerm = perm.Request{}
+	s.pendingPermGen = 0
 	if d == perm.AllowAlways && s.ag != nil && s.ag.Gate != nil && tool != "" {
 		s.cfg.Extensions.AlwaysAllowTools = appendUnique(s.cfg.Extensions.AlwaysAllowTools, tool)
 		s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
@@ -1046,14 +1329,52 @@ func (s *server) cancelChat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	s.abortTurnLocked()
+	restoreMode := s.liveTask
 	s.mu.Unlock()
 	s.emit(event{Type: "done"})
+	if restoreMode.Valid() {
+		s.emit(event{Type: "task_mode", Text: string(restoreMode)})
+	}
 	w.WriteHeader(204)
+}
+
+// scopeAPI performs the cheap, deterministic preflight used by the browser
+// UI. It does not call a provider or inspect the repository, so asking whether
+// a request is broad never costs a model turn.
+func (s *server) scopeAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Prompt string `json:"prompt"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	prompt := strings.TrimSpace(in.Prompt)
+	if prompt == "" {
+		http.Error(w, "empty prompt", http.StatusBadRequest)
+		return
+	}
+	p, needed := scope.Analyze(prompt)
+	w.Header().Set("Content-Type", "application/json")
+	if !needed {
+		_ = json.NewEncoder(w).Encode(map[string]any{"needed": false})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"needed":   true,
+		"question": p.Question,
+		"choices":  p.Choices,
+	})
 }
 
 func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Prompt      string              `json:"prompt"`
+		ScopeChoice string              `json:"scope_choice"`
 		Attachments []attachments.Input `json:"attachments"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -1072,7 +1393,39 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userPrompt := prompt
-	kind, payload := slash.Resolve(s.cfg.Workspace, prompt)
+	s.mu.Lock()
+	workspace := s.cfg.Workspace
+	s.mu.Unlock()
+	kind, payload := slash.Resolve(workspace, prompt)
+	scopeChoice := ""
+	var scopeMode *agent.TaskMode
+	if kind == slash.Unknown {
+		if preflight, needed := scope.Analyze(prompt); needed {
+			if strings.TrimSpace(in.ScopeChoice) == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error":    "scope_required",
+					"needed":   true,
+					"question": preflight.Question,
+					"choices":  preflight.Choices,
+				})
+				return
+			}
+			applied, ok := scope.Apply(prompt, preflight, in.ScopeChoice)
+			if !ok {
+				http.Error(w, "invalid scope choice", http.StatusBadRequest)
+				return
+			}
+			prompt = applied
+			scopeChoice = strings.TrimSpace(strings.ToLower(in.ScopeChoice))
+			mode := agent.ScopeTaskMode(scopeChoice)
+			scopeMode = &mode
+		} else if strings.TrimSpace(in.ScopeChoice) != "" {
+			http.Error(w, "scope choice is not needed for this prompt", http.StatusBadRequest)
+			return
+		}
+	}
 	runAgent := kind != slash.Local
 	if kind == slash.Local && strings.HasPrefix(payload, "goal:set:") {
 		text := strings.TrimPrefix(payload, "goal:set:")
@@ -1095,8 +1448,14 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 			s.emit(event{Type: "system", Text: "cleared"})
 		case "compact":
 			s.mu.Lock()
-			budget := ctxmgr.BudgetForModel(s.cfg.Model)
-			compact, stats, err := ctxmgr.Manage(context.Background(), s.ag.LLM, s.cfg.Model, s.hist, budget)
+			cfg := s.cfg
+			ag := s.ag
+			budget := ctxmgr.BudgetForModel(cfg.Model)
+			var client llm.Client
+			if ag != nil {
+				client = ag.ClientSnapshot()
+			}
+			compact, stats, err := ctxmgr.Manage(context.Background(), client, cfg.Model, s.hist, budget)
 			if err == nil {
 				s.hist = compact
 			}
@@ -1127,18 +1486,33 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 				s.emit(event{Type: "system", Text: text})
 			}
 		case "status":
-			st := fmt.Sprintf("safe/fast=%s task=%s model=%s workspace=%s", s.cfg.Mode, s.ag.TaskMode.Label(), s.cfg.Model, s.cfg.Workspace)
-			if s.ag != nil && s.ag.Goal != "" {
-				st += " · goal: " + s.ag.Goal
+			s.mu.Lock()
+			cfg := s.cfg
+			ag := s.ag
+			s.mu.Unlock()
+			mode := agent.TaskAgent
+			goalText := ""
+			if ag != nil {
+				mode = ag.TaskModeSnapshot()
+				goalText = ag.GoalSnapshot()
 			}
-			if s.ag.Tools != nil && s.ag.Tools.HasMCP() {
-				st += fmt.Sprintf(" · %d MCP tools", len(s.ag.Tools.MCP.Tools()))
+			st := fmt.Sprintf("safe/fast=%s task=%s model=%s workspace=%s", cfg.Mode, mode.Label(), cfg.Model, cfg.Workspace)
+			if goalText != "" {
+				st += " · goal: " + goalText
+			}
+			if ag != nil && ag.Tools != nil && ag.Tools.HasMCP() {
+				if mcp := ag.Tools.MCPManagerSnapshot(); mcp != nil {
+					st += fmt.Sprintf(" · %d MCP tools", len(mcp.Tools()))
+				}
 			}
 			s.emit(event{Type: "system", Text: st})
 		case "diff":
 			s.emit(event{Type: "system", Text: slash.GitDiff()})
 		case "goal:show":
-			g, _ := goal.Load(s.cfg.Workspace)
+			s.mu.Lock()
+			workspace := s.cfg.Workspace
+			s.mu.Unlock()
+			g, _ := goal.Load(workspace)
 			if g == "" {
 				s.emit(event{Type: "system", Text: "no active goal"})
 			} else {
@@ -1170,12 +1544,14 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		prompt = payload
 	}
 
-	s.autoApplyFromUserPrompt(userPrompt)
-
 	s.mu.Lock()
 	if s.busy {
 		s.mu.Unlock()
-		s.queueSteer(prompt, parts)
+		if !s.queueSteerMode(prompt, parts, userPrompt, scopeMode) {
+			s.emit(event{Type: "error", Text: "follow-up queue is full; wait for the current turn to finish"})
+			http.Error(w, "follow-up queue is full", http.StatusTooManyRequests)
+			return
+		}
 		s.emit(event{Type: "system", Text: "Follow-up queued for when the current turn finishes"})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(202)
@@ -1184,7 +1560,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	s.startAgentTurn(prompt, parts)
+	s.startAgentTurnAsMode(prompt, parts, userPrompt, scopeMode)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(202)
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
@@ -1203,6 +1579,7 @@ type guiHandler struct {
 	changes   []event
 	sessionID string
 	turnGen   uint64
+	permCh    chan perm.Decision
 }
 
 func newGUIHandler(s *server) *guiHandler {
@@ -1210,11 +1587,19 @@ func newGUIHandler(s *server) *guiHandler {
 	ws := s.cfg.Workspace
 	sessionID := s.sessionID
 	turnGen := s.turnGen
+	permCh := s.permCh
 	s.mu.Unlock()
-	return newGUIHandlerAt(s, sessionID, turnGen, ws)
+	return newGUIHandlerAtWithPerm(s, sessionID, turnGen, permCh, ws)
 }
 
 func newGUIHandlerAt(s *server, sessionID string, turnGen uint64, workspace ...string) *guiHandler {
+	s.mu.Lock()
+	permCh := s.permCh
+	s.mu.Unlock()
+	return newGUIHandlerAtWithPerm(s, sessionID, turnGen, permCh, workspace...)
+}
+
+func newGUIHandlerAtWithPerm(s *server, sessionID string, turnGen uint64, permCh chan perm.Decision, workspace ...string) *guiHandler {
 	ws := ""
 	if len(workspace) > 0 {
 		ws = workspace[0]
@@ -1225,32 +1610,60 @@ func newGUIHandlerAt(s *server, sessionID string, turnGen uint64, workspace ...s
 		s.mu.Unlock()
 	}
 	store, _ := learn.Load(ws)
-	return &guiHandler{s: s, learn: store, sessionID: sessionID, turnGen: turnGen}
+	return &guiHandler{s: s, learn: store, sessionID: sessionID, turnGen: turnGen, permCh: permCh}
+}
+
+func (h *guiHandler) live() bool {
+	if h == nil || h.s == nil {
+		return false
+	}
+	// Keep small unit-test handlers useful while every production turn carries
+	// both identity fields.  A partially tagged handler is never considered
+	// live, which avoids accidentally blessing a stale callback.
+	if h.sessionID == "" && h.turnGen == 0 {
+		return true
+	}
+	h.s.mu.Lock()
+	live := h.s.sessionID == h.sessionID && h.s.turnGen == h.turnGen
+	h.s.mu.Unlock()
+	return live
+}
+
+func (h *guiHandler) emit(e event) bool {
+	if !h.live() {
+		return false
+	}
+	if h.sessionID != "" && h.turnGen != 0 {
+		e.SessionID = h.sessionID
+		e.turnGen = h.turnGen
+	}
+	h.s.emit(e)
+	return true
 }
 
 func (h *guiHandler) OnTaskState(task *taskstate.Task) {
 	if task == nil || task.SessionID != h.sessionID {
 		return
 	}
-	h.s.mu.Lock()
-	live := h.s.sessionID == h.sessionID && h.s.turnGen == h.turnGen
-	h.s.mu.Unlock()
-	if !live {
-		return
-	}
-	h.s.emit(event{Type: "task_progress", SessionID: h.sessionID, Task: task})
+	h.emit(event{Type: "task_progress", SessionID: h.sessionID, Task: task})
 }
 
 func (h *guiHandler) beginTurn(prompt string) {
+	if !h.live() {
+		return
+	}
 	h.prompt = prompt
 	h.learn.RecordTurn()
-	h.s.emit(event{Type: "think", Text: summarizePrompt(prompt), Kind: "plan", Status: "start"})
-	h.s.emit(event{Type: "activity", Kind: "reset"})
+	h.emit(event{Type: "think", Text: summarizePrompt(prompt), Kind: "plan", Status: "start"})
+	h.emit(event{Type: "activity", Kind: "reset"})
 }
 
 func (h *guiHandler) endTurn(result agent.Result) {
+	if !h.live() {
+		return
+	}
 	if result.Context.Compacted && result.Context.Method != "" {
-		h.s.emit(event{
+		h.emit(event{
 			Type:   "context",
 			Text:   fmt.Sprintf("Auto-compacted context (%s)", result.Context.Method),
 			Tokens: result.Context.Tokens,
@@ -1265,7 +1678,7 @@ func (h *guiHandler) endTurn(result agent.Result) {
 		if h.edits == 1 {
 			label = "Edited 1 file"
 		}
-		h.s.emit(event{
+		h.emit(event{
 			Type:    "changes_summary",
 			Text:    label,
 			Count:   h.edits,
@@ -1274,10 +1687,10 @@ func (h *guiHandler) endTurn(result agent.Result) {
 			Status:  "done",
 		})
 	}
-	h.s.emit(event{Type: "think", Text: "Done", Kind: "plan", Status: "done"})
+	h.emit(event{Type: "think", Text: "Done", Kind: "plan", Status: "done"})
 	if result.Verified != "" {
 		failed := strings.Contains(strings.ToLower(result.Verified), "fail")
-		h.s.emit(event{
+		h.emit(event{
 			Type:    "test",
 			Text:    result.Verified,
 			Summary: clip(result.Verified, 2000),
@@ -1285,8 +1698,11 @@ func (h *guiHandler) endTurn(result agent.Result) {
 			Kind:    "test",
 		})
 	}
+	if !h.live() {
+		return
+	}
 	_ = learn.Save(h.learn)
-	h.s.emit(event{Type: "overview", Text: "refresh"})
+	h.emit(event{Type: "overview", Text: "refresh"})
 	h.s.cleanupExtensionPool()
 	h.s.reflectAfterTurn(h.prompt, result)
 }
@@ -1303,15 +1719,18 @@ func summarizePrompt(prompt string) string {
 }
 
 func (h *guiHandler) OnText(text string) {
-	h.s.emit(event{Type: "assistant", Text: text})
+	h.emit(event{Type: "assistant", Text: text})
 }
 func (h *guiHandler) OnTextDelta(delta string) {
-	h.s.emit(event{Type: "assistant_delta", Text: delta})
+	h.emit(event{Type: "assistant_delta", Text: delta})
 }
 func (h *guiHandler) OnTextFinal(text string) {
-	h.s.emit(event{Type: "assistant_final", Text: text})
+	h.emit(event{Type: "assistant_final", Text: text})
 }
 func (h *guiHandler) OnToolStart(call llm.ToolCall) {
+	if !h.live() {
+		return
+	}
 	h.learn.RecordTool(call.Name)
 
 	switch call.Name {
@@ -1321,31 +1740,34 @@ func (h *guiHandler) OnToolStart(call llm.ToolCall) {
 			h.reads++
 			h.s.noteTurnActivity("read")
 			h.learn.RecordRead(path)
-			h.s.emit(event{Type: "review", Path: path})
-			h.s.emit(event{Type: "activity", Kind: "read", Count: h.reads, Path: path})
+			h.emit(event{Type: "review", Path: path})
+			h.emit(event{Type: "activity", Kind: "read", Count: h.reads, Path: path})
 		}
 	case "glob", "grep":
 		h.searches++
 		h.s.noteTurnActivity("search")
 		h.learn.RecordSearch()
-		h.s.emit(event{Type: "activity", Kind: "search", Count: h.searches})
+		h.emit(event{Type: "activity", Kind: "search", Count: h.searches})
 	case "write_file", "edit_file":
 		path := parseToolPath(call.Arguments)
 		h.s.noteTurnActivity("edit")
-		h.s.emit(event{Type: "think", Text: "Editing " + path, Kind: "edit", Status: "start", Path: path})
+		h.emit(event{Type: "think", Text: "Editing " + path, Kind: "edit", Status: "start", Path: path})
 	case "bash":
 		var in struct {
 			Command string `json:"command"`
 		}
 		_ = json.Unmarshal([]byte(call.Arguments), &in)
 		if isTestCommand(in.Command) {
-			h.s.emit(event{Type: "think", Text: "Running tests…", Kind: "test", Status: "start"})
+			h.emit(event{Type: "think", Text: "Running tests…", Kind: "test", Status: "start"})
 		}
 	}
 }
 func (h *guiHandler) OnToolEnd(call llm.ToolCall, result string, err error) {
+	if !h.live() {
+		return
+	}
 	if err != nil {
-		h.s.emit(event{Type: "error", Text: err.Error()})
+		h.emit(event{Type: "error", Text: err.Error()})
 		return
 	}
 
@@ -1380,7 +1802,7 @@ func (h *guiHandler) OnToolEnd(call llm.ToolCall, result string, err error) {
 		if isTestCommand(in.Command) {
 			passed, failed, skipped := parseTestOutput(result)
 			h.learn.RecordTest(passed, failed, skipped, result)
-			h.s.emit(event{
+			h.emit(event{
 				Type:    "test",
 				Text:    formatTestSummary(passed, failed, skipped),
 				Summary: clip(result, 2000),
@@ -1395,7 +1817,7 @@ func (h *guiHandler) OnToolEnd(call llm.ToolCall, result string, err error) {
 }
 
 func (h *guiHandler) recordChange(path string, added, removed int) {
-	if path == "" {
+	if path == "" || !h.live() {
 		return
 	}
 	h.edits++
@@ -1404,8 +1826,8 @@ func (h *guiHandler) recordChange(path string, added, removed int) {
 	h.learn.RecordChange(path, added, removed)
 	ev := event{Type: "change", Path: path, Added: added, Removed: removed, Status: "done"}
 	h.changes = append(h.changes, ev)
-	h.s.emit(ev)
-	h.s.emit(event{Type: "activity", Kind: "edit", Count: h.edits, Added: h.added, Removed: h.removed})
+	h.emit(ev)
+	h.emit(event{Type: "activity", Kind: "edit", Count: h.edits, Added: h.added, Removed: h.removed})
 }
 
 func ternary(cond bool, a, b string) string {
@@ -1416,22 +1838,44 @@ func ternary(cond bool, a, b string) string {
 }
 
 func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error) {
+	if !h.live() {
+		return perm.Deny, context.Canceled
+	}
 	h.s.mu.Lock()
 	h.s.pendingPerm = req
+	h.s.pendingPermGen = h.turnGen
+	ag := h.s.ag
 	h.s.mu.Unlock()
-	if h.s.ag != nil {
-		_ = h.s.ag.Trace.Append("perm", req.Tool, req.Summary, nil, 0)
+	if ag != nil {
+		if traceLog := ag.TraceSnapshot(); traceLog != nil {
+			_ = traceLog.Append("perm", req.Tool, req.Summary, nil, 0)
+		}
 	}
-	h.s.emit(permissionEvent(req))
+	h.emit(permissionEvent(req))
+	permCh := h.permCh
+	if permCh == nil {
+		h.s.mu.Lock()
+		permCh = h.s.permCh
+		h.s.mu.Unlock()
+	}
+	if permCh == nil {
+		return perm.Deny, errors.New("permission channel unavailable")
+	}
 	select {
 	case <-ctx.Done():
 		h.s.mu.Lock()
-		h.s.pendingPerm = perm.Request{}
+		if h.s.pendingPermGen == h.turnGen {
+			h.s.pendingPerm = perm.Request{}
+			h.s.pendingPermGen = 0
+		}
 		h.s.mu.Unlock()
 		return perm.Deny, ctx.Err()
-	case d := <-h.s.permCh:
+	case d := <-permCh:
 		h.s.mu.Lock()
-		h.s.pendingPerm = perm.Request{}
+		if h.s.pendingPermGen == h.turnGen {
+			h.s.pendingPerm = perm.Request{}
+			h.s.pendingPermGen = 0
+		}
 		h.s.mu.Unlock()
 		return d, nil
 	}
@@ -1458,7 +1902,9 @@ func permStatus(req perm.Request) string {
 	return "risky"
 }
 func (h *guiHandler) OnError(err error) {
-	h.s.emit(event{Type: "error", Text: err.Error()})
+	if err != nil {
+		h.emit(event{Type: "error", Text: err.Error()})
+	}
 }
 
 func contextEvent(st ctxmgr.Stats) event {
@@ -1566,17 +2012,25 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.mu.Lock()
+			workspace := s.cfg.Workspace
+			s.mu.Unlock()
+			if !sessionWorkspaceMatches(sess, workspace) {
+				http.Error(w, "session belongs to another workspace", http.StatusForbidden)
+				return
+			}
+			s.mu.Lock()
 			s.abortTurnLocked()
 			s.sessionID = sess.ID
 			s.hist = sess.Messages
 			if next := cloneAgentForSession(s.ag, sess.ID); next != nil {
 				s.ag = next
 			}
+			ag := s.ag
 			s.mu.Unlock()
 			s.emitTaskSnapshot(sess.ID)
 			var task *taskstate.Task
-			if s.ag != nil {
-				task = s.ag.TaskSnapshot()
+			if ag != nil {
+				task = ag.TaskSnapshot()
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -1610,6 +2064,24 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func sessionWorkspaceMatches(sess *session.Session, workspace string) bool {
+	if sess == nil || strings.TrimSpace(sess.Workspace) == "" || strings.TrimSpace(workspace) == "" {
+		return false
+	}
+	canonical := func(path string) string {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return ""
+		}
+		abs = filepath.Clean(abs)
+		if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+			abs = filepath.Clean(resolved)
+		}
+		return abs
+	}
+	return canonical(sess.Workspace) == canonical(workspace)
+}
+
 func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET only", 405)
@@ -1623,25 +2095,29 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	ws := s.cfg.Workspace
 	s.mu.Unlock()
-	wsAbs, err := filepath.Abs(ws)
+	resolved, err := perm.ResolveWorkspacePath(ws, rel)
+	if err != nil || resolved.OutsideWorkspace {
+		http.Error(w, "outside workspace", 403)
+		return
+	}
+	wsAbs := resolved.Root
+	abs := resolved.Path
+	f, err := os.Open(abs)
+	if err != nil {
+		http.Error(w, err.Error(), 404)
+		return
+	}
+	defer f.Close()
+	const maxPreviewBytes = 256 << 10
+	data, err := io.ReadAll(io.LimitReader(f, maxPreviewBytes+utf8.UTFMax))
 	if err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
-	abs := filepath.Join(wsAbs, rel)
-	abs, err = filepath.Abs(abs)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	if abs != wsAbs && !strings.HasPrefix(abs, wsAbs+string(os.PathSeparator)) {
-		http.Error(w, "outside workspace", 403)
-		return
-	}
-	data, err := os.ReadFile(abs)
-	if err != nil {
-		http.Error(w, err.Error(), 404)
-		return
+	truncatedBytes := len(data) > maxPreviewBytes
+	if truncatedBytes {
+		data = data[:maxPreviewBytes]
+		data = trimIncompleteUTF8Prefix(data)
 	}
 	if !utf8.Valid(data) {
 		http.Error(w, "not a utf-8 text file", 415)
@@ -1670,8 +2146,24 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 		"path":      display,
 		"lines":     rows,
 		"total":     total,
-		"truncated": total > maxLines,
+		"truncated": total > maxLines || truncatedBytes,
 	})
+}
+
+func trimIncompleteUTF8Prefix(data []byte) []byte {
+	if utf8.Valid(data) {
+		return data
+	}
+	start := len(data) - utf8.UTFMax + 1
+	if start < 0 {
+		start = 0
+	}
+	for n := len(data) - 1; n >= start; n-- {
+		if utf8.Valid(data[:n]) {
+			return data[:n]
+		}
+	}
+	return data
 }
 
 func (s *server) settings(w http.ResponseWriter, r *http.Request) {
@@ -1726,91 +2218,85 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mu.Lock()
+		cfg := s.cfg
+		workspaceChanged := in.Workspace != "" && in.Workspace != cfg.Workspace
 		if in.Workspace != "" {
-			s.cfg.Workspace = in.Workspace
+			cfg.Workspace = in.Workspace
 		}
 		if mode := config.Mode(in.Mode); mode.Valid() {
-			s.cfg.Mode = mode
-			s.ag.CFG.Mode = mode
-			s.ag.Gate.Mode = mode
+			cfg.Mode = mode
 		}
 		if in.Model != "" {
 			if in.Model == config.ModelAuto {
-				switch s.cfg.Provider {
+				switch cfg.Provider {
 				case config.ProviderOpenCode, config.ProviderAntigravity, config.ProviderOllama, config.ProviderOpenAI:
-					s.cfg.Model = ""
-					s.cfg.Model = s.cfg.BackendModel()
-					s.cfg.Router.Enabled = false
+					cfg.Model = ""
+					cfg.Model = cfg.BackendModel()
+					cfg.Router.Enabled = false
 				default:
-					s.cfg.Model = config.ModelAuto
-					s.cfg.Router.Enabled = true
+					cfg.Model = config.ModelAuto
+					cfg.Router.Enabled = true
 				}
 			} else {
-				s.cfg.Model = in.Model
-				s.cfg.Router.Enabled = false
+				cfg.Model = in.Model
+				cfg.Router.Enabled = false
 			}
-			s.ag.CFG.Model = s.cfg.Model
-			s.ag.CFG.Router.Enabled = s.cfg.Router.Enabled
 		}
 		if p := config.Provider(strings.ToLower(in.Provider)); in.Provider != "" {
 			switch p {
 			case config.ProviderCodex, config.ProviderQuadCode, config.ProviderOpenCode, config.ProviderAntigravity, config.ProviderOpenAI, config.ProviderOllama:
-				s.cfg.Provider = p
-				s.ag.CFG.Provider = p
+				cfg.Provider = p
 				// Drop Auto when switching to providers without a router.
 				if (p == config.ProviderOpenCode || p == config.ProviderAntigravity || p == config.ProviderOllama || p == config.ProviderOpenAI) &&
-					(s.cfg.Model == "" || s.cfg.Model == config.ModelAuto) {
-					s.cfg.Model = s.cfg.BackendModel()
-					s.cfg.Router.Enabled = false
-					s.ag.CFG.Model = s.cfg.Model
-					s.ag.CFG.Router.Enabled = false
+					(cfg.Model == "" || cfg.Model == config.ModelAuto) {
+					cfg.Model = cfg.BackendModel()
+					cfg.Router.Enabled = false
 				}
 			}
 		}
 		if in.AnthropicKey != "" {
-			s.cfg.AnthropicKey = in.AnthropicKey
-			s.ag.CFG.AnthropicKey = in.AnthropicKey
+			cfg.AnthropicKey = in.AnthropicKey
 		}
 		if in.RouterEnabled != nil {
-			s.cfg.Router.Enabled = *in.RouterEnabled
-			s.ag.CFG.Router.Enabled = *in.RouterEnabled
+			cfg.Router.Enabled = *in.RouterEnabled
 		}
 		if in.UseLLMAdvisor != nil {
-			s.cfg.Router.UseLLMAdvisor = *in.UseLLMAdvisor
-			s.ag.CFG.Router.UseLLMAdvisor = *in.UseLLMAdvisor
+			cfg.Router.UseLLMAdvisor = *in.UseLLMAdvisor
 		}
 		if in.AllowFable != nil {
-			s.cfg.Router.AllowFable = *in.AllowFable
-			s.ag.CFG.Router.AllowFable = *in.AllowFable
+			cfg.Router.AllowFable = *in.AllowFable
 		}
 		if in.FableConfirmed != nil {
-			s.cfg.Router.FableConfirmed = *in.FableConfirmed
-			s.ag.CFG.Router.FableConfirmed = *in.FableConfirmed
+			cfg.Router.FableConfirmed = *in.FableConfirmed
 		}
 		if in.RefreshCatalog {
 			llm.InitCatalog(true)
 			llm.RefreshCLIModels(true)
 		}
 		if in.MaxToolRounds > 0 {
-			s.cfg.MaxToolRounds = in.MaxToolRounds
-			s.ag.CFG.MaxToolRounds = in.MaxToolRounds
+			cfg.MaxToolRounds = in.MaxToolRounds
 		}
 		if in.LLMTimeoutSec > 0 {
-			s.cfg.LLMTimeoutSec = in.LLMTimeoutSec
+			cfg.LLMTimeoutSec = in.LLMTimeoutSec
 		}
 		if in.BashTimeoutSec > 0 {
-			s.cfg.BashTimeoutSec = in.BashTimeoutSec
+			cfg.BashTimeoutSec = in.BashTimeoutSec
 		}
-		cfg := s.cfg
+		if !workspaceChanged {
+			s.cfg = cfg
+		}
+		if !workspaceChanged && s.ag != nil {
+			s.ag.UpdateConfig(func(current *config.Config) { *current = cfg })
+		}
 		s.mu.Unlock()
 		persisted := true
 		var persistErr string
-		if err := config.Save(cfg); err != nil {
-			// Keep the in-memory change even if disk is unwritable (sandbox, permissions).
-			persisted = false
-			persistErr = err.Error()
-		}
-		if in.Provider != "" || in.RouterEnabled != nil || in.UseLLMAdvisor != nil || in.AllowFable != nil || in.FableConfirmed != nil || in.AnthropicKey != "" {
+		if workspaceChanged {
+			if _, err := s.replaceWorkspace(cfg); err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+		} else if in.Provider != "" || in.RouterEnabled != nil || in.UseLLMAdvisor != nil || in.AllowFable != nil || in.FableConfirmed != nil || in.AnthropicKey != "" {
 			a, err := app.Build(cfg)
 			if err != nil {
 				http.Error(w, err.Error(), 500)
@@ -1821,6 +2307,11 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			s.ag = a
 			s.mu.Unlock()
 			s.attachRouterHook()
+		}
+		if err := config.Save(cfg); err != nil {
+			// Keep the in-memory change even if disk is unwritable (sandbox, permissions).
+			persisted = false
+			persistErr = err.Error()
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{

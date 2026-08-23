@@ -10,6 +10,7 @@ import (
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/extensions"
 	"github.com/saiaathish/picogent/internal/mcpbridge"
+	"github.com/saiaathish/picogent/internal/tools"
 	"github.com/saiaathish/picogent/internal/trace"
 	"github.com/saiaathish/picogent/internal/verify"
 )
@@ -18,32 +19,35 @@ func wireRuntime(a *agent.Agent) {
 	if a == nil || a.Tools == nil {
 		return
 	}
-	log, err := trace.Open(a.CFG.Workspace)
+	cfg := a.ConfigSnapshot()
+	log, err := trace.Open(cfg.Workspace)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "picogent: trace: %v\n", err)
 	}
-	a.Trace = log
-	ws := a.CFG.Workspace
-	a.Tools.Ctx.MCPList = func() string {
-		return mcpListText(ws, a.Tools.MCP)
-	}
-	a.Tools.Ctx.MCPSuggest = func(query string) string {
-		return mcpSuggestText(ws, query)
-	}
-	a.Tools.Ctx.MCPAdd = func(ctx context.Context, id string) (string, error) {
-		return mcpAdd(a, id)
-	}
-	a.Tools.Ctx.MCPRemove = func(ctx context.Context, id string) (string, error) {
-		return mcpRemove(a, id)
-	}
-	a.Tools.Ctx.Verify = func(ctx context.Context) (string, error) {
-		res := verify.Run(ctx, ws)
-		return verify.Format(res), nil
-	}
-	a.Tools.Ctx.VerifyTargets = func(ctx context.Context, targets []string) (string, error) {
-		res := verify.RunPipeline(ctx, ws, verify.Options{Targets: targets})
-		return verify.FormatPipeline(res), nil
-	}
+	a.SetTrace(log)
+	a.Tools.UpdateContext(func(c *tools.Context) {
+		c.MCPList = func() string {
+			workspace := a.ConfigSnapshot().Workspace
+			return mcpListText(workspace, a.Tools.MCPManagerSnapshot())
+		}
+		c.MCPSuggest = func(query string) string {
+			return mcpSuggestText(a.ConfigSnapshot().Workspace, query)
+		}
+		c.MCPAdd = func(ctx context.Context, id string) (string, error) {
+			return mcpAdd(a, id)
+		}
+		c.MCPRemove = func(ctx context.Context, id string) (string, error) {
+			return mcpRemove(a, id)
+		}
+		c.Verify = func(ctx context.Context) (string, error) {
+			res := verify.Run(ctx, a.ConfigSnapshot().Workspace)
+			return verify.Format(res), nil
+		}
+		c.VerifyTargets = func(ctx context.Context, targets []string) (string, error) {
+			res := verify.RunPipeline(ctx, a.ConfigSnapshot().Workspace, verify.Options{Targets: targets})
+			return verify.FormatPipeline(res), nil
+		}
+	})
 }
 
 func mcpListText(workspace string, live *mcpbridge.Manager) string {
@@ -99,7 +103,8 @@ func mcpAdd(a *agent.Agent, id string) (string, error) {
 	if it == nil {
 		return "", fmt.Errorf("unknown catalog id %s", id)
 	}
-	res, _, err := extensions.Install(*it, a.CFG.Workspace)
+	workspace := a.ConfigSnapshot().Workspace
+	res, _, err := extensions.Install(*it, workspace)
 	if err != nil {
 		return "", err
 	}
@@ -109,7 +114,7 @@ func mcpAdd(a *agent.Agent, id string) (string, error) {
 	}
 	if a.Tools != nil {
 		cfg := *it.MCP
-		if servers, err := mcpbridge.LoadServers(a.CFG.Workspace); err == nil {
+		if servers, err := mcpbridge.LoadServers(workspace); err == nil {
 			if saved, ok := servers[res.MCPName]; ok {
 				cfg = saved
 			}
@@ -118,7 +123,7 @@ func mcpAdd(a *agent.Agent, id string) (string, error) {
 			msg += " (connect warning: " + err.Error() + ")"
 		}
 	}
-	_ = a.Trace.Append("mcp_add", "mcp_manage", id, trace.Bool(true), 0)
+	_ = a.TraceSnapshot().Append("mcp_add", "mcp_manage", id, trace.Bool(true), 0)
 	return msg, nil
 }
 
@@ -132,12 +137,12 @@ func mcpRemove(a *agent.Agent, id string) (string, error) {
 		return "", err
 	}
 	if a.Tools != nil {
-		if a.Tools.MCP != nil {
-			a.Tools.MCP.DropServer(name)
-			a.Tools.AttachMCP(a.Tools.MCP)
+		if mcp := a.Tools.MCPManagerSnapshot(); mcp != nil {
+			mcp.DropServer(name)
+			a.Tools.AttachMCP(mcp)
 		}
 	}
-	_ = a.Trace.Append("mcp_remove", "mcp_manage", id, trace.Bool(true), 0)
+	_ = a.TraceSnapshot().Append("mcp_remove", "mcp_manage", id, trace.Bool(true), 0)
 	return "removed " + name, nil
 }
 
@@ -145,13 +150,15 @@ func connectOne(a *agent.Agent, name string, cfg mcpbridge.ServerConfig) error {
 	if a == nil || a.Tools == nil || name == "" {
 		return nil
 	}
-	if a.Tools.MCP == nil {
-		a.Tools.MCP = &mcpbridge.Manager{}
+	mcp := a.Tools.MCPManagerSnapshot()
+	if mcp == nil {
+		mcp = &mcpbridge.Manager{}
+		a.Tools.AttachMCP(mcp)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 22*time.Second)
 	defer cancel()
-	err := a.Tools.MCP.ConnectServer(ctx, name, cfg)
-	a.Tools.AttachMCP(a.Tools.MCP)
+	err := mcp.ConnectServer(ctx, name, cfg)
+	a.Tools.AttachMCP(mcp)
 	return err
 }
 
@@ -160,10 +167,11 @@ func ReloadMCP(a *agent.Agent) error {
 	if a == nil || a.Tools == nil {
 		return fmt.Errorf("no agent")
 	}
-	if a.Tools.MCP != nil {
-		a.Tools.MCP.Close()
+	if mcp := a.Tools.MCPManagerSnapshot(); mcp != nil {
+		mcp.Close()
 	}
-	servers, err := mcpbridge.LoadServers(a.CFG.Workspace)
+	workspace := a.ConfigSnapshot().Workspace
+	servers, err := mcpbridge.LoadServers(workspace)
 	if err != nil {
 		return err
 	}

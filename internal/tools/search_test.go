@@ -1,6 +1,10 @@
 package tools
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestGlobMatch(t *testing.T) {
 	cases := []struct {
@@ -38,5 +42,22 @@ func TestGlobMatchNoStackOverflow(t *testing.T) {
 		for _, rel := range rels {
 			_ = globMatch(pattern, rel)
 		}
+	}
+}
+
+func TestSanitizedCommandEnvOmitsCredentialsAndStartupHooks(t *testing.T) {
+	t.Setenv("PICOGENT_TEST_API_KEY", "do-not-leak")
+	t.Setenv("BASH_ENV", "/tmp/evil-profile")
+	t.Setenv("PICOGENT_TEST_SAFE", "kept")
+	env := sanitizedCommandEnv()
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "PICOGENT_TEST_API_KEY=") || strings.Contains(joined, "BASH_ENV=") {
+		t.Fatalf("sensitive environment leaked: %s", joined)
+	}
+	if !strings.Contains(joined, "PICOGENT_TEST_SAFE=kept") {
+		t.Fatalf("ordinary environment was unexpectedly removed: %s", joined)
+	}
+	if os.Getenv("PATH") != "" && !hasEnvKey(env, "PATH") {
+		t.Fatal("sanitized environment removed PATH")
 	}
 }
