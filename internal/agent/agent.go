@@ -270,10 +270,10 @@ func (a *Agent) RuntimeSnapshot() RuntimeState {
 }
 
 func (a *Agent) systemPrompt(userHint string) string {
-	return systemPromptFor(a.RuntimeSnapshot(), userHint, a.taskPromptSuffix())
+	return systemPromptFor(a.RuntimeSnapshot(), userHint, a.taskPromptSuffix(), "")
 }
 
-func systemPromptFor(state RuntimeState, userHint, taskSuffix string) string {
+func systemPromptFor(state RuntimeState, userHint, taskSuffix, scopeBoundary string) string {
 	p := systemPromptBase
 	if state.Tools != nil && state.Tools.HasMCP() {
 		p += systemPromptMCP
@@ -299,6 +299,9 @@ func systemPromptFor(state RuntimeState, userHint, taskSuffix string) string {
 	if taskSuffix != "" {
 		p += taskSuffix
 	}
+	if boundary := strings.TrimSpace(scopeBoundary); boundary != "" {
+		p += "\n\nCurrent turn scope (takes precedence over active and durable goals):\n" + boundary
+	}
 	return p
 }
 
@@ -308,6 +311,10 @@ type RunOptions struct {
 	TaskMode      *TaskMode
 	TracePrompt   string
 	DurablePrompt string
+	// ScopeBoundary is a temporary first-pass instruction. It is appended after
+	// durable task and active-goal context so a broad resumable objective cannot
+	// override the selected work for this turn.
+	ScopeBoundary string
 }
 
 func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message, ev EventHandler) ([]llm.Message, Result, error) {
@@ -364,7 +371,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	a.beginDurableTask(durablePrompt, ev)
 	// Always refresh the system prompt so mid-chat task mode / goal changes take effect.
 	msgs := make([]llm.Message, 0, len(history)+3)
-	msgs = append(msgs, llm.Message{Role: "system", Content: systemPromptFor(state, userText, a.taskPromptSuffix())})
+	msgs = append(msgs, llm.Message{Role: "system", Content: systemPromptFor(state, userText, a.taskPromptSuffix(), opts.ScopeBoundary)})
 	for i, m := range history {
 		if i == 0 && m.Role == "system" {
 			continue

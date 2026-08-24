@@ -151,24 +151,22 @@ func (h *handler) OnTaskState(task *taskstate.Task) {
 }
 
 type model struct {
-	cfg           config.Config
-	ag            *agent.Agent
-	history       []llm.Message
-	sessionID     string
-	lines         []logLine
-	vp            viewport.Model
-	ta            textarea.Model
-	busy          bool
-	perm          *perm.Request
-	h             *handler
-	turnID        uint64
-	width         int
-	height        int
-	cancel        context.CancelFunc
-	task          *taskstate.Task
-	turnMode      *agent.TaskMode
-	pendingScope  *scope.Prompt
-	pendingPrompt string
+	cfg       config.Config
+	ag        *agent.Agent
+	history   []llm.Message
+	sessionID string
+	lines     []logLine
+	vp        viewport.Model
+	ta        textarea.Model
+	busy      bool
+	perm      *perm.Request
+	h         *handler
+	turnID    uint64
+	width     int
+	height    int
+	cancel    context.CancelFunc
+	task      *taskstate.Task
+	turnMode  *agent.TaskMode
 }
 
 func Run() error {
@@ -243,23 +241,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "ctrl+c":
 				m.decide(perm.Deny)
 				m.stop()
-				return m, tea.Quit
-			}
-			return m, nil
-		}
-		if m.pendingScope != nil {
-			switch msg.String() {
-			case "esc":
-				m.pendingScope = nil
-				m.pendingPrompt = ""
-				m.lines = append(m.lines, logLine{Kind: "system", Text: "scope check canceled"})
-				m.refresh()
-			case "1", "2", "3":
-				index := int(msg.String()[0] - '1')
-				if index < len(m.pendingScope.Choices) {
-					return m, m.chooseScope(index)
-				}
-			case "ctrl+c":
 				return m, tea.Quit
 			}
 			return m, nil
@@ -440,12 +421,23 @@ func (m *model) stop() {
 }
 
 func (m *model) autoApplyPrompt(prompt string) {
+	m.autoApplyPromptWith(prompt, false)
+}
+
+func (m *model) autoApplyScopedPrompt(prompt string) {
+	m.autoApplyPromptWith(prompt, true)
+}
+
+func (m *model) autoApplyPromptWith(prompt string, automaticScope bool) {
 	if m.ag == nil || !m.cfg.AutoTaskModeOn() || strings.HasPrefix(strings.TrimSpace(prompt), "/") {
 		return
 	}
 	currentMode := m.ag.TaskModeSnapshot()
 	currentGoal := m.ag.GoalSnapshot()
 	dec := agent.InferAuto(prompt, currentMode, currentGoal)
+	if automaticScope {
+		dec = agent.InferAutomaticScope(prompt, currentMode, currentGoal)
+	}
 	if dec.GoalSet && dec.Goal != currentGoal {
 		_ = goal.Set(m.cfg.Workspace, dec.Goal)
 		m.ag.SetGoal(dec.Goal)
@@ -482,59 +474,31 @@ func (m *model) submit(line string) tea.Cmd {
 		}
 	}
 	if p, ok := scope.Analyze(line); ok {
-		m.pendingScope = &p
-		m.pendingPrompt = line
-		m.lines = append(m.lines, logLine{Kind: "scope", Text: formatScopePrompt(p)})
+		choice := scope.Recommended(p)
+		prompt, applied := scope.Apply(line, p, choice.ID)
+		if !applied {
+			m.lines = append(m.lines, logLine{Kind: "error", Text: "couldn't apply the recommended scope"})
+			m.refresh()
+			return nil
+		}
+		m.lines = append(m.lines, logLine{Kind: "system", Text: scope.DefaultMessage(choice)})
 		m.refresh()
-		return nil
+		// The automatic boundary does not override the current or inferred task
+		// mode. runAgentAs keeps plan/report/debug wording intact.
+		return m.runAgentAs(prompt, line, scope.TurnBoundary(choice))
 	}
 	return m.runAgent(line)
 }
 
 func (m *model) runAgent(prompt string) tea.Cmd {
-	return m.runAgentAsMode(prompt, prompt, nil)
+	return m.runAgentAsMode(prompt, prompt, nil, false, "")
 }
 
-func (m *model) chooseScope(index int) tea.Cmd {
-	if m.pendingScope == nil || index < 0 || index >= len(m.pendingScope.Choices) {
-		return nil
-	}
-	preflight := *m.pendingScope
-	original := m.pendingPrompt
-	choice := preflight.Choices[index]
-	m.pendingScope = nil
-	m.pendingPrompt = ""
-	mode := agent.ScopeTaskMode(choice.ID)
-	m.lines = append(m.lines, logLine{Kind: "system", Text: "using: " + choice.Label})
-	m.refresh()
-	prompt, ok := scope.Apply(original, preflight, choice.ID)
-	if !ok {
-		m.lines = append(m.lines, logLine{Kind: "error", Text: "that scope choice is no longer available"})
-		m.refresh()
-		return nil
-	}
-	return m.runAgentAsMode(prompt, original, &mode)
+func (m *model) runAgentAs(prompt, displayPrompt, scopeBoundary string) tea.Cmd {
+	return m.runAgentAsMode(prompt, displayPrompt, nil, true, scopeBoundary)
 }
 
-func formatScopePrompt(p scope.Prompt) string {
-	var b strings.Builder
-	b.WriteString("Quick check — " + p.Question + "\n")
-	for i, c := range p.Choices {
-		recommended := ""
-		if c.Recommended {
-			recommended = " (recommended)"
-		}
-		fmt.Fprintf(&b, "%d. %s%s — %s\n", i+1, c.Label, recommended, c.Why)
-	}
-	b.WriteString("Choose 1–3, or Esc to cancel.")
-	return strings.TrimSpace(b.String())
-}
-
-func (m *model) runAgentAs(prompt, displayPrompt string) tea.Cmd {
-	return m.runAgentAsMode(prompt, displayPrompt, nil)
-}
-
-func (m *model) runAgentAsMode(prompt, displayPrompt string, mode *agent.TaskMode) tea.Cmd {
+func (m *model) runAgentAsMode(prompt, displayPrompt string, mode *agent.TaskMode, automaticScope bool, scopeBoundary string) tea.Cmd {
 	m.busy = true
 	if mode != nil && mode.Valid() {
 		copyMode := *mode
@@ -542,10 +506,13 @@ func (m *model) runAgentAsMode(prompt, displayPrompt string, mode *agent.TaskMod
 	} else {
 		m.turnMode = nil
 	}
-	// Infer persistent state only after this turn is admitted. A scope choice
-	// may infer a goal, but it never changes the configured task mode.
+	// Infer persistent state only after this turn is admitted. A temporary scope
+	// never overwrites the saved task-mode preference. Automatic inference may
+	// update the live session mode; a new session restores m.cfg.TaskMode.
 	if mode != nil {
 		m.autoApplyGoal(displayPrompt)
+	} else if automaticScope {
+		m.autoApplyScopedPrompt(displayPrompt)
 	} else {
 		m.autoApplyPrompt(displayPrompt)
 	}
@@ -572,7 +539,7 @@ func (m *model) runAgentAsMode(prompt, displayPrompt string, mode *agent.TaskMod
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	return func() tea.Msg {
-		hist, res, err := ag.RunWithOptions(ctx, hist, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{TaskMode: mode, TracePrompt: displayPrompt, DurablePrompt: displayPrompt})
+		hist, res, err := ag.RunWithOptions(ctx, hist, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{TaskMode: mode, TracePrompt: displayPrompt, DurablePrompt: displayPrompt, ScopeBoundary: scopeBoundary})
 		if prompt != displayPrompt {
 			for i := len(hist) - 1; i >= 0; i-- {
 				if hist[i].Role == "user" && hist[i].Content == prompt {
@@ -835,6 +802,9 @@ func (m *model) startNewSession(message string) {
 	m.sessionID = next
 	if m.ag != nil {
 		m.ag.SetTaskSession(m.sessionID)
+		// Inferred task modes belong to the old conversation. Restore the
+		// configured/manual baseline for this fresh session instead.
+		m.ag.SetTaskMode(agent.ParseTaskMode(m.cfg.TaskMode))
 		m.task = m.ag.TaskSnapshot()
 	} else {
 		m.task = nil

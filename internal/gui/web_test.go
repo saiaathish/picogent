@@ -15,12 +15,39 @@ func TestEmbeddedIndex(t *testing.T) {
 	if !strings.Contains(string(b), "Picogent") || !strings.Contains(string(b), "new-chat-top") {
 		t.Fatal("index missing title or header new chat")
 	}
+	if !strings.Contains(string(b), `id="status-announcer"`) || !strings.Contains(string(b), `aria-live="polite"`) {
+		t.Fatal("index missing non-disruptive status announcer")
+	}
+	if strings.Contains(string(b), "scope-card") {
+		t.Fatal("index still contains the blocking scope picker")
+	}
 	js, err := gui.ReadWeb("web/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(js), "/api/sessions") || !strings.Contains(string(js), "viewEpoch") || !strings.Contains(string(js), `message || "Couldn't save mode"`) {
 		t.Fatal("gui missing session client or new-chat race guard")
+	}
+	if strings.Contains(string(js), "/api/scope") || strings.Contains(string(js), "scope_required") || strings.Contains(string(js), "hideScopeCard") || strings.Contains(string(js), "scope_notice") {
+		t.Fatal("gui still contains blocking or duplicate client-side scope handling")
+	}
+	if !strings.Contains(string(js), "statusAnnouncerEl.textContent = text") {
+		t.Fatal("gui does not announce accepted-turn status without moving focus")
+	}
+	activityStart := strings.Index(string(js), "function updateActivityPanel()")
+	activityEnd := strings.Index(string(js), "function addReasonStep(text)")
+	if activityStart < 0 || activityEnd < activityStart || !strings.Contains(string(js)[activityStart:activityEnd], `activityComplete ? "Completed" : "Working…"`) {
+		t.Fatal("activity panel does not replace an empty completed turn's Working label")
+	}
+	finishStart := strings.Index(string(js), "function finishTurnUI()")
+	finishEnd := strings.Index(string(js), "/* ─── SSE ─── */")
+	if finishStart < 0 || finishEnd < finishStart || !strings.Contains(string(js)[finishStart:finishEnd], "activityComplete = true;") || !strings.Contains(string(js)[finishStart:finishEnd], "updateActivityPanel();") {
+		t.Fatal("completed turn UI does not finalize the activity panel")
+	}
+	doneStart := strings.Index(string(js), `if (e.type === "done")`)
+	doneEnd := strings.Index(string(js), `if (e.type === "side_delta")`)
+	if doneStart < 0 || doneEnd < doneStart || !strings.Contains(string(js)[doneStart:doneEnd], "finishTurnUI();") {
+		t.Fatal("done SSE path does not finalize the turn UI")
 	}
 	settings, err := gui.ReadWeb("web/settings.html")
 	if err != nil {

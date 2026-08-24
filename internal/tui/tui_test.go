@@ -10,9 +10,9 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
-	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 )
@@ -25,7 +25,7 @@ func TestAssistantFinalReplacesStreamedText(t *testing.T) {
 	}
 }
 
-func TestBroadPromptShowsScopeChoicesBeforeRunning(t *testing.T) {
+func TestBroadPromptStartsWithRecommendedScope(t *testing.T) {
 	workspace := t.TempDir()
 	cfg := config.Default()
 	cfg.Workspace = workspace
@@ -38,18 +38,165 @@ func TestBroadPromptShowsScopeChoicesBeforeRunning(t *testing.T) {
 		h:         &handler{permCh: make(chan perm.Decision, 1)},
 		sessionID: "scope-session",
 	}
-	if cmd := m.submit("build something"); cmd != nil {
-		t.Fatal("broad prompt started before a choice")
+	if cmd := m.submit("build something"); cmd == nil {
+		t.Fatal("broad prompt did not start")
 	}
-	if m.pendingScope == nil || len(m.pendingScope.Choices) != 3 {
-		t.Fatalf("pending scope = %#v", m.pendingScope)
+	if !m.busy {
+		t.Fatal("automatic scope did not mark the model busy")
 	}
-	if m.busy {
-		t.Fatal("scope prompt marked model busy")
+	if m.turnMode != nil {
+		t.Fatalf("automatic scope installed temporary task mode %q", *m.turnMode)
 	}
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
-	if m.pendingScope != nil || cmd == nil || !m.busy {
-		t.Fatalf("choice did not start turn: pending=%#v cmd=%v busy=%v", m.pendingScope, cmd != nil, m.busy)
+	if len(m.lines) < 3 || m.lines[len(m.lines)-2].Kind != "system" || m.lines[len(m.lines)-2].Text != "Starting with a small working version by default." {
+		t.Fatalf("scope notice = %#v", m.lines)
+	}
+	if got := m.lines[len(m.lines)-1]; got.Kind != "user" || got.Text != "build something" {
+		t.Fatalf("user line = %#v", got)
+	}
+}
+
+func TestAutomaticScopePrioritizesFocusedTurnOverDurableGoal(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	m := &model{cfg: cfg, ag: a, vp: viewport.New(80, 20), h: &handler{permCh: make(chan perm.Decision, 1)}, sessionID: "scope-boundary"}
+	const broadGoal = "fix all flaky tests and make CI green"
+	cmd := m.submit(broadGoal)
+	if cmd == nil {
+		t.Fatal("automatic scope did not start")
+	}
+	msg := cmd()
+	done, ok := msg.(doneMsg)
+	if !ok {
+		t.Fatalf("automatic scoped turn result = %T, want doneMsg", msg)
+	}
+	if done.err != nil {
+		t.Fatalf("automatic scoped turn failed: %v", done.err)
+	}
+	if got := a.GoalSnapshot(); got != broadGoal {
+		t.Fatalf("automatic scope goal = %q, want %q", got, broadGoal)
+	}
+	if got, _ := goal.Load(workspace); got != broadGoal {
+		t.Fatalf("automatic scope saved goal = %q, want %q", got, broadGoal)
+	}
+	if len(fake.Calls) == 0 {
+		t.Fatal("automatic scoped turn did not reach the model")
+	}
+	var system string
+	for _, message := range fake.Calls[0].Messages {
+		if message.Role == "system" {
+			system = message.Content
+			break
+		}
+	}
+	goalAt := strings.Index(system, broadGoal)
+	boundaryAt := strings.Index(system, "Current turn scope (takes precedence over active and durable goals):")
+	if goalAt < 0 || boundaryAt <= goalAt {
+		t.Fatalf("system prompt did not prioritize turn boundary: %q", system)
+	}
+}
+
+func TestCompletionPromptReachesAgentWithoutAutomaticScope(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	m := &model{cfg: cfg, ag: a, vp: viewport.New(80, 20), h: &handler{permCh: make(chan perm.Decision, 1)}, sessionID: "completion-without-scope"}
+	const prompt = "finish this project"
+
+	cmd := m.submit(prompt)
+	if cmd == nil {
+		t.Fatal("completion prompt did not start")
+	}
+	if len(m.lines) != 1 || m.lines[0].Kind != "user" || m.lines[0].Text != prompt {
+		t.Fatalf("completion prompt lines = %#v, want only the unchanged user prompt", m.lines)
+	}
+	msg := cmd()
+	done, ok := msg.(doneMsg)
+	if !ok {
+		t.Fatalf("completion prompt result = %T, want doneMsg", msg)
+	}
+	if done.err != nil {
+		t.Fatalf("completion prompt failed: %v", done.err)
+	}
+	if len(fake.Calls) != 1 {
+		t.Fatalf("completion prompt calls = %d, want 1", len(fake.Calls))
+	}
+
+	var system, user string
+	for _, message := range fake.Calls[0].Messages {
+		switch message.Role {
+		case "system":
+			system = message.Content
+		case "user":
+			user = message.Content
+		}
+	}
+	if user != prompt {
+		t.Fatalf("completion prompt sent to model = %q, want unchanged %q", user, prompt)
+	}
+	if strings.Contains(system, "Current turn scope (takes precedence over active and durable goals):") {
+		t.Fatalf("completion prompt installed an automatic scope boundary: %q", system)
+	}
+}
+
+func TestAutomaticScopeKeepsPlanAndReportIntent(t *testing.T) {
+	for _, tt := range []struct {
+		prompt string
+		want   agent.TaskMode
+	}{
+		{"build something, but plan it first", agent.TaskPlan},
+		{"build something, but inspect and report first", agent.TaskAsk},
+	} {
+		t.Run(tt.want.Label(), func(t *testing.T) {
+			workspace := t.TempDir()
+			cfg := config.Default()
+			cfg.Workspace = workspace
+			a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+			m := &model{cfg: cfg, ag: a, vp: viewport.New(80, 20), h: &handler{permCh: make(chan perm.Decision, 1)}, sessionID: "scope-intent"}
+			if cmd := m.submit(tt.prompt); cmd == nil {
+				t.Fatal("automatic scope did not start")
+			}
+			if m.turnMode != nil {
+				t.Fatalf("automatic scope installed temporary task mode %q", *m.turnMode)
+			}
+			if got := a.TaskModeSnapshot(); got != tt.want {
+				t.Fatalf("task mode = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAutomaticScopePreservesSelectedTaskBoundary(t *testing.T) {
+	for _, tt := range []struct {
+		prompt string
+		mode   agent.TaskMode
+	}{
+		{"create something", agent.TaskPlan},
+		{"fix everything", agent.TaskAsk},
+		{"remove everything", agent.TaskDebug},
+	} {
+		t.Run(tt.mode.Label(), func(t *testing.T) {
+			workspace := t.TempDir()
+			cfg := config.Default()
+			cfg.Workspace = workspace
+			a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+			a.SetTaskMode(tt.mode)
+			m := &model{cfg: cfg, ag: a, vp: viewport.New(80, 20), h: &handler{permCh: make(chan perm.Decision, 1)}, sessionID: "scope-boundary"}
+			if cmd := m.submit(tt.prompt); cmd == nil {
+				t.Fatal("automatic scope did not start")
+			}
+			if got := a.TaskModeSnapshot(); got != tt.mode {
+				t.Fatalf("task mode = %q, want preserved %q", got, tt.mode)
+			}
+		})
 	}
 }
 
@@ -151,24 +298,6 @@ func TestModeSlashDoesNotReportOrApplyUnsavedChange(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestScopeEscapeCancelsWithoutRunning(t *testing.T) {
-	p := structScopePrompt()
-	m := &model{
-		pendingScope:  &p,
-		pendingPrompt: "build something",
-		lines:         []logLine{{Kind: "user", Text: "build something"}},
-		vp:            viewport.New(80, 20),
-	}
-	_, _ = m.Update(tea.KeyMsg{Type: tea.KeyEscape})
-	if m.pendingScope != nil || m.pendingPrompt != "" {
-		t.Fatalf("escape left scope pending: %#v %q", m.pendingScope, m.pendingPrompt)
-	}
-}
-
-func structScopePrompt() scope.Prompt {
-	return scope.Prompt{Question: "Pick", Choices: []scope.Choice{{ID: "small", Label: "Small", Recommended: true}, {ID: "full", Label: "Full"}}}
 }
 
 func TestFormatTaskProgress(t *testing.T) {
@@ -321,6 +450,55 @@ func TestClearStartsNewSessionAndClearsDurableTask(t *testing.T) {
 
 func TestResetStartsNewSessionAndClearsDurableTask(t *testing.T) {
 	testSessionReset(t, "reset")
+}
+
+func TestNewSessionRestoresConfiguredTaskModeAfterAutomaticInference(t *testing.T) {
+	for _, command := range []string{"clear", "reset"} {
+		for _, tt := range []struct {
+			name       string
+			configured agent.TaskMode
+			prompt     string
+			inferred   agent.TaskMode
+		}{
+			{"default agent after plan", agent.TaskAgent, "build something, but plan it first", agent.TaskPlan},
+			{"manual plan after debug", agent.TaskPlan, "debug this broken build", agent.TaskDebug},
+			{"manual ask after plan", agent.TaskAsk, "build something, but plan it first", agent.TaskPlan},
+			{"manual debug after report", agent.TaskDebug, "build something, but inspect and report first", agent.TaskAsk},
+		} {
+			t.Run(command+"/"+tt.name, func(t *testing.T) {
+				workspace := t.TempDir()
+				cfg := config.Default()
+				cfg.Workspace = workspace
+				cfg.TaskMode = string(tt.configured)
+				a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+				m := &model{
+					cfg:       cfg,
+					ag:        a,
+					sessionID: "old-session",
+					lines:     []logLine{{Kind: "system", Text: "ready"}},
+					h:         &handler{permCh: make(chan perm.Decision, 1)},
+					vp:        viewport.New(80, 20),
+				}
+
+				m.autoApplyScopedPrompt(tt.prompt)
+				if got := a.TaskModeSnapshot(); got != tt.inferred {
+					t.Fatalf("inferred task mode = %q, want %q", got, tt.inferred)
+				}
+				if got := agent.ParseTaskMode(m.cfg.TaskMode); got != tt.configured {
+					t.Fatalf("saved task mode changed during inference: %q, want %q", got, tt.configured)
+				}
+
+				if command == "clear" {
+					m.slashLocal("clear")
+				} else {
+					m.slash("/reset")
+				}
+				if got := a.TaskModeSnapshot(); got != tt.configured {
+					t.Fatalf("task mode after %s = %q, want configured %q", command, got, tt.configured)
+				}
+			})
+		}
+	}
 }
 
 func testSessionReset(t *testing.T, command string) {

@@ -9,10 +9,6 @@ const taskModeEl = $("task-mode");
 const permEl = $("perm");
 const permText = $("perm-text");
 const permHint = $("perm-hint");
-const scopeEl = $("scope-card");
-const scopeQuestion = $("scope-question");
-const scopeChoices = $("scope-choices");
-const scopeCancel = $("scope-cancel");
 const promptEl = $("prompt");
 const sendBtn = $("send");
 const attachBtn = $("attach-btn");
@@ -60,6 +56,7 @@ const taskBlockedEl = $("task-progress-blocked");
 const taskFilesBtn = $("task-progress-files");
 const taskActivityBtn = $("task-progress-activity");
 const taskAnnouncerEl = $("task-progress-announcer");
+const statusAnnouncerEl = $("status-announcer");
 let threadsCache = [];
 let chatsOpen = false;
 let sideOpen = false;
@@ -69,6 +66,7 @@ let turnChanges = [];
 let turnStats = { reads: 0, searches: 0, edits: 0, added: 0, removed: 0 };
 let activityItems = [];
 let activityPanel = null;
+let activityComplete = false;
 
 let ready = false;
 let busy = false;
@@ -85,7 +83,6 @@ let reviewReturnFocus = null;
 let highlight = { start: 0, end: 0 };
 let activeTask = null;
 let taskAnnouncementKey = "";
-let pendingScopeRequest = null;
 let currentTaskMode = "agent";
 let taskModeTemporary = false;
 
@@ -142,6 +139,7 @@ function resetReasoning() {
   turnStats = { reads: 0, searches: 0, edits: 0, added: 0, removed: 0 };
   activityItems = [];
   activityPanel = null;
+  activityComplete = false;
   reasoningEl.innerHTML = "";
   renderChangesPanel();
 }
@@ -337,6 +335,7 @@ function ensureActivityPanel() {
 }
 
 function pushActivity(kind, text, path) {
+  activityComplete = false;
   const panel = ensureActivityPanel();
   if (path && !activityItems.some((a) => a.path === path && a.kind === kind)) {
     activityItems.push({ kind, text, path });
@@ -352,7 +351,7 @@ function updateActivityPanel() {
   if (turnStats.reads) parts.push("Explored " + turnStats.reads + " file" + (turnStats.reads === 1 ? "" : "s"));
   if (turnStats.searches) parts.push(turnStats.searches + " search" + (turnStats.searches === 1 ? "" : "es"));
   if (turnStats.edits) parts.push("Edited " + turnStats.edits + " file" + (turnStats.edits === 1 ? "" : "s"));
-  panel.label.textContent = parts.length ? parts.join(" · ") : "Working…";
+  panel.label.textContent = parts.length ? parts.join(" · ") : activityComplete ? "Completed" : "Working…";
 
   panel.details.innerHTML = "";
   if (!activityItems.length) return;
@@ -855,6 +854,10 @@ function add(kind, text, attachmentMeta) {
   const role = kind === "you" || kind === "user" ? "user" : kind;
   wrap.className = "turn turn-" + role;
 
+  if (role === "system" && statusAnnouncerEl) {
+    statusAnnouncerEl.textContent = text;
+  }
+
   if (role === "user") {
     if (attachmentMeta?.length) {
       const tray = document.createElement("div");
@@ -910,7 +913,6 @@ function applyRefsFromText(text) {
 function clearLog() {
   stopStreamTimer();
   stream = null;
-  hideScopeCard();
   logEl.innerHTML = "";
   resetReasoning();
   setThinking(false);
@@ -1545,77 +1547,7 @@ promptEl?.addEventListener("paste", (e) => {
   }
 });
 
-function setScopeComposerLocked(locked) {
-  if (promptEl) promptEl.disabled = !!locked;
-  if (attachBtn) attachBtn.disabled = !!locked || busy;
-  if (modelPick) modelPick.disabled = !!locked;
-  if (sendBtn && locked) sendBtn.disabled = true;
-}
-
-function hideScopeCard() {
-  pendingScopeRequest = null;
-  if (scopeEl) scopeEl.hidden = true;
-  scopeChoices?.replaceChildren();
-  setScopeComposerLocked(false);
-  if (sendBtn) sendBtn.disabled = !ready;
-}
-
-function showScopeCard(data, request) {
-  pendingScopeRequest = request;
-  if (!scopeEl || !scopeQuestion || !scopeChoices) return;
-  scopeQuestion.textContent = data.question || "What should I focus on first?";
-  scopeChoices.replaceChildren();
-  (data.choices || []).forEach((choice, index) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "scope-choice";
-    const number = document.createElement("span");
-    number.className = "scope-choice-number";
-    number.textContent = String(index + 1);
-    const copy = document.createElement("span");
-    copy.className = "scope-choice-copy";
-    const label = document.createElement("span");
-    label.className = "scope-choice-label";
-    label.textContent = choice.label || "Continue";
-    if (choice.recommended) {
-      const badge = document.createElement("span");
-      badge.className = "scope-recommended";
-      badge.textContent = "  Recommended";
-      label.appendChild(badge);
-    }
-    const why = document.createElement("span");
-    why.className = "scope-choice-why";
-    why.textContent = choice.why || "";
-    copy.append(label, why);
-    button.append(number, copy);
-    button.addEventListener("click", () => chooseScope(choice.id));
-    scopeChoices.appendChild(button);
-  });
-  scopeEl.hidden = false;
-  setScopeComposerLocked(true);
-  scopeChoices.querySelector("button")?.focus();
-  scopeEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
-}
-
-async function chooseScope(choiceID) {
-  const request = pendingScopeRequest;
-  if (!request || !choiceID) return;
-  hideScopeCard();
-  await submitChat(request.prompt, request.attachments, request.sentAttachments, choiceID);
-}
-
-scopeCancel?.addEventListener("click", () => {
-  hideScopeCard();
-  promptEl?.focus();
-});
-document.addEventListener("keydown", (e) => {
-  if (!pendingScopeRequest || e.key !== "Escape") return;
-  e.preventDefault();
-  hideScopeCard();
-  promptEl?.focus();
-});
-
-async function submitChat(prompt, attachments, sentAttachments, scopeChoice = "") {
+async function submitChat(prompt, attachments, sentAttachments) {
   add("you", prompt || "(attached files)", sentAttachments);
   pendingAttachments = [];
   renderAttachTray();
@@ -1629,7 +1561,6 @@ async function submitChat(prompt, attachments, sentAttachments, scopeChoice = ""
   if (!wasBusy) setThinking(true);
   sendBtn.disabled = !ready;
   const body = { prompt, attachments };
-  if (scopeChoice) body.scope_choice = scopeChoice;
   let res;
   try {
     res = await fetch("/api/chat", {
@@ -1658,14 +1589,6 @@ async function submitChat(prompt, attachments, sentAttachments, scopeChoice = ""
   if (res.headers.get("content-type")?.includes("application/json")) {
     try { data = await res.json(); } catch (_) {}
   }
-  if (res.status === 409 && data?.error === "scope_required") {
-    if (!wasBusy) {
-      busy = false;
-      setThinking(false);
-    }
-    showScopeCard(data, { prompt, attachments, sentAttachments });
-    return;
-  }
   if (res.ok) {
     if (data?.queued) return;
     return;
@@ -1692,27 +1615,6 @@ $("composer").onsubmit = async (e) => {
     preview: a.preview,
   }));
   const attachments = pendingAttachments.map((a) => ({ name: a.name, mime: a.mime, data: a.data }));
-  if (prompt) {
-    try {
-      const check = await fetch("/api/scope", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ prompt }),
-      });
-      if (!check.ok) {
-        add("error", await check.text());
-        return;
-      }
-      const data = await check.json();
-      if (data.needed) {
-        showScopeCard(data, { prompt, attachments, sentAttachments });
-        return;
-      }
-    } catch (_) {
-      add("error", "Could not check the task scope. Try again.");
-      return;
-    }
-  }
   await submitChat(prompt, attachments, sentAttachments);
 };
 
@@ -2012,6 +1914,8 @@ function finishTurnUI() {
   const thinkLabel = reasoningEl.querySelector(".reason-thinking");
   if (thinkLabel) thinkLabel.remove();
   if (activityPanel) {
+    activityComplete = true;
+    updateActivityPanel();
     activityPanel.details.hidden = true;
     activityPanel.toggle.classList.remove("is-open");
   }
