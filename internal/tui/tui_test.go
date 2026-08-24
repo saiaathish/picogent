@@ -59,6 +59,7 @@ func TestAutomaticScopePrioritizesFocusedTurnOverDurableGoal(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()
 	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
 	cfg.Workspace = workspace
 	fake := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}
 	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
@@ -68,8 +69,13 @@ func TestAutomaticScopePrioritizesFocusedTurnOverDurableGoal(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("automatic scope did not start")
 	}
-	if msg := cmd(); msg == nil {
-		t.Fatal("automatic scoped turn did not return a result")
+	msg := cmd()
+	done, ok := msg.(doneMsg)
+	if !ok {
+		t.Fatalf("automatic scoped turn result = %T, want doneMsg", msg)
+	}
+	if done.err != nil {
+		t.Fatalf("automatic scoped turn failed: %v", done.err)
 	}
 	if got := a.GoalSnapshot(); got != broadGoal {
 		t.Fatalf("automatic scope goal = %q, want %q", got, broadGoal)
