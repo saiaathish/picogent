@@ -58,11 +58,11 @@ func stripDurableInternal(msgs []llm.Message) []llm.Message {
 }
 
 func (a *Agent) continueAfterVerificationFailure(text string, round int, verified string, ev EventHandler, maxToolRounds int) bool {
-	if round+1 >= maxToolRounds || strings.Contains(strings.ToLower(text), "blocked:") {
-		return false
-	}
 	if verified != "" {
 		a.noteTaskVerification(verified, ev)
+	}
+	if round+1 >= maxToolRounds || strings.Contains(strings.ToLower(text), "blocked:") {
+		return false
 	}
 	a.taskMu.RLock()
 	if a.task == nil || len(a.task.Verification) == 0 {
@@ -126,7 +126,7 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) {
 		return
 	}
 	var candidate *taskstate.Task
-	if a.task == nil || a.task.Status == taskstate.StatusDone || a.task.Status == taskstate.StatusBlocked {
+	if a.task == nil || (a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification()) || a.task.Status == taskstate.StatusBlocked {
 		task, ok, err := taskstate.NewFromPrompt(a.TaskSession, prompt)
 		if err != nil || !ok {
 			a.taskMu.Unlock()
@@ -135,6 +135,14 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) {
 		candidate = task
 	} else {
 		candidate = cloneTask(a.task)
+	}
+	candidate.InitializeChangeSequence()
+	if candidate.Status == taskstate.StatusDone && candidate.NeedsVerification() {
+		if err := candidate.SetStatus(taskstate.StatusVerifying); err != nil {
+			a.taskMu.Unlock()
+			a.reportTaskUpdateError(ev, err)
+			return
+		}
 	}
 	if candidate.Status == taskstate.StatusPlanning {
 		if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
@@ -179,7 +187,7 @@ func (a *Agent) taskPromptSuffix() string {
 
 func (a *Agent) noteTaskChanged(path string, ev EventHandler) {
 	a.mutateTask(ev, func(task *taskstate.Task) error {
-		task.AddChangedFiles(path)
+		task.RecordChanged(path)
 		for current := task.Current(); current != nil && !strings.Contains(strings.ToLower(current.Description), "verif"); current = task.Current() {
 			task.Advance()
 		}
@@ -239,9 +247,8 @@ func (a *Agent) blockDurableTask(reason string, ev EventHandler) {
 	})
 }
 
-func (a *Agent) finishDurableTask(changed []string, text, blocker string, ev EventHandler) {
+func (a *Agent) finishDurableTask(text, blocker string, ev EventHandler) {
 	a.mutateTask(ev, func(task *taskstate.Task) error {
-		task.AddChangedFiles(changed...)
 		if blocker != "" {
 			task.Block(blocker)
 		} else if task.Status == taskstate.StatusBlocked {
@@ -256,6 +263,10 @@ func (a *Agent) finishDurableTask(changed []string, text, blocker string, ev Eve
 			low := strings.ToLower(text)
 			if strings.Contains(low, "blocked:") || strings.Contains(low, "permission needed") {
 				task.Block("agent reported a blocker")
+			} else if task.NeedsVerification() {
+				if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
+					return err
+				}
 			} else {
 				for task.Advance() {
 				}

@@ -1,6 +1,7 @@
 package taskstate
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -78,6 +79,9 @@ func TestValidateRejectsInvalidState(t *testing.T) {
 		{"negative step", func(v *Task) { v.CurrentStep = -1 }},
 		{"large step", func(v *Task) { v.CurrentStep = 2 }},
 		{"attempts", func(v *Task) { v.Attempts = -1 }},
+		{"negative change sequence", func(v *Task) { v.ChangeSeq = -1 }},
+		{"invalid verified change sequence", func(v *Task) { v.VerifiedChangeSeq = -2 }},
+		{"verified change sequence ahead", func(v *Task) { v.ChangeSeq, v.VerifiedChangeSeq = 1, 2 }},
 		{"empty step", func(v *Task) { v.Steps[0].Description = " " }},
 	}
 	for _, tt := range tests {
@@ -91,6 +95,87 @@ func TestValidateRejectsInvalidState(t *testing.T) {
 	}
 	if err := (*Task)(nil).Validate(); err == nil {
 		t.Fatal("nil task should fail validation")
+	}
+}
+
+func TestEvidenceTracksLatestChange(t *testing.T) {
+	task, err := New("evidence", "fix signup", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.NeedsVerification() {
+		t.Fatal("new task should not need verification")
+	}
+
+	task.RecordChanged(" ./internal/signup.go ")
+	if task.ChangeSeq != 1 || !reflect.DeepEqual(task.ChangedFiles, []string{"internal/signup.go"}) {
+		t.Fatalf("first change = seq %d files %#v", task.ChangeSeq, task.ChangedFiles)
+	}
+	if !task.NeedsVerification() {
+		t.Fatal("a change must need verification")
+	}
+
+	task.AddVerification("go test ./internal/signup", true, "pass")
+	if task.VerifiedChangeSeq != 1 || task.NeedsVerification() {
+		t.Fatalf("passing evidence = verified %d needs=%v", task.VerifiedChangeSeq, task.NeedsVerification())
+	}
+
+	// A later edit to the same display path must invalidate the earlier pass.
+	task.RecordChanged("internal/signup.go")
+	if task.ChangeSeq != 2 || len(task.ChangedFiles) != 1 || !task.NeedsVerification() {
+		t.Fatalf("repeat change = seq %d files %#v needs=%v", task.ChangeSeq, task.ChangedFiles, task.NeedsVerification())
+	}
+	task.AddVerification("go test ./internal/signup", true, "pass again")
+	if task.VerifiedChangeSeq != 2 || task.NeedsVerification() {
+		t.Fatalf("second pass = verified %d needs=%v", task.VerifiedChangeSeq, task.NeedsVerification())
+	}
+	task.AddVerification("go test ./internal/signup", false, "failed")
+	if task.VerifiedChangeSeq != -1 || !task.NeedsVerification() {
+		t.Fatalf("failed evidence = verified %d needs=%v", task.VerifiedChangeSeq, task.NeedsVerification())
+	}
+
+	legacy := *task
+	legacy.ChangedFiles = []string{"internal/legacy.go"}
+	legacy.ChangeSeq = 0
+	legacy.VerifiedChangeSeq = 0
+	legacy.Verification = nil
+	if !legacy.NeedsVerification() {
+		t.Fatal("legacy changed files without a sequence must remain unverified")
+	}
+	legacy.Status = StatusDone
+	if !legacy.InitializeChangeSequence() || legacy.ChangeSeq != 1 || !legacy.NeedsVerification() {
+		t.Fatalf("legacy migration = %+v", legacy)
+	}
+	if err := legacy.SetStatus(StatusVerifying); err != nil {
+		t.Fatalf("unverified legacy done task should reopen for verification: %v", err)
+	}
+	legacy.AddVerification("go test ./internal/legacy", true, "pass")
+	if legacy.NeedsVerification() {
+		t.Fatalf("migrated passing evidence should cover legacy state: %+v", legacy)
+	}
+	if legacy.InitializeChangeSequence() {
+		t.Fatal("legacy sequence migration must be idempotent")
+	}
+}
+
+func TestEvidenceJSONRoundTrip(t *testing.T) {
+	task, err := New("evidence-json", "fix signup", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordChanged("internal/signup.go")
+	task.AddVerification("go test ./internal/signup", true, "pass")
+
+	data, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Task
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if restored.ChangeSeq != 1 || restored.VerifiedChangeSeq != 1 || restored.NeedsVerification() {
+		t.Fatalf("restored evidence = %+v", restored)
 	}
 }
 
@@ -116,9 +201,10 @@ func TestAdvanceAtEndAndNilHelpers(t *testing.T) {
 	var nilTask *Task
 	nilTask.NoteAttempt()
 	nilTask.AddChangedFiles("x")
+	nilTask.RecordChanged("x")
 	nilTask.AddVerification("x", false, "x")
 	nilTask.Block("x")
-	if nilTask.Advance() || nilTask.Current() != nil || nilTask.ConsecutiveVerificationFailures() != 0 {
+	if nilTask.Advance() || nilTask.Current() != nil || nilTask.ConsecutiveVerificationFailures() != 0 || nilTask.NeedsVerification() {
 		t.Fatal("nil helpers must be safe")
 	}
 }

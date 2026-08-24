@@ -444,9 +444,6 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				continue
 			}
 			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
-			for _, path := range res.FilesChanged {
-				a.noteTaskChanged(path, ev)
-			}
 			normalized := normalizeExplainFooter(text, res.FilesChanged, res.UndoAvailable, res.UndoError)
 			oldText := text
 			if normalized != text {
@@ -468,9 +465,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			res.Text = text
 			res.ToolRounds = round
-			res.GoalDone = goal.LooksComplete(text)
-			a.finishDurableTask(res.FilesChanged, text, taskBlocker, ev)
+			a.finishDurableTask(text, taskBlocker, ev)
 			res.Task = a.TaskSnapshot()
+			res.GoalDone = goal.LooksComplete(text) && (res.Task == nil || res.Task.Status == taskstate.StatusDone)
 			_ = traceLog.Append("turn_end", "", text, trace.Bool(true), 0)
 			msgs = stripDurableInternal(msgs)
 			final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
@@ -491,6 +488,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		for _, call := range msg.ToolCalls {
 			if call.Name == "verify" {
 				calledVerify = true
+				if task := a.TaskSnapshot(); task != nil {
+					call.Arguments = includeChangedVerificationTargets(call.Arguments, task.ChangedFiles)
+				}
 				a.setTaskStatus(taskstate.StatusVerifying, ev)
 			}
 			ev.OnToolStart(call)
@@ -571,6 +571,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		}
 		wg.Wait()
 
+		// Consume all explicit verification evidence before recording writes from
+		// this batch. A verification co-batched with a write may have observed
+		// the old workspace; RecordChanged below deliberately invalidates it.
 		for _, ex := range pending {
 			if ex.ran && (ex.call.Name == "write_file" || ex.call.Name == "edit_file") {
 				nativeWriteRan = true
@@ -579,12 +582,18 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				a.setTaskStatus(taskstate.StatusVerifying, ev)
 				lastVerification = ex.text
 				a.noteTaskVerification(ex.text, ev)
-			} else if ex.ran {
+			}
+		}
+
+		var successfulWrites []string
+		for _, ex := range pending {
+			if ex.call.Name != "verify" && ex.ran {
 				a.setTaskStatus(taskstate.StatusWorking, ev)
 			}
 			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
 					changed[p] = struct{}{}
+					successfulWrites = append(successfulWrites, p)
 				}
 			}
 			content := ex.text
@@ -592,6 +601,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				content = ex.err.Error()
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
+		}
+		for _, path := range successfulWrites {
+			a.noteTaskChanged(path, ev)
 		}
 		if len(pending) > 0 {
 			lastToolKind = classifyToolKind(pending[len(pending)-1].call.Name)
@@ -614,7 +626,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 }
 
 func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint string, filesChanged []string, already bool, state RuntimeState, gate *perm.Gate) string {
-	if already || len(filesChanged) == 0 || state.Tools == nil {
+	task := a.TaskSnapshot()
+	needsVerification := false
+	if task != nil {
+		needsVerification = task.NeedsVerification()
+	}
+	if ((already || len(filesChanged) == 0) && !needsVerification) || state.Tools == nil {
 		return ""
 	}
 	regCtx := state.Tools.ContextSnapshot()
@@ -626,6 +643,9 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 		return ""
 	}
 	targets := append([]string(nil), filesChanged...)
+	if len(targets) == 0 && needsVerification && task != nil {
+		targets = append(targets, task.ChangedFiles...)
+	}
 	seen := make(map[string]struct{}, len(targets))
 	for _, target := range targets {
 		seen[target] = struct{}{}
@@ -664,6 +684,43 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	okv := err == nil && strings.Contains(strings.ToLower(out), "pass") && !strings.Contains(strings.ToLower(out), "inconclusive")
 	_ = state.Trace.Append("verify", "verify", out, &okv, 0)
 	return out
+}
+
+// includeChangedVerificationTargets prevents a narrow explicit verification
+// request from being treated as evidence for durable mutations it omitted.
+func includeChangedVerificationTargets(args string, changed []string) string {
+	if len(changed) == 0 {
+		return args
+	}
+	var in struct {
+		Targets []string `json:"targets"`
+	}
+	if json.Unmarshal([]byte(args), &in) != nil {
+		return args
+	}
+	seen := make(map[string]struct{}, len(in.Targets)+len(changed))
+	for _, target := range in.Targets {
+		key := strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(target, "\\", "/")), "./")
+		if key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+	for _, path := range changed {
+		key := strings.TrimPrefix(strings.TrimSpace(strings.ReplaceAll(path, "\\", "/")), "./")
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		in.Targets = append(in.Targets, path)
+	}
+	encoded, err := json.Marshal(in)
+	if err != nil {
+		return args
+	}
+	return string(encoded)
 }
 
 type NopHandler struct{}

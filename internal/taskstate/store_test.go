@@ -19,7 +19,7 @@ func TestStoreRoundTripDeleteAndPermissions(t *testing.T) {
 	}
 	task.Status = StatusWorking
 	task.NoteAttempt()
-	task.AddChangedFiles("internal/signup.go")
+	task.RecordChanged("internal/signup.go")
 	task.AddVerification("go test ./internal/signup", true, "ok")
 	if err := store.Save(task); err != nil {
 		t.Fatal(err)
@@ -41,6 +41,9 @@ func TestStoreRoundTripDeleteAndPermissions(t *testing.T) {
 	}
 	if !reflect.DeepEqual(task, loaded) {
 		t.Fatalf("round trip mismatch:\nwant %+v\n got %+v", task, loaded)
+	}
+	if loaded.ChangeSeq != 1 || loaded.VerifiedChangeSeq != 1 || loaded.NeedsVerification() {
+		t.Fatalf("round-tripped evidence = %+v", loaded)
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
