@@ -42,6 +42,7 @@ import (
 	"github.com/saiaathish/picogent/internal/slash"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/trace"
+	"github.com/saiaathish/picogent/internal/verify"
 )
 
 type event struct {
@@ -2040,12 +2041,19 @@ func (h *guiHandler) endTurn(result agent.Result) {
 	}
 	h.emit(event{Type: "think", Text: "Done", Kind: "plan", Status: "done"})
 	if result.Verified != "" {
-		failed := strings.Contains(strings.ToLower(result.Verified), "fail")
+		status := verify.StatusFromEvidence(result.Verified)
+		eventStatus := "unresolved"
+		switch status {
+		case verify.StatusPass:
+			eventStatus = "done"
+		case verify.StatusFail:
+			eventStatus = "fail"
+		}
 		h.emit(event{
 			Type:    "test",
 			Text:    result.Verified,
 			Summary: clip(result.Verified, 2000),
-			Status:  ternary(failed, "fail", "done"),
+			Status:  eventStatus,
 			Kind:    "test",
 		})
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/verify"
 )
 
 // Signal is the post-turn evidence used for reflection.
@@ -52,8 +53,7 @@ func WorthReflecting(sig Signal) bool {
 	if sig.GoalDone {
 		return true
 	}
-	if len(sig.FilesChanged) > 0 && strings.TrimSpace(sig.Verified) != "" &&
-		!strings.Contains(strings.ToLower(sig.Verified), "fail") {
+	if len(sig.FilesChanged) > 0 && verify.StatusFromEvidence(sig.Verified) == verify.StatusPass {
 		return true
 	}
 	if len(sig.FilesChanged) >= 3 && sig.ToolRounds >= 3 {
@@ -258,8 +258,7 @@ func heuristicReflect(sig Signal) reflectOut {
 			exts[ext]++
 		}
 	}
-	verifyOK := strings.TrimSpace(sig.Verified) != "" &&
-		!strings.Contains(strings.ToLower(sig.Verified), "fail")
+	verifyOK := verify.StatusFromEvidence(sig.Verified) == verify.StatusPass
 
 	out := reflectOut{Skip: true}
 	switch {
