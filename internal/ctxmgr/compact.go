@@ -111,21 +111,29 @@ func MicroCompact(msgs []llm.Message) []llm.Message {
 }
 
 func TruncateTail(msgs []llm.Message, keep int) []llm.Message {
+	if len(msgs) == 0 || keep <= 0 {
+		return nil
+	}
 	if len(msgs) <= keep {
-		return msgs
+		return toolPairSafeTail(msgs)
 	}
 	head := msgs[0]
 	if head.Role != "system" {
 		head = llm.Message{}
 	}
-	tail := msgs[len(msgs)-keep+1:]
+	start := len(msgs) - keep
 	if head.Role == "system" {
-		out := make([]llm.Message, 0, keep)
-		out = append(out, head)
-		out = append(out, tail...)
-		return out
+		start++
 	}
-	return tail
+	start = backfillToolCallStart(msgs, start)
+	tail := toolPairSafeTail(msgs[start:])
+	if head.Role != "system" {
+		return tail
+	}
+	out := make([]llm.Message, 0, len(tail)+1)
+	out = append(out, head)
+	out = append(out, tail...)
+	return out
 }
 
 const summaryPrompt = `Summarize this conversation for an AI coding agent continuing the work.
@@ -184,6 +192,7 @@ func Manage(ctx context.Context, client llm.Client, model string, msgs []llm.Mes
 
 	// Tier 0 — always: TokenTamer + micro-mask + digest (cheap, every round).
 	out := ToolAwareCompact(msgs)
+	out = DeduplicateToolResults(out)
 	out = MicroCompact(out)
 	out = DigestStaleTools(out)
 
