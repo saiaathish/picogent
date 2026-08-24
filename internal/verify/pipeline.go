@@ -198,7 +198,19 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 
 	targeted := runStage(ScopeTargeted, result.Plan.Targeted)
 	result.Stages = append(result.Stages, targeted)
-	if targeted.Status == StatusFail || targeted.Status == StatusInconclusive {
+	requestedTargets := false
+	for _, target := range options.Targets {
+		if strings.TrimSpace(target) != "" {
+			requestedTargets = true
+			break
+		}
+	}
+	if requestedTargets && len(result.Plan.Targeted) == 0 {
+		targeted.Status = StatusInconclusive
+		targeted.Reason = "requested targets have no safe targeted command"
+		result.Stages[0] = targeted
+	}
+	if targeted.Status != StatusPass {
 		result.Status = targeted.Status
 		result.Reason = targeted.Reason
 		result.Duration = time.Since(started)
@@ -257,6 +269,16 @@ func normalizeResult(result Result, command Command, attempt int) Result {
 		} else {
 			result.Status = StatusFail
 		}
+	}
+	switch result.Status {
+	case StatusPass, StatusFail, StatusInconclusive, StatusSkipped:
+	default:
+		result.Status = StatusInconclusive
+		result.Reason = "verification returned an unknown status"
+	}
+	if result.Status == StatusPass && result.Passed == 0 && result.Failed == 0 {
+		result.Status = StatusInconclusive
+		result.Reason = "verification returned PASS without test evidence"
 	}
 	result.OK = result.Status == StatusPass
 	return result

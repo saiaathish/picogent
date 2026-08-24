@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/saiaathish/picogent/internal/verify"
 )
 
 const causalStaleDays = 90
@@ -48,7 +50,7 @@ func RecordFailure(s Store, userHint, evidence string) Store {
 // RecordVerificationRoute stores only a passing route. It never stores or
 // executes a command from memory; verify still detects and builds commands.
 func RecordVerificationRoute(s Store, userHint string, targets []string, evidence string) Store {
-	if verificationStatus(evidence) != "PASS" {
+	if verify.StatusFromEvidence(evidence) != verify.StatusPass {
 		return s
 	}
 	now := time.Now().UTC()
@@ -96,16 +98,6 @@ func resolveLatestFailure(s *Store, class string, now time.Time) {
 		s.Failures[best].Resolutions++
 		s.Failures[best].LastResolved = &now
 	}
-}
-
-func verificationStatus(evidence string) string {
-	upper := strings.ToUpper(strings.TrimSpace(evidence))
-	for _, status := range []string{"INCONCLUSIVE", "SKIPPED", "FAIL", "PASS"} {
-		if strings.HasPrefix(upper, "VERIFY "+status) {
-			return status
-		}
-	}
-	return ""
 }
 
 func failureTrigger(evidence string) string {

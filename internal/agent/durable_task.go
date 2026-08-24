@@ -8,6 +8,7 @@ import (
 	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/taskstate"
+	"github.com/saiaathish/picogent/internal/verify"
 )
 
 const durableContinuePrompt = `Internal task-loop instruction: the original request already authorizes the work. Do not ask whether to continue. Take the next obvious safe action with tools. Stop only for permission, a genuine user choice, repeated verification failure, an unavailable resource, or exhausted budget.`
@@ -318,13 +319,7 @@ func (a *Agent) requireTaskVerification(ev EventHandler) {
 }
 
 func verificationStatus(output string) string {
-	upper := strings.ToUpper(strings.TrimSpace(output))
-	for _, status := range []string{"INCONCLUSIVE", "SKIPPED", "FAIL", "PASS"} {
-		if strings.HasPrefix(upper, "VERIFY "+status) {
-			return status
-		}
-	}
-	return "INCONCLUSIVE"
+	return string(verify.StatusFromEvidence(output))
 }
 
 func (a *Agent) blockDurableTask(reason string, ev EventHandler) {

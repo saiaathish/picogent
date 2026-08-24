@@ -39,6 +39,47 @@ func TestRunNoneIsInconclusive(t *testing.T) {
 	}
 }
 
+func TestStatusFromEvidenceRequiresExactStatusToken(t *testing.T) {
+	for _, tc := range []struct {
+		evidence string
+		want     Status
+	}{
+		{"verify PASS\ngo test ./...", StatusPass},
+		{"VERIFY FAIL (targeted)", StatusFail},
+		{"verify INCONCLUSIVE timeout", StatusInconclusive},
+		{"verify SKIPPED no runner", StatusSkipped},
+		{"verify PASSIVE", StatusInconclusive},
+		{"tests passed", StatusInconclusive},
+		{"", StatusInconclusive},
+	} {
+		if got := StatusFromEvidence(tc.evidence); got != tc.want {
+			t.Fatalf("StatusFromEvidence(%q)=%s want %s", tc.evidence, got, tc.want)
+		}
+	}
+}
+
+func TestRunCommandZeroEvidenceIsInconclusive(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "go.mod", "module x\n")
+	writeVerifyFile(t, dir, "empty.go", "package empty\n")
+	res := runCommand(t.Context(), dir, Command{Runner: "go", Display: "go test ./...", Args: []string{"test", "./..."}, Scope: ScopeBroader}, 1, time.Second)
+	if res.Status != StatusInconclusive || res.OK {
+		t.Fatalf("zero-evidence command = %+v", res)
+	}
+}
+
+func TestRunPipelineRejectsUncoveredTargets(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "Cargo.toml", "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n")
+	result := RunPipeline(t.Context(), dir, Options{Targets: []string{"src/main.rs"}, Executor: func(context.Context, string, Command, int, time.Duration) Result {
+		t.Fatal("broader verification must not run when requested targets have no safe targeted command")
+		return Result{}
+	}})
+	if result.Status != StatusInconclusive || len(result.Stages) != 1 {
+		t.Fatalf("uncovered targets = %+v", result)
+	}
+}
+
 func TestDetectPlanTargetsGoPackageThenBroader(t *testing.T) {
 	dir := t.TempDir()
 	writeVerifyFile(t, dir, "go.mod", "module x\n")

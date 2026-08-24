@@ -253,7 +253,7 @@ func TestWorthReflecting(t *testing.T) {
 	if WorthReflecting(Signal{FilesChanged: []string{"a.go", "b.go"}, ToolRounds: 2}) {
 		t.Fatal("two-file edit without verify should skip")
 	}
-	if !WorthReflecting(Signal{FilesChanged: []string{"a.go"}, Verified: "ok", ToolRounds: 2}) {
+	if !WorthReflecting(Signal{FilesChanged: []string{"a.go"}, Verified: "verify PASS", ToolRounds: 2}) {
 		t.Fatal("verified edit should reflect")
 	}
 }
@@ -261,7 +261,7 @@ func TestWorthReflecting(t *testing.T) {
 func TestHeuristicReflectGo(t *testing.T) {
 	out := heuristicReflect(Signal{
 		FilesChanged: []string{"internal/foo.go"},
-		Verified:     "ok: 3 passed",
+		Verified:     "verify PASS: 3 passed",
 		ToolRounds:   3,
 	})
 	if out.Skip || out.Habit == "" || out.Playbook == "" {

@@ -129,6 +129,11 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 		Attempt:  attempt,
 	}
 	if err == nil {
+		if passed == 0 && failed == 0 {
+			res.OK = false
+			res.Status = StatusInconclusive
+			res.Reason = "runner exited successfully without test evidence"
+		}
 		return res
 	}
 	res.OK = false
@@ -178,8 +183,10 @@ func Format(r Result) string {
 		switch {
 		case r.Runner == "none":
 			status = StatusInconclusive
-		case r.OK:
+		case r.OK && r.Passed > 0:
 			status = StatusPass
+		case r.OK:
+			status = StatusInconclusive
 		default:
 			status = StatusFail
 		}
