@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/scope"
@@ -64,6 +66,21 @@ func TestAutomaticRecommendedScopePreservesTaskIntent(t *testing.T) {
 	plan := scope.Choice{ID: "plan"}
 	if got := scopeModeForHeadlessTurn(a, cfg, "build something", plan, true); got == nil || *got != agent.TaskPlan {
 		t.Fatalf("explicit plan scope mode = %v, want temporary plan", got)
+	}
+}
+
+func TestHeadlessCompletionInferenceExitsSavedPlanModeForThisTurn(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace = t.TempDir()
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: cfg.Workspace}), perm.New(config.ModeFast, cfg.Workspace, nil))
+	a.SetTaskMode(agent.TaskPlan)
+	mode := autoModeForHeadlessTurn(a, cfg, "finish this project")
+	if mode == nil || *mode != agent.TaskAgent {
+		t.Fatalf("automatic headless mode = %v, want agent", mode)
+	}
+	if got := a.TaskModeSnapshot(); got != agent.TaskPlan {
+		t.Fatalf("headless inference changed saved live mode to %q", got)
 	}
 }
 
@@ -164,5 +181,103 @@ func TestHeadlessYesOverridesOnlyThisProcess(t *testing.T) {
 	}
 	if reloaded.Mode != config.ModeSafe {
 		t.Fatalf("saved mode = %q, want original safe mode", reloaded.Mode)
+	}
+}
+
+func TestHeadlessPersistsExplicitCompletionGoalBeforeRun(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+
+	if err := applyHeadlessGoalInference(a, cfg, "finish this project"); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.GoalSnapshot(); got != "finish this project" {
+		t.Fatalf("agent goal = %q, want persisted completion intent", got)
+	}
+	if got, err := goal.Load(workspace); err != nil || got != "finish this project" {
+		t.Fatalf("stored goal = %q, err=%v", got, err)
+	}
+}
+
+func TestHeadlessClarifyCancelDoesNotPersistInferredGoal(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+	t.Setenv("PICOGENT_MODE", "")
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	oldStdin := os.Stdin
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.WriteString("esc\n"); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	os.Stdin = reader
+	defer func() {
+		_ = reader.Close()
+		os.Stdin = oldStdin
+	}()
+
+	if err := run([]string{"run", "--clarify", "--dir", workspace, "fix all flaky tests and make CI green"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := goal.Load(workspace); err != nil || got != "" {
+		t.Fatalf("canceled headless scope persisted goal %q, err=%v", got, err)
+	}
+}
+
+func TestHeadlessClearsGoalOnlyAfterVerifiedCompletion(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	if err := goal.Set(workspace, "finish the project"); err != nil {
+		t.Fatal(err)
+	}
+	state, _ := goal.LoadState(workspace)
+	a.SetGoalState(state.Text, state.Revision)
+
+	if err := clearHeadlessGoalAfterCompletion(a, cfg, "finish the project", state.Revision, agent.Result{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := goal.Load(workspace); got != "finish the project" {
+		t.Fatalf("unverified goal was cleared: %q", got)
+	}
+	if err := goal.Set(workspace, "newer project goal"); err != nil {
+		t.Fatal(err)
+	}
+	newer, _ := goal.LoadState(workspace)
+	a.SetGoalState(newer.Text, newer.Revision)
+	if err := clearHeadlessGoalAfterCompletion(a, cfg, "finish the project", state.Revision, agent.Result{GoalDone: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := goal.Load(workspace); got != "newer project goal" || a.GoalSnapshot() != "newer project goal" {
+		t.Fatalf("stale completion erased newer goal: stored=%q agent=%q", got, a.GoalSnapshot())
+	}
+	if err := goal.Set(workspace, "finish the project"); err != nil {
+		t.Fatal(err)
+	}
+	state, _ = goal.LoadState(workspace)
+	a.SetGoalState(state.Text, state.Revision)
+
+	if err := clearHeadlessGoalAfterCompletion(a, cfg, "finish the project", state.Revision, agent.Result{GoalDone: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := goal.Load(workspace); got != "" || a.GoalSnapshot() != "" {
+		t.Fatalf("verified goal was not cleared: stored=%q agent=%q", got, a.GoalSnapshot())
 	}
 }

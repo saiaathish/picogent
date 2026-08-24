@@ -85,3 +85,17 @@ func TestInferGoalPhrase(t *testing.T) {
 		t.Fatal("expected goal")
 	}
 }
+
+func TestInferAutoPersistsExplicitProjectCompletionIntent(t *testing.T) {
+	for _, prompt := range []string{"finish this project", "finish the project"} {
+		t.Run(prompt, func(t *testing.T) {
+			decision := InferAuto(prompt, TaskAgent, "")
+			if !decision.GoalSet || decision.Goal != prompt {
+				t.Fatalf("decision = %#v, want persisted goal %q", decision, prompt)
+			}
+			if decision.TaskMode != TaskAgent {
+				t.Fatalf("task mode = %q, want agent", decision.TaskMode)
+			}
+		})
+	}
+}

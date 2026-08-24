@@ -74,7 +74,9 @@ func Build(cfg config.Config) (*agent.Agent, error) {
 	skills := extensions.LoadDeveloperExtensions(cfg.Extensions.InstalledSkills)
 	a.SetSkillRules(extensions.SkillsPrompt(skills))
 	syncMemory(a, cfg.Workspace)
-	syncGoal(a, cfg.Workspace)
+	if err := syncGoal(a, cfg.Workspace); err != nil {
+		return nil, fmt.Errorf("couldn't load active goal: %w", err)
+	}
 	wireRuntime(a)
 	return a, nil
 }
@@ -95,12 +97,16 @@ func RefreshMemory(a *agent.Agent, workspace string) {
 	syncMemory(a, workspace)
 }
 
-func syncGoal(a *agent.Agent, workspace string) {
+func syncGoal(a *agent.Agent, workspace string) error {
 	if a == nil {
-		return
+		return nil
 	}
-	g, _ := goal.Load(workspace)
-	a.SetGoal(g)
+	state, err := goal.LoadState(workspace)
+	if err != nil {
+		return err
+	}
+	a.SetGoalState(state.Text, state.Revision)
+	return nil
 }
 
 // RoutePersist saves the last routing decision into config (best-effort).

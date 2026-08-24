@@ -579,6 +579,222 @@ func TestCanceledTurnCannotPersistInferredState(t *testing.T) {
 	}
 }
 
+func TestGUIInferenceSaveFailureDrainsQueuedTurns(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	s := &server{
+		cfg:         cfg,
+		ag:          ag,
+		busy:        true,
+		activeTurns: 1,
+		turnGen:     1,
+		sessionID:   "queued-save-failure",
+		steerQueue: []queuedTurn{{
+			prompt:  "fix all failing tests",
+			display: "fix all failing tests",
+		}},
+	}
+	admitted := turnAdmission{
+		runAgent:   ag,
+		runSession: s.sessionID,
+		workspace:  workspace,
+		myGen:      1,
+		ctx:        context.Background(),
+		goalEpoch:  0,
+	}
+	s.runAdmittedTurn(admitted, "fix all failing tests", nil, "fix all failing tests", nil)
+	s.mu.Lock()
+	active, busy, pending := s.activeTurns, s.busy, len(s.steerQueue)
+	s.mu.Unlock()
+	if active != 0 || busy || pending != 0 {
+		t.Fatalf("save failure stranded queue: active=%d busy=%v pending=%d", active, busy, pending)
+	}
+}
+
+func TestCompletionPromptPersistsDurableGoalInGUI(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	s := &server{cfg: cfg, ag: ag, sessionID: "completion-goal", turnGen: 1}
+
+	for _, prompt := range []string{"finish this project", "finish the project"} {
+		t.Run(prompt, func(t *testing.T) {
+			if err := goal.Clear(workspace); err != nil {
+				t.Fatal(err)
+			}
+			ag.SetGoal("")
+			s.autoApplyFromUserPrompt(prompt, 1)
+			if got := ag.GoalSnapshot(); got != prompt {
+				t.Fatalf("agent goal = %q, want %q", got, prompt)
+			}
+			if got, err := goal.Load(workspace); err != nil || got != prompt {
+				t.Fatalf("stored goal = %q, err=%v", got, err)
+			}
+		})
+	}
+}
+
+func TestGUIStaleCompletedTurnCannotClearNewerGoal(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	ag.SetGoal("newer project goal")
+	if err := goal.Set(workspace, "newer project goal"); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: cfg, ag: ag, turnGen: 2}
+	if err := s.clearGoalIf("finish this project", 0, 0, 2); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := goal.Load(workspace); got != "newer project goal" || ag.GoalSnapshot() != "newer project goal" {
+		t.Fatalf("stale completion erased newer goal: stored=%q agent=%q", got, ag.GoalSnapshot())
+	}
+}
+
+func TestGUISameTextGoalReplacementCannotClearOlderCompletion(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	firstRevision, err := goal.SetState(workspace, "finish this project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag.SetGoalState("finish this project", firstRevision)
+	s := &server{cfg: cfg, ag: ag, turnGen: 2}
+	oldEpoch := s.goalEpoch
+	if err := s.setGoal("finish this project"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := goal.LoadState(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Revision == firstRevision || s.goalEpoch == oldEpoch {
+		t.Fatalf("same-text replacement did not advance identity: old=%d new=%d epoch=%d", firstRevision, state.Revision, s.goalEpoch)
+	}
+	replacementRevision := state.Revision
+	if err := s.clearGoalIf("finish this project", firstRevision, oldEpoch, 2); err != nil {
+		t.Fatal(err)
+	}
+	state, err = goal.LoadState(workspace)
+	if err != nil || state.Text != "finish this project" || state.Revision != replacementRevision {
+		t.Fatalf("stale completion erased same-text replacement: %#v err=%v", state, err)
+	}
+}
+
+func TestGUIQueuedSameTextGoalReplacementSurvivesOlderCompletion(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	firstRevision, err := goal.SetState(workspace, "finish this project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scripted := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "Goal complete: done"}}}}
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		Verify: func(context.Context) (string, error) {
+			return "verify PASS", nil
+		},
+	})
+	ag := agent.New(cfg, scripted, reg, perm.New(config.ModeFast, workspace, nil))
+	ag.SetGoalState("finish this project", firstRevision)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	s := &server{
+		cfg:       cfg,
+		ag:        ag,
+		sessionID: "same-text-aba",
+		permCh:    make(chan perm.Decision, 1),
+	}
+	s.beforeAgentRun = func() {
+		s.mu.Lock()
+		if s.ag != nil {
+			s.ag.SetClient(scripted)
+		}
+		s.mu.Unlock()
+		first := false
+		once.Do(func() {
+			first = true
+			close(entered)
+		})
+		if first {
+			<-release
+		}
+	}
+
+	s.startAgentTurn("work under the current goal", nil)
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("initial turn did not reach the pre-run barrier")
+	}
+	queued := httptest.NewRecorder()
+	s.chat(queued, httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":"/goal finish this project"}`)))
+	if queued.Code != http.StatusAccepted {
+		t.Fatalf("queued /goal status = %d, body=%s", queued.Code, queued.Body.String())
+	}
+	var queuedBody struct {
+		Queued bool `json:"queued"`
+	}
+	if err := json.Unmarshal(queued.Body.Bytes(), &queuedBody); err != nil {
+		t.Fatal(err)
+	}
+	if !queuedBody.Queued {
+		t.Fatalf("queued /goal response = %s", queued.Body.String())
+	}
+	replacement, err := goal.LoadState(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement.Text != "finish this project" || replacement.Revision == firstRevision {
+		t.Fatalf("same-text replacement state = %#v, old revision=%d", replacement, firstRevision)
+	}
+	close(release)
+
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		s.mu.Lock()
+		active, pending := s.activeTurns, len(s.steerQueue)
+		s.mu.Unlock()
+		if active == 0 && pending == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("queued same-text goal did not finish: active=%d pending=%d", active, pending)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	final, err := goal.LoadState(workspace)
+	if err != nil || final.Text != replacement.Text || final.Revision != replacement.Revision {
+		t.Fatalf("older completion erased queued same-text goal: %#v err=%v", final, err)
+	}
+	currentGoal, currentRevision := ag.GoalStateSnapshot()
+	if currentGoal != replacement.Text || currentRevision != replacement.Revision {
+		t.Fatalf("live agent goal = %q/%d, want %q/%d", currentGoal, currentRevision, replacement.Text, replacement.Revision)
+	}
+}
+
 func TestSessionLoadRequiresCurrentWorkspace(t *testing.T) {
 	current := t.TempDir()
 	other := t.TempDir()

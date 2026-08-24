@@ -100,6 +100,7 @@ type turnAdmission struct {
 	automaticScope bool
 	scopeNotice    string
 	scopeBoundary  string
+	goalEpoch      uint64
 }
 
 type server struct {
@@ -123,8 +124,9 @@ type server struct {
 	liveTask       agent.TaskMode
 	// turnMode is a temporary scope boundary for the admitted turn. It is
 	// exposed in state while the turn runs but never replaces liveTask.
-	turnMode *agent.TaskMode
-	turnGen  uint64 // bumped on cancel/new chat so stale turns cannot rewrite hist
+	turnMode  *agent.TaskMode
+	turnGen   uint64 // bumped on cancel/new chat so stale turns cannot rewrite hist
+	goalEpoch uint64 // bumped whenever a user explicitly replaces/clears a goal
 	// beforeAgentRun is test-only synchronization for proving that a turn uses
 	// the agent/session it captured before a session switch. Production leaves
 	// it nil.
@@ -496,7 +498,7 @@ func cloneAgentForSession(src *agent.Agent, sessionID string) *agent.Agent {
 	clone.SetProjectRules(state.ProjectRules)
 	clone.SetSkillRules(state.SkillRules)
 	clone.SetMemory(state.Memory)
-	clone.SetGoal(state.Goal)
+	clone.SetGoalState(state.Goal, state.GoalRevision)
 	clone.SetTrace(state.Trace)
 	clone.SetTaskStore(src.TaskStoreSnapshot())
 	clone.SetTaskMode(state.TaskMode)
@@ -965,21 +967,28 @@ func (s *server) applyTaskMode(payload string) {
 	s.emit(event{Type: "task_mode", Text: string(m)})
 }
 
-func (s *server) autoApplyFromUserPrompt(prompt string, expectedGen uint64) {
-	s.autoApplyInferredFromUserPrompt(prompt, expectedGen, false)
+func (s *server) autoApplyFromUserPrompt(prompt string, expectedGen uint64) error {
+	s.mu.Lock()
+	expectedEpoch := s.goalEpoch
+	s.mu.Unlock()
+	return s.autoApplyInferredFromUserPrompt(prompt, expectedGen, expectedEpoch, false)
 }
 
-func (s *server) autoApplyScopedFromUserPrompt(prompt string, expectedGen uint64) {
-	s.autoApplyInferredFromUserPrompt(prompt, expectedGen, true)
+func (s *server) autoApplyScopedFromUserPrompt(prompt string, expectedGen uint64) error {
+	s.mu.Lock()
+	expectedEpoch := s.goalEpoch
+	s.mu.Unlock()
+	return s.autoApplyInferredFromUserPrompt(prompt, expectedGen, expectedEpoch, true)
 }
 
-func (s *server) autoApplyInferredFromUserPrompt(prompt string, expectedGen uint64, automaticScope bool) {
+func (s *server) autoApplyInferredFromUserPrompt(prompt string, expectedGen, expectedEpoch uint64, automaticScope bool) error {
 	if strings.HasPrefix(strings.TrimSpace(prompt), "/") {
-		return
+		return nil
 	}
 	s.mu.Lock()
 	ag := s.ag
 	sessionID := s.sessionID
+	goalEpoch := s.goalEpoch
 	cur := s.liveTask
 	cfg := s.cfg
 	goalText := ""
@@ -991,7 +1000,7 @@ func (s *server) autoApplyInferredFromUserPrompt(prompt string, expectedGen uint
 	}
 	s.mu.Unlock()
 	if ag == nil || !cfg.AutoTaskModeOn() {
-		return
+		return nil
 	}
 
 	dec := agent.InferAuto(prompt, cur, goalText)
@@ -999,14 +1008,18 @@ func (s *server) autoApplyInferredFromUserPrompt(prompt string, expectedGen uint
 		dec = agent.InferAutomaticScope(prompt, cur, goalText)
 	}
 	goalApplied := false
+	var goalErr error
 	if dec.GoalSet && dec.Goal != goalText {
 		// Inference is deterministic but may run across a reset/rebuild. Keep
 		// the side effect attached to the admitted agent and session.
 		s.mu.Lock()
-		if s.ag == ag && s.sessionID == sessionID && s.turnGen == expectedGen {
-			if err := goal.Set(s.cfg.Workspace, dec.Goal); err == nil {
-				ag.SetGoal(dec.Goal)
+		if s.ag == ag && s.sessionID == sessionID && s.turnGen == expectedGen && s.goalEpoch == expectedEpoch && s.goalEpoch == goalEpoch {
+			if revision, err := goal.SetState(s.cfg.Workspace, dec.Goal); err == nil {
+				ag.SetGoalState(dec.Goal, revision)
 				goalApplied = true
+			} else {
+				goalErr = fmt.Errorf("couldn't save inferred goal: %w", err)
+				s.goalEpoch++ // fail closed: this turn may not retire the old goal
 			}
 		}
 		s.mu.Unlock()
@@ -1021,18 +1034,31 @@ func (s *server) autoApplyInferredFromUserPrompt(prompt string, expectedGen uint
 	if goalApplied {
 		s.emit(event{Type: "goal", Text: dec.Goal})
 	}
+	if goalErr != nil {
+		s.emit(event{Type: "error", Text: goalErr.Error()})
+		return goalErr
+	}
 	if modeApplied && dec.TaskMode != cur {
 		s.emit(event{Type: "task_mode", Text: string(dec.TaskMode)})
 	}
+	return nil
 }
 
-func (s *server) autoApplyGoalFromUserPrompt(prompt string, expectedGen uint64) {
+func (s *server) autoApplyGoalFromUserPrompt(prompt string, expectedGen uint64) error {
+	s.mu.Lock()
+	expectedEpoch := s.goalEpoch
+	s.mu.Unlock()
+	return s.autoApplyGoalFromUserPromptAt(prompt, expectedGen, expectedEpoch)
+}
+
+func (s *server) autoApplyGoalFromUserPromptAt(prompt string, expectedGen, expectedEpoch uint64) error {
 	if strings.HasPrefix(strings.TrimSpace(prompt), "/") {
-		return
+		return nil
 	}
 	s.mu.Lock()
 	ag := s.ag
 	sessionID := s.sessionID
+	goalEpoch := s.goalEpoch
 	cfg := s.cfg
 	cur := s.liveTask
 	if !cur.Valid() && ag != nil {
@@ -1044,21 +1070,30 @@ func (s *server) autoApplyGoalFromUserPrompt(prompt string, expectedGen uint64) 
 	}
 	s.mu.Unlock()
 	if ag == nil || !cfg.AutoTaskModeOn() {
-		return
+		return nil
 	}
 	dec := agent.InferAuto(prompt, cur, goalText)
 	if dec.GoalSet && dec.Goal != goalText {
+		var goalErr error
 		s.mu.Lock()
-		if s.ag == ag && s.sessionID == sessionID && s.turnGen == expectedGen {
-			if err := goal.Set(s.cfg.Workspace, dec.Goal); err == nil {
-				ag.SetGoal(dec.Goal)
+		if s.ag == ag && s.sessionID == sessionID && s.turnGen == expectedGen && s.goalEpoch == expectedEpoch && s.goalEpoch == goalEpoch {
+			if revision, err := goal.SetState(s.cfg.Workspace, dec.Goal); err == nil {
+				ag.SetGoalState(dec.Goal, revision)
 				s.mu.Unlock()
 				s.emit(event{Type: "goal", Text: dec.Goal})
-				return
+				return nil
+			} else {
+				goalErr = fmt.Errorf("couldn't save inferred goal: %w", err)
+				s.goalEpoch++ // fail closed: this turn may not retire the old goal
 			}
 		}
 		s.mu.Unlock()
+		if goalErr != nil {
+			s.emit(event{Type: "error", Text: goalErr.Error()})
+			return goalErr
+		}
 	}
+	return nil
 }
 
 func (s *server) queueSteer(prompt string, parts []llm.Part, display string) bool {
@@ -1177,6 +1212,7 @@ func (s *server) admitAgentTurnLocked(mode *agent.TaskMode, allowBusy bool) (tur
 		ctx:            ctx,
 		turnPermCh:     turnPermCh,
 		temporaryMode:  temporaryMode,
+		goalEpoch:      s.goalEpoch,
 	}, true
 }
 
@@ -1185,6 +1221,7 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 	runSession := admitted.runSession
 	workspace := admitted.workspace
 	myGen := admitted.myGen
+	myGoalEpoch := admitted.goalEpoch
 	ctx := admitted.ctx
 	turnPermCh := admitted.turnPermCh
 	temporaryMode := admitted.temporaryMode
@@ -1196,12 +1233,65 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 	}
 	// Infer persistent state only after this turn is admitted. Queued
 	// follow-ups and canceled requests cannot leave a goal or mode behind.
+	var intentErr error
 	if temporaryMode {
-		s.autoApplyGoalFromUserPrompt(displayPrompt, myGen)
+		intentErr = s.autoApplyGoalFromUserPromptAt(displayPrompt, myGen, myGoalEpoch)
 	} else if automaticScope {
-		s.autoApplyScopedFromUserPrompt(displayPrompt, myGen)
+		intentErr = s.autoApplyInferredFromUserPrompt(displayPrompt, myGen, myGoalEpoch, true)
 	} else {
-		s.autoApplyFromUserPrompt(displayPrompt, myGen)
+		intentErr = s.autoApplyInferredFromUserPrompt(displayPrompt, myGen, myGoalEpoch, false)
+	}
+	if intentErr != nil {
+		var next *turnAdmission
+		var nextPrompt string
+		var nextParts []llm.Part
+		var nextDisplay string
+		var nextMode *agent.TaskMode
+		s.mu.Lock()
+		live := s.turnGen == myGen
+		if live {
+			// An inference failure must not strand turns that were queued behind
+			// this admission. Keep the handoff atomic with busy-state cleanup,
+			// matching the normal completion path below.
+			s.steerMu.Lock()
+			if len(s.steerQueue) > 0 {
+				queued := s.steerQueue[0]
+				s.activeTurns--
+				admittedNext, admittedOK := s.admitAgentTurnLocked(queued.mode, true)
+				if admittedOK {
+					admittedNext.automaticScope = queued.automaticScope
+					admittedNext.scopeNotice = queued.scopeNotice
+					admittedNext.scopeBoundary = queued.scopeBoundary
+					s.steerQueue[0] = queuedTurn{}
+					s.steerQueue = s.steerQueue[1:]
+					next = &admittedNext
+					nextPrompt = queued.prompt
+					nextParts = queued.parts
+					nextDisplay = queued.display
+					nextMode = queued.mode
+				} else {
+					s.activeTurns++
+				}
+			}
+			s.steerMu.Unlock()
+			if next == nil {
+				s.busy = false
+				s.cancel = nil
+				s.turnMode = nil
+				s.activeTurns--
+			}
+		} else {
+			s.activeTurns--
+		}
+		s.mu.Unlock()
+		if next != nil {
+			s.runAdmittedTurn(*next, nextPrompt, nextParts, nextDisplay, nextMode)
+			return
+		}
+		if live {
+			s.emit(event{Type: "done"})
+		}
+		return
 	}
 	if temporaryMode {
 		if mode != nil {
@@ -1310,6 +1400,14 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 		if beforeAgentRun != nil {
 			beforeAgentRun()
 		}
+		runGoal := ""
+		var runGoalRevision uint64
+		s.mu.Lock()
+		if s.turnGen == myGen && s.goalEpoch == myGoalEpoch {
+			runGoal, runGoalRevision = runAgent.GoalStateSnapshot()
+			runGoal = strings.TrimSpace(runGoal)
+		}
+		s.mu.Unlock()
 		next, result, err := runAgent.RunWithOptions(ctx, hist, userMsg, h, agent.RunOptions{TaskMode: mode, TracePrompt: displayPrompt, DurablePrompt: displayPrompt, ScopeBoundary: admitted.scopeBoundary})
 		s.mu.Lock()
 		stale := s.turnGen != myGen
@@ -1334,8 +1432,10 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 			break
 		}
 		h.endTurn(result)
-		if result.GoalDone {
-			_ = s.clearGoal()
+		if result.GoalDone && runGoal != "" {
+			if err := s.clearGoalIf(runGoal, runGoalRevision, myGoalEpoch, myGen); err != nil {
+				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't clear completed goal: %v", err)})
+			}
 		}
 		s.mu.Lock()
 		if s.turnGen != myGen {
@@ -1368,14 +1468,15 @@ func (s *server) setGoal(text string) error {
 	text = strings.TrimSpace(text)
 	s.mu.Lock()
 	workspace := s.cfg.Workspace
-	s.mu.Unlock()
-	if err := goal.Set(workspace, text); err != nil {
+	revision, err := goal.SetState(workspace, text)
+	if err != nil {
+		s.mu.Unlock()
 		return err
 	}
-	s.mu.Lock()
 	if s.ag != nil {
-		s.ag.SetGoal(text)
+		s.ag.SetGoalState(text, revision)
 	}
+	s.goalEpoch++
 	s.mu.Unlock()
 	s.emit(event{Type: "goal", Text: text})
 	return nil
@@ -1384,13 +1485,48 @@ func (s *server) setGoal(text string) error {
 func (s *server) clearGoal() error {
 	s.mu.Lock()
 	workspace := s.cfg.Workspace
-	s.mu.Unlock()
 	if err := goal.Clear(workspace); err != nil {
+		s.mu.Unlock()
 		return err
 	}
-	s.mu.Lock()
 	if s.ag != nil {
-		s.ag.SetGoal("")
+		s.ag.SetGoalState("", 0)
+	}
+	s.goalEpoch++
+	s.mu.Unlock()
+	s.emit(event{Type: "goal", Text: ""})
+	return nil
+}
+
+// clearGoalIf lets a completed turn retire only the goal it actually ran
+// under. A queued or concurrently admitted newer goal must remain intact.
+func (s *server) clearGoalIf(expected string, expectedRevision, expectedEpoch, expectedGen uint64) error {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return nil
+	}
+	s.mu.Lock()
+	workspace := s.cfg.Workspace
+	ag := s.ag
+	if ag == nil || (expectedGen != 0 && s.turnGen != expectedGen) || s.goalEpoch != expectedEpoch {
+		s.mu.Unlock()
+		return nil
+	}
+	actualGoal, actualRevision := ag.GoalStateSnapshot()
+	if actualGoal != expected || actualRevision != expectedRevision {
+		s.mu.Unlock()
+		return nil
+	}
+	cleared, err := goal.ClearIfState(workspace, expected, expectedRevision)
+	if err != nil || !cleared {
+		s.mu.Unlock()
+		return err
+	}
+	if s.ag == ag {
+		actualGoal, actualRevision := ag.GoalStateSnapshot()
+		if actualGoal == expected && actualRevision == expectedRevision {
+			ag.SetGoalState("", 0)
+		}
 	}
 	s.mu.Unlock()
 	s.emit(event{Type: "goal", Text: ""})
