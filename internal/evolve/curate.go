@@ -96,6 +96,8 @@ func Curate(s Store) Store {
 		archived = archived[:12]
 	}
 	s.Playbooks = append(active, archived...)
+	s.Failures = curateFailures(s.Failures)
+	s.VerificationRoutes = curateRoutes(s.VerificationRoutes)
 	return s
 }
 

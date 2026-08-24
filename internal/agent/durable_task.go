@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
@@ -259,6 +260,42 @@ func (a *Agent) noteTaskVerification(output string, ev EventHandler) {
 		task.AddVerification("verify", passed, output)
 		return nil
 	})
+	a.rememberVerification(output)
+}
+
+// rememberVerification turns current evidence into a bounded causal memory
+// record. Memory is advisory context only; the live verifier and permission
+// gate remain authoritative.
+func (a *Agent) rememberVerification(output string) {
+	status := verificationStatus(output)
+	if status != "PASS" && status != "FAIL" && status != "INCONCLUSIVE" && status != "SKIPPED" {
+		return
+	}
+	state := a.RuntimeSnapshot()
+	workspace := strings.TrimSpace(state.CFG.Workspace)
+	if workspace == "" {
+		return
+	}
+	if strings.TrimSpace(state.Memory.Workspace) == "" || state.Memory.Workspace != workspace {
+		return
+	}
+	hint := state.Goal
+	var targets []string
+	if task := a.TaskSnapshot(); task != nil {
+		if strings.TrimSpace(task.Goal) != "" {
+			hint = task.Goal
+		}
+		targets = append(targets, task.ChangedFiles...)
+	}
+	memory := state.Memory
+	if status == "PASS" {
+		memory = evolve.RecordVerificationRoute(memory, hint, targets, output)
+	} else {
+		memory = evolve.RecordFailure(memory, hint, output)
+	}
+	if err := evolve.Save(memory); err == nil {
+		a.SetMemory(memory)
+	}
 }
 
 // requireTaskVerification records that an explicit completion marker still

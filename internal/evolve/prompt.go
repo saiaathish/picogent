@@ -9,11 +9,11 @@ import (
 // Hard token budget for the learned-memory system-prompt section.
 // ~180 tokens worst case — self-evolution must not eat the harness savings.
 const (
-	maxPromptBytes   = 720
-	maxPromptHabits  = 3
-	maxPromptBooks   = 1
-	maxPromptHabit   = 96
-	maxPromptBody    = 240
+	maxPromptBytes  = 720
+	maxPromptHabits = 3
+	maxPromptBooks  = 1
+	maxPromptHabit  = 96
+	maxPromptBody   = 240
 )
 
 // Prompt builds a tiny system-prompt section (no relevance filter).
@@ -25,8 +25,10 @@ func Prompt(s Store) string {
 func PromptFor(s Store, userHint string) string {
 	habits := pickHabits(s, maxPromptHabits)
 	books := pickPlaybooks(s, userHint, maxPromptBooks)
+	failures := pickFailures(s, userHint, 1)
+	routes := pickRoutes(s, userHint, 1)
 
-	if len(habits) == 0 && len(books) == 0 {
+	if len(habits) == 0 && len(books) == 0 && len(failures) == 0 && len(routes) == 0 {
 		return ""
 	}
 
@@ -53,6 +55,29 @@ func PromptFor(s Store, userHint string) string {
 				}
 				b.WriteString(block)
 			}
+		}
+	}
+	if len(failures) > 0 && b.Len() < maxPromptBytes {
+		failure := failures[0]
+		block := fmt.Sprintf("\nCausal check (hypothesis; verify now):\n- %s -> %s", clip(failure.Trigger, 96), clip(failure.Consequence, 180))
+		if failure.Evidence != "" {
+			block += "; evidence: " + clip(failure.Evidence, 180)
+		}
+		if b.Len()+len(block) <= maxPromptBytes {
+			b.WriteString(block)
+		}
+	}
+	if len(routes) > 0 && b.Len() < maxPromptBytes {
+		route := routes[0]
+		block := fmt.Sprintf("\nKnown verification route (recheck current repo): %s", route.Class)
+		if len(route.Targets) > 0 {
+			block += " → " + strings.Join(route.Targets, ", ")
+		}
+		if len(route.Stages) > 0 {
+			block += " [" + strings.Join(route.Stages, " → ") + "]"
+		}
+		if b.Len()+len(block) <= maxPromptBytes {
+			b.WriteString(block)
 		}
 	}
 	out := b.String()
