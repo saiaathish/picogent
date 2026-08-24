@@ -124,6 +124,7 @@
           </div>
         </section>
         <div id="task-progress-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
+        <div id="status-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
         <div id="ext-recs" class="ext-recs" hidden aria-label="Suggested extensions"></div>
         <div id="log" class="log"></div>
         <div id="thinking" class="think" aria-live="polite">
@@ -154,13 +155,6 @@
             <button type="button" class="yes" data-allow="1">Allow</button>
           </div>
         </div>
-        <section id="scope-card" class="scope-card" hidden role="region" aria-live="polite" aria-labelledby="scope-question" aria-describedby="scope-help">
-          <p class="scope-kicker">Quick check</p>
-          <h2 id="scope-question"></h2>
-          <p id="scope-help" class="scope-help">Pick one so I can keep the first pass focused.</p>
-          <div id="scope-choices" class="scope-choices" role="group" aria-labelledby="scope-question" aria-describedby="scope-help"></div>
-          <button type="button" id="scope-cancel" class="scope-cancel">Cancel</button>
-        </section>
         <form id="composer" class="prompt">
           <span class="beam" aria-hidden="true"></span>
           <div id="slash-menu" class="slash-menu" hidden role="listbox" aria-label="Commands"></div>

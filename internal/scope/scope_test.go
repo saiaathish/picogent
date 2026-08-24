@@ -23,7 +23,12 @@ func TestAnalyzeOffersSimpleRecommendedChoices(t *testing.T) {
 	}{
 		{"build something", "How big should the first pass be?", "small"},
 		{"fix everything", "What should I focus on first?", "focused"},
+		{"fix all flaky tests and make CI green", "What should I focus on first?", "focused"},
 		{"make it better", "What outcome do you want first?", "focused"},
+		{"make me a website for my landscaping business", "How big should the first pass be?", "small"},
+		{"this button doesn’t work", "What should I focus on first?", "focused"},
+		{"I want this app to feel way better", "What outcome do you want first?", "focused"},
+		{"finish this project", "What outcome do you want first?", "focused"},
 	}
 	for _, tt := range tests {
 		p, ok := Analyze(tt.prompt)
@@ -52,8 +57,32 @@ func TestApplyValidatesChoiceAndKeepsBoundaryPlain(t *testing.T) {
 	if want := "A small working version"; !contains(got, want) {
 		t.Fatalf("applied prompt = %q, want %q", got, want)
 	}
+	if got, ok := Select(p, "small"); !ok || got.ID != "small" {
+		t.Fatalf("Select() = %#v, %v", got, ok)
+	}
+	if _, ok := Select(p, "not-a-choice"); ok {
+		t.Fatal("unknown choice was selected")
+	}
 	if _, ok := Apply("build something", p, "not-a-choice"); ok {
 		t.Fatal("unknown choice was accepted")
+	}
+}
+
+func TestDefaultMessageExplainsAutomaticRecommendation(t *testing.T) {
+	if got, want := DefaultMessage(Choice{Label: "A focused fix"}), "Starting with a focused fix by default."; got != want {
+		t.Fatalf("DefaultMessage() = %q, want %q", got, want)
+	}
+	if got := DefaultMessage(Choice{}); got != "Starting with the recommended scope by default." {
+		t.Fatalf("empty choice message = %q", got)
+	}
+}
+
+func TestTurnBoundaryOverridesBroaderWorkForOneTurn(t *testing.T) {
+	got := TurnBoundary(Choice{Label: "A focused fix"})
+	for _, want := range []string{"A focused fix", "scope boundary", "takes precedence", "do not expand"} {
+		if !contains(got, want) {
+			t.Fatalf("TurnBoundary() = %q, want %q", got, want)
+		}
 	}
 }
 

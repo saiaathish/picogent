@@ -17,11 +17,25 @@ func ScopeTaskMode(choiceID string) TaskMode {
 	switch strings.ToLower(strings.TrimSpace(choiceID)) {
 	case "plan":
 		return TaskPlan
-	case "report":
+	case "report", "explore":
 		return TaskAsk
 	default:
 		return TaskAgent
 	}
+}
+
+// InferAutomaticScope applies normal intent inference without letting a broad
+// action verb silently escape a deliberately selected Plan, Ask, or Debug
+// boundary. Strong continuation language such as "go ahead" still moves a
+// planned task into implementation, and explicit plan/report/debug wording is
+// honored normally.
+func InferAutomaticScope(prompt string, current TaskMode, activeGoal string) AutoDecision {
+	d := InferAuto(prompt, current, activeGoal)
+	if current.Valid() && current != TaskAgent && d.TaskMode == TaskAgent && d.TaskWhy != "implementation requested" {
+		d.TaskMode = current
+		d.TaskWhy = ""
+	}
+	return d
 }
 
 // InferAuto reads a user message and suggests task mode / goal adjustments.
@@ -59,12 +73,20 @@ func inferTaskMode(p string, current TaskMode, hasGoal bool) (TaskMode, string) 
 	}
 
 	for _, k := range []string{
-		"bug", "error:", "error ", "crash", "broken", "doesn't work", "does not work",
+		"bug", "error:", "error ", "crash", "broken", "doesn't work", "doesn’t work", "does not work",
 		"fails when", "stack trace", "panic", "exception", "regression", "root cause",
 		"debug this", "why does it fail", "not working", "flaky test", "flaky tests",
 	} {
 		if strings.Contains(p, k) {
 			return TaskDebug, "bug or failure reported"
+		}
+	}
+
+	for _, k := range []string{
+		"report first", "report back first", "explain what you find first", "inspect and report", "investigate and report",
+	} {
+		if strings.Contains(p, k) {
+			return TaskAsk, "report requested before changes"
 		}
 	}
 

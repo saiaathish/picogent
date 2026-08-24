@@ -100,27 +100,46 @@ func TestScopedTaskModeIsPerTurn(t *testing.T) {
 	}
 }
 
-func TestScopedPromptKeepsDurableTaskGoalReadable(t *testing.T) {
+func TestScopedPromptKeepsDurableTaskGoalReadableAndPrioritizesTurnBoundary(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Default()
 	cfg.Workspace = dir
 	cfg.Provider = config.ProviderOllama
 	store := taskstate.NewStore(t.TempDir())
-	a := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
 	a.TaskStore = store
 	a.SetTaskSession("scoped-goal")
 	mode := agent.TaskAgent
-	internalPrompt := "build something\n\nPicogent scope choice: A small working version. Best default: keep the first pass focused."
+	internalPrompt := "fix all flaky tests and make CI green\n\nPicogent scope choice: A focused fix. Best default: keep the first pass focused."
+	boundary := "For this turn, honor this scope boundary: A focused fix. This temporary boundary takes precedence over any broader active goal or durable task; do not expand beyond it unless the user explicitly asks."
+	a.SetGoal("fix all flaky tests and make CI green")
 	_, result, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: internalPrompt}, allowAll{}, agent.RunOptions{
 		TaskMode:      &mode,
-		TracePrompt:   "build something",
-		DurablePrompt: "build something",
+		TracePrompt:   "fix all flaky tests and make CI green",
+		DurablePrompt: "fix all flaky tests and make CI green",
+		ScopeBoundary: boundary,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Task == nil || result.Task.Goal != "Build something" {
+	if result.Task == nil || result.Task.Goal != "Fix all flaky tests and make CI green" {
 		t.Fatalf("durable task goal = %#v, want original prompt", result.Task)
+	}
+	if len(fake.Calls) != 1 {
+		t.Fatal("scoped prompt did not reach the model")
+	}
+	var system string
+	for _, msg := range fake.Calls[0].Messages {
+		if msg.Role == "system" {
+			system = msg.Content
+			break
+		}
+	}
+	goalAt := strings.Index(system, "Goal: Fix all flaky tests and make CI green")
+	boundaryAt := strings.Index(system, boundary)
+	if goalAt < 0 || boundaryAt <= goalAt {
+		t.Fatalf("system prompt did not put turn boundary after durable goal: %q", system)
 	}
 }
 

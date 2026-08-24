@@ -36,6 +36,37 @@ func TestChooseScopeUsesNumberedChoiceAndDefault(t *testing.T) {
 	}
 }
 
+func TestAutomaticRecommendedScopePreservesTaskIntent(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace = t.TempDir()
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: cfg.Workspace}), perm.New(config.ModeFast, cfg.Workspace, nil))
+	p, ok := scope.Analyze("build something")
+	if !ok {
+		t.Fatal("expected scope prompt")
+	}
+
+	a.SetTaskMode(agent.TaskPlan)
+	if got := scopeModeForHeadlessTurn(a, cfg, "build something", scope.Recommended(p), false); got != nil {
+		t.Fatalf("automatic scope overrode existing task mode: %q", *got)
+	}
+	if got := scopeModeForHeadlessTurn(a, cfg, "create something", scope.Recommended(p), false); got != nil {
+		t.Fatalf("automatic scope escaped plan mode: %q", *got)
+	}
+
+	a.SetTaskMode(agent.TaskAgent)
+	if got := scopeModeForHeadlessTurn(a, cfg, "build something, but plan it first", scope.Recommended(p), false); got == nil || *got != agent.TaskPlan {
+		t.Fatalf("automatic scope mode = %v, want temporary plan", got)
+	}
+	if got := scopeModeForHeadlessTurn(a, cfg, "build something, but inspect and report first", scope.Recommended(p), false); got == nil || *got != agent.TaskAsk {
+		t.Fatalf("automatic scope mode = %v, want temporary ask", got)
+	}
+
+	plan := scope.Choice{ID: "plan"}
+	if got := scopeModeForHeadlessTurn(a, cfg, "build something", plan, true); got == nil || *got != agent.TaskPlan {
+		t.Fatalf("explicit plan scope mode = %v, want temporary plan", got)
+	}
+}
+
 func TestRunRequiresPrompt(t *testing.T) {
 	err := run([]string{"run"})
 	if err == nil || !strings.Contains(err.Error(), "missing prompt") {

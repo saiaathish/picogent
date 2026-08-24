@@ -1,7 +1,7 @@
 // Package scope keeps the first step of a broad request small and predictable.
 // It deliberately uses a few plain-language rules instead of another model
-// call: users should get a quick, understandable choice before Picogent starts
-// an expensive turn, and clear requests should go straight through.
+// call: safely broad requests begin with an understandable recommended boundary,
+// while callers can still explicitly ask to clarify it.
 package scope
 
 import (
@@ -18,9 +18,9 @@ type Choice struct {
 	Recommended bool   `json:"recommended"`
 }
 
-// Prompt is the small preflight shown when a request leaves too much room for
-// interpretation. There are always two or three choices and the first one is
-// the recommended default.
+// Prompt describes the small preflight available when a request leaves too much
+// room for interpretation. There are always two or three choices and the
+// first one is the recommended default.
 type Prompt struct {
 	Question string   `json:"question"`
 	Choices  []Choice `json:"choices"`
@@ -102,23 +102,49 @@ func Recommended(p Prompt) Choice {
 	return Choice{}
 }
 
-// Apply attaches a selected boundary to the agent message. The instruction is
-// intentionally short and is removed from the saved transcript by the UI
-// surfaces after the turn completes.
-func Apply(prompt string, p Prompt, choiceID string) (string, bool) {
+// DefaultMessage explains an automatic recommendation without implying that
+// the user explicitly picked it. UI surfaces can show this after the task has
+// been accepted instead of interrupting a safely broad request.
+func DefaultMessage(choice Choice) string {
+	label := strings.TrimSpace(choice.Label)
+	if label == "" {
+		return "Starting with the recommended scope by default."
+	}
+	return fmt.Sprintf("Starting with %s by default.", strings.ToLower(label))
+}
+
+// TurnBoundary gives a selected scope precedence over a broader durable task
+// for this turn only. The durable task remains useful for resumability, but it
+// must not silently override either an automatic default or an explicit choice.
+func TurnBoundary(choice Choice) string {
+	label := strings.TrimSpace(choice.Label)
+	if label == "" {
+		label = "the recommended scope"
+	}
+	return fmt.Sprintf("For this turn, honor this scope boundary: %s. This temporary boundary takes precedence over any broader active goal or durable task; do not expand beyond it unless the user explicitly asks.", label)
+}
+
+// Select resolves a stable choice ID from a prompt. Callers that need both the
+// user-message guidance and the per-turn precedence boundary should resolve
+// the same validated choice before applying it.
+func Select(p Prompt, choiceID string) (Choice, bool) {
 	choiceID = strings.TrimSpace(strings.ToLower(choiceID))
 	if choiceID == "" {
-		return "", false
+		return Choice{}, false
 	}
-	var choice Choice
-	found := false
-	for _, c := range p.Choices {
-		if c.ID == choiceID {
-			choice = c
-			found = true
-			break
+	for _, choice := range p.Choices {
+		if choice.ID == choiceID {
+			return choice, true
 		}
 	}
+	return Choice{}, false
+}
+
+// Apply attaches a selected or recommended boundary to the agent message. The
+// instruction is intentionally short and is removed from the saved transcript
+// by the UI surfaces after the turn completes.
+func Apply(prompt string, p Prompt, choiceID string) (string, bool) {
+	choice, found := Select(p, choiceID)
 	if !found || strings.TrimSpace(prompt) == "" {
 		return "", false
 	}
@@ -126,9 +152,17 @@ func Apply(prompt string, p Prompt, choiceID string) (string, bool) {
 }
 
 func requestKind(p string) string {
-	for _, phrase := range []string{"make it better", "improve this", "clean this up", "what should we do", "where do we start", "work on this", "take care of this", "deal with this", "help with this"} {
+	for _, phrase := range []string{"make it better", "improve this", "clean this up", "feel way better", "finish this project", "what should we do", "where do we start", "work on this", "take care of this", "deal with this", "help with this"} {
 		if strings.Contains(p, phrase) {
 			return "general"
+		}
+	}
+	// An explicit broad repair remains a fix even when its success criterion
+	// includes verbs such as "make CI green". Otherwise the generic build verb
+	// list below would incorrectly choose a build-sized first pass.
+	for _, phrase := range []string{"fix everything", "fix all", "fix every", "doesn't work", "doesn’t work", "does not work"} {
+		if strings.Contains(p, phrase) {
+			return "fix"
 		}
 	}
 	for _, word := range []string{"build", "create", "make", "add", "implement", "write", "develop", "set up", "setup"} {
@@ -147,8 +181,8 @@ func requestKind(p string) string {
 func broadPhrase(p string) bool {
 	for _, phrase := range []string{
 		"make it better", "improve this", "clean this up", "fix everything", "fix all",
-		"build something", "create something", "make an app", "make a website",
-		"make it production ready", "finish the project", "work on this", "take care of this",
+		"build something", "create something", "make an app", "make a website", "make me a website",
+		"make it production ready", "feel way better", "finish the project", "finish this project", "work on this", "take care of this",
 		"deal with this", "help with this", "what should we do", "where do we start",
 	} {
 		if strings.Contains(p, phrase) {

@@ -74,10 +74,13 @@ type transcriptLine struct {
 const maxQueuedTurns = 8
 
 type queuedTurn struct {
-	prompt  string
-	parts   []llm.Part
-	display string
-	mode    *agent.TaskMode
+	prompt         string
+	parts          []llm.Part
+	display        string
+	mode           *agent.TaskMode
+	automaticScope bool
+	scopeNotice    string
+	scopeBoundary  string
 }
 
 // turnAdmission is the immutable runtime boundary captured when a turn is
@@ -94,6 +97,9 @@ type turnAdmission struct {
 	ctx            context.Context
 	turnPermCh     chan perm.Decision
 	temporaryMode  bool
+	automaticScope bool
+	scopeNotice    string
+	scopeBoundary  string
 }
 
 type server struct {
@@ -960,6 +966,14 @@ func (s *server) applyTaskMode(payload string) {
 }
 
 func (s *server) autoApplyFromUserPrompt(prompt string, expectedGen uint64) {
+	s.autoApplyInferredFromUserPrompt(prompt, expectedGen, false)
+}
+
+func (s *server) autoApplyScopedFromUserPrompt(prompt string, expectedGen uint64) {
+	s.autoApplyInferredFromUserPrompt(prompt, expectedGen, true)
+}
+
+func (s *server) autoApplyInferredFromUserPrompt(prompt string, expectedGen uint64, automaticScope bool) {
 	if strings.HasPrefix(strings.TrimSpace(prompt), "/") {
 		return
 	}
@@ -981,6 +995,9 @@ func (s *server) autoApplyFromUserPrompt(prompt string, expectedGen uint64) {
 	}
 
 	dec := agent.InferAuto(prompt, cur, goalText)
+	if automaticScope {
+		dec = agent.InferAutomaticScope(prompt, cur, goalText)
+	}
 	goalApplied := false
 	if dec.GoalSet && dec.Goal != goalText {
 		// Inference is deterministic but may run across a reset/rebuild. Keep
@@ -1049,15 +1066,22 @@ func (s *server) queueSteer(prompt string, parts []llm.Part, display string) boo
 }
 
 func (s *server) queueSteerMode(prompt string, parts []llm.Part, display string, mode *agent.TaskMode) bool {
+	return s.queueSteerScoped(prompt, parts, display, mode, false, "", "")
+}
+
+func (s *server) queueSteerScoped(prompt string, parts []llm.Part, display string, mode *agent.TaskMode, automaticScope bool, scopeNotice, scopeBoundary string) bool {
 	s.steerMu.Lock()
 	defer s.steerMu.Unlock()
 	if len(s.steerQueue) >= maxQueuedTurns {
 		return false
 	}
 	queued := queuedTurn{
-		prompt:  prompt,
-		parts:   append([]llm.Part(nil), parts...),
-		display: display,
+		prompt:         prompt,
+		parts:          append([]llm.Part(nil), parts...),
+		display:        display,
+		automaticScope: automaticScope,
+		scopeNotice:    scopeNotice,
+		scopeBoundary:  scopeBoundary,
 	}
 	if mode != nil {
 		copyMode := *mode
@@ -1164,12 +1188,18 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 	ctx := admitted.ctx
 	turnPermCh := admitted.turnPermCh
 	temporaryMode := admitted.temporaryMode
+	automaticScope := admitted.automaticScope
 	hist := admitted.hist
 	beforeAgentRun := admitted.beforeAgentRun
+	if admitted.scopeNotice != "" {
+		s.emit(event{Type: "system", Text: admitted.scopeNotice, SessionID: runSession, turnGen: myGen})
+	}
 	// Infer persistent state only after this turn is admitted. Queued
 	// follow-ups and canceled requests cannot leave a goal or mode behind.
 	if temporaryMode {
 		s.autoApplyGoalFromUserPrompt(displayPrompt, myGen)
+	} else if automaticScope {
+		s.autoApplyScopedFromUserPrompt(displayPrompt, myGen)
 	} else {
 		s.autoApplyFromUserPrompt(displayPrompt, myGen)
 	}
@@ -1214,6 +1244,9 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 					s.activeTurns--
 					admittedNext, admittedOK := s.admitAgentTurnLocked(queued.mode, true)
 					if admittedOK {
+						admittedNext.automaticScope = queued.automaticScope
+						admittedNext.scopeNotice = queued.scopeNotice
+						admittedNext.scopeBoundary = queued.scopeBoundary
 						s.steerQueue[0] = queuedTurn{}
 						s.steerQueue = s.steerQueue[1:]
 						next = &admittedNext
@@ -1277,7 +1310,7 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 		if beforeAgentRun != nil {
 			beforeAgentRun()
 		}
-		next, result, err := runAgent.RunWithOptions(ctx, hist, userMsg, h, agent.RunOptions{TaskMode: mode, TracePrompt: displayPrompt, DurablePrompt: displayPrompt})
+		next, result, err := runAgent.RunWithOptions(ctx, hist, userMsg, h, agent.RunOptions{TaskMode: mode, TracePrompt: displayPrompt, DurablePrompt: displayPrompt, ScopeBoundary: admitted.scopeBoundary})
 		s.mu.Lock()
 		stale := s.turnGen != myGen
 		s.mu.Unlock()
@@ -1554,30 +1587,37 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	workspace := s.cfg.Workspace
 	s.mu.Unlock()
 	kind, payload := slash.Resolve(workspace, prompt)
-	scopeChoice := ""
+	scopeNotice := ""
+	scopeBoundary := ""
+	automaticScope := false
 	var scopeMode *agent.TaskMode
 	if kind == slash.Unknown {
 		if preflight, needed := scope.Analyze(prompt); needed {
-			if strings.TrimSpace(in.ScopeChoice) == "" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusConflict)
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"error":    "scope_required",
-					"needed":   true,
-					"question": preflight.Question,
-					"choices":  preflight.Choices,
-				})
+			choiceID := strings.TrimSpace(in.ScopeChoice)
+			automatic := choiceID == ""
+			if automatic {
+				choiceID = scope.Recommended(preflight).ID
+				automaticScope = true
+			}
+			choice, selected := scope.Select(preflight, choiceID)
+			if !selected {
+				http.Error(w, "invalid scope choice", http.StatusBadRequest)
 				return
 			}
-			applied, ok := scope.Apply(prompt, preflight, in.ScopeChoice)
+			if automatic {
+				scopeNotice = scope.DefaultMessage(choice)
+			}
+			scopeBoundary = scope.TurnBoundary(choice)
+			applied, ok := scope.Apply(prompt, preflight, choiceID)
 			if !ok {
 				http.Error(w, "invalid scope choice", http.StatusBadRequest)
 				return
 			}
 			prompt = applied
-			scopeChoice = strings.TrimSpace(strings.ToLower(in.ScopeChoice))
-			mode := agent.ScopeTaskMode(scopeChoice)
-			scopeMode = &mode
+			if !automatic {
+				mode := agent.ScopeTaskMode(choiceID)
+				scopeMode = &mode
+			}
 		} else if strings.TrimSpace(in.ScopeChoice) != "" {
 			http.Error(w, "scope choice is not needed for this prompt", http.StatusBadRequest)
 			return
@@ -1703,8 +1743,9 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	if s.busy {
+		queued := s.queueSteerScoped(prompt, parts, userPrompt, scopeMode, automaticScope, scopeNotice, scopeBoundary)
 		s.mu.Unlock()
-		if !s.queueSteerMode(prompt, parts, userPrompt, scopeMode) {
+		if !queued {
 			s.emit(event{Type: "error", Text: "follow-up queue is full; wait for the current turn to finish"})
 			http.Error(w, "follow-up queue is full", http.StatusTooManyRequests)
 			return
@@ -1712,15 +1753,32 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		s.emit(event{Type: "system", Text: "Follow-up queued for when the current turn finishes"})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(202)
-		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "queued": true})
+		response := map[string]any{"ok": true, "queued": true}
+		if scopeNotice != "" {
+			response["scope_notice"] = scopeNotice
+		}
+		_ = json.NewEncoder(w).Encode(response)
 		return
 	}
+	admitted, admittedOK := s.admitAgentTurnLocked(scopeMode, false)
+	if admittedOK {
+		admitted.automaticScope = automaticScope
+		admitted.scopeNotice = scopeNotice
+		admitted.scopeBoundary = scopeBoundary
+	}
 	s.mu.Unlock()
-
-	s.startAgentTurnAsMode(prompt, parts, userPrompt, scopeMode)
+	if !admittedOK {
+		http.Error(w, "could not admit agent turn", http.StatusConflict)
+		return
+	}
+	s.runAdmittedTurn(admitted, prompt, parts, userPrompt, scopeMode)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(202)
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	response := map[string]any{"ok": true}
+	if scopeNotice != "" {
+		response["scope_notice"] = scopeNotice
+	}
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 type guiHandler struct {

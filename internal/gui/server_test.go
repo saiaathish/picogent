@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/tools"
 
@@ -435,8 +437,11 @@ func TestSetupFinishRetainsSavedModeDuringEnvironmentOverride(t *testing.T) {
 func TestFollowUpQueuePreservesFIFOAndBounds(t *testing.T) {
 	s := &server{}
 	mode := agent.TaskPlan
-	if !s.queueSteerMode("first", []llm.Part{{Type: "text", Text: "one"}}, "first display", &mode) {
+	if !s.queueSteerScoped("first", []llm.Part{{Type: "text", Text: "one"}}, "first display", &mode, true, "scope notice", "scope boundary") {
 		t.Fatal("first follow-up was rejected")
+	}
+	if first := s.steerQueue[0]; !first.automaticScope || first.scopeNotice != "scope notice" || first.scopeBoundary != "scope boundary" {
+		t.Fatalf("queued scope metadata = %#v", first)
 	}
 	if !s.queueSteer("second", nil, "second display") {
 		t.Fatal("second follow-up was rejected")
@@ -622,37 +627,46 @@ func TestScopeAPILeavesSpecificPromptAlone(t *testing.T) {
 	}
 }
 
-func TestChatRequiresScopeChoiceForBroadPrompt(t *testing.T) {
+func TestChatRejectsInvalidExplicitScopeChoice(t *testing.T) {
 	s := &server{cfg: config.Config{Workspace: t.TempDir()}}
 	res := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":"build something"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":"build something","scope_choice":"everything"}`))
 	s.chat(res, req)
-	if res.Code != http.StatusConflict {
-		t.Fatalf("status = %d, want %d", res.Code, http.StatusConflict)
-	}
-	if !strings.Contains(res.Body.String(), `"error":"scope_required"`) {
-		t.Fatalf("body = %s", res.Body.String())
+	if res.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusBadRequest)
 	}
 }
 
-func TestChatAppliesScopeAndKeepsTranscriptReadable(t *testing.T) {
+func TestChatDefaultsScopeAndKeepsTranscriptReadable(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()
 	cfg := config.Default()
 	cfg.Provider = config.ProviderOllama
 	cfg.Workspace = workspace
-	ag := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	client := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}
+	ag := agent.New(cfg, client, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
 	s := &server{
 		cfg:       cfg,
 		ag:        ag,
 		sessionID: "scope-session",
 		permCh:    make(chan perm.Decision, 1),
+		subs:      []chan event{make(chan event, 64)},
 	}
+	events := s.subs[0]
 	res := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":"build something","scope_choice":"small"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":"build something"}`))
 	s.chat(res, req)
 	if res.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusAccepted)
+	}
+	var body struct {
+		ScopeNotice string `json:"scope_notice"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ScopeNotice != "Starting with a small working version by default." {
+		t.Fatalf("scope notice = %q", body.ScopeNotice)
 	}
 	// The first GUI turn may have to initialize trace/extension state on a
 	// slower Windows or macOS runner; allow startup variance without changing
@@ -676,6 +690,293 @@ func TestChatAppliesScopeAndKeepsTranscriptReadable(t *testing.T) {
 			t.Fatal("scoped turn did not finish")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+	noticeIndex, assistantIndex, noticeCount := -1, -1, 0
+	for index := 0; ; index++ {
+		select {
+		case e := <-events:
+			if e.Type == "system" && e.Text == body.ScopeNotice {
+				noticeCount++
+				if noticeIndex < 0 {
+					noticeIndex = index
+				}
+			}
+			if (e.Type == "assistant_delta" || e.Type == "assistant" || e.Type == "assistant_final") && assistantIndex < 0 {
+				assistantIndex = index
+			}
+		default:
+			if noticeIndex < 0 {
+				t.Fatal("automatic scope notice was not published to the event stream")
+			}
+			if noticeCount != 1 {
+				t.Fatalf("automatic scope notice event count = %d, want 1", noticeCount)
+			}
+			if assistantIndex < 0 {
+				t.Fatal("scoped turn did not publish assistant output")
+			}
+			if noticeIndex > assistantIndex {
+				t.Fatalf("scope notice event index %d followed assistant event index %d", noticeIndex, assistantIndex)
+			}
+			goto checkedEventOrder
+		}
+	}
+
+checkedEventOrder:
+	if len(client.Calls) == 0 {
+		t.Fatal("defaulted scope did not reach the model")
+	}
+	var scoped string
+	for i := len(client.Calls[0].Messages) - 1; i >= 0; i-- {
+		if client.Calls[0].Messages[i].Role == "user" {
+			scoped = client.Calls[0].Messages[i].Content
+			break
+		}
+	}
+	if !strings.Contains(scoped, "Picogent scope choice: A small working version") {
+		t.Fatalf("model prompt = %q, want recommended scope guidance", scoped)
+	}
+}
+
+func TestAutomaticScopePrioritizesFocusedTurnOverDurableGoal(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	scripted := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}
+	ag := agent.New(cfg, scripted, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	s := &server{cfg: cfg, ag: ag, sessionID: "scope-boundary", permCh: make(chan perm.Decision, 1)}
+	res := httptest.NewRecorder()
+	const broadGoal = "fix all flaky tests and make CI green"
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":"`+broadGoal+`"}`))
+	s.chat(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusAccepted)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		s.mu.Lock()
+		active := s.activeTurns
+		s.mu.Unlock()
+		if active == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("automatic scoped turn did not finish")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := ag.GoalSnapshot(); got != broadGoal {
+		t.Fatalf("automatic scope goal = %q, want %q", got, broadGoal)
+	}
+	if got, _ := goal.Load(workspace); got != broadGoal {
+		t.Fatalf("automatic scope saved goal = %q, want %q", got, broadGoal)
+	}
+	if len(scripted.Calls) == 0 {
+		t.Fatal("automatic scoped turn did not reach the model")
+	}
+	var system string
+	for _, message := range scripted.Calls[0].Messages {
+		if message.Role == "system" {
+			system = message.Content
+			break
+		}
+	}
+	boundary := scope.TurnBoundary(scope.Choice{Label: "A focused fix"})
+	goalAt := strings.Index(system, broadGoal)
+	boundaryAt := strings.Index(system, boundary)
+	if goalAt < 0 || boundaryAt <= goalAt {
+		t.Fatalf("system prompt did not prioritize turn boundary: %q", system)
+	}
+}
+
+func TestQueuedAutomaticScopeRunsAfterOneOrderedNotice(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	scripted := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "first done"}},
+		{Message: llm.Message{Role: "assistant", Content: "scoped second done"}},
+	}}
+	ag := agent.New(cfg, scripted, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	events := make(chan event, 128)
+	s := &server{cfg: cfg, ag: ag, sessionID: "queued-scope-order", permCh: make(chan perm.Decision, 1), subs: []chan event{events}}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	s.beforeAgentRun = func() {
+		s.mu.Lock()
+		if s.ag != nil {
+			s.ag.SetClient(scripted)
+		}
+		s.mu.Unlock()
+		first := false
+		once.Do(func() {
+			first = true
+			close(entered)
+		})
+		if first {
+			<-release
+		}
+	}
+
+	s.startAgentTurn("first", nil)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first turn did not reach its barrier")
+	}
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":"build something"}`))
+	s.chat(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusAccepted)
+	}
+	var body struct {
+		Queued      bool   `json:"queued"`
+		ScopeNotice string `json:"scope_notice"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Queued || body.ScopeNotice == "" {
+		t.Fatalf("queued response = %#v", body)
+	}
+	close(release)
+
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		s.mu.Lock()
+		active := s.activeTurns
+		queued := len(s.steerQueue)
+		s.mu.Unlock()
+		if active == 0 && queued == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("queued scoped turn did not finish: active=%d queued=%d", active, queued)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	noticeIndex, assistantIndex, noticeCount := -1, -1, 0
+	var seen []string
+	for index := 0; ; index++ {
+		select {
+		case e := <-events:
+			seen = append(seen, e.Type+":"+e.Text)
+			if e.Type == "system" && e.Text == body.ScopeNotice {
+				noticeCount++
+				if noticeIndex < 0 {
+					noticeIndex = index
+				}
+			}
+			if strings.HasPrefix(e.Type, "assistant") && noticeIndex >= 0 && assistantIndex < 0 {
+				assistantIndex = index
+			}
+		default:
+			if noticeCount != 1 || noticeIndex < 0 {
+				t.Fatalf("queued scope notice count/index = %d/%d", noticeCount, noticeIndex)
+			}
+			if assistantIndex < 0 || noticeIndex > assistantIndex {
+				t.Fatalf("queued scope notice/assistant order = %d/%d; events=%v", noticeIndex, assistantIndex, seen)
+			}
+			var scopedSystem string
+			for _, call := range scripted.Calls {
+				for _, message := range call.Messages {
+					if message.Role == "user" && strings.Contains(message.Content, "Picogent scope choice: A small working version") {
+						for _, candidate := range call.Messages {
+							if candidate.Role == "system" {
+								scopedSystem = candidate.Content
+								break
+							}
+						}
+						break
+					}
+				}
+			}
+			if !strings.Contains(scopedSystem, scope.TurnBoundary(scope.Choice{Label: "A small working version"})) {
+				t.Fatalf("queued scoped call lost turn boundary: %q", scopedSystem)
+			}
+			return
+		}
+	}
+}
+
+func TestAutomaticScopeKeepsPlanIntent(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	s := &server{cfg: cfg, ag: ag, liveTask: agent.TaskAgent, sessionID: "scope-plan", permCh: make(chan perm.Decision, 1)}
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":"build something, but plan it first"}`))
+	s.chat(res, req)
+	if res.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusAccepted)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		s.mu.Lock()
+		active := s.activeTurns
+		s.mu.Unlock()
+		if active == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("automatic scoped turn did not finish")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := ag.TaskModeSnapshot(); got != agent.TaskPlan {
+		t.Fatalf("task mode = %q, want plan", got)
+	}
+}
+
+func TestAutomaticScopePreservesSelectedTaskBoundary(t *testing.T) {
+	for _, tt := range []struct {
+		prompt string
+		mode   agent.TaskMode
+	}{
+		{"create something", agent.TaskPlan},
+		{"fix everything", agent.TaskAsk},
+		{"remove everything", agent.TaskDebug},
+	} {
+		t.Run(tt.mode.Label(), func(t *testing.T) {
+			workspace := t.TempDir()
+			cfg := config.Default()
+			cfg.Provider = config.ProviderOllama
+			cfg.Workspace = workspace
+			ag := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+			ag.SetTaskMode(tt.mode)
+			s := &server{cfg: cfg, ag: ag, liveTask: tt.mode, sessionID: "scope-boundary", permCh: make(chan perm.Decision, 1)}
+			res := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":`+strconv.Quote(tt.prompt)+`}`))
+			s.chat(res, req)
+			if res.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want %d", res.Code, http.StatusAccepted)
+			}
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				s.mu.Lock()
+				active := s.activeTurns
+				s.mu.Unlock()
+				if active == 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("automatic scoped turn did not finish")
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			if got := ag.TaskModeSnapshot(); got != tt.mode {
+				t.Fatalf("task mode = %q, want preserved %q", got, tt.mode)
+			}
+		})
 	}
 }
 

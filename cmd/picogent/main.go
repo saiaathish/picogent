@@ -316,12 +316,34 @@ func runOnce(args []string) error {
 		if applied, ok := scope.Apply(prompt, preflight, choice.ID); ok {
 			prompt = applied
 		}
-		mode := agent.ScopeTaskMode(choice.ID)
-		_, _, err = a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{TaskMode: &mode, TracePrompt: originalPrompt, DurablePrompt: originalPrompt})
+		mode := scopeModeForHeadlessTurn(a, cfg, originalPrompt, choice, *clarify)
+		scopeBoundary := scope.TurnBoundary(choice)
+		_, _, err = a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{TaskMode: mode, TracePrompt: originalPrompt, DurablePrompt: originalPrompt, ScopeBoundary: scopeBoundary})
 		return err
 	}
 	_, _, err = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h)
 	return err
+}
+
+// scopeModeForHeadlessTurn keeps an automatic scope boundary separate from
+// task intent. Only an explicit --clarify selection overrides the active mode;
+// otherwise the existing lightweight intent inference remains free to honor
+// wording such as "plan it first" or "inspect and report".
+func scopeModeForHeadlessTurn(a *agent.Agent, cfg config.Config, prompt string, choice scope.Choice, explicit bool) *agent.TaskMode {
+	if explicit {
+		mode := agent.ScopeTaskMode(choice.ID)
+		return &mode
+	}
+	if a == nil || !cfg.AutoTaskModeOn() {
+		return nil
+	}
+	current := a.TaskModeSnapshot()
+	decision := agent.InferAutomaticScope(prompt, current, a.GoalSnapshot())
+	if decision.TaskMode == current {
+		return nil
+	}
+	mode := decision.TaskMode
+	return &mode
 }
 
 // applyHeadlessYes enables Fast mode for this invocation without changing the
