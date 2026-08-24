@@ -1,6 +1,7 @@
 package ctxmgr
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -117,6 +118,57 @@ func TestTruncateTailPreservesToolCallPairs(t *testing.T) {
 	for id := range callIDs {
 		if !resultIDs[id] {
 			t.Fatalf("tool call %q lost its result in %#v", id, out)
+		}
+	}
+}
+
+func TestManageKeepsLongToolLoopBounded(t *testing.T) {
+	long := strings.Repeat("exploration output that should not accumulate forever\n", 160)
+	msgs := []llm.Message{{Role: "system", Content: "you are picogent"}}
+	budget := BudgetForModel("gpt-5.6-terra")
+	maxTokens := 0
+	for i := 0; i < 80; i++ {
+		id := fmt.Sprintf("loop-%d", i)
+		msgs = append(msgs,
+			llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: id, Name: "bash", Arguments: `{"cmd":"inspect"}`}}},
+			llm.Message{Role: "tool", ToolCallID: id, Name: "bash", Content: long},
+		)
+		var stats Stats
+		var err error
+		msgs, stats, err = Manage(t.Context(), nil, "gpt-5.6-terra", msgs, budget)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stats.Tokens > maxTokens {
+			maxTokens = stats.Tokens
+		}
+	}
+	if maxTokens > SoftTarget(budget)*3 {
+		t.Fatalf("long loop grew beyond bounded working set: max=%d soft=%d", maxTokens, SoftTarget(budget))
+	}
+	if len(msgs) == 0 || msgs[0].Role != "system" {
+		t.Fatalf("system context was lost after long loop: %#v", msgs)
+	}
+	callIDs := map[string]bool{}
+	resultIDs := map[string]bool{}
+	for _, message := range msgs {
+		if message.Role == "assistant" {
+			for _, call := range message.ToolCalls {
+				callIDs[call.ID] = true
+			}
+		}
+		if message.Role == "tool" {
+			resultIDs[message.ToolCallID] = true
+		}
+	}
+	for id := range callIDs {
+		if !resultIDs[id] {
+			t.Fatalf("long loop retained call %q without a result", id)
+		}
+	}
+	for id := range resultIDs {
+		if !callIDs[id] {
+			t.Fatalf("long loop retained result %q without a call", id)
 		}
 	}
 }
