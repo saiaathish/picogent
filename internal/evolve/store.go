@@ -22,6 +22,8 @@ import (
 const (
 	maxHabits    = 5
 	maxPlaybooks = 4
+	maxFailures  = 6
+	maxRoutes    = 6
 	maxHabitLen  = 100
 	maxBodyLen   = 320
 	staleDays    = 45
@@ -52,12 +54,44 @@ type Playbook struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// FailureMemory keeps one compact cause/effect relationship from a failed or
+// unavailable verification. It is a hypothesis for the next turn, not an
+// authority that can bypass current evidence or permissions.
+type FailureMemory struct {
+	ID           string     `json:"id"`
+	Class        string     `json:"class,omitempty"`
+	Trigger      string     `json:"trigger"`
+	Consequence  string     `json:"consequence"`
+	Evidence     string     `json:"evidence,omitempty"`
+	Confidence   string     `json:"confidence,omitempty"`
+	Hits         int        `json:"hits"`
+	Failures     int        `json:"failures"`
+	Resolutions  int        `json:"resolutions,omitempty"`
+	LastSeen     time.Time  `json:"last_seen"`
+	LastResolved *time.Time `json:"last_resolved,omitempty"`
+}
+
+// VerificationRoute is a learned, bounded relationship between a task class
+// and paths covered by a passing verification. It informs context and target
+// selection only; commands are still built by verify at runtime.
+type VerificationRoute struct {
+	ID       string    `json:"id"`
+	Class    string    `json:"class,omitempty"`
+	Targets  []string  `json:"targets,omitempty"`
+	Stages   []string  `json:"stages,omitempty"`
+	Hits     int       `json:"hits"`
+	Passes   int       `json:"passes"`
+	LastUsed time.Time `json:"last_used"`
+}
+
 // Store is per-workspace learned memory.
 type Store struct {
-	Workspace string     `json:"workspace"`
-	Habits    []Habit    `json:"habits"`
-	Playbooks []Playbook `json:"playbooks"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	Workspace          string              `json:"workspace"`
+	Habits             []Habit             `json:"habits"`
+	Playbooks          []Playbook          `json:"playbooks"`
+	Failures           []FailureMemory     `json:"failures,omitempty"`
+	VerificationRoutes []VerificationRoute `json:"verification_routes,omitempty"`
+	UpdatedAt          time.Time           `json:"updated_at"`
 }
 
 func readPath(workspace string) (string, error) {

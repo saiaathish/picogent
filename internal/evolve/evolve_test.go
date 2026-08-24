@@ -186,6 +186,63 @@ func TestVerificationTargetsSkipUnsafeOrNonPathTokens(t *testing.T) {
 	}
 }
 
+func TestCausalFailureMemoryIsBoundedRelevantAndScrubbed(t *testing.T) {
+	now := time.Now().UTC()
+	s := Store{Workspace: "/tmp/x"}
+	inputs := []struct {
+		hint string
+		out  string
+	}{
+		{"fix auth", "verify FAIL token=secret failed"},
+		{"make the UI responsive", "verify INCONCLUSIVE timeout"},
+		{"fix the broken Go tests", "verify FAIL old_string not found"},
+		{"benchmark startup", "verify FAIL panic"},
+		{"fix setup", "verify FAIL command not found"},
+		{"fix the database", "verify FAIL error"},
+		{"fix another thing", "verify FAIL unexpected"},
+	}
+	for _, input := range inputs {
+		s = RecordFailure(s, input.hint, input.out)
+	}
+	if len(s.Failures) != maxFailures {
+		t.Fatalf("failures=%d want cap %d", len(s.Failures), maxFailures)
+	}
+	for _, failure := range s.Failures {
+		if strings.Contains(failure.Evidence, "secret") || strings.Contains(failure.Evidence, "token=") {
+			t.Fatalf("sensitive evidence persisted: %+v", failure)
+		}
+	}
+	s = RecordFailure(s, "fix auth", "verify FAIL token=next-secret failed")
+	prompt := PromptFor(s, "fix auth session")
+	if !strings.Contains(prompt, "Causal check") || !strings.Contains(prompt, "proof") && !strings.Contains(prompt, "smallest") {
+		t.Fatalf("relevant causal memory missing: %s", prompt)
+	}
+	if s.Failures[0].LastSeen.Before(now) {
+		t.Fatalf("causal memory did not update: %+v", s.Failures[0])
+	}
+}
+
+func TestVerificationRouteMemoryIsBoundedAndNeverAddsUnsafeTargets(t *testing.T) {
+	s := Store{Workspace: "/tmp/x"}
+	s = RecordVerificationRoute(s, "fix auth", []string{"internal/auth", "../outside", "/tmp/absolute", "internal/session"}, "verify PASS targeted broader")
+	if len(s.VerificationRoutes) != 1 {
+		t.Fatalf("routes=%d", len(s.VerificationRoutes))
+	}
+	route := s.VerificationRoutes[0]
+	if route.Passes != 1 || len(route.Targets) != 2 || route.Targets[0] != "internal/auth" {
+		t.Fatalf("route=%+v", route)
+	}
+	prompt := PromptFor(s, "fix auth token")
+	if !strings.Contains(prompt, "Known verification route") || !strings.Contains(prompt, "internal/auth") {
+		t.Fatalf("route not injected: %s", prompt)
+	}
+	s = RecordVerificationRoute(s, "fix auth", route.Targets, "verify PASS targeted broader")
+	if s.VerificationRoutes[0].Hits != 2 || len(s.Failures) != 0 {
+		// No failure should be fabricated by a passing route.
+		t.Fatalf("route update=%+v failures=%+v", s.VerificationRoutes[0], s.Failures)
+	}
+}
+
 func TestWorthReflecting(t *testing.T) {
 	if WorthReflecting(Signal{UserPrompt: "hi"}) {
 		t.Fatal("tiny turn should skip")
