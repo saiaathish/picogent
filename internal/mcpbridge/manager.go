@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -182,10 +183,7 @@ func dial(ctx context.Context, name string, cfg ServerConfig) (*mcp.ClientSessio
 		transport = &mcp.StreamableClientTransport{Endpoint: url}
 	case cfg.Command != "":
 		cmd = exec.CommandContext(ctx, cfg.Command, cfg.Args...)
-		cmd.Env = os.Environ()
-		for k, v := range cfg.Env {
-			cmd.Env = append(cmd.Env, k+"="+v)
-		}
+		cmd.Env = commandEnv(cfg.Env)
 		transport = &mcp.CommandTransport{Command: cmd}
 	default:
 		return nil, nil, fmt.Errorf("server %q: need url or command", name)
@@ -202,6 +200,34 @@ func dial(ctx context.Context, name string, cfg ServerConfig) (*mcp.ClientSessio
 		}
 	}
 	return session, cleanup, nil
+}
+
+// commandEnv keeps MCP subprocesses from inheriting unrelated credentials or
+// loader hooks. A server may request additional values explicitly in config.
+func commandEnv(explicit map[string]string) []string {
+	allowed := []string{"PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "TMPDIR"}
+	values := make(map[string]string, len(allowed)+len(explicit))
+	for _, key := range allowed {
+		if value, ok := os.LookupEnv(key); ok {
+			values[key] = value
+		}
+	}
+	for key, value := range explicit {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		values[key] = value
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, key+"="+values[key])
+	}
+	return out
 }
 
 func normalizeSchema(raw any) map[string]any {
