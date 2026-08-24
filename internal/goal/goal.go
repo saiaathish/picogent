@@ -162,6 +162,32 @@ func recoverBackup(path string) error {
 	return nil
 }
 
+// missingStatePathError distinguishes an absent state directory (a normal
+// first-run condition) from a path whose ancestor exists but is not a
+// directory. Windows reports the latter as ERROR_PATH_NOT_FOUND, which
+// os.IsNotExist also matches; walking the ancestors keeps persistence failures
+// visible consistently across platforms.
+func missingStatePathError(path string) error {
+	dir := filepath.Dir(path)
+	for {
+		info, err := os.Stat(dir)
+		if err == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("goal state parent %s is not a directory", dir)
+			}
+			return nil
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		next := filepath.Dir(dir)
+		if next == dir {
+			return nil
+		}
+		dir = next
+	}
+}
+
 func loadLocked(path string) (State, error) {
 	if err := recoverBackup(path); err != nil {
 		return State{}, err
@@ -212,6 +238,9 @@ func LoadState(workspace string) (State, error) {
 	// file exists, its parent necessarily exists and can host the lock file.
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
+			if parentErr := missingStatePathError(path); parentErr != nil {
+				return State{}, parentErr
+			}
 			if _, backupErr := os.Stat(stateBackupPath(path)); os.IsNotExist(backupErr) {
 				return State{}, nil
 			}
@@ -311,6 +340,9 @@ func clearIfState(workspace, expected string, expectedRevision *uint64) (bool, e
 	}
 	if _, err := os.Stat(path); err != nil {
 		if os.IsNotExist(err) {
+			if parentErr := missingStatePathError(path); parentErr != nil {
+				return false, parentErr
+			}
 			if _, backupErr := os.Stat(stateBackupPath(path)); os.IsNotExist(backupErr) {
 				return false, nil
 			}
