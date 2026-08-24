@@ -35,6 +35,9 @@ func Analyze(prompt string) (Prompt, bool) {
 		return Prompt{}, false
 	}
 	lower := strings.ToLower(p)
+	if explicitCompletionRequest(lower) {
+		return Prompt{}, false
+	}
 	words := strings.Fields(p)
 	if len(words) > 28 || hasConcreteTarget(lower) {
 		return Prompt{}, false
@@ -152,7 +155,7 @@ func Apply(prompt string, p Prompt, choiceID string) (string, bool) {
 }
 
 func requestKind(p string) string {
-	for _, phrase := range []string{"make it better", "improve this", "clean this up", "feel way better", "finish this project", "what should we do", "where do we start", "work on this", "take care of this", "deal with this", "help with this"} {
+	for _, phrase := range []string{"make it better", "improve this", "clean this up", "feel way better", "what should we do", "where do we start", "work on this", "take care of this", "deal with this", "help with this"} {
 		if strings.Contains(p, phrase) {
 			return "general"
 		}
@@ -182,9 +185,20 @@ func broadPhrase(p string) bool {
 	for _, phrase := range []string{
 		"make it better", "improve this", "clean this up", "fix everything", "fix all",
 		"build something", "create something", "make an app", "make a website", "make me a website",
-		"make it production ready", "feel way better", "finish the project", "finish this project", "work on this", "take care of this",
+		"make it production ready", "feel way better", "work on this", "take care of this",
 		"deal with this", "help with this", "what should we do", "where do we start",
 	} {
+		if strings.Contains(p, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// explicitCompletionRequest is an outcome request, not a request to narrow
+// the work. Let the agent inspect the project and determine what remains.
+func explicitCompletionRequest(p string) bool {
+	for _, phrase := range []string{"finish this project", "finish the project"} {
 		if strings.Contains(p, phrase) {
 			return true
 		}

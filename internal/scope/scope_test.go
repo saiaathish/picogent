@@ -15,6 +15,17 @@ func TestAnalyzeSkipsSpecificRequests(t *testing.T) {
 	}
 }
 
+func TestAnalyzeSkipsExplicitCompletionRequests(t *testing.T) {
+	for _, prompt := range []string{
+		"finish this project",
+		"finish the project",
+	} {
+		if got, ok := Analyze(prompt); ok || len(got.Choices) != 0 {
+			t.Fatalf("Analyze(%q) = %#v, %v; want no preflight", prompt, got, ok)
+		}
+	}
+}
+
 func TestAnalyzeOffersSimpleRecommendedChoices(t *testing.T) {
 	tests := []struct {
 		prompt string
@@ -28,7 +39,6 @@ func TestAnalyzeOffersSimpleRecommendedChoices(t *testing.T) {
 		{"make me a website for my landscaping business", "How big should the first pass be?", "small"},
 		{"this button doesn’t work", "What should I focus on first?", "focused"},
 		{"I want this app to feel way better", "What outcome do you want first?", "focused"},
-		{"finish this project", "What outcome do you want first?", "focused"},
 	}
 	for _, tt := range tests {
 		p, ok := Analyze(tt.prompt)

@@ -100,6 +100,53 @@ func TestAutomaticScopePrioritizesFocusedTurnOverDurableGoal(t *testing.T) {
 	}
 }
 
+func TestCompletionPromptReachesAgentWithoutAutomaticScope(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	m := &model{cfg: cfg, ag: a, vp: viewport.New(80, 20), h: &handler{permCh: make(chan perm.Decision, 1)}, sessionID: "completion-without-scope"}
+	const prompt = "finish this project"
+
+	cmd := m.submit(prompt)
+	if cmd == nil {
+		t.Fatal("completion prompt did not start")
+	}
+	if len(m.lines) != 1 || m.lines[0].Kind != "user" || m.lines[0].Text != prompt {
+		t.Fatalf("completion prompt lines = %#v, want only the unchanged user prompt", m.lines)
+	}
+	msg := cmd()
+	done, ok := msg.(doneMsg)
+	if !ok {
+		t.Fatalf("completion prompt result = %T, want doneMsg", msg)
+	}
+	if done.err != nil {
+		t.Fatalf("completion prompt failed: %v", done.err)
+	}
+	if len(fake.Calls) != 1 {
+		t.Fatalf("completion prompt calls = %d, want 1", len(fake.Calls))
+	}
+
+	var system, user string
+	for _, message := range fake.Calls[0].Messages {
+		switch message.Role {
+		case "system":
+			system = message.Content
+		case "user":
+			user = message.Content
+		}
+	}
+	if user != prompt {
+		t.Fatalf("completion prompt sent to model = %q, want unchanged %q", user, prompt)
+	}
+	if strings.Contains(system, "Current turn scope (takes precedence over active and durable goals):") {
+		t.Fatalf("completion prompt installed an automatic scope boundary: %q", system)
+	}
+}
+
 func TestAutomaticScopeKeepsPlanAndReportIntent(t *testing.T) {
 	for _, tt := range []struct {
 		prompt string
