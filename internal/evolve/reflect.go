@@ -95,51 +95,49 @@ func Reflect(ctx context.Context, client llm.Client, model string, sig Signal) (
 		return Delta{Skipped: reason, Store: store}, nil
 	}
 
-	d := Delta{Store: store}
+	d := Delta{}
 	src := "heuristic"
 	if usedLLM {
 		src = "reflect"
 	}
 
-	if h := strings.TrimSpace(out.Habit); h != "" {
-		var created bool
-		var habit Habit
-		store, habit, created = UpsertHabit(store, h, src)
-		d.Habit = &habit
-		if created {
-			d.Created = true
-		} else {
-			d.Updated = true
+	saved, err := Update(sig.Workspace, func(current Store) (Store, error) {
+		if h := strings.TrimSpace(out.Habit); h != "" {
+			var created bool
+			var habit Habit
+			current, habit, created = UpsertHabit(current, h, src)
+			d.Habit = &habit
+			if created {
+				d.Created = true
+			} else {
+				d.Updated = true
+			}
 		}
-	}
-	if body := strings.TrimSpace(out.Playbook); body != "" {
-		title := strings.TrimSpace(out.Title)
-		if title == "" {
-			title = defaultPlaybookTitle(sig)
+		if body := strings.TrimSpace(out.Playbook); body != "" {
+			title := strings.TrimSpace(out.Title)
+			if title == "" {
+				title = defaultPlaybookTitle(sig)
+			}
+			class := strings.TrimSpace(out.Class)
+			if class == "" {
+				class = inferClass(sig)
+			}
+			var created bool
+			var pb Playbook
+			current, pb, created = UpsertPlaybook(current, title, body, class, src)
+			d.Playbook = &pb
+			if created {
+				d.Created = true
+			} else {
+				d.Updated = true
+			}
 		}
-		class := strings.TrimSpace(out.Class)
-		if class == "" {
-			class = inferClass(sig)
-		}
-		var created bool
-		var pb Playbook
-		store, pb, created = UpsertPlaybook(store, title, body, class, src)
-		d.Playbook = &pb
-		if created {
-			d.Created = true
-		} else {
-			d.Updated = true
-		}
-	}
-
-	if d.Habit == nil && d.Playbook == nil {
-		return Delta{Skipped: "empty extract", Store: store}, nil
-	}
-
-	if err := Save(store); err != nil {
+		return current, nil
+	})
+	if err != nil {
 		return Delta{}, err
 	}
-	d.Store = store
+	d.Store = saved
 	d.Message = formatDeltaMessage(d)
 	return d, nil
 }

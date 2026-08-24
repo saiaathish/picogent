@@ -288,13 +288,13 @@ func (a *Agent) rememberVerification(output string) {
 		}
 		targets = append(targets, task.ChangedFiles...)
 	}
-	memory := state.Memory
-	if status == "PASS" {
-		memory = evolve.RecordVerificationRoute(memory, hint, targets, output)
-	} else {
-		memory = evolve.RecordFailure(memory, hint, output)
-	}
-	if err := evolve.Save(memory); err == nil {
+	memory, err := evolve.Update(workspace, func(memory evolve.Store) (evolve.Store, error) {
+		if status == "PASS" {
+			return evolve.RecordVerificationRoute(memory, hint, targets, output), nil
+		}
+		return evolve.RecordFailure(memory, hint, output), nil
+	})
+	if err == nil {
 		a.SetMemory(memory)
 	}
 }

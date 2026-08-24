@@ -48,32 +48,40 @@ func (s *server) evolveAPI(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad json", 400)
 			return
 		}
-		store, err := evolve.Load(ws)
-		if err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
+		var store evolve.Store
 		switch strings.ToLower(req.Kind) {
 		case "habit":
-			out := store.Habits[:0]
-			for _, h := range store.Habits {
-				if h.ID != req.ID {
-					out = append(out, h)
+			var err error
+			store, err = evolve.Update(ws, func(store evolve.Store) (evolve.Store, error) {
+				out := store.Habits[:0]
+				for _, h := range store.Habits {
+					if h.ID != req.ID {
+						out = append(out, h)
+					}
 				}
+				store.Habits = out
+				return store, nil
+			})
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
 			}
-			store.Habits = out
 		case "playbook":
-			for i := range store.Playbooks {
-				if store.Playbooks[i].ID == req.ID {
-					store.Playbooks[i].Archived = true
+			var err error
+			store, err = evolve.Update(ws, func(store evolve.Store) (evolve.Store, error) {
+				for i := range store.Playbooks {
+					if store.Playbooks[i].ID == req.ID {
+						store.Playbooks[i].Archived = true
+					}
 				}
+				return store, nil
+			})
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
 			}
 		default:
 			http.Error(w, "kind must be habit or playbook", 400)
-			return
-		}
-		if err := evolve.Save(store); err != nil {
-			http.Error(w, err.Error(), 500)
 			return
 		}
 		s.mu.Lock()

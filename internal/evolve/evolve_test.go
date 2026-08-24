@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -25,6 +26,18 @@ func TestLoadDoesNotCreateStateUntilSave(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, "evolve")); err != nil {
 		t.Fatalf("Save did not create state directory: %v", err)
+	}
+}
+
+func TestLoadReportsStateParentThatIsNotADirectory(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "picogent")
+	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+	if _, err := Load(filepath.Join(root, "project")); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("Load error=%v, want invalid state parent", err)
 	}
 }
 
@@ -54,6 +67,108 @@ func TestUpsertHabitPrefersUpdate(t *testing.T) {
 	}
 	if len(loaded.Habits) != 1 {
 		t.Fatalf("want 1 habit, got %d", len(loaded.Habits))
+	}
+}
+
+func TestSaveAtomicallyReplacesStateWithoutTempResidue(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PICOGENT_HOME", root)
+	ws := filepath.Join(root, "project")
+
+	store := Store{Workspace: ws}
+	store, _, _ = UpsertHabit(store, "verify after every change", "test")
+	if err := Save(store); err != nil {
+		t.Fatal(err)
+	}
+	store, _, _ = UpsertHabit(store, "keep the verification command narrow", "test")
+	if err := Save(store); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := readPath(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".tmp") {
+			t.Fatalf("atomic save left temp file %q", entry.Name())
+		}
+	}
+	loaded, err := Load(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Habits) != 2 {
+		t.Fatalf("loaded habits=%d, want 2", len(loaded.Habits))
+	}
+}
+
+func TestUpdateSerializesConcurrentMutations(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	ws := filepath.Join(t.TempDir(), "project")
+	const updates = 32
+	errs := make(chan error, updates)
+	var wg sync.WaitGroup
+	for i := 0; i < updates; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := Update(ws, func(store Store) (Store, error) {
+				var created bool
+				store, _, created = UpsertHabit(store, "preserve every concurrent update", "test")
+				if !created && len(store.Habits) != 1 {
+					return Store{}, errors.New("concurrent update produced duplicate habits")
+				}
+				return store, nil
+			})
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store, err := Load(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(store.Habits) != 1 || store.Habits[0].Hits != updates {
+		t.Fatalf("concurrent store=%+v, want one habit with %d hits", store.Habits, updates)
+	}
+}
+
+func TestUpdateCallbackErrorDoesNotReplaceState(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	ws := filepath.Join(t.TempDir(), "project")
+	initial := Store{Workspace: ws}
+	initial, _, _ = UpsertHabit(initial, "keep this state", "test")
+	if err := Save(initial); err != nil {
+		t.Fatal(err)
+	}
+	wantErr := errors.New("stop update")
+	if _, err := Update(ws, func(store Store) (Store, error) {
+		store.Habits = nil
+		return store, wantErr
+	}); !errors.Is(err, wantErr) {
+		t.Fatalf("Update error=%v, want %v", err, wantErr)
+	}
+	got, err := Load(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Habits) != 1 || got.Habits[0].Text != "keep this state" {
+		t.Fatalf("state changed after failed update: %+v", got)
 	}
 }
 
