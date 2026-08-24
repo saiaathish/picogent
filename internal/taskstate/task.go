@@ -41,19 +41,24 @@ type Verification struct {
 
 // Task is the compact state required to resume an execution loop.
 type Task struct {
-	Version      int            `json:"version"`
-	ID           string         `json:"id"`
-	SessionID    string         `json:"session_id"`
-	Goal         string         `json:"goal"`
-	Status       Status         `json:"status"`
-	Steps        []Step         `json:"steps,omitempty"`
-	CurrentStep  int            `json:"current_step"`
-	Attempts     int            `json:"attempts"`
-	ChangedFiles []string       `json:"changed_files,omitempty"`
-	Verification []Verification `json:"verification,omitempty"`
-	BlockedBy    string         `json:"blocked_by,omitempty"`
-	CreatedAt    time.Time      `json:"created_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
+	Version      int      `json:"version"`
+	ID           string   `json:"id"`
+	SessionID    string   `json:"session_id"`
+	Goal         string   `json:"goal"`
+	Status       Status   `json:"status"`
+	Steps        []Step   `json:"steps,omitempty"`
+	CurrentStep  int      `json:"current_step"`
+	Attempts     int      `json:"attempts"`
+	ChangedFiles []string `json:"changed_files,omitempty"`
+	ChangeSeq    int      `json:"change_seq,omitempty"`
+	// VerifiedChangeSeq is the latest change sequence covered by passing
+	// verification. A negative value records that the latest evidence did not
+	// pass.
+	VerifiedChangeSeq int            `json:"verified_change_seq,omitempty"`
+	Verification      []Verification `json:"verification,omitempty"`
+	BlockedBy         string         `json:"blocked_by,omitempty"`
+	CreatedAt         time.Time      `json:"created_at"`
+	UpdatedAt         time.Time      `json:"updated_at"`
 }
 
 // New creates a task associated with a persisted chat session.
@@ -113,6 +118,12 @@ func (t *Task) Validate() error {
 	if t.Attempts < 0 {
 		return errors.New("task attempts cannot be negative")
 	}
+	if t.ChangeSeq < 0 {
+		return errors.New("task change sequence cannot be negative")
+	}
+	if t.VerifiedChangeSeq < -1 || t.VerifiedChangeSeq > t.ChangeSeq {
+		return fmt.Errorf("task verified change sequence %d is invalid for change sequence %d", t.VerifiedChangeSeq, t.ChangeSeq)
+	}
 	for i, step := range t.Steps {
 		if strings.TrimSpace(step.Description) == "" {
 			return fmt.Errorf("task step %d is empty", i)
@@ -131,7 +142,8 @@ func (s Status) Valid() bool {
 	}
 }
 
-// SetStatus applies a legal phase transition. Done is terminal.
+// SetStatus applies a legal phase transition. Done is terminal except when
+// unverified persisted mutations must be reopened solely for verification.
 func (t *Task) SetStatus(next Status) error {
 	if t == nil {
 		return errors.New("task is nil")
@@ -139,7 +151,7 @@ func (t *Task) SetStatus(next Status) error {
 	if !next.Valid() {
 		return fmt.Errorf("invalid task status %q", next)
 	}
-	if t.Status == StatusDone && next != StatusDone {
+	if t.Status == StatusDone && next != StatusDone && (next != StatusVerifying || !t.NeedsVerification()) {
 		return errors.New("done task is terminal")
 	}
 	if t.Status == StatusPlanning && next == StatusVerifying {
@@ -182,31 +194,46 @@ func (t *Task) NoteAttempt() {
 }
 
 // AddChangedFiles records normalized, unique changed paths in first-seen order.
+// Each nonempty path represents a successful mutation and advances ChangeSeq.
 func (t *Task) AddChangedFiles(paths ...string) {
+	for _, path := range paths {
+		t.RecordChanged(path)
+	}
+}
+
+// RecordChanged records a successful mutation. ChangedFiles stays compact and
+// unique for display while ChangeSeq advances for every nonempty mutation,
+// including a later edit to a path that is already listed.
+func (t *Task) RecordChanged(path string) {
 	if t == nil {
 		return
 	}
-	seen := make(map[string]struct{}, len(t.ChangedFiles)+len(paths))
-	for _, path := range t.ChangedFiles {
-		seen[path] = struct{}{}
+	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+	path = strings.TrimPrefix(path, "./")
+	if path == "" {
+		return
 	}
-	changed := false
-	for _, path := range paths {
-		path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
-		path = strings.TrimPrefix(path, "./")
-		if path == "" {
-			continue
+	for _, changed := range t.ChangedFiles {
+		if changed == path {
+			t.ChangeSeq++
+			t.touch()
+			return
 		}
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		t.ChangedFiles = append(t.ChangedFiles, path)
-		changed = true
 	}
-	if changed {
-		t.touch()
+	t.ChangedFiles = append(t.ChangedFiles, path)
+	t.ChangeSeq++
+	t.touch()
+}
+
+// InitializeChangeSequence represents a legacy changed-file list as one
+// unverified mutation generation. It is safe to call repeatedly.
+func (t *Task) InitializeChangeSequence() bool {
+	if t == nil || t.ChangeSeq != 0 || len(t.ChangedFiles) == 0 {
+		return false
 	}
+	t.ChangeSeq = 1
+	t.touch()
+	return true
 }
 
 // AddVerification appends concise verification evidence.
@@ -220,7 +247,28 @@ func (t *Task) AddVerification(command string, passed bool, summary string) {
 		Summary: compactText(summary, 800),
 		At:      time.Now().UTC(),
 	})
+	if passed {
+		t.VerifiedChangeSeq = t.ChangeSeq
+	} else {
+		t.VerifiedChangeSeq = -1
+	}
 	t.touch()
+}
+
+// NeedsVerification reports whether the most recent successful mutation has
+// not been covered by a passing check. Older task files did not carry a change
+// sequence, so changed paths in that shape remain conservatively unverified.
+func (t *Task) NeedsVerification() bool {
+	if t == nil {
+		return false
+	}
+	if len(t.ChangedFiles) > 0 && t.ChangeSeq == 0 {
+		return true
+	}
+	if len(t.Verification) > 0 && !t.Verification[len(t.Verification)-1].Passed {
+		return true
+	}
+	return t.VerifiedChangeSeq != t.ChangeSeq
 }
 
 // ConsecutiveVerificationFailures counts failures since the latest passing check.

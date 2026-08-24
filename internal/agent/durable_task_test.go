@@ -93,7 +93,10 @@ func TestDurableTaskContinuesPastRoutineDeferral(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace = workspace
 	cfg.Provider = config.ProviderOllama
-	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		Verify:    func(context.Context) (string, error) { return "verify PASS\nfixed", nil },
+	})
 	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
 	a.TaskStore = taskstate.NewStore(t.TempDir())
 	a.SetTaskSession("session-2")
@@ -115,6 +118,281 @@ func TestDurableTaskContinuesPastRoutineDeferral(t *testing.T) {
 		if msg.Role == "system" && msg.Content == "Internal task-loop instruction: the original request already authorizes the work. Do not ask whether to continue. Take the next obvious safe action with tools. Stop only for permission, a genuine user choice, repeated verification failure, an unavailable resource, or exhausted budget." {
 			t.Fatal("internal continuation prompt persisted in chat history")
 		}
+	}
+}
+
+func TestDurableTaskWriteWithoutVerifierRemainsVerifying(t *testing.T) {
+	workspace := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("session-unverified-write")
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusVerifying {
+		t.Fatalf("task=%#v, want verifying", result.Task)
+	}
+	if !result.Task.NeedsVerification() || result.Task.ChangeSeq != 1 {
+		t.Fatalf("task evidence=%#v", result.Task)
+	}
+}
+
+func TestDurableTaskResumesUnverifiedWriteWithAutomaticVerification(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+
+	initial := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	initial.TaskStore = store
+	initial.SetTaskSession("session-resume-unverified-write")
+	_, first, err := initial.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Task == nil || !first.Task.NeedsVerification() {
+		t.Fatalf("initial task=%#v", first.Task)
+	}
+
+	checks := 0
+	var gotTargets []string
+	resumed := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the fix is verified"}},
+	}}, tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(_ context.Context, targets []string) (string, error) {
+			checks++
+			gotTargets = append([]string(nil), targets...)
+			return "verify PASS\n1 passed", nil
+		},
+	}), perm.New(config.ModeFast, workspace, nil))
+	resumed.TaskStore = store
+	resumed.SetTaskSession("session-resume-unverified-write")
+	_, result, err := resumed.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish the task"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks != 1 {
+		t.Fatalf("automatic verification calls=%d, want 1", checks)
+	}
+	if got := strings.Join(gotTargets, ","); got != "fixed.txt" {
+		t.Fatalf("automatic verification targets=%v, want [fixed.txt]", gotTargets)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone || result.Task.NeedsVerification() {
+		t.Fatalf("resumed task=%#v", result.Task)
+	}
+	if !result.GoalDone {
+		t.Fatal("verified resumed completion should complete the result goal")
+	}
+}
+
+func TestDurableTaskResumesLegacyCompletedChangesForVerification(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	legacy, err := taskstate.New("session-legacy-completed-changes", "fix the broken signup flow", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.Status = taskstate.StatusDone
+	legacy.ChangedFiles = []string{"fixed.txt"}
+	if err := store.Save(legacy); err != nil {
+		t.Fatal(err)
+	}
+
+	checks := 0
+	var gotTargets []string
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the legacy fix is verified"}},
+	}}, tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(_ context.Context, targets []string) (string, error) {
+			checks++
+			gotTargets = append([]string(nil), targets...)
+			return "verify PASS\n1 passed", nil
+		},
+	}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = store
+	a.SetTaskSession(legacy.SessionID)
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish the task"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks != 1 || strings.Join(gotTargets, ",") != "fixed.txt" {
+		t.Fatalf("legacy verification checks=%d targets=%v", checks, gotTargets)
+	}
+	if result.Task == nil || result.Task.ID != legacy.ID || result.Task.Status != taskstate.StatusDone || result.Task.NeedsVerification() {
+		t.Fatalf("legacy result task=%#v", result.Task)
+	}
+	if result.Task.ChangeSeq != 1 || result.Task.VerifiedChangeSeq != 1 || !result.GoalDone {
+		t.Fatalf("legacy evidence=%#v goalDone=%v", result.Task, result.GoalDone)
+	}
+}
+
+func TestDurableTaskExplicitVerificationIncludesAllChangedFiles(t *testing.T) {
+	workspace := t.TempDir()
+	first, _ := json.Marshal(map[string]string{"path": "first.txt", "content": "first"})
+	second, _ := json.Marshal(map[string]string{"path": "second.txt", "content": "second"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "first", Name: "write_file", Arguments: string(first)},
+			{ID: "second", Name: "write_file", Arguments: string(second)},
+		}}},
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "verify", Name: "verify", Arguments: `{"targets":["first.txt"]}`}}}},
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: both files are verified"}},
+	}}
+	checks := 0
+	var gotTargets []string
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(_ context.Context, targets []string) (string, error) {
+			checks++
+			gotTargets = append([]string(nil), targets...)
+			return "verify PASS\n1 passed", nil
+		},
+	})
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("session-explicit-full-targets")
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix both files"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks != 1 || strings.Join(gotTargets, ",") != "first.txt,second.txt" {
+		t.Fatalf("explicit verification checks=%d targets=%v", checks, gotTargets)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone || result.Task.NeedsVerification() {
+		t.Fatalf("task=%#v", result.Task)
+	}
+	if result.Task.ChangeSeq != 2 || result.Task.VerifiedChangeSeq != 2 || !result.GoalDone {
+		t.Fatalf("task evidence=%#v goalDone=%v", result.Task, result.GoalDone)
+	}
+}
+
+func TestDurableTaskPassingVerificationCompletes(t *testing.T) {
+	workspace := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: all tests pass"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		Verify:    func(context.Context) (string, error) { return "verify PASS\n1 passed", nil },
+	})
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("session-verified-write")
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone || result.Task.NeedsVerification() {
+		t.Fatalf("task=%#v", result.Task)
+	}
+	if result.Task.ChangeSeq != 1 || result.Task.VerifiedChangeSeq != 1 || len(result.Task.Verification) != 1 {
+		t.Fatalf("task evidence=%#v", result.Task)
+	}
+	if !result.GoalDone {
+		t.Fatal("verified durable completion should complete the result goal")
+	}
+}
+
+func TestDurableTaskCoBatchedWriteAndVerifyForcesFinalAutoVerify(t *testing.T) {
+	workspace := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "write", Name: "write_file", Arguments: string(args)},
+			{ID: "verify", Name: "verify", Arguments: `{}`},
+		}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	var mu sync.Mutex
+	checks := 0
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		Verify: func(context.Context) (string, error) {
+			mu.Lock()
+			checks++
+			mu.Unlock()
+			return "verify PASS\n1 passed", nil
+		},
+	})
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("session-co-batched-verify")
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	gotChecks := checks
+	mu.Unlock()
+	if gotChecks != 2 {
+		t.Fatalf("verify calls=%d, want explicit verify plus final auto verify", gotChecks)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone || result.Task.NeedsVerification() {
+		t.Fatalf("task=%#v", result.Task)
+	}
+	if result.Task.ChangeSeq != 1 || result.Task.VerifiedChangeSeq != 1 || len(result.Task.Verification) != 2 {
+		t.Fatalf("task evidence=%#v", result.Task)
+	}
+}
+
+func TestDurableTaskUnverifiedCompletionMarkerDoesNotCompleteGoal(t *testing.T) {
+	workspace := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: all tests pass"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("session-unverified-marker")
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusVerifying {
+		t.Fatalf("task=%#v", result.Task)
+	}
+	if result.GoalDone {
+		t.Fatal("an unverified durable task must not complete the result goal")
 	}
 }
 
