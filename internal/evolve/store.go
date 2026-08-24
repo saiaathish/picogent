@@ -10,6 +10,8 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,15 +115,32 @@ func storePath(workspace string) (string, error) {
 	return path, nil
 }
 
-func Load(workspace string) (Store, error) {
-	path, err := readPath(workspace)
-	if err != nil {
-		return Store{}, err
+func missingStatePathError(path string) error {
+	dir := filepath.Dir(path)
+	for {
+		info, err := os.Stat(dir)
+		if err == nil {
+			if !info.IsDir() {
+				return fmt.Errorf("evolve state parent %s is not a directory", dir)
+			}
+			return nil
+		}
+		if !os.IsNotExist(err) {
+			return err
+		}
+		next := filepath.Dir(dir)
+		if next == dir {
+			return nil
+		}
+		dir = next
 	}
+}
+
+func loadLocked(path, workspace string) (Store, error) {
 	s := Store{Workspace: workspace}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return s, nil
 		}
 		return Store{}, err
@@ -135,18 +154,88 @@ func Load(workspace string) (Store, error) {
 	return s, nil
 }
 
+func Load(workspace string) (Store, error) {
+	path, err := readPath(workspace)
+	if err != nil {
+		return Store{}, err
+	}
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if parentErr := missingStatePathError(path); parentErr != nil {
+				return Store{}, parentErr
+			}
+			return Store{Workspace: workspace}, nil
+		}
+		return Store{}, err
+	}
+	unlock, err := acquireStoreLock(path)
+	if err != nil {
+		return Store{}, err
+	}
+	defer unlock()
+	return loadLocked(path, workspace)
+}
+
+func saveLocked(path string, s Store) (Store, error) {
+	s = Curate(s)
+	s.UpdatedAt = time.Now().UTC()
+	data, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return Store{}, err
+	}
+	if err := writeAtomic(path, data); err != nil {
+		return Store{}, err
+	}
+	return s, nil
+}
+
+// Save atomically persists a store. Callers that derive a new store from a
+// prior Load should prefer Update so the read and write happen under one
+// cross-process lock.
 func Save(s Store) error {
 	path, err := storePath(s.Workspace)
 	if err != nil {
 		return err
 	}
-	s = Curate(s)
-	s.UpdatedAt = time.Now().UTC()
-	data, err := json.MarshalIndent(s, "", "  ")
+	unlock, err := acquireStoreLock(path)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	defer unlock()
+	_, err = saveLocked(path, s)
+	return err
+}
+
+// Update loads, mutates, curates, and atomically persists one workspace store
+// while holding the same lock for the entire transaction. It prevents a
+// concurrent reflection or verification-memory update from losing another
+// update between Load and Save.
+func Update(workspace string, fn func(Store) (Store, error)) (Store, error) {
+	if fn == nil {
+		return Store{}, errors.New("evolve update callback is required")
+	}
+	path, err := storePath(workspace)
+	if err != nil {
+		return Store{}, err
+	}
+	unlock, err := acquireStoreLock(path)
+	if err != nil {
+		return Store{}, err
+	}
+	defer unlock()
+
+	current, err := loadLocked(path, workspace)
+	if err != nil {
+		return Store{}, err
+	}
+	next, err := fn(current)
+	if err != nil {
+		return Store{}, err
+	}
+	// The workspace argument selects the path and is authoritative. A
+	// callback cannot redirect a transaction to a different workspace.
+	next.Workspace = workspace
+	return saveLocked(path, next)
 }
 
 func idFor(parts ...string) string {
