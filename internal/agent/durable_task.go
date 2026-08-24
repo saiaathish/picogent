@@ -119,18 +119,23 @@ func (a *Agent) TaskSnapshot() *taskstate.Task {
 	return cloneTask(a.task)
 }
 
-func (a *Agent) beginDurableTask(prompt string, ev EventHandler) {
+func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
 	a.taskMu.Lock()
 	if a.TaskStore == nil || a.TaskSession == "" {
 		a.taskMu.Unlock()
-		return
+		return false
 	}
 	var candidate *taskstate.Task
 	if a.task == nil || (a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification()) || a.task.Status == taskstate.StatusBlocked {
 		task, ok, err := taskstate.NewFromPrompt(a.TaskSession, prompt)
-		if err != nil || !ok {
+		if err != nil {
 			a.taskMu.Unlock()
-			return
+			a.reportTaskUpdateError(ev, err)
+			return true
+		}
+		if !ok {
+			a.taskMu.Unlock()
+			return false
 		}
 		candidate = task
 	} else {
@@ -141,14 +146,14 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) {
 		if err := candidate.SetStatus(taskstate.StatusVerifying); err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
-			return
+			return true
 		}
 	}
 	if candidate.Status == taskstate.StatusPlanning {
 		if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
-			return
+			return true
 		}
 	}
 	candidate.NoteAttempt()
@@ -156,10 +161,11 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) {
 	if err != nil {
 		a.taskMu.Unlock()
 		a.reportTaskPersistenceError(ev, err)
-		return
+		return true
 	}
 	a.taskMu.Unlock()
 	emitTaskState(ev, snapshot)
+	return false
 }
 
 func (a *Agent) taskPromptSuffix() string {
@@ -227,6 +233,25 @@ func (a *Agent) noteTaskVerification(output string, ev EventHandler) {
 	a.mutateTask(ev, func(task *taskstate.Task) error {
 		task.AddVerification("verify", passed, output)
 		return nil
+	})
+}
+
+// requireTaskVerification records that an explicit completion marker still
+// needs fresh evidence. The negative sequence is also meaningful for tasks
+// with no file mutations, where the normal mutation-based verification gate
+// would otherwise consider an unverified task complete.
+func (a *Agent) requireTaskVerification(ev EventHandler) {
+	a.mutateTask(ev, func(task *taskstate.Task) error {
+		task.VerifiedChangeSeq = -1
+		if task.Status == taskstate.StatusPlanning {
+			if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+				return err
+			}
+		}
+		if task.Status == taskstate.StatusVerifying {
+			return nil
+		}
+		return task.SetStatus(taskstate.StatusVerifying)
 	})
 }
 

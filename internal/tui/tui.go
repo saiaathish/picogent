@@ -68,12 +68,14 @@ type taskProgressMsg struct {
 	sessionID string
 }
 type doneMsg struct {
-	history   []llm.Message
-	result    agent.Result
-	prompt    string
-	err       error
-	turnID    uint64
-	sessionID string
+	history      []llm.Message
+	result       agent.Result
+	prompt       string
+	goal         string
+	goalRevision uint64
+	err          error
+	turnID       uint64
+	sessionID    string
 }
 
 type evolveMsg struct {
@@ -325,6 +327,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.result.Task != nil && msg.result.Task.SessionID == m.sessionID {
 			m.task = msg.result.Task
 		}
+		if msg.result.GoalDone && strings.TrimSpace(msg.goal) != "" && m.ag != nil {
+			workspace := m.ag.ConfigSnapshot().Workspace
+			currentGoal, currentRevision := m.ag.GoalStateSnapshot()
+			if currentGoal == msg.goal && currentRevision == msg.goalRevision {
+				if cleared, err := goal.ClearIfState(workspace, msg.goal, msg.goalRevision); err != nil {
+					m.lines = append(m.lines, logLine{Kind: "error", Text: fmt.Sprintf("couldn't clear completed goal: %v", err)})
+				} else if cleared {
+					m.ag.SetGoalState("", 0)
+				}
+			}
+		}
 		if msg.err != nil && !strings.Contains(strings.ToLower(msg.err.Error()), "context canceled") {
 			m.lines = append(m.lines, logLine{Kind: "error", Text: msg.err.Error()})
 		}
@@ -420,17 +433,17 @@ func (m *model) stop() {
 	m.turnID++
 }
 
-func (m *model) autoApplyPrompt(prompt string) {
-	m.autoApplyPromptWith(prompt, false)
+func (m *model) autoApplyPrompt(prompt string) error {
+	return m.autoApplyPromptWith(prompt, false)
 }
 
-func (m *model) autoApplyScopedPrompt(prompt string) {
-	m.autoApplyPromptWith(prompt, true)
+func (m *model) autoApplyScopedPrompt(prompt string) error {
+	return m.autoApplyPromptWith(prompt, true)
 }
 
-func (m *model) autoApplyPromptWith(prompt string, automaticScope bool) {
+func (m *model) autoApplyPromptWith(prompt string, automaticScope bool) error {
 	if m.ag == nil || !m.cfg.AutoTaskModeOn() || strings.HasPrefix(strings.TrimSpace(prompt), "/") {
-		return
+		return nil
 	}
 	currentMode := m.ag.TaskModeSnapshot()
 	currentGoal := m.ag.GoalSnapshot()
@@ -439,24 +452,32 @@ func (m *model) autoApplyPromptWith(prompt string, automaticScope bool) {
 		dec = agent.InferAutomaticScope(prompt, currentMode, currentGoal)
 	}
 	if dec.GoalSet && dec.Goal != currentGoal {
-		_ = goal.Set(m.cfg.Workspace, dec.Goal)
-		m.ag.SetGoal(dec.Goal)
+		if revision, err := goal.SetState(m.cfg.Workspace, dec.Goal); err == nil {
+			m.ag.SetGoalState(dec.Goal, revision)
+		} else {
+			return fmt.Errorf("couldn't save inferred goal: %w", err)
+		}
 	}
 	if dec.TaskMode != currentMode {
 		m.ag.SetTaskMode(dec.TaskMode)
 	}
+	return nil
 }
 
-func (m *model) autoApplyGoal(prompt string) {
+func (m *model) autoApplyGoal(prompt string) error {
 	if m.ag == nil || !m.cfg.AutoTaskModeOn() || strings.HasPrefix(strings.TrimSpace(prompt), "/") {
-		return
+		return nil
 	}
 	currentGoal := m.ag.GoalSnapshot()
 	dec := agent.InferAuto(prompt, m.ag.TaskModeSnapshot(), currentGoal)
 	if dec.GoalSet && dec.Goal != currentGoal {
-		_ = goal.Set(m.cfg.Workspace, dec.Goal)
-		m.ag.SetGoal(dec.Goal)
+		if revision, err := goal.SetState(m.cfg.Workspace, dec.Goal); err == nil {
+			m.ag.SetGoalState(dec.Goal, revision)
+		} else {
+			return fmt.Errorf("couldn't save inferred goal: %w", err)
+		}
 	}
+	return nil
 }
 
 func (m *model) submit(line string) tea.Cmd {
@@ -509,12 +530,20 @@ func (m *model) runAgentAsMode(prompt, displayPrompt string, mode *agent.TaskMod
 	// Infer persistent state only after this turn is admitted. A temporary scope
 	// never overwrites the saved task-mode preference. Automatic inference may
 	// update the live session mode; a new session restores m.cfg.TaskMode.
+	var intentErr error
 	if mode != nil {
-		m.autoApplyGoal(displayPrompt)
+		intentErr = m.autoApplyGoal(displayPrompt)
 	} else if automaticScope {
-		m.autoApplyScopedPrompt(displayPrompt)
+		intentErr = m.autoApplyScopedPrompt(displayPrompt)
 	} else {
-		m.autoApplyPrompt(displayPrompt)
+		intentErr = m.autoApplyPrompt(displayPrompt)
+	}
+	if intentErr != nil {
+		m.busy = false
+		m.turnMode = nil
+		m.lines = append(m.lines, logLine{Kind: "error", Text: intentErr.Error()})
+		m.refresh()
+		return nil
 	}
 	m.turnID++
 	turnID := m.turnID
@@ -536,6 +565,11 @@ func (m *model) runAgentAsMode(prompt, displayPrompt string, mode *agent.TaskMod
 	h := &handler{send: send, permCh: permCh, turnID: turnID, sessionID: sessionID}
 	ag := m.ag
 	hist := m.history
+	runGoal := ""
+	var runGoalRevision uint64
+	if ag != nil {
+		runGoal, runGoalRevision = ag.GoalStateSnapshot()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	return func() tea.Msg {
@@ -548,12 +582,7 @@ func (m *model) runAgentAsMode(prompt, displayPrompt string, mode *agent.TaskMod
 				}
 			}
 		}
-		if res.GoalDone {
-			workspace := ag.ConfigSnapshot().Workspace
-			_ = goal.Clear(workspace)
-			ag.SetGoal("")
-		}
-		return doneMsg{history: hist, result: res, prompt: displayPrompt, err: err, turnID: turnID, sessionID: sessionID}
+		return doneMsg{history: hist, result: res, prompt: displayPrompt, goal: runGoal, goalRevision: runGoalRevision, err: err, turnID: turnID, sessionID: sessionID}
 	}
 }
 
@@ -656,8 +685,13 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "task mode: " + strings.ToLower(tm.Label())})
 	case strings.HasPrefix(payload, "goal:set:"):
 		text := strings.TrimPrefix(payload, "goal:set:")
-		_ = goal.Set(m.cfg.Workspace, text)
-		m.ag.SetGoal(text)
+		revision, err := goal.SetState(m.cfg.Workspace, text)
+		if err != nil {
+			m.lines = append(m.lines, logLine{Kind: "error", Text: fmt.Sprintf("couldn't save goal: %v", err)})
+			m.refresh()
+			return nil
+		}
+		m.ag.SetGoalState(text, revision)
 		m.lines = append(m.lines, logLine{Kind: "user", Text: "/goal " + text})
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "goal set"})
 		m.refresh()
@@ -670,8 +704,12 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 			m.lines = append(m.lines, logLine{Kind: "system", Text: "goal: " + g})
 		}
 	case payload == "goal:clear":
-		_ = goal.Clear(m.cfg.Workspace)
-		m.ag.SetGoal("")
+		if err := goal.Clear(m.cfg.Workspace); err != nil {
+			m.lines = append(m.lines, logLine{Kind: "error", Text: fmt.Sprintf("couldn't clear goal: %v", err)})
+			m.refresh()
+			return nil
+		}
+		m.ag.SetGoalState("", 0)
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "goal cleared"})
 	}
 	m.refresh()

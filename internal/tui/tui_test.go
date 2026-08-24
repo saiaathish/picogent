@@ -126,8 +126,17 @@ func TestCompletionPromptReachesAgentWithoutAutomaticScope(t *testing.T) {
 	if done.err != nil {
 		t.Fatalf("completion prompt failed: %v", done.err)
 	}
+	if done.result.GoalDone {
+		t.Fatal("unmarked completion must not clear the active goal")
+	}
 	if len(fake.Calls) != 1 {
 		t.Fatalf("completion prompt calls = %d, want 1", len(fake.Calls))
+	}
+	if got := a.GoalSnapshot(); got != prompt {
+		t.Fatalf("completion prompt goal = %q, want persisted %q", got, prompt)
+	}
+	if got, err := goal.Load(workspace); err != nil || got != prompt {
+		t.Fatalf("completion prompt stored goal = %q, err=%v", got, err)
 	}
 
 	var system, user string
@@ -144,6 +153,71 @@ func TestCompletionPromptReachesAgentWithoutAutomaticScope(t *testing.T) {
 	}
 	if strings.Contains(system, "Current turn scope (takes precedence over active and durable goals):") {
 		t.Fatalf("completion prompt installed an automatic scope boundary: %q", system)
+	}
+}
+
+func TestStaleCompletedTurnCannotClearNewerGoal(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	ag.SetGoal("newer project goal")
+	if err := goal.Set(workspace, "newer project goal"); err != nil {
+		t.Fatal(err)
+	}
+	m := &model{cfg: cfg, ag: ag, turnID: 2, sessionID: "new-session", vp: viewport.New(80, 20)}
+	_, _ = m.Update(doneMsg{result: agent.Result{GoalDone: true}, goal: "finish this project", turnID: 1, sessionID: "old-session"})
+	if got, _ := goal.Load(workspace); got != "newer project goal" || ag.GoalSnapshot() != "newer project goal" {
+		t.Fatalf("stale completion erased newer goal: stored=%q agent=%q", got, ag.GoalSnapshot())
+	}
+}
+
+func TestGoalSlashFailsClosedWhenDurableWriteFails(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	ag.SetGoalState("old durable goal", 1)
+	m := &model{cfg: cfg, ag: ag, lines: []logLine{}, vp: viewport.New(80, 20)}
+	m.slashLocal("goal:set:new durable goal")
+	if got, _ := ag.GoalStateSnapshot(); got != "old durable goal" {
+		t.Fatalf("failed goal write changed memory to %q", got)
+	}
+	if len(m.lines) == 0 || m.lines[len(m.lines)-1].Kind != "error" {
+		t.Fatalf("failed goal write did not report an error: %#v", m.lines)
+	}
+	m.slashLocal("goal:clear")
+	if got, _ := ag.GoalStateSnapshot(); got != "old durable goal" {
+		t.Fatalf("failed goal clear changed memory to %q", got)
+	}
+}
+
+func TestCompletedGoalClearFailureIsVisibleAndKeepsGoal(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	ag.SetGoalState("finish this project", 1)
+	m := &model{cfg: cfg, ag: ag, sessionID: "session-1"}
+	_, _ = m.Update(doneMsg{result: agent.Result{GoalDone: true}, goal: "finish this project", goalRevision: 1})
+	if got, _ := ag.GoalStateSnapshot(); got != "finish this project" {
+		t.Fatalf("failed clear changed in-memory goal to %q", got)
+	}
+	if len(m.lines) == 0 || m.lines[len(m.lines)-1].Kind != "error" || !strings.Contains(m.lines[len(m.lines)-1].Text, "couldn't clear completed goal") {
+		t.Fatalf("clear failure was not visible: %#v", m.lines)
 	}
 }
 
@@ -175,6 +249,7 @@ func TestAutomaticScopeKeepsPlanAndReportIntent(t *testing.T) {
 }
 
 func TestAutomaticScopePreservesSelectedTaskBoundary(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
 	for _, tt := range []struct {
 		prompt string
 		mode   agent.TaskMode

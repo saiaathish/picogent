@@ -579,3 +579,52 @@ func TestDurableTaskDoesNotPublishUnsavedState(t *testing.T) {
 		t.Fatalf("last persisted state changed: got=%#v last=%#v", loaded, lastPersisted)
 	}
 }
+
+func TestDurableTaskResumesActiveCompletionIntentAfterMissingEvidence(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+
+	initial := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the project is finished"}},
+	}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	initial.SetGoal("finish this project")
+	initial.TaskStore = store
+	initial.SetTaskSession("resume-completion-intent")
+	_, first, err := initial.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish this project"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.GoalDone || first.Task == nil || first.Task.Status != taskstate.StatusVerifying {
+		t.Fatalf("initial completion = %#v goalDone=%v, want verifying/unresolved", first.Task, first.GoalDone)
+	}
+
+	checks := 0
+	resumed := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the project is finished"}},
+	}}, tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(_ context.Context, targets []string) (string, error) {
+			checks++
+			if len(targets) != 0 {
+				t.Fatalf("resume completion targets = %v, want none", targets)
+			}
+			return "verify PASS\nproject checks passed", nil
+		},
+	}), perm.New(config.ModeFast, workspace, nil))
+	resumed.SetGoal("finish this project")
+	resumed.TaskStore = store
+	resumed.SetTaskSession("resume-completion-intent")
+	_, result, err := resumed.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish this project"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks != 1 {
+		t.Fatalf("resume verification calls = %d, want 1", checks)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone || result.Task.NeedsVerification() || !result.GoalDone {
+		t.Fatalf("resumed completion = %#v goalDone=%v, want verified done", result.Task, result.GoalDone)
+	}
+}

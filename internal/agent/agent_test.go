@@ -382,6 +382,172 @@ func TestGoalCompleteMarksResult(t *testing.T) {
 	}
 }
 
+func TestActiveGoalCompletionRequiresPassingEvidenceWithoutChanges(t *testing.T) {
+	dir := t.TempDir()
+	checks := 0
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the project is finished"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: dir,
+		VerifyTargets: func(_ context.Context, targets []string) (string, error) {
+			checks++
+			if len(targets) != 0 {
+				t.Fatalf("completion-only verification targets = %v, want none", targets)
+			}
+			return "verify PASS\nproject checks passed", nil
+		},
+	})
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, dir, nil))
+	a.SetGoal("finish this project")
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("active-goal-completion")
+
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish this project"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks != 1 {
+		t.Fatalf("completion verification calls = %d, want 1", checks)
+	}
+	if res.Task == nil || res.Task.Status != taskstate.StatusDone || res.Task.NeedsVerification() {
+		t.Fatalf("completion task = %#v, want done with passing evidence", res.Task)
+	}
+	if len(res.Task.Verification) != 1 || res.Task.VerifiedChangeSeq != 0 {
+		t.Fatalf("completion evidence = %#v", res.Task)
+	}
+	if !res.GoalDone {
+		t.Fatal("passing completion evidence should set GoalDone")
+	}
+}
+
+func TestActiveGoalCompletionWithoutVerifierRemainsVerifying(t *testing.T) {
+	dir := t.TempDir()
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the project is finished"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
+	a.SetGoal("finish the project")
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("active-goal-no-verifier")
+
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish the project"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Task == nil || res.Task.Status != taskstate.StatusVerifying || !res.Task.NeedsVerification() {
+		t.Fatalf("completion task = %#v, want verifying/unverified", res.Task)
+	}
+	if res.GoalDone {
+		t.Fatal("completion marker without evidence must not set GoalDone")
+	}
+}
+
+func TestActiveGoalCompletionRequiresDurableTaskStart(t *testing.T) {
+	workspace := t.TempDir()
+	badRoot := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(badRoot, []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the project is finished"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		Verify: func(context.Context) (string, error) {
+			return "verify PASS", nil
+		},
+	})
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(badRoot)
+	a.SetTaskSession("durable-start-failure")
+	a.SetGoal("finish this project")
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish this project"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GoalDone {
+		t.Fatal("goal completed despite failed durable task initialization")
+	}
+}
+
+func TestActiveGoalCompletionRefreshesEvidenceAfterLaterWriteWithoutTaskStore(t *testing.T) {
+	dir := t.TempDir()
+	writeArgs, _ := json.Marshal(map[string]string{"path": "later.txt", "content": "updated"})
+	checks := 0
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "verify-before", Name: "verify", Arguments: `{}`}}}},
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: string(writeArgs)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the project is finished"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: dir,
+		VerifyTargets: func(_ context.Context, _ []string) (string, error) {
+			checks++
+			return "verify PASS\nchecks passed", nil
+		},
+	})
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, dir, nil))
+	a.SetGoal("finish this project")
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish this project"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checks != 2 {
+		t.Fatalf("verification calls = %d, want explicit evidence plus a fresh completion check", checks)
+	}
+	if !result.GoalDone {
+		t.Fatal("completion should require and receive fresh post-write evidence")
+	}
+}
+
+func TestScopedCompletionCannotRetireBroaderActiveGoal(t *testing.T) {
+	dir := t.TempDir()
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the focused pass is finished"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: dir,
+		Verify: func(context.Context) (string, error) {
+			return "verify PASS\nfocused checks passed", nil
+		},
+	})
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, dir, nil))
+	a.SetGoal("finish this project")
+	mode := agent.TaskPlan
+	_, result, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "finish this project"}, allowAll{}, agent.RunOptions{
+		TaskMode:      &mode,
+		ScopeBoundary: "For this turn, complete only the focused first pass.",
+		DurablePrompt: "finish this project",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GoalDone {
+		t.Fatal("a scoped first pass must not retire the broader active goal")
+	}
+	if got := a.GoalSnapshot(); got != "finish this project" {
+		t.Fatalf("active goal = %q, want retained broad goal", got)
+	}
+}
+
 func TestSystemPromptRefreshesTaskMode(t *testing.T) {
 	dir := t.TempDir()
 	fake := &llm.Scripted{Responses: []llm.ChatResponse{

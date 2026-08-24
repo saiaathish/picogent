@@ -97,6 +97,7 @@ type Agent struct {
 	Memory       evolve.Store // learned habits/playbooks; injected per-turn with a hard byte budget
 	TaskMode     TaskMode
 	Goal         string
+	GoalRevision uint64
 	Trace        *trace.Log
 	TaskStore    *taskstate.Store
 	TaskSession  string
@@ -116,6 +117,7 @@ type RuntimeState struct {
 	LLM          llm.Client
 	TaskMode     TaskMode
 	Goal         string
+	GoalRevision uint64
 	ProjectRules string
 	SkillRules   string
 	Memory       evolve.Store
@@ -155,6 +157,17 @@ func (a *Agent) SetTaskMode(m TaskMode) {
 func (a *Agent) SetGoal(goalText string) {
 	a.stateMu.Lock()
 	a.Goal = strings.TrimSpace(goalText)
+	a.GoalRevision = 0
+	a.stateMu.Unlock()
+}
+
+// SetGoalState updates the durable goal text and its identity together. Plain
+// SetGoal remains useful for tests and transient in-memory goals, but durable
+// completion must carry the revision returned by goal.SetState.
+func (a *Agent) SetGoalState(goalText string, revision uint64) {
+	a.stateMu.Lock()
+	a.Goal = strings.TrimSpace(goalText)
+	a.GoalRevision = revision
 	a.stateMu.Unlock()
 }
 
@@ -252,6 +265,22 @@ func (a *Agent) GoalSnapshot() string {
 	return a.Goal
 }
 
+func (a *Agent) GoalRevisionSnapshot() uint64 {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.GoalRevision
+}
+
+// GoalStateSnapshot reads the text and revision as one state-machine value.
+// Callers that use the pair for conditional completion must not fetch the two
+// fields independently, or a concurrent goal replacement could forge a pair
+// that never existed together.
+func (a *Agent) GoalStateSnapshot() (string, uint64) {
+	a.stateMu.RLock()
+	defer a.stateMu.RUnlock()
+	return a.Goal, a.GoalRevision
+}
+
 func (a *Agent) RuntimeSnapshot() RuntimeState {
 	a.stateMu.RLock()
 	defer a.stateMu.RUnlock()
@@ -260,6 +289,7 @@ func (a *Agent) RuntimeSnapshot() RuntimeState {
 		LLM:          a.LLM,
 		TaskMode:     a.TaskMode,
 		Goal:         a.Goal,
+		GoalRevision: a.GoalRevision,
 		ProjectRules: a.ProjectRules,
 		SkillRules:   a.SkillRules,
 		Memory:       a.Memory,
@@ -368,7 +398,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	if durablePrompt == "" {
 		durablePrompt = userText
 	}
-	a.beginDurableTask(durablePrompt, ev)
+	taskPersistenceFailed := a.beginDurableTask(durablePrompt, ev)
 	// Always refresh the system prompt so mid-chat task mode / goal changes take effect.
 	msgs := make([]llm.Message, 0, len(history)+3)
 	msgs = append(msgs, llm.Message{Role: "system", Content: systemPromptFor(state, userText, a.taskPromptSuffix(), opts.ScopeBoundary)})
@@ -434,8 +464,16 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableContinuePrompt})
 				continue
 			}
+			completionMarker := goal.LooksComplete(text)
+			completionEvidenceRequired := completionMarker && strings.TrimSpace(state.Goal) != ""
+			if completionEvidenceRequired && verificationStatus(lastVerification) != "PASS" {
+				// A completion marker is only intent evidence. Mark the durable
+				// task as awaiting verification before attempting the check so a
+				// missing verifier or denied check cannot accidentally finalize it.
+				a.requireTaskVerification(ev)
+			}
 			res.FilesChanged = sortedChanged(changed)
-			if autoVerified := a.maybeVerify(ctx, ev, userText, res.FilesChanged, calledVerify, state, gate); autoVerified != "" {
+			if autoVerified := a.maybeVerify(ctx, ev, userText, res.FilesChanged, calledVerify, completionEvidenceRequired, state, gate); autoVerified != "" {
 				lastVerification = autoVerified
 			}
 			res.Verified = lastVerification
@@ -467,7 +505,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			res.ToolRounds = round
 			a.finishDurableTask(text, taskBlocker, ev)
 			res.Task = a.TaskSnapshot()
-			res.GoalDone = goal.LooksComplete(text) && (res.Task == nil || res.Task.Status == taskstate.StatusDone)
+			goalEvidencePassed := !completionEvidenceRequired || verificationStatus(lastVerification) == "PASS"
+			taskComplete := res.Task == nil || (res.Task.Status == taskstate.StatusDone && !res.Task.NeedsVerification())
+			res.GoalDone = completionMarker && goalEvidencePassed && !taskPersistenceFailed && strings.TrimSpace(opts.ScopeBoundary) == "" && taskComplete
 			_ = traceLog.Append("turn_end", "", text, trace.Bool(true), 0)
 			msgs = stripDurableInternal(msgs)
 			final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
@@ -625,13 +665,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	return final, res, err
 }
 
-func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint string, filesChanged []string, already bool, state RuntimeState, gate *perm.Gate) string {
+func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint string, filesChanged []string, already bool, completionEvidenceRequired bool, state RuntimeState, gate *perm.Gate) string {
 	task := a.TaskSnapshot()
 	needsVerification := false
 	if task != nil {
 		needsVerification = task.NeedsVerification()
 	}
-	if ((already || len(filesChanged) == 0) && !needsVerification) || state.Tools == nil {
+	if ((already || len(filesChanged) == 0) && !needsVerification && !completionEvidenceRequired) || state.Tools == nil {
 		return ""
 	}
 	regCtx := state.Tools.ContextSnapshot()
@@ -659,6 +699,11 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	}
 	args, _ := json.Marshal(map[string]any{"targets": targets})
 	call := llm.ToolCall{ID: "verify-auto", Name: "verify", Arguments: string(args)}
+	if blocked, reason := state.TaskMode.BlockTool(call.Name); blocked {
+		ev.OnToolStart(call)
+		ev.OnToolEnd(call, reason, nil)
+		return reason
+	}
 	a.setTaskStatus(taskstate.StatusVerifying, ev)
 	ev.OnToolStart(call)
 	req := tool.Permission(call.Arguments, regCtx)

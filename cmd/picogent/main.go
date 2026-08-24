@@ -17,6 +17,7 @@ import (
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/gui"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/mcpbridge"
@@ -317,12 +318,91 @@ func runOnce(args []string) error {
 			prompt = applied
 		}
 		mode := scopeModeForHeadlessTurn(a, cfg, originalPrompt, choice, *clarify)
+		if err := applyHeadlessGoalInference(a, cfg, originalPrompt); err != nil {
+			return err
+		}
+		runGoal, runGoalRevision := a.GoalStateSnapshot()
+		runGoal = strings.TrimSpace(runGoal)
 		scopeBoundary := scope.TurnBoundary(choice)
-		_, _, err = a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{TaskMode: mode, TracePrompt: originalPrompt, DurablePrompt: originalPrompt, ScopeBoundary: scopeBoundary})
+		_, result, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{TaskMode: mode, TracePrompt: originalPrompt, DurablePrompt: originalPrompt, ScopeBoundary: scopeBoundary})
+		if err != nil {
+			return err
+		}
+		return clearHeadlessGoalAfterCompletion(a, cfg, runGoal, runGoalRevision, result)
+	}
+	automaticMode := autoModeForHeadlessTurn(a, cfg, originalPrompt)
+	if err := applyHeadlessGoalInference(a, cfg, originalPrompt); err != nil {
 		return err
 	}
-	_, _, err = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h)
-	return err
+	runGoal, runGoalRevision := a.GoalStateSnapshot()
+	runGoal = strings.TrimSpace(runGoal)
+	_, result, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{
+		TaskMode:      automaticMode,
+		TracePrompt:   originalPrompt,
+		DurablePrompt: originalPrompt,
+	})
+	if err != nil {
+		return err
+	}
+	return clearHeadlessGoalAfterCompletion(a, cfg, runGoal, runGoalRevision, result)
+}
+
+// applyHeadlessGoalInference mirrors the GUI/TUI automatic intent path. The
+// inferred goal is persisted before the model runs so an interrupted one-shot
+// invocation can resume with the same durable intent.
+func applyHeadlessGoalInference(a *agent.Agent, cfg config.Config, prompt string) error {
+	if a == nil || !cfg.AutoTaskModeOn() {
+		return nil
+	}
+	current := a.GoalSnapshot()
+	decision := agent.InferAuto(prompt, a.TaskModeSnapshot(), current)
+	if !decision.GoalSet || decision.Goal == current {
+		return nil
+	}
+	revision, err := goal.SetState(cfg.Workspace, decision.Goal)
+	if err != nil {
+		return fmt.Errorf("couldn't save inferred goal: %w", err)
+	}
+	a.SetGoalState(decision.Goal, revision)
+	return nil
+}
+
+// clearHeadlessGoalAfterCompletion removes a persisted goal only after the
+// agent reports a completion marker backed by its verification gate.
+func clearHeadlessGoalAfterCompletion(a *agent.Agent, cfg config.Config, expectedGoal string, expectedRevision uint64, result agent.Result) error {
+	expectedGoal = strings.TrimSpace(expectedGoal)
+	if a == nil || !result.GoalDone || expectedGoal == "" {
+		return nil
+	}
+	currentGoal, currentRevision := a.GoalStateSnapshot()
+	if currentGoal != expectedGoal || currentRevision != expectedRevision {
+		return nil
+	}
+	cleared, err := goal.ClearIfState(cfg.Workspace, expectedGoal, expectedRevision)
+	if err != nil {
+		return fmt.Errorf("couldn't clear completed goal: %w", err)
+	}
+	currentGoal, currentRevision = a.GoalStateSnapshot()
+	if cleared && currentGoal == expectedGoal && currentRevision == expectedRevision {
+		a.SetGoalState("", 0)
+	}
+	return nil
+}
+
+// autoModeForHeadlessTurn mirrors the lightweight GUI/TUI mode inference for
+// prompts that do not trigger a scope preflight. It is per-turn only; the
+// saved PICOGENT_MODE/task-mode preference remains untouched.
+func autoModeForHeadlessTurn(a *agent.Agent, cfg config.Config, prompt string) *agent.TaskMode {
+	if a == nil || !cfg.AutoTaskModeOn() {
+		return nil
+	}
+	current := a.TaskModeSnapshot()
+	decision := agent.InferAuto(prompt, current, a.GoalSnapshot())
+	if decision.TaskMode == current {
+		return nil
+	}
+	mode := decision.TaskMode
+	return &mode
 }
 
 // scopeModeForHeadlessTurn keeps an automatic scope boundary separate from

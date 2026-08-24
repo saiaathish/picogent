@@ -159,6 +159,15 @@ func inferGoalPhrase(prompt string) (string, bool) {
 		return "", false
 	}
 
+	// Project-completion language is explicit durable intent even though it
+	// does not contain one of the broader "until/all/every" goal triggers.
+	// Keep the original prompt as the persisted goal so the user's wording is
+	// retained for resume and UI display.
+	completion := strings.Trim(strings.TrimSpace(lower), "!?.,")
+	if completion == "finish this project" || completion == "finish the project" {
+		return p, true
+	}
+
 	triggers := []string{
 		"until ", "don't stop until", "do not stop until", "keep going until",
 		"fix all", "make sure all", "get all", "make ci green", "make the ci green",
