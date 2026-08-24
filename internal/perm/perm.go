@@ -190,7 +190,7 @@ func autoAllow(mode config.Mode, req Request) bool {
 		return false
 	}
 	switch req.Tool {
-	case "read_file", "glob", "grep", "list_dir", "repo_map", "todo_write", "verify":
+	case "read_file", "glob", "grep", "list_dir", "repo_map", "todo_write":
 		return true
 	case "git":
 		return req.Command == "status" || req.Command == "diff"
@@ -199,15 +199,13 @@ func autoAllow(mode config.Mode, req Request) bool {
 		return req.Command == "list" || req.Command == "suggest"
 	}
 	if strings.HasPrefix(req.Tool, "mcp_") {
-		if mode == config.ModeFast {
-			// Fast: read/list/navigate MCP tools auto-allow; write/act-style still ask.
-			return !LooksWriteMCP(req.Tool)
-		}
+		// Connected MCP tools cross an external trust boundary. Their names are
+		// metadata supplied by the server, not a capability declaration.
 		return false
 	}
 	if mode == config.ModeFast {
 		switch req.Tool {
-		case "write_file", "edit_file", "bash", "verify":
+		case "write_file", "edit_file":
 			return true
 		}
 	}
@@ -237,22 +235,9 @@ func ClassifyMCP(tool, summary string) Request {
 
 var destructiveRe = regexp.MustCompile(`(?i)(^|[;&|]\s*)(rm|sudo|mkfs|dd|shutdown|reboot)\b`)
 
-// bashSafeCommands is intentionally small.  A shell command is only
-// auto-allowed in Fast mode when its executable and syntax are simple enough
-// to keep the one-workspace promise legible.  Everything else still works
-// after an explicit approval, but cannot silently run with the model's
-// authority.
-var bashSafeCommands = map[string]bool{
-	"awk": true, "bun": true, "cargo": true, "cat": true, "cmake": true,
-	"cut": true, "diff": true, "dirname": true, "du": true, "echo": true,
-	"file": true, "find": true, "git": true, "go": true, "grep": true,
-	"head": true, "jq": true, "just": true, "ls": true, "make": true,
-	"node": true, "npm": true, "npx": true, "pnpm": true, "printf": true,
-	"pwd": true, "pytest": true, "rg": true, "ruby": true, "rustc": true,
-	"sed": true, "sort": true, "tail": true, "tr": true, "uniq": true,
-	"wc": true, "which": true, "where": true, "yarn": true,
-}
-
+// Shell commands still work after explicit approval, but Fast mode never
+// silently grants the shell model authority. The lexical boundary below is
+// retained only to explain outside-workspace or operator risks in the prompt.
 var bashDestructiveRe = regexp.MustCompile(`(?i)(^|[\s;&|])(?:rm|sudo|mkfs|dd|shutdown|reboot|chmod|chown|kill|pkill|git\s+(?:push|commit|reset|clean|checkout|restore|rebase)|npm\s+(?:install|uninstall|publish)|pnpm\s+(?:install|remove|publish)|yarn\s+(?:add|remove|publish)|cargo\s+(?:install|publish))\b`)
 
 func ClassifyBash(command, workspace string) Request {
@@ -289,10 +274,6 @@ func bashNeedsApproval(command, workspace string) (bool, string) {
 	first := strings.Trim(fields[0], "\"'")
 	if strings.Contains(first, "=") && !strings.HasPrefix(first, "./") {
 		return true, "environment assignments are not auto-allowed"
-	}
-	base := strings.ToLower(filepath.Base(first))
-	if !bashSafeCommands[base] {
-		return true, "this shell executable is not constrained to the workspace"
 	}
 	root := strings.TrimSpace(workspace)
 	if root != "" {

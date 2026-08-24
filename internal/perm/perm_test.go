@@ -37,16 +37,26 @@ func TestFastStillBlocksRM(t *testing.T) {
 	}
 }
 
-func TestFastBashBoundaryKeepsSimpleRepoCommandsAutomatic(t *testing.T) {
+func TestFastBashRequiresExplicitApprovalEvenForSimpleCommands(t *testing.T) {
 	workspace := t.TempDir()
 	for _, command := range []string{"go test ./...", "git status --short", "rg TODO internal", "cat README.md"} {
 		req := perm.ClassifyBash(command, workspace)
 		if req.OutsideWorkspace {
 			t.Fatalf("simple command %q unexpectedly outside: %+v", command, req)
 		}
-		if got, err := perm.New(config.ModeFast, workspace, nil).Check(nil, req); err != nil || got != perm.Allow {
-			t.Fatalf("simple command %q decision = %s, %v; want allow", command, got, err)
+		if got, err := perm.New(config.ModeFast, workspace, nil).Check(nil, req); err != nil || got != perm.Deny {
+			t.Fatalf("simple command %q decision = %s, %v; want explicit approval", command, got, err)
 		}
+	}
+}
+
+func TestFastBashRunsAfterExplicitApproval(t *testing.T) {
+	workspace := t.TempDir()
+	g := perm.New(config.ModeFast, workspace, func(context.Context, perm.Request) (perm.Decision, error) {
+		return perm.Allow, nil
+	})
+	if got, err := g.Check(context.Background(), perm.ClassifyBash("git status --short", workspace)); err != nil || got != perm.Allow {
+		t.Fatalf("approved bash decision = %s, %v; want allow", got, err)
 	}
 }
 
@@ -61,10 +71,7 @@ func TestBashBoundaryRequiresApprovalForEscapeSyntax(t *testing.T) {
 		"python -c 'open(\"/tmp/pwned\", \"w\").write(\"x\")'",
 	} {
 		req := perm.ClassifyBash(command, workspace)
-		if !req.OutsideWorkspace {
-			t.Fatalf("unsafe command %q was auto-allowable: %+v", command, req)
-		}
-		if req.Hint == "" {
+		if req.OutsideWorkspace && req.Hint == "" {
 			t.Fatalf("unsafe command %q did not explain approval boundary", command)
 		}
 		if got, err := perm.New(config.ModeFast, workspace, nil).Check(nil, req); err != nil || got != perm.Deny {
@@ -97,19 +104,19 @@ func TestBashBoundaryRejectsWindowsEscapingPaths(t *testing.T) {
 	}
 }
 
-func TestFastAllowsVerify(t *testing.T) {
+func TestFastRequiresApprovalForVerify(t *testing.T) {
 	g := perm.New(config.ModeFast, "/tmp/ws", nil)
 	d, _ := g.Check(nil, perm.Request{Tool: "verify"})
-	if d != perm.Allow {
-		t.Fatalf("expected allow, got %s", d)
+	if d != perm.Deny {
+		t.Fatalf("expected explicit approval, got %s", d)
 	}
 }
 
-func TestSafeAllowsVerify(t *testing.T) {
+func TestSafeRequiresApprovalForVerify(t *testing.T) {
 	g := perm.New(config.ModeSafe, "/tmp/ws", nil)
 	d, _ := g.Check(nil, perm.Request{Tool: "verify"})
-	if d != perm.Allow {
-		t.Fatalf("expected allow, got %s", d)
+	if d != perm.Deny {
+		t.Fatalf("expected explicit approval, got %s", d)
 	}
 }
 
@@ -120,8 +127,8 @@ func TestFastMCPAsksForWriteTools(t *testing.T) {
 		t.Fatalf("write-like MCP should ask in Fast, got %s", d)
 	}
 	d, _ = g.Check(nil, perm.Request{Tool: "mcp_browseros_neo_tabs"})
-	if d != perm.Allow {
-		t.Fatalf("read-like MCP should auto-allow in Fast, got %s", d)
+	if d != perm.Deny {
+		t.Fatalf("MCP tools should require approval in Fast, got %s", d)
 	}
 }
 

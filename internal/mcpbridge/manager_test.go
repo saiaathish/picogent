@@ -1,6 +1,10 @@
 package mcpbridge
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
 func TestDropServerKeepsOthers(t *testing.T) {
 	m := &Manager{
@@ -31,4 +35,23 @@ func TestDropServerEmpty(t *testing.T) {
 	var m *Manager
 	m.DropServer("x")
 	(&Manager{}).DropServer("x")
+}
+
+func TestCommandEnvDoesNotInheritParentSecrets(t *testing.T) {
+	t.Setenv("PICOGENT_TEST_SECRET", "should-not-cross")
+	t.Setenv("PATH", "/usr/bin")
+	env := commandEnv(map[string]string{"EXPLICIT_TOKEN": "configured", "PATH": "/custom/bin"})
+	joined := strings.Join(env, "\n")
+	if strings.Contains(joined, "PICOGENT_TEST_SECRET") || strings.Contains(joined, "should-not-cross") {
+		t.Fatalf("parent secret inherited: %v", env)
+	}
+	if !strings.Contains(joined, "EXPLICIT_TOKEN=configured") {
+		t.Fatalf("explicit MCP environment missing: %v", env)
+	}
+	if !strings.Contains(joined, "PATH=/custom/bin") {
+		t.Fatalf("explicit PATH override missing: %v", env)
+	}
+	if _, ok := os.LookupEnv("PICOGENT_TEST_SECRET"); !ok {
+		t.Fatal("test environment was unexpectedly changed")
+	}
 }

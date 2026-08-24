@@ -716,7 +716,9 @@ func TestGUIQueuedSameTextGoalReplacementSurvivesOlderCompletion(t *testing.T) {
 			return "verify PASS", nil
 		},
 	})
-	ag := agent.New(cfg, scripted, reg, perm.New(config.ModeFast, workspace, nil))
+	gate := perm.New(config.ModeFast, workspace, nil)
+	gate.AddAlwaysAllowed("verify")
+	ag := agent.New(cfg, scripted, reg, gate)
 	ag.SetGoalState("finish this project", firstRevision)
 	entered := make(chan struct{})
 	release := make(chan struct{})
