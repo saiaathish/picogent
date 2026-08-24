@@ -170,3 +170,202 @@ func TestEnvironmentModeRemainsExplicitOverride(t *testing.T) {
 		t.Fatalf("mode = %q, want explicit environment override %q", got.Mode, config.ModeFast)
 	}
 }
+
+func TestSaveDoesNotPersistEnvironmentModeOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		persisted config.Mode
+		override  config.Mode
+	}{
+		{name: "fast override does not promote saved safe", persisted: config.ModeSafe, override: config.ModeFast},
+		{name: "safe override does not demote saved fast", persisted: config.ModeFast, override: config.ModeSafe},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("PICOGENT_HOME", home)
+			t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+			t.Setenv("PICOGENT_MODE", "")
+			t.Setenv("PICOGENT_MODEL", "")
+			t.Setenv("PICOGENT_BASE_URL", "")
+			t.Setenv("PICOGENT_PROVIDER", "")
+			t.Setenv("PICOGENT_ROUTER", "")
+			t.Chdir(t.TempDir())
+
+			user := config.Default()
+			user.Mode = tc.persisted
+			user.Provider = config.ProviderOllama
+			if err := config.Save(user); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv("PICOGENT_MODE", string(tc.override))
+			effective, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if effective.Mode != tc.override {
+				t.Fatalf("effective mode = %q, want override %q", effective.Mode, tc.override)
+			}
+			effective.Model = "saved-after-env-override"
+			if err := config.Save(effective); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv("PICOGENT_MODE", "")
+			reloaded, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.Mode != tc.persisted {
+				t.Fatalf("saved mode = %q, want original user mode %q", reloaded.Mode, tc.persisted)
+			}
+			if reloaded.Model != "saved-after-env-override" {
+				t.Fatalf("unrelated setting was not saved: %q", reloaded.Model)
+			}
+		})
+	}
+}
+
+func TestFirstSaveWithEnvironmentModeKeepsSafeDefault(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+	t.Setenv("PICOGENT_MODE", "fast")
+	t.Setenv("PICOGENT_MODEL", "")
+	t.Chdir(t.TempDir())
+
+	effective, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.Mode != config.ModeFast {
+		t.Fatalf("effective mode = %q, want %q", effective.Mode, config.ModeFast)
+	}
+	effective.Provider = config.ProviderOllama
+	if err := config.Save(effective); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PICOGENT_MODE", "")
+	reloaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Mode != config.ModeSafe {
+		t.Fatalf("saved mode = %q, want safe default %q", reloaded.Mode, config.ModeSafe)
+	}
+}
+
+func TestUserModeSelectionPreservesRuntimeOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		persisted  config.Mode
+		override   config.Mode
+		selection  config.Mode
+		wantStored config.Mode
+	}{
+		{
+			name:       "saved safe remains beneath fast override",
+			persisted:  config.ModeSafe,
+			override:   config.ModeFast,
+			selection:  config.ModeSafe,
+			wantStored: config.ModeSafe,
+		},
+		{
+			name:       "saved fast remains beneath safe override",
+			persisted:  config.ModeFast,
+			override:   config.ModeSafe,
+			selection:  config.ModeFast,
+			wantStored: config.ModeFast,
+		},
+		{
+			name:       "selection updates saved safe beneath fast override",
+			persisted:  config.ModeSafe,
+			override:   config.ModeFast,
+			selection:  config.ModeFast,
+			wantStored: config.ModeFast,
+		},
+		{
+			name:       "selection updates saved fast beneath safe override",
+			persisted:  config.ModeFast,
+			override:   config.ModeSafe,
+			selection:  config.ModeSafe,
+			wantStored: config.ModeSafe,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("PICOGENT_HOME", home)
+			t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+			t.Setenv("PICOGENT_MODE", "")
+			t.Chdir(t.TempDir())
+
+			user := config.Default()
+			user.Mode = tc.persisted
+			user.Provider = config.ProviderOllama
+			if err := config.Save(user); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv("PICOGENT_MODE", string(tc.override))
+			effective, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			effective.SetUserMode(tc.selection)
+			if effective.Mode != tc.override {
+				t.Fatalf("effective mode = %q, want runtime override %q", effective.Mode, tc.override)
+			}
+			if effective.PersistentMode() != tc.wantStored {
+				t.Fatalf("persistent mode = %q, want selection %q", effective.PersistentMode(), tc.wantStored)
+			}
+			if err := config.Save(effective); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv("PICOGENT_MODE", "")
+			reloaded, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.Mode != tc.wantStored {
+				t.Fatalf("saved mode = %q, want selection %q", reloaded.Mode, tc.wantStored)
+			}
+		})
+	}
+}
+
+func TestRuntimeModeDoesNotPersist(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+	t.Setenv("PICOGENT_MODE", "")
+	t.Chdir(t.TempDir())
+
+	user := config.Default()
+	user.Mode = config.ModeSafe
+	user.Provider = config.ProviderOllama
+	if err := config.Save(user); err != nil {
+		t.Fatal(err)
+	}
+
+	effective, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective.SetRuntimeMode(config.ModeFast)
+	if effective.Mode != config.ModeFast {
+		t.Fatalf("effective mode = %q, want fast runtime mode", effective.Mode)
+	}
+	if err := config.Save(effective); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Mode != config.ModeSafe {
+		t.Fatalf("saved mode = %q, want original safe mode", reloaded.Mode)
+	}
+}

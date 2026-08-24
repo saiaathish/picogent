@@ -35,6 +35,7 @@ import (
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/opencodeauth"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/projects"
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/setup"
@@ -98,6 +99,8 @@ type turnAdmission struct {
 type server struct {
 	cfg            config.Config
 	ag             *agent.Agent
+	saveConfig     func(config.Config) error
+	configTxMu     sync.Mutex
 	mu             sync.Mutex
 	hist           []llm.Message
 	sessionID      string
@@ -554,6 +557,8 @@ func (s *server) snapshot() map[string]any {
 	}
 	out := map[string]any{
 		"mode":                cfg.Mode,
+		"saved_mode":          cfg.PersistentMode(),
+		"mode_overridden":     cfg.ModeOverridden(),
 		"task_mode":           string(taskMode),
 		"model":               cfg.DisplayModel(),
 		"workspace":           cfg.Workspace,
@@ -877,14 +882,41 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid mode", 400)
 		return
 	}
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	s.mu.Lock()
-	s.cfg.Mode = m
-	if s.ag != nil {
-		s.ag.SetMode(m)
+	// Save a prospective config before exposing it to this process. A failed
+	// persistence write must not look like a successful mode change in either
+	// the GUI state or the permission gate.
+	next := s.cfg
+	next.SetUserMode(m)
+	if err := s.persistConfig(next); err != nil {
+		s.mu.Unlock()
+		http.Error(w, "couldn't save mode: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
-	_ = config.Save(s.cfg)
+	s.cfg = next
+	if s.ag != nil {
+		s.ag.UpdateConfig(func(cfg *config.Config) { cfg.SetUserMode(m) })
+	}
 	s.mu.Unlock()
 	w.WriteHeader(204)
+}
+
+func (s *server) persistConfig(cfg config.Config) error {
+	if s.saveConfig != nil {
+		return s.saveConfig(cfg)
+	}
+	return config.Save(cfg)
+}
+
+func closeCandidateAgent(a *agent.Agent) {
+	if a == nil || a.Tools == nil {
+		return
+	}
+	if mcp := a.Tools.MCPManagerSnapshot(); mcp != nil {
+		mcp.Close()
+	}
 }
 
 func (s *server) setTaskMode(w http.ResponseWriter, r *http.Request) {
@@ -2300,7 +2332,9 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"workspace":                 cfg.Workspace,
-			"mode":                      cfg.Mode,
+			"mode":                      cfg.PersistentMode(),
+			"active_mode":               cfg.Mode,
+			"mode_overridden":           cfg.ModeOverridden(),
 			"model":                     cfg.DisplayModel(),
 			"provider":                  cfg.Provider,
 			"max_tool_rounds":           cfg.MaxToolRounds,
@@ -2341,14 +2375,17 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), 400)
 			return
 		}
+		s.configTxMu.Lock()
+		defer s.configTxMu.Unlock()
 		s.mu.Lock()
 		cfg := s.cfg
+		s.mu.Unlock()
 		workspaceChanged := in.Workspace != "" && in.Workspace != cfg.Workspace
 		if in.Workspace != "" {
 			cfg.Workspace = in.Workspace
 		}
 		if mode := config.Mode(in.Mode); mode.Valid() {
-			cfg.Mode = mode
+			cfg.SetUserMode(mode)
 		}
 		if in.Model != "" {
 			if in.Model == config.ModelAuto {
@@ -2406,44 +2443,73 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		if in.BashTimeoutSec > 0 {
 			cfg.BashTimeoutSec = in.BashTimeoutSec
 		}
-		if !workspaceChanged {
-			s.cfg = cfg
-		}
-		if !workspaceChanged && s.ag != nil {
-			s.ag.UpdateConfig(func(current *config.Config) { *current = cfg })
-		}
-		s.mu.Unlock()
-		persisted := true
-		var persistErr string
-		if workspaceChanged {
-			if _, err := s.replaceWorkspace(cfg); err != nil {
-				http.Error(w, err.Error(), 500)
-				return
-			}
-		} else if in.Provider != "" || in.RouterEnabled != nil || in.UseLLMAdvisor != nil || in.AllowFable != nil || in.FableConfirmed != nil || in.AnthropicKey != "" {
-			a, err := app.Build(cfg)
+		rebuildAgent := workspaceChanged || in.Provider != "" || in.RouterEnabled != nil || in.UseLLMAdvisor != nil || in.AllowFable != nil || in.FableConfirmed != nil || in.AnthropicKey != ""
+		var nextAgent *agent.Agent
+		var nextSession string
+		var nextHistory []llm.Message
+		if rebuildAgent {
+			built, err := app.Build(cfg)
 			if err != nil {
 				http.Error(w, err.Error(), 500)
 				return
 			}
-			s.mu.Lock()
-			s.cfg = cfg
-			s.ag = a
-			s.mu.Unlock()
-			s.attachRouterHook()
+			nextAgent = built
+			if workspaceChanged {
+				nextSession, nextHistory = initialSession(cfg.Workspace)
+				nextAgent.SetTaskSession(nextSession)
+			}
 		}
-		if err := config.Save(cfg); err != nil {
-			// Keep the in-memory change even if disk is unwritable (sandbox, permissions).
-			persisted = false
-			persistErr = err.Error()
+		// Persist before publishing. The configuration transaction mutex is also
+		// held by /api/mode, so Settings and direct mode changes cannot reorder
+		// their saved config. A failed write changes neither the live agent nor
+		// its permission gate.
+		if err := s.persistConfig(cfg); err != nil {
+			closeCandidateAgent(nextAgent)
+			http.Error(w, "couldn't save settings: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.mu.Lock()
+		if workspaceChanged {
+			oldWorkspace := s.cfg.Workspace
+			oldSession := s.sessionID
+			oldHistory := s.hist
+			s.abortTurnLocked()
+			if oldSession != "" && len(oldHistory) > 0 {
+				_ = session.SaveMessages(oldWorkspace, oldSession, oldHistory)
+			}
+			s.cfg = cfg
+			s.ag = nextAgent
+			s.hist = nextHistory
+			s.sessionID = nextSession
+		} else {
+			s.cfg = cfg
+			if nextAgent != nil {
+				nextAgent.SetTaskSession(s.sessionID)
+				s.ag = nextAgent
+			} else if s.ag != nil {
+				s.ag.UpdateConfig(func(current *config.Config) { *current = cfg })
+			}
+		}
+		s.mu.Unlock()
+		if workspaceChanged {
+			s.attachRouterHook()
+			_, _, _ = projects.Ensure(cfg.Workspace)
+			s.emit(event{Type: "system", Text: "Opened " + projects.NameFromPath(cfg.Workspace)})
+			s.emitTaskSnapshot(nextSession)
+			s.emit(event{Type: "overview", Text: "refresh"})
+			s.invalidatePromptRecs()
+			s.emit(event{Type: "prompts_refresh", Text: "all"})
+		} else if nextAgent != nil {
+			s.attachRouterHook()
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"ok":        true,
-			"persisted": persisted,
-			"warning":   persistErr,
-			"model":     cfg.DisplayModel(),
-			"mode":      cfg.Mode,
+			"ok":              true,
+			"persisted":       true,
+			"model":           cfg.DisplayModel(),
+			"mode":            cfg.PersistentMode(),
+			"active_mode":     cfg.Mode,
+			"mode_overridden": cfg.ModeOverridden(),
 		})
 	default:
 		http.Error(w, "GET or POST only", 405)

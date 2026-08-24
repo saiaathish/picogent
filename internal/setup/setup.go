@@ -44,6 +44,8 @@ type Status struct {
 	Logins     []LoginTarget `json:"logins"`
 	Workspace  string        `json:"workspace"`
 	Mode       string        `json:"mode"`
+	ActiveMode string        `json:"active_mode"`
+	ModeOverridden bool      `json:"mode_overridden"`
 	Model        string            `json:"model"`
 	Provider     string            `json:"provider"`
 	ModelOptions []llm.ModelChoice `json:"model_options"`
@@ -92,7 +94,9 @@ func Snapshot(cfg config.Config) Status {
 		Components:   comps,
 		Logins:       logins,
 		Workspace:    ws,
-		Mode:         string(cfg.Mode),
+		Mode:         string(cfg.PersistentMode()),
+		ActiveMode:   string(cfg.Mode),
+		ModeOverridden: cfg.ModeOverridden(),
 		Model:        cfg.DisplayModel(),
 		Provider:     string(cfg.Provider),
 		ModelOptions: llm.ModelChoices(llm.EcoCodex, false),
@@ -506,7 +510,7 @@ func Apply(cfg config.Config, workspace, mode, model string) (config.Config, err
 		m = config.ModeSafe
 	}
 	cfg.Workspace = abs
-	cfg.Mode = m
+	cfg.SetUserMode(m)
 	prov := cfg.Provider
 	if prov == "" {
 		prov = config.ProviderCodex

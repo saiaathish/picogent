@@ -1068,6 +1068,7 @@ async function refresh() {
   syncEmpty();
   await loadThreads();
   await loadProjects();
+  return s;
 }
 
 let authPollTimer = null;
@@ -1177,12 +1178,20 @@ $("auth-banner-btn")?.addEventListener("click", () => {
 modeSeg.addEventListener("click", async (e) => {
   const btn = e.target.closest("[data-mode]");
   if (!btn) return;
-  await fetch("/api/mode", {
+  const res = await fetch("/api/mode", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ mode: btn.dataset.mode }),
   });
-  refresh();
+  if (!res.ok) {
+    const message = await res.text();
+    add("error", message || "Couldn't save mode");
+    return;
+  }
+  const state = await refresh();
+  if (state?.mode_overridden && state.mode !== btn.dataset.mode) {
+    add("system", `Saved ${String(btn.dataset.mode).toUpperCase()} for next run; PICOGENT_MODE keeps this run ${String(state.mode).toUpperCase()}.`);
+  }
 });
 
 function bindNewChat(el) {

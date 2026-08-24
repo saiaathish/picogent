@@ -54,6 +54,384 @@ func TestGUIOnlyAcceptsLoopbackListenAddresses(t *testing.T) {
 	}
 }
 
+func TestSetModePersistsDeliberateChoiceWithEnvironmentOverride(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+	t.Setenv("PICOGENT_MODE", "")
+	t.Chdir(t.TempDir())
+
+	user := config.Default()
+	user.Mode = config.ModeFast
+	user.Provider = config.ProviderOllama
+	user.Workspace = t.TempDir()
+	if err := config.Save(user); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PICOGENT_MODE", "safe")
+	effective, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := perm.New(effective.Mode, effective.Workspace, nil)
+	ag := agent.New(effective, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: effective.Workspace}), gate)
+	s := &server{cfg: effective, ag: ag, permCh: make(chan perm.Decision, 1)}
+	state := s.snapshot()
+	if state["mode"] != config.ModeSafe || state["saved_mode"] != config.ModeFast || state["mode_overridden"] != true {
+		t.Fatalf("state mode fields = %#v", state)
+	}
+	res := httptest.NewRecorder()
+	s.setMode(res, httptest.NewRequest(http.MethodPost, "/api/mode", strings.NewReader(`{"mode":"fast"}`)))
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("set mode status = %d", res.Code)
+	}
+	if s.cfg.Mode != config.ModeSafe {
+		t.Fatalf("server effective mode = %q, want environment mode %q", s.cfg.Mode, config.ModeSafe)
+	}
+	if got := ag.ConfigSnapshot().Mode; got != config.ModeSafe {
+		t.Fatalf("agent effective mode = %q, want environment mode %q", got, config.ModeSafe)
+	}
+	if gate.Mode != config.ModeSafe {
+		t.Fatalf("gate mode = %q, want environment mode %q", gate.Mode, config.ModeSafe)
+	}
+
+	t.Setenv("PICOGENT_MODE", "")
+	reloaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Mode != config.ModeFast {
+		t.Fatalf("saved mode = %q, want deliberate user mode %q", reloaded.Mode, config.ModeFast)
+	}
+}
+
+func TestSetModeDoesNotReportOrApplyUnsavedChange(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	cfg.SetRuntimeMode(config.ModeFast)
+	gate := perm.New(cfg.Mode, workspace, nil)
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
+	s := &server{cfg: cfg, ag: ag, permCh: make(chan perm.Decision, 1)}
+
+	res := httptest.NewRecorder()
+	s.setMode(res, httptest.NewRequest(http.MethodPost, "/api/mode", strings.NewReader(`{"mode":"fast"}`)))
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("set mode status = %d, body=%s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "couldn't save mode") {
+		t.Fatalf("set mode error = %q", res.Body.String())
+	}
+	if s.cfg.Mode != config.ModeFast || s.cfg.PersistentMode() != config.ModeSafe {
+		t.Fatalf("server config changed after failed save: %#v", s.cfg)
+	}
+	if got := ag.ConfigSnapshot(); got.Mode != config.ModeFast || got.PersistentMode() != config.ModeSafe {
+		t.Fatalf("agent config changed after failed save: %#v", got)
+	}
+	if gate.Mode != config.ModeFast {
+		t.Fatalf("gate mode changed after failed save: %q", gate.Mode)
+	}
+}
+
+func TestSettingsDoesNotReportOrApplyUnsavedModeChange(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	cfg.SetRuntimeMode(config.ModeFast)
+	gate := perm.New(cfg.Mode, workspace, nil)
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
+	s := &server{cfg: cfg, ag: ag, permCh: make(chan perm.Decision, 1)}
+
+	res := httptest.NewRecorder()
+	s.settings(res, httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(`{"mode":"fast"}`)))
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("settings status = %d, body=%s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "couldn't save settings") {
+		t.Fatalf("settings error = %q", res.Body.String())
+	}
+	if s.cfg.Mode != config.ModeFast || s.cfg.PersistentMode() != config.ModeSafe {
+		t.Fatalf("server config changed after failed settings save: %#v", s.cfg)
+	}
+	if got := ag.ConfigSnapshot(); got.Mode != config.ModeFast || got.PersistentMode() != config.ModeSafe {
+		t.Fatalf("agent config changed after failed settings save: %#v", got)
+	}
+	if gate.Mode != config.ModeFast {
+		t.Fatalf("gate mode changed after failed settings save: %q", gate.Mode)
+	}
+}
+
+func TestSettingsDoesNotReplaceWorkspaceWhenSaveFails(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+	oldWorkspace := t.TempDir()
+	newWorkspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = oldWorkspace
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: oldWorkspace}), perm.New(cfg.Mode, oldWorkspace, nil))
+	s := &server{cfg: cfg, ag: ag, sessionID: "old-session", permCh: make(chan perm.Decision, 1)}
+
+	res := httptest.NewRecorder()
+	s.settings(res, httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(fmt.Sprintf(`{"workspace":%q}`, newWorkspace))))
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("settings status = %d, body=%s", res.Code, res.Body.String())
+	}
+	s.mu.Lock()
+	gotCfg, gotAgent, gotSession := s.cfg, s.ag, s.sessionID
+	s.mu.Unlock()
+	if gotCfg.Workspace != oldWorkspace || gotAgent != ag || gotSession != "old-session" {
+		t.Fatalf("failed settings workspace change published state: cfg=%#v agentReplaced=%t session=%q", gotCfg, gotAgent != ag, gotSession)
+	}
+}
+
+func TestSettingsAndModePersistenceAreSerialized(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	gate := perm.New(cfg.Mode, workspace, nil)
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
+
+	firstSaveStarted := make(chan struct{})
+	releaseFirstSave := make(chan struct{})
+	secondSaveStarted := make(chan struct{})
+	var saves []config.Config
+	var savesMu sync.Mutex
+	s := &server{
+		cfg:    cfg,
+		ag:     ag,
+		permCh: make(chan perm.Decision, 1),
+		saveConfig: func(next config.Config) error {
+			savesMu.Lock()
+			index := len(saves)
+			saves = append(saves, next)
+			savesMu.Unlock()
+			switch index {
+			case 0:
+				close(firstSaveStarted)
+				<-releaseFirstSave
+			case 1:
+				close(secondSaveStarted)
+			}
+			return nil
+		},
+	}
+
+	settingsRes := httptest.NewRecorder()
+	settingsDone := make(chan struct{})
+	go func() {
+		s.settings(settingsRes, httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(`{"mode":"fast"}`)))
+		close(settingsDone)
+	}()
+	<-firstSaveStarted
+
+	modeRes := httptest.NewRecorder()
+	modeDone := make(chan struct{})
+	go func() {
+		s.setMode(modeRes, httptest.NewRequest(http.MethodPost, "/api/mode", strings.NewReader(`{"mode":"safe"}`)))
+		close(modeDone)
+	}()
+
+	select {
+	case <-secondSaveStarted:
+		close(releaseFirstSave)
+		<-settingsDone
+		<-modeDone
+		t.Fatal("mode save began before the settings transaction completed")
+	case <-time.After(10 * time.Second):
+	}
+	close(releaseFirstSave)
+	select {
+	case <-settingsDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("settings transaction did not finish")
+	}
+	select {
+	case <-modeDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("mode transaction did not finish")
+	}
+	if settingsRes.Code != http.StatusOK || modeRes.Code != http.StatusNoContent {
+		t.Fatalf("settings/mode status = %d/%d", settingsRes.Code, modeRes.Code)
+	}
+	savesMu.Lock()
+	defer savesMu.Unlock()
+	if len(saves) != 2 || saves[0].PersistentMode() != config.ModeFast || saves[1].PersistentMode() != config.ModeSafe {
+		t.Fatalf("save order = %#v, want fast then safe", saves)
+	}
+	if s.cfg.PersistentMode() != config.ModeSafe || ag.ConfigSnapshot().PersistentMode() != config.ModeSafe || gate.Mode != config.ModeSafe {
+		t.Fatalf("final live state did not match final saved mode: server=%#v agent=%#v gate=%q", s.cfg, ag.ConfigSnapshot(), gate.Mode)
+	}
+}
+
+func TestSettingsSavesBaselineModeDuringEnvironmentOverride(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+	t.Setenv("PICOGENT_MODE", "")
+	t.Chdir(t.TempDir())
+
+	user := config.Default()
+	user.Mode = config.ModeSafe
+	user.Provider = config.ProviderOllama
+	user.Workspace = workspace
+	if err := config.Save(user); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PICOGENT_MODE", "fast")
+	effective, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := perm.New(effective.Mode, workspace, nil)
+	ag := agent.New(effective, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
+	s := &server{cfg: effective, ag: ag, permCh: make(chan perm.Decision, 1)}
+
+	get := httptest.NewRecorder()
+	s.settings(get, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if get.Code != http.StatusOK {
+		t.Fatalf("settings get status = %d", get.Code)
+	}
+	var settings map[string]any
+	if err := json.NewDecoder(get.Body).Decode(&settings); err != nil {
+		t.Fatal(err)
+	}
+	if got := settings["mode"]; got != string(config.ModeSafe) {
+		t.Fatalf("settings saved mode = %#v, want %q", got, config.ModeSafe)
+	}
+	if got := settings["active_mode"]; got != string(config.ModeFast) {
+		t.Fatalf("settings active mode = %#v, want %q", got, config.ModeFast)
+	}
+	if got, _ := settings["mode_overridden"].(bool); !got {
+		t.Fatalf("settings mode_overridden = %#v, want true", settings["mode_overridden"])
+	}
+
+	post := httptest.NewRecorder()
+	s.settings(post, httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(`{"mode":"fast"}`)))
+	if post.Code != http.StatusOK {
+		t.Fatalf("settings post status = %d, body=%s", post.Code, post.Body.String())
+	}
+	if s.cfg.Mode != config.ModeFast {
+		t.Fatalf("server effective mode = %q, want environment mode %q", s.cfg.Mode, config.ModeFast)
+	}
+	if got := ag.ConfigSnapshot().Mode; got != config.ModeFast {
+		t.Fatalf("agent effective mode = %q, want environment mode %q", got, config.ModeFast)
+	}
+	if gate.Mode != config.ModeFast {
+		t.Fatalf("gate mode = %q, want environment mode %q", gate.Mode, config.ModeFast)
+	}
+
+	t.Setenv("PICOGENT_MODE", "")
+	reloaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Mode != config.ModeFast {
+		t.Fatalf("saved mode = %q, want settings selection %q", reloaded.Mode, config.ModeFast)
+	}
+}
+
+func TestSetupFinishRetainsSavedModeDuringEnvironmentOverride(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		persisted config.Mode
+		override  config.Mode
+	}{
+		{name: "safe preference beneath fast environment", persisted: config.ModeSafe, override: config.ModeFast},
+		{name: "fast preference beneath safe environment", persisted: config.ModeFast, override: config.ModeSafe},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			workspace := t.TempDir()
+			t.Setenv("PICOGENT_HOME", home)
+			t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+			t.Setenv("PICOGENT_MODE", "")
+			t.Setenv("PICOGENT_MODEL", "")
+			t.Chdir(t.TempDir())
+
+			user := config.Default()
+			user.Mode = tc.persisted
+			user.Provider = config.ProviderOllama
+			user.Model = "qwen2.5-coder:7b"
+			user.Workspace = workspace
+			if err := config.Save(user); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Setenv("PICOGENT_MODE", string(tc.override))
+			effective, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			s := &server{cfg: effective, permCh: make(chan perm.Decision, 1), sessionID: "setup-session"}
+
+			status := httptest.NewRecorder()
+			s.setupStatus(status, httptest.NewRequest(http.MethodGet, "/api/setup", nil))
+			if status.Code != http.StatusOK {
+				t.Fatalf("setup status = %d", status.Code)
+			}
+			var snapshot struct {
+				Mode           string `json:"mode"`
+				ActiveMode     string `json:"active_mode"`
+				ModeOverridden bool   `json:"mode_overridden"`
+				Model          string `json:"model"`
+			}
+			if err := json.NewDecoder(status.Body).Decode(&snapshot); err != nil {
+				t.Fatal(err)
+			}
+			if snapshot.Mode != string(tc.persisted) || snapshot.ActiveMode != string(tc.override) || !snapshot.ModeOverridden {
+				t.Fatalf("setup snapshot = %#v, want saved=%q active=%q overridden=true", snapshot, tc.persisted, tc.override)
+			}
+
+			body, err := json.Marshal(map[string]string{"workspace": workspace, "mode": snapshot.Mode, "model": snapshot.Model})
+			if err != nil {
+				t.Fatal(err)
+			}
+			finish := httptest.NewRecorder()
+			s.setupFinish(finish, httptest.NewRequest(http.MethodPost, "/api/setup/finish", strings.NewReader(string(body))))
+			if finish.Code != http.StatusNoContent {
+				t.Fatalf("setup finish status = %d, body=%s", finish.Code, finish.Body.String())
+			}
+			if s.cfg.Mode != tc.override {
+				t.Fatalf("server effective mode = %q, want environment mode %q", s.cfg.Mode, tc.override)
+			}
+			if s.ag == nil || s.ag.ConfigSnapshot().Mode != tc.override {
+				t.Fatalf("setup agent did not retain effective environment mode %q", tc.override)
+			}
+
+			t.Setenv("PICOGENT_MODE", "")
+			reloaded, err := config.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if reloaded.Mode != tc.persisted || !reloaded.SetupComplete {
+				t.Fatalf("reloaded config = %#v, want saved mode %q and completed setup", reloaded, tc.persisted)
+			}
+		})
+	}
+}
+
 func TestFollowUpQueuePreservesFIFOAndBounds(t *testing.T) {
 	s := &server{}
 	mode := agent.TaskPlan

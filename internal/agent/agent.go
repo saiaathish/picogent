@@ -227,7 +227,7 @@ func (a *Agent) UpdateConfig(update func(*config.Config)) {
 }
 
 func (a *Agent) SetMode(mode config.Mode) {
-	a.UpdateConfig(func(cfg *config.Config) { cfg.Mode = mode })
+	a.UpdateConfig(func(cfg *config.Config) { cfg.SetUserMode(mode) })
 }
 
 func (a *Agent) SetModel(model string) {

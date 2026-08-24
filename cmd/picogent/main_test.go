@@ -7,8 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/saiaathish/picogent/internal/agent"
+	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/scope"
+	"github.com/saiaathish/picogent/internal/tools"
 )
 
 func TestVersion(t *testing.T) {
@@ -82,5 +86,52 @@ func TestStdioYesStillBlocksRiskyActions(t *testing.T) {
 	decision, err := h.OnNeedPermission(context.Background(), perm.Request{Summary: "delete file", Destructive: true})
 	if decision != perm.Deny || !errors.Is(err, errHeadlessPermissionDenied) {
 		t.Fatalf("risky --yes result = %s, %v; want deny/exit-2 error", decision, err)
+	}
+}
+
+func TestHeadlessYesOverridesOnlyThisProcess(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+	t.Setenv("PICOGENT_MODE", "")
+	t.Chdir(t.TempDir())
+
+	user := config.Default()
+	user.Mode = config.ModeSafe
+	user.Provider = config.ProviderOllama
+	user.Workspace = workspace
+	if err := config.Save(user); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PICOGENT_MODE", "safe")
+	effective, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := perm.New(effective.Mode, workspace, nil)
+	a := agent.New(effective, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
+	applyHeadlessYes(&effective, a)
+	if effective.Mode != config.ModeFast || effective.PersistentMode() != config.ModeSafe {
+		t.Fatalf("headless config effective=%q persistent=%q, want fast/safe", effective.Mode, effective.PersistentMode())
+	}
+	if got := a.ConfigSnapshot().Mode; got != config.ModeFast {
+		t.Fatalf("agent mode = %q, want fast", got)
+	}
+	if gate.Mode != config.ModeFast {
+		t.Fatalf("gate mode = %q, want fast", gate.Mode)
+	}
+	if err := config.Save(effective); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PICOGENT_MODE", "")
+	reloaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Mode != config.ModeSafe {
+		t.Fatalf("saved mode = %q, want original safe mode", reloaded.Mode)
 	}
 }

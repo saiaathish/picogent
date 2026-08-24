@@ -295,8 +295,7 @@ func runOnce(args []string) error {
 		a.SetModel(*model)
 	}
 	if *yes {
-		cfg.Mode = config.ModeFast
-		a.SetMode(config.ModeFast)
+		applyHeadlessYes(&cfg, a)
 	}
 	// Headless turns do not have a chat UI session, but they still need the
 	// same durable execution checkpoint as TUI/GUI turns.  A stable, prompt-
@@ -323,6 +322,18 @@ func runOnce(args []string) error {
 	}
 	_, _, err = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h)
 	return err
+}
+
+// applyHeadlessYes enables Fast mode for this invocation without changing the
+// saved preference. Destructive actions still receive a separate hard deny.
+func applyHeadlessYes(cfg *config.Config, a *agent.Agent) {
+	if cfg == nil {
+		return
+	}
+	cfg.SetRuntimeMode(config.ModeFast)
+	if a != nil {
+		a.UpdateConfig(func(current *config.Config) { current.SetRuntimeMode(config.ModeFast) })
+	}
 }
 
 func headlessTaskSessionID(prompt string) string {
