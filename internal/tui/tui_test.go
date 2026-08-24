@@ -13,9 +13,22 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 )
+
+func TestInitialSessionResumesLatestSavedSession(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	if err := session.SaveMessages(workspace, "resume-me", []llm.Message{{Role: "user", Content: "continue"}}); err != nil {
+		t.Fatal(err)
+	}
+	id, history, resumed := initialSession(workspace)
+	if !resumed || id != "resume-me" || len(history) != 1 || history[0].Content != "continue" {
+		t.Fatalf("initial session=(%q, %#v, %v)", id, history, resumed)
+	}
+}
 
 func TestAssistantFinalReplacesStreamedText(t *testing.T) {
 	m := &model{lines: []logLine{{Kind: "assistant", Text: "Undo: git checkout -- note.txt"}}}

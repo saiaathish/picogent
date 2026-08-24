@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/saiaathish/picogent/internal/llm"
 )
@@ -95,41 +94,33 @@ func clipTitleInput(s string, n int) string {
 
 // SetTitle saves an AI-generated title for a session.
 func SetTitle(id, title string) error {
-	s, err := Load(id)
-	if err != nil {
-		return err
-	}
 	title = sanitizeTitle(title)
 	if title == "" {
-		return nil
+		_, err := Load(id)
+		return err
 	}
-	s.Title = title
-	s.Updated = time.Now().UTC()
-	return s.Save()
+	_, err := updateSession(id, "", false, func(s *Session) error {
+		s.Title = title
+		return nil
+	})
+	return err
 }
 
 // SaveMessages preserves AI titles when saving history.
 func saveMessagesWithTitle(workspace string, id string, msgs []llm.Message, titleOverride string) error {
 	id = strings.TrimSuffix(strings.TrimSpace(id), ".json")
-	s := &Session{ID: id, Workspace: workspace, Messages: msgs}
 	if id == "" {
-		s = New(workspace)
+		id = New(workspace).ID
 	}
-	if prev, err := Load(s.ID); err == nil {
-		s.Title = prev.Title
-		s.Workspace = prev.Workspace
-		if s.Workspace == "" {
-			s.Workspace = workspace
+	if _, err := updateSession(id, workspace, true, func(s *Session) error {
+		if titleOverride != "" {
+			s.Title = sanitizeTitle(titleOverride)
+		} else if s.Title == "" || s.Title == "New chat" {
+			s.Title = deriveTitle(msgs)
 		}
-	}
-	if titleOverride != "" {
-		s.Title = sanitizeTitle(titleOverride)
-	} else if s.Title == "" || s.Title == "New chat" {
-		s.Title = deriveTitle(msgs)
-	}
-	s.Messages = msgs
-	s.Updated = time.Now().UTC()
-	if err := s.Save(); err != nil {
+		s.Messages = append([]llm.Message(nil), msgs...)
+		return nil
+	}); err != nil {
 		return err
 	}
 	return Prune(workspace)

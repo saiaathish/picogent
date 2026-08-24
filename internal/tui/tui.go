@@ -194,17 +194,28 @@ func newModel(cfg config.Config, a *agent.Agent) *model {
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 	vp := viewport.New(80, 20)
 	h := &handler{permCh: make(chan perm.Decision, 1), send: func(tea.Msg) {}}
-	m := &model{cfg: cfg, ag: a, ta: ta, vp: vp, h: h, sessionID: session.New(cfg.Workspace).ID}
+	sessionID, history, resumed := initialSession(cfg.Workspace)
+	m := &model{cfg: cfg, ag: a, ta: ta, vp: vp, h: h, sessionID: sessionID, history: history}
 	if a != nil {
 		a.SetTaskSession(m.sessionID)
 		m.task = a.TaskSnapshot()
 	}
 	m.lines = []logLine{{Kind: "system", Text: greeting(cfg, a)}}
+	if resumed {
+		m.lines = append(m.lines, logLine{Kind: "system", Text: "resumed " + m.sessionID})
+	}
 	if err := cfg.MissingAuth(); err != nil {
 		m.lines = append(m.lines, logLine{Kind: "error", Text: err.Error()})
 	}
 	m.refresh()
 	return m
+}
+
+func initialSession(workspace string) (id string, history []llm.Message, resumed bool) {
+	if prev, err := session.Latest(workspace); err == nil {
+		return prev.ID, prev.Messages, true
+	}
+	return session.New(workspace).ID, nil, false
 }
 
 func greeting(cfg config.Config, a *agent.Agent) string {
