@@ -39,18 +39,45 @@ type Verification struct {
 	At      time.Time `json:"at"`
 }
 
+// IntentContract is the compact, internal interpretation of a user request.
+// It keeps vague intent and its risk/proof implications durable without
+// exposing a planning mode or requiring the user to name agent concepts.
+type IntentContract struct {
+	Outcome       string `json:"outcome"`
+	Class         string `json:"class,omitempty"`
+	Action        string `json:"action,omitempty"`
+	Completeness  string `json:"completeness,omitempty"`
+	Scope         string `json:"scope,omitempty"`
+	Risk          string `json:"risk,omitempty"`
+	NeedsResearch bool   `json:"needs_research,omitempty"`
+	NeedsVisual   bool   `json:"needs_visual,omitempty"`
+	NeedsTests    bool   `json:"needs_tests,omitempty"`
+	NeedsApproval bool   `json:"needs_approval,omitempty"`
+	Confidence    string `json:"confidence,omitempty"`
+}
+
+// Criterion is one compact, internal definition-of-done item. Evidence is
+// recorded separately in Verification so raw model narration does not become
+// durable task state.
+type Criterion struct {
+	Description string `json:"description"`
+	Required    bool   `json:"required,omitempty"`
+}
+
 // Task is the compact state required to resume an execution loop.
 type Task struct {
-	Version      int      `json:"version"`
-	ID           string   `json:"id"`
-	SessionID    string   `json:"session_id"`
-	Goal         string   `json:"goal"`
-	Status       Status   `json:"status"`
-	Steps        []Step   `json:"steps,omitempty"`
-	CurrentStep  int      `json:"current_step"`
-	Attempts     int      `json:"attempts"`
-	ChangedFiles []string `json:"changed_files,omitempty"`
-	ChangeSeq    int      `json:"change_seq,omitempty"`
+	Version          int             `json:"version"`
+	ID               string          `json:"id"`
+	SessionID        string          `json:"session_id"`
+	Goal             string          `json:"goal"`
+	Intent           *IntentContract `json:"intent,omitempty"`
+	DefinitionOfDone []Criterion     `json:"definition_of_done,omitempty"`
+	Status           Status          `json:"status"`
+	Steps            []Step          `json:"steps,omitempty"`
+	CurrentStep      int             `json:"current_step"`
+	Attempts         int             `json:"attempts"`
+	ChangedFiles     []string        `json:"changed_files,omitempty"`
+	ChangeSeq        int             `json:"change_seq,omitempty"`
 	// VerifiedChangeSeq is the latest change sequence covered by passing
 	// verification. A negative value records that the latest evidence did not
 	// pass.
@@ -108,6 +135,22 @@ func (t *Task) Validate() error {
 	}
 	if strings.TrimSpace(t.Goal) == "" {
 		return errors.New("task goal is required")
+	}
+	if t.Intent != nil {
+		if strings.TrimSpace(t.Intent.Outcome) == "" {
+			return errors.New("task intent outcome is required")
+		}
+		if len(t.Intent.Outcome) > 600 {
+			return errors.New("task intent outcome is too long")
+		}
+	}
+	if len(t.DefinitionOfDone) > 8 {
+		return errors.New("task definition of done is too long")
+	}
+	for i, criterion := range t.DefinitionOfDone {
+		if strings.TrimSpace(criterion.Description) == "" {
+			return fmt.Errorf("task completion criterion %d is empty", i)
+		}
 	}
 	if !t.Status.Valid() {
 		return fmt.Errorf("invalid task status %q", t.Status)

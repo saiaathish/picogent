@@ -178,14 +178,39 @@ func (a *Agent) taskPromptSuffix() string {
 	b.WriteString(t.Goal)
 	b.WriteString("\nStatus: ")
 	b.WriteString(string(t.Status))
-	for i, step := range t.Steps {
-		mark := "[ ]"
-		if step.Done {
-			mark = "[x]"
-		} else if i == t.CurrentStep {
-			mark = "[>]"
+	if t.Intent != nil {
+		fmt.Fprintf(&b, "\nIntent: %s | class=%s | completeness=%s | risk=%s", t.Intent.Action, t.Intent.Class, t.Intent.Completeness, t.Intent.Risk)
+		if t.Intent.NeedsResearch {
+			b.WriteString(" | research-needed")
 		}
-		fmt.Fprintf(&b, "\n%s %s", mark, step.Description)
+		if t.Intent.NeedsVisual {
+			b.WriteString(" | rendered-check-needed")
+		}
+	}
+	if len(t.DefinitionOfDone) > 0 {
+		b.WriteString("\nDefinition of done:")
+		for i, criterion := range t.DefinitionOfDone {
+			if i >= 8 {
+				break
+			}
+			mark := "[ ]"
+			if i < len(t.Steps) && t.Steps[i].Done {
+				mark = "[x]"
+			} else if i == t.CurrentStep {
+				mark = "[>]"
+			}
+			fmt.Fprintf(&b, "\n%s %s", mark, criterion.Description)
+		}
+	} else {
+		for i, step := range t.Steps {
+			mark := "[ ]"
+			if step.Done {
+				mark = "[x]"
+			} else if i == t.CurrentStep {
+				mark = "[>]"
+			}
+			fmt.Fprintf(&b, "\n%s %s", mark, step.Description)
+		}
 	}
 	b.WriteString("\nContinue while the goal is unresolved and a safe permitted action remains.")
 	return b.String()
@@ -379,6 +404,11 @@ func cloneTask(task *taskstate.Task) *taskstate.Task {
 	}
 	cp := *task
 	cp.Steps = append([]taskstate.Step(nil), task.Steps...)
+	cp.DefinitionOfDone = append([]taskstate.Criterion(nil), task.DefinitionOfDone...)
+	if task.Intent != nil {
+		intent := *task.Intent
+		cp.Intent = &intent
+	}
 	cp.ChangedFiles = append([]string(nil), task.ChangedFiles...)
 	cp.Verification = append([]taskstate.Verification(nil), task.Verification...)
 	return &cp
