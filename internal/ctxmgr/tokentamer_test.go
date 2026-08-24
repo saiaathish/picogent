@@ -57,3 +57,66 @@ func TestToolAwareCompactClipsOldBash(t *testing.T) {
 		t.Fatalf("old bash should clip: %d", len(out[0].Content))
 	}
 }
+
+func TestDeduplicateToolResultsKeepsLatestReadAndRepoMap(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read_file", Arguments: `{"path":"internal/a.go"}`}}},
+		{Role: "tool", ToolCallID: "r1", Name: "read_file", Content: "old read"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "r2", Name: "read_file", Arguments: `{"path":"internal/a.go"}`}}},
+		{Role: "tool", ToolCallID: "r2", Name: "read_file", Content: "latest read"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "m1", Name: "repo_map", Arguments: `{}`}}},
+		{Role: "tool", ToolCallID: "m1", Name: "repo_map", Content: "old map"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "m2", Name: "repo_map", Arguments: `{}`}}},
+		{Role: "tool", ToolCallID: "m2", Name: "repo_map", Content: "latest map"},
+	}
+	out := DeduplicateToolResults(msgs)
+	if !strings.HasPrefix(out[1].Content, "[duplicate read_file result omitted") {
+		t.Fatalf("old read was not compacted: %q", out[1].Content)
+	}
+	if out[3].Content != "latest read" || out[7].Content != "latest map" {
+		t.Fatalf("latest results changed: read=%q map=%q", out[3].Content, out[7].Content)
+	}
+	if !strings.HasPrefix(out[5].Content, "[duplicate repo_map result omitted") {
+		t.Fatalf("old repo map was not compacted: %q", out[5].Content)
+	}
+}
+
+func TestTruncateTailPreservesToolCallPairs(t *testing.T) {
+	msgs := []llm.Message{
+		{Role: "system", Content: "system"},
+		{Role: "user", Content: "first"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "c1", Name: "read_file", Arguments: `{}`}}},
+		{Role: "tool", ToolCallID: "c1", Name: "read_file", Content: "one"},
+		{Role: "user", Content: "second"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "c2", Name: "read_file", Arguments: `{}`}, {ID: "c3", Name: "grep", Arguments: `{}`}}},
+		{Role: "tool", ToolCallID: "c2", Name: "read_file", Content: "two"},
+		{Role: "tool", ToolCallID: "c3", Name: "grep", Content: "three"},
+		{Role: "user", Content: "third"},
+	}
+	out := TruncateTail(msgs, 6)
+	if len(out) == 0 || out[0].Role != "system" {
+		t.Fatalf("system message was lost: %#v", out)
+	}
+	callIDs := map[string]bool{}
+	resultIDs := map[string]bool{}
+	for _, message := range out {
+		if message.Role == "assistant" {
+			for _, call := range message.ToolCalls {
+				callIDs[call.ID] = true
+			}
+		}
+		if message.Role == "tool" {
+			resultIDs[message.ToolCallID] = true
+		}
+	}
+	for id := range resultIDs {
+		if !callIDs[id] {
+			t.Fatalf("orphaned tool result %q in %#v", id, out)
+		}
+	}
+	for id := range callIDs {
+		if !resultIDs[id] {
+			t.Fatalf("tool call %q lost its result in %#v", id, out)
+		}
+	}
+}
