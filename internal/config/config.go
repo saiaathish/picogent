@@ -77,6 +77,8 @@ type Config struct {
 	AutoTaskMode   *bool            `yaml:"auto_task_mode"`
 	Router         RouterConfig     `yaml:"router"`
 	Extensions     ExtensionsConfig `yaml:"extensions"`
+	modeBeforeOverride Mode
+	modeOverridden     bool
 }
 
 func Default() Config {
@@ -209,15 +211,68 @@ func Save(cfg Config) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return err
-	}
 	path, err := Path()
 	if err != nil {
 		return err
 	}
+	// Runtime mode overrides control only the current process. Keep the user's
+	// saved choice when unrelated settings are persisted after Load applied one.
+	if cfg.modeOverridden {
+		cfg.Mode = cfg.PersistentMode()
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
 	return os.WriteFile(path, data, 0o600)
+}
+
+func explicitModeOverride() (Mode, bool) {
+	mode := Mode(os.Getenv("PICOGENT_MODE"))
+	return mode, mode.Valid()
+}
+
+// SetRuntimeMode applies a valid mode only for this process. It is never
+// serialized by Save, which preserves the prior user-selected mode instead.
+func (c *Config) SetRuntimeMode(mode Mode) {
+	if !mode.Valid() {
+		return
+	}
+	if !c.modeOverridden {
+		c.modeBeforeOverride = c.PersistentMode()
+		c.modeOverridden = true
+	}
+	c.Mode = mode
+}
+
+// PersistentMode returns the mode that Save will keep for future processes.
+func (c Config) PersistentMode() Mode {
+	if c.modeOverridden && c.modeBeforeOverride.Valid() {
+		return c.modeBeforeOverride
+	}
+	if c.Mode.Valid() {
+		return c.Mode
+	}
+	return ModeSafe
+}
+
+// ModeOverridden reports whether the current process is using a runtime mode.
+func (c Config) ModeOverridden() bool {
+	return c.modeOverridden
+}
+
+// SetUserMode records a deliberate persistent Safe/Fast selection. A runtime
+// override remains effective for the current process while its saved baseline
+// is updated for future runs.
+func (c *Config) SetUserMode(mode Mode) {
+	if !mode.Valid() {
+		return
+	}
+	if c.modeOverridden {
+		c.modeBeforeOverride = mode
+		return
+	}
+	c.Mode = mode
 }
 
 func (c Config) APIKeyResolved() string {
@@ -357,8 +412,8 @@ func overlayEnv(cfg Config) Config {
 		cfg.BaseURL = v
 		cfg.Provider = ProviderOpenAI
 	}
-	if v := os.Getenv("PICOGENT_MODE"); v == string(ModeSafe) || v == string(ModeFast) {
-		cfg.Mode = Mode(v)
+	if mode, ok := explicitModeOverride(); ok {
+		cfg.SetRuntimeMode(mode)
 	}
 	switch strings.ToLower(os.Getenv("PICOGENT_PROVIDER")) {
 	case "codex":

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -48,6 +50,106 @@ func TestBroadPromptShowsScopeChoicesBeforeRunning(t *testing.T) {
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'1'}})
 	if m.pendingScope != nil || cmd == nil || !m.busy {
 		t.Fatalf("choice did not start turn: pending=%#v cmd=%v busy=%v", m.pendingScope, cmd != nil, m.busy)
+	}
+}
+
+func TestModeSlashPersistsPreferenceWithoutOverridingRuntimeMode(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+	t.Setenv("PICOGENT_MODE", "")
+
+	user := config.Default()
+	user.Mode = config.ModeFast
+	user.Provider = config.ProviderOllama
+	user.Workspace = workspace
+	if err := config.Save(user); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PICOGENT_MODE", "safe")
+	effective, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := perm.New(effective.Mode, workspace, nil)
+	a := agent.New(effective, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
+	m := &model{cfg: effective, ag: a}
+
+	m.slash("/fast")
+	if got := m.lines[len(m.lines)-1].Text; !strings.Contains(got, "current run stays safe (PICOGENT_MODE)") {
+		t.Fatalf("mode confirmation = %q, want active environment override disclosure", got)
+	}
+	if m.cfg.Mode != config.ModeSafe {
+		t.Fatalf("model effective mode = %q, want environment mode %q", m.cfg.Mode, config.ModeSafe)
+	}
+	if got := a.ConfigSnapshot().Mode; got != config.ModeSafe {
+		t.Fatalf("agent effective mode = %q, want environment mode %q", got, config.ModeSafe)
+	}
+	if gate.Mode != config.ModeSafe {
+		t.Fatalf("gate mode = %q, want environment mode %q", gate.Mode, config.ModeSafe)
+	}
+
+	m.slash("/safe")
+	m.cfg.Model = "saved-after-mode-choice"
+	if err := config.Save(m.cfg); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_MODE", "")
+	reloaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Mode != config.ModeSafe {
+		t.Fatalf("saved mode = %q, want deliberate user choice %q", reloaded.Mode, config.ModeSafe)
+	}
+	if reloaded.Model != "saved-after-mode-choice" {
+		t.Fatalf("saved model = %q, want unrelated setting to persist", reloaded.Model)
+	}
+}
+
+func TestModeSlashDoesNotReportOrApplyUnsavedChange(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		persistent config.Mode
+		runtime    config.Mode
+		command    string
+	}{
+		{name: "fast saved beneath safe runtime", persistent: config.ModeFast, runtime: config.ModeSafe, command: "/safe"},
+		{name: "safe saved beneath fast runtime", persistent: config.ModeSafe, runtime: config.ModeFast, command: "/fast"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := filepath.Join(t.TempDir(), "not-a-directory")
+			if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PICOGENT_HOME", home)
+
+			workspace := t.TempDir()
+			cfg := config.Default()
+			cfg.Mode = tc.persistent
+			cfg.Workspace = workspace
+			cfg.Provider = config.ProviderOllama
+			cfg.SetRuntimeMode(tc.runtime)
+			gate := perm.New(cfg.Mode, workspace, nil)
+			ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
+			m := &model{cfg: cfg, ag: ag}
+
+			m.slash(tc.command)
+			if got := m.lines[len(m.lines)-1]; got.Kind != "error" || !strings.Contains(got.Text, "couldn't save mode") {
+				t.Fatalf("mode result = %#v, want save failure", got)
+			}
+			if m.cfg.Mode != tc.runtime || m.cfg.PersistentMode() != tc.persistent {
+				t.Fatalf("model config changed after failed save: %#v", m.cfg)
+			}
+			if got := ag.ConfigSnapshot(); got.Mode != tc.runtime || got.PersistentMode() != tc.persistent {
+				t.Fatalf("agent config changed after failed save: %#v", got)
+			}
+			if gate.Mode != tc.runtime {
+				t.Fatalf("gate mode changed after failed save: %q", gate.Mode)
+			}
+		})
 	}
 }
 

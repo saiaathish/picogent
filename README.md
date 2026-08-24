@@ -97,6 +97,8 @@ non-destructive work that stays inside the workspace.
 
 TUI commands: `/safe` `/fast` `/model` `/provider codex|ollama|openai` `/reset` `/quit`
 
+`PICOGENT_MODE=safe` or `PICOGENT_MODE=fast` is a process-only override: it controls the current run without replacing your saved choice. A Safe/Fast selection made while it is set applies on the next run.
+
 ## What it can do (80/20 Claude Code harness)
 
 Picogent implements the **useful core** of [Claude Code](https://github.com/anthropics/claude-code) and [tanbiralam/claude-code](https://github.com/tanbiralam/claude-code) (tool/command reference), without the 512k-line machinery.

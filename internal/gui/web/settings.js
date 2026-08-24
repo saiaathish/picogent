@@ -59,6 +59,15 @@ function updateModelDesc() {
   document.getElementById("model-desc").textContent = opt?.description || "";
 }
 
+function renderModeOverride(s) {
+  const hint = document.getElementById("mode-override-hint");
+  if (!hint) return;
+  hint.hidden = !s.mode_overridden;
+  if (s.mode_overridden) {
+    hint.textContent = `PICOGENT_MODE keeps this run in ${String(s.active_mode || "").toUpperCase()} mode. Your saved choice applies next time.`;
+  }
+}
+
 function syncProviderUI() {
   const provider = document.getElementById("provider").value;
   const isClaude = provider === "quadcode";
@@ -128,6 +137,7 @@ async function load() {
   state = s;
   document.getElementById("workspace").value = s.workspace || "";
   document.getElementById("mode").value = s.mode || "safe";
+  renderModeOverride(s);
   document.getElementById("provider").value = ["quadcode", "opencode", "antigravity"].includes(s.provider)
     ? s.provider
     : "codex";
@@ -274,14 +284,11 @@ document.getElementById("form").onsubmit = async (e) => {
   });
   save.disabled = false;
   if (!res.ok) {
-    status.textContent = "Couldn't save.";
+    const message = await res.text();
+    status.textContent = message || "Couldn't save.";
     return;
   }
-  let data = {};
-  try {
-    data = await res.json();
-  } catch (_) {}
-  status.textContent = data.persisted === false ? "Applied (couldn’t write config file)." : "Saved.";
+  status.textContent = "Saved.";
   await load();
   setTimeout(() => (status.textContent = ""), 2500);
 };

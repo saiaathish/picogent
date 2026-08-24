@@ -736,13 +736,9 @@ func (m *model) slash(line string) tea.Cmd {
 			}
 		}
 	case "/safe":
-		m.cfg.Mode = config.ModeSafe
-		m.ag.SetMode(config.ModeSafe)
-		m.lines = append(m.lines, logLine{Kind: "system", Text: "mode: safe"})
+		m.saveMode(config.ModeSafe)
 	case "/fast":
-		m.cfg.Mode = config.ModeFast
-		m.ag.SetMode(config.ModeFast)
-		m.lines = append(m.lines, logLine{Kind: "system", Text: "mode: fast"})
+		m.saveMode(config.ModeFast)
 	case "/model":
 		if len(parts) < 2 {
 			m.lines = append(m.lines, logLine{Kind: "system", Text: "current model: " + m.cfg.Model})
@@ -803,6 +799,24 @@ func (m *model) slash(line string) tea.Cmd {
 	}
 	m.refresh()
 	return nil
+}
+
+func (m *model) saveMode(mode config.Mode) {
+	next := m.cfg
+	next.SetUserMode(mode)
+	if err := config.Save(next); err != nil {
+		m.lines = append(m.lines, logLine{Kind: "error", Text: "couldn't save mode: " + err.Error()})
+		return
+	}
+	m.cfg = next
+	if m.ag != nil {
+		m.ag.UpdateConfig(func(cfg *config.Config) { cfg.SetUserMode(mode) })
+	}
+	message := "saved mode: " + string(mode)
+	if m.cfg.ModeOverridden() {
+		message += "; current run stays " + string(m.cfg.Mode) + " (PICOGENT_MODE)"
+	}
+	m.lines = append(m.lines, logLine{Kind: "system", Text: message})
 }
 
 // startNewSession drops the current chat and durable execution state before

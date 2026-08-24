@@ -105,6 +105,13 @@ function paint(st) {
 
   if (st.workspace) document.getElementById("workspace").value = st.workspace;
   if (st.mode) document.getElementById("mode").value = st.mode;
+  const modeHint = document.getElementById("mode-override-hint");
+  if (modeHint) {
+    modeHint.hidden = !st.mode_overridden;
+    if (st.mode_overridden) {
+      modeHint.textContent = `PICOGENT_MODE keeps this setup session in ${String(st.active_mode || "").toUpperCase()} mode. Your saved choice applies next time.`;
+    }
+  }
   const modelSel = document.getElementById("model");
   if (st.model_options && st.model_options.length) {
     modelOptionsCache = st.model_options;
