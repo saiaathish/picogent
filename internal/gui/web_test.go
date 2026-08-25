@@ -40,6 +40,14 @@ func TestEmbeddedIndex(t *testing.T) {
 	if !strings.Contains(string(js), "statusAnnouncerEl.textContent = text") {
 		t.Fatal("gui does not announce accepted-turn status without moving focus")
 	}
+	if !strings.Contains(string(js), "function verificationPresentation(status)") ||
+		!strings.Contains(string(js), `case "pass":`) ||
+		!strings.Contains(string(js), `case "done": return { className: "is-pass", label: "PASS" }`) ||
+		!strings.Contains(string(js), `case "skipped": return { className: "is-skipped", label: "SKIPPED" }`) ||
+		!strings.Contains(string(js), `label: "INCONCLUSIVE"`) ||
+		strings.Contains(string(js), `e.status === "fail" ? "is-fail" : "is-pass"`) {
+		t.Fatal("gui verification rendering does not preserve all non-pass outcomes")
+	}
 	activityStart := strings.Index(string(js), "function updateActivityPanel()")
 	activityEnd := strings.Index(string(js), "function addReasonStep(text)")
 	if activityStart < 0 || activityEnd < activityStart || !strings.Contains(string(js)[activityStart:activityEnd], `activityComplete ? "Completed" : "Working…"`) {
@@ -61,6 +69,9 @@ func TestEmbeddedIndex(t *testing.T) {
 	}
 	if !strings.Contains(string(styles), ".recent-recovery") || !strings.Contains(string(styles), ".turn-recovery") {
 		t.Fatal("recovery controls are missing product styling")
+	}
+	if !strings.Contains(string(styles), ".test-result.is-skipped") || !strings.Contains(string(styles), ".test-result.is-inconclusive") {
+		t.Fatal("unresolved verification states are missing distinct styling")
 	}
 	settings, err := gui.ReadWeb("web/settings.html")
 	if err != nil {

@@ -2021,6 +2021,15 @@ function finishTurnUI() {
 
 /* ─── SSE ─── */
 let ev;
+function verificationPresentation(status) {
+  switch (status) {
+    case "pass":
+    case "done": return { className: "is-pass", label: "PASS" };
+    case "fail": return { className: "is-fail", label: "FAIL" };
+    case "skipped": return { className: "is-skipped", label: "SKIPPED" };
+    default: return { className: "is-inconclusive", label: "INCONCLUSIVE" };
+  }
+}
 function showPermission(e) {
   if (!e) return;
   permText.textContent = e.summary || e.text || "";
@@ -2207,12 +2216,14 @@ function connectEvents() {
       renderChangesPanel();
       return;
     }
-	if (e.type === "test") {
-		const note = document.createElement("div");
-		note.className = "test-result" + (e.status === "fail" ? " is-fail" : " is-pass");
-		const title = document.createElement("strong");
-		title.textContent = e.text || "Tests";
-		note.appendChild(title);
+    if (e.type === "test") {
+      const presentation = verificationPresentation(e.status);
+      const note = document.createElement("div");
+      note.className = "test-result " + presentation.className;
+      note.dataset.status = presentation.label;
+      const title = document.createElement("strong");
+      title.textContent = presentation.label + " · " + (e.text || "Tests");
+      note.appendChild(title);
       if (e.summary) {
         const pre = document.createElement("pre");
         pre.textContent = e.summary.slice(0, 1200);

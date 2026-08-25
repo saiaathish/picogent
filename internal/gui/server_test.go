@@ -23,10 +23,29 @@ import (
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/tools"
+	"github.com/saiaathish/picogent/internal/verify"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
+
+func TestVerificationEventStatusPreservesEveryOutcome(t *testing.T) {
+	tests := []struct {
+		status verify.Status
+		want   string
+	}{
+		{status: verify.StatusPass, want: "pass"},
+		{status: verify.StatusFail, want: "fail"},
+		{status: verify.StatusInconclusive, want: "inconclusive"},
+		{status: verify.StatusSkipped, want: "skipped"},
+		{status: "unknown", want: "inconclusive"},
+	}
+	for _, test := range tests {
+		if got := verificationEventStatus(test.status); got != test.want {
+			t.Errorf("verificationEventStatus(%q)=%q, want %q", test.status, got, test.want)
+		}
+	}
+}
 
 func TestTaskProgressClearEventKeepsNullTaskEnvelope(t *testing.T) {
 	raw, err := json.Marshal(event{Type: "task_progress", SessionID: "session-current"})

@@ -2001,18 +2001,11 @@ func (h *guiHandler) endTurn(result agent.Result) {
 	h.emit(event{Type: "think", Text: "Done", Kind: "plan", Status: "done"})
 	if result.Verified != "" {
 		status := verify.StatusFromEvidence(result.Verified)
-		eventStatus := "unresolved"
-		switch status {
-		case verify.StatusPass:
-			eventStatus = "done"
-		case verify.StatusFail:
-			eventStatus = "fail"
-		}
 		h.emit(event{
 			Type:    "test",
 			Text:    result.Verified,
 			Summary: clip(result.Verified, 2000),
-			Status:  eventStatus,
+			Status:  verificationEventStatus(status),
 			Kind:    "test",
 		})
 	}
@@ -2023,6 +2016,19 @@ func (h *guiHandler) endTurn(result agent.Result) {
 	h.emit(event{Type: "overview", Text: "refresh"})
 	h.s.cleanupExtensionPool()
 	h.s.reflectAfterTurn(h.prompt, result)
+}
+
+func verificationEventStatus(status verify.Status) string {
+	switch status {
+	case verify.StatusPass:
+		return "pass"
+	case verify.StatusFail:
+		return "fail"
+	case verify.StatusSkipped:
+		return "skipped"
+	default:
+		return "inconclusive"
+	}
 }
 
 func summarizePrompt(prompt string) string {
