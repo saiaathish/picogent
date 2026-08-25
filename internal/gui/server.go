@@ -58,6 +58,7 @@ type event struct {
 	Count     int             `json:"count,omitempty"`
 	Kind      string          `json:"kind,omitempty"`
 	Status    string          `json:"status,omitempty"`
+	Available bool            `json:"available,omitempty"`
 	Tokens    int             `json:"tokens,omitempty"`
 	Budget    int             `json:"budget,omitempty"`
 	Pct       float64         `json:"pct,omitempty"`
@@ -542,8 +543,10 @@ func (s *server) snapshot() map[string]any {
 	}
 	s.mu.Unlock()
 	var task *taskstate.Task
+	undoAvailable := false
 	if ag != nil {
 		task = ag.TaskSnapshot()
+		undoAvailable = ag.UndoAvailable()
 		if task != nil && task.SessionID != sessionID {
 			task = nil
 		}
@@ -587,6 +590,7 @@ func (s *server) snapshot() map[string]any {
 		"setup":               !cfg.SetupComplete,
 		"mcp_tools":           mcpToolCount(ag),
 		"session_id":          sessionID,
+		"undo_available":      undoAvailable,
 		"task":                task,
 		"router":              s.routerSnapshot(),
 		"model_options":       llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
@@ -1540,6 +1544,7 @@ func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Unlock()
 	s.invalidatePromptRecs()
 	s.emitTaskSnapshot(id)
+	s.emit(event{Type: "undo", Status: "cleared"})
 	s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
 	s.emit(event{Type: "prompts_refresh", Text: "main"})
 	w.Header().Set("Content-Type", "application/json")
@@ -1777,6 +1782,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 			id := s.newSessionLocked()
 			s.mu.Unlock()
 			s.emitTaskSnapshot(id)
+			s.emit(event{Type: "undo", Status: "cleared"})
 			s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
 			s.emit(event{Type: "prompts_refresh", Text: "all"})
 			s.emit(event{Type: "system", Text: "cleared"})
@@ -1818,6 +1824,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 				s.emit(event{Type: "error", Text: err.Error()})
 			} else {
 				s.emit(event{Type: "system", Text: text})
+				s.emit(event{Type: "undo", Status: "cleared", Text: text})
 			}
 		case "status":
 			s.mu.Lock()
@@ -2038,6 +2045,11 @@ func (h *guiHandler) endTurn(result agent.Result) {
 			Removed: h.removed,
 			Status:  "done",
 		})
+	}
+	if result.UndoAvailable {
+		h.emit(event{Type: "undo", Status: "available", Available: true})
+	} else if result.UndoError != "" {
+		h.emit(event{Type: "undo", Status: "unavailable", Text: result.UndoError})
 	}
 	h.emit(event{Type: "think", Text: "Done", Kind: "plan", Status: "done"})
 	if result.Verified != "" {
@@ -2356,6 +2368,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			s.mu.Unlock()
 			s.invalidatePromptRecs()
 			s.emitTaskSnapshot(id)
+			s.emit(event{Type: "undo", Status: "cleared"})
 			s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
 			s.emit(event{Type: "prompts_refresh", Text: "all"})
 			w.Header().Set("Content-Type", "application/json")
@@ -2387,6 +2400,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			ag := s.ag
 			s.mu.Unlock()
 			s.emitTaskSnapshot(sess.ID)
+			s.emit(event{Type: "undo", Status: "cleared"})
 			var task *taskstate.Task
 			if ag != nil {
 				task = ag.TaskSnapshot()
@@ -2403,13 +2417,18 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "id required", 400)
 				return
 			}
+			rotated := false
 			s.mu.Lock()
 			if s.sessionID == in.ID {
 				_ = s.newSessionLocked()
+				rotated = true
 			}
 			currentID := s.sessionID
 			s.mu.Unlock()
 			s.emitTaskSnapshot(currentID)
+			if rotated {
+				s.emit(event{Type: "undo", Status: "cleared"})
+			}
 			if err := session.Delete(in.ID); err != nil && !os.IsNotExist(err) {
 				http.Error(w, err.Error(), 500)
 				return
@@ -2696,6 +2715,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		if workspaceChanged {
 			s.attachRouterHook()
 			_, _, _ = projects.Ensure(cfg.Workspace)
+			s.emit(event{Type: "undo", Status: "cleared"})
 			s.emit(event{Type: "system", Text: "Opened " + projects.NameFromPath(cfg.Workspace)})
 			s.emitTaskSnapshot(nextSession)
 			s.emit(event{Type: "overview", Text: "refresh"})

@@ -46,6 +46,11 @@ const changesSummary = $("changes-summary");
 const activityList = $("activity-list");
 const extRecsEl = $("ext-recs");
 const extToastsEl = $("ext-toasts");
+const recentRecoveryEl = $("recent-recovery");
+const recentSessionListEl = $("recent-session-list");
+const turnRecoveryEl = $("turn-recovery");
+const turnRecoveryTextEl = $("turn-recovery-text");
+const undoTurnBtn = $("undo-turn");
 const permTitle = $("perm-title");
 const taskProgressEl = $("task-progress");
 const taskStatusEl = $("task-progress-status");
@@ -67,6 +72,8 @@ let turnStats = { reads: 0, searches: 0, edits: 0, added: 0, removed: 0 };
 let activityItems = [];
 let activityPanel = null;
 let activityComplete = false;
+let undoAvailable = false;
+let undoInFlight = false;
 
 let ready = false;
 let busy = false;
@@ -607,6 +614,7 @@ async function loadProjects() {
 
 async function applyProjectSwitch(data) {
   clearTaskProgress();
+  setUndoAvailable(false);
   sessionId = data.session_id || sessionId;
   if (data.messages) replayMessages(data.messages);
   else clearLog();
@@ -663,6 +671,48 @@ function setChatsOpen(on) {
   chatsOpen = on;
   shell.classList.toggle("chats-open", on);
   syncScrim();
+}
+
+function setUndoAvailable(available) {
+  undoAvailable = !!available;
+  undoInFlight = false;
+  if (!turnRecoveryEl || !undoTurnBtn) return;
+  turnRecoveryEl.hidden = !undoAvailable;
+  syncUndoControl();
+  undoTurnBtn.textContent = "Undo last change";
+  if (undoAvailable && turnRecoveryTextEl) {
+    turnRecoveryTextEl.textContent = "Changes from the last turn can be restored.";
+  }
+}
+
+function syncUndoControl() {
+  if (undoTurnBtn) undoTurnBtn.disabled = !undoAvailable || undoInFlight || busy;
+}
+
+async function undoLastChange() {
+  if (!undoAvailable || undoInFlight || busy || !undoTurnBtn) return;
+  undoInFlight = true;
+  undoTurnBtn.disabled = true;
+  undoTurnBtn.textContent = "Undoing…";
+  if (turnRecoveryTextEl) turnRecoveryTextEl.textContent = "Restoring the last turn…";
+  try {
+    const res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ prompt: "/undo" }),
+    });
+    if (!res.ok) {
+      const message = await res.text();
+      throw new Error(message || "Could not undo the last change.");
+    }
+    statusAnnouncerEl.textContent = "Undo requested.";
+  } catch (err) {
+    undoInFlight = false;
+    undoTurnBtn.disabled = false;
+    undoTurnBtn.textContent = "Undo last change";
+    if (turnRecoveryTextEl) turnRecoveryTextEl.textContent = "Undo could not start. Try again.";
+    add("error", err?.message || "Could not undo the last change.");
+  }
 }
 
 function setReviewOpen(on) {
@@ -932,6 +982,7 @@ async function loadThreads() {
   sessionId = data.current_id || sessionId;
   threadsCache = data.sessions || [];
   renderThreads();
+  renderRecentSessions();
 }
 
 function renderThreads() {
@@ -962,6 +1013,48 @@ function renderThreads() {
   }
 }
 
+function formatRecentDate(value) {
+  const date = new Date(value || "");
+  if (Number.isNaN(date.getTime())) return "Recent";
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+}
+
+function renderRecentSessions() {
+  if (!recentRecoveryEl || !recentSessionListEl) return;
+  const recent = threadsCache.filter((s) => s.id !== sessionId).slice(0, 3);
+  if (!recent.length) {
+    recentRecoveryEl.hidden = true;
+    recentSessionListEl.replaceChildren();
+    return;
+  }
+  recentRecoveryEl.hidden = false;
+  const rows = recent.map((s) => {
+    const title = s.title || "New chat";
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "recent-session";
+    row.setAttribute("aria-label", "Resume chat: " + title);
+    row.addEventListener("click", () => loadThread(s.id));
+
+    const copy = document.createElement("span");
+    copy.className = "recent-session-copy";
+    const titleEl = document.createElement("span");
+    titleEl.className = "recent-session-title";
+    titleEl.textContent = title;
+    const dateEl = document.createElement("small");
+    dateEl.className = "recent-session-date";
+    dateEl.textContent = formatRecentDate(s.updated);
+    copy.append(titleEl, dateEl);
+
+    const action = document.createElement("span");
+    action.className = "recent-session-action";
+    action.textContent = "Resume";
+    row.append(copy, action);
+    return row;
+  });
+  recentSessionListEl.replaceChildren(...rows);
+}
+
 threadSearch.addEventListener("input", renderThreads);
 
 async function loadThread(id) {
@@ -977,6 +1070,7 @@ async function loadThread(id) {
   ).json();
   if (epoch !== viewEpoch) return;
   clearTaskProgress();
+  setUndoAvailable(false);
   sessionId = data.id;
   replayMessages(data.messages || []);
   setChatsOpen(false);
@@ -999,6 +1093,7 @@ async function newChat() {
   ).json();
   if (epoch !== viewEpoch) return;
   clearTaskProgress();
+  setUndoAvailable(false);
   sessionId = data.id;
   clearLog();
   // Starter hero is inside #empty — force it visible before prompts paint.
@@ -1065,6 +1160,11 @@ async function refresh() {
     replayMessages(s.messages);
   }
   busy = !!s.busy;
+  if (Object.prototype.hasOwnProperty.call(s, "undo_available")) {
+    setUndoAvailable(!!s.undo_available);
+  } else {
+    syncUndoControl();
+  }
   sendBtn.disabled = !ready || !!s.auth?.needed;
   setThinking(busy);
   syncEmpty();
@@ -1205,6 +1305,11 @@ function bindNewChat(el) {
 }
 bindNewChat($("new-chat"));
 bindNewChat($("new-chat-top"));
+$("open-chats")?.addEventListener("click", () => {
+  setChatsOpen(true);
+  threadSearch?.focus();
+});
+undoTurnBtn?.addEventListener("click", undoLastChange);
 
 permEl.addEventListener("click", async (e) => {
   const t = e.target.closest("[data-allow], [data-turn], [data-always]");
@@ -1904,6 +2009,7 @@ document.addEventListener("keydown", (e) => {
 function finishTurnUI() {
   busy = false;
   sendBtn.disabled = !ready;
+  syncUndoControl();
   if (stream) {
     stream.finishing = true;
     stream.live = false;
@@ -1999,6 +2105,29 @@ function connectEvents() {
       add("system", e.text || "Extension removed");
       refresh();
       return;
+    }
+    if (e.type === "undo") {
+      if (e.status === "available") {
+        setUndoAvailable(true);
+        statusAnnouncerEl.textContent = "Undo is available for the latest change.";
+      } else if (e.status === "cleared") {
+        setUndoAvailable(false);
+        statusAnnouncerEl.textContent = e.text || "Last turn undone.";
+      } else if (e.status === "unavailable") {
+        setUndoAvailable(false);
+        const message = e.text ? "Undo unavailable: " + e.text : "Undo is unavailable for the latest turn.";
+        statusAnnouncerEl.textContent = message;
+        add("system", message);
+      }
+      return;
+    }
+    if (e.type === "error" && undoInFlight) {
+      undoInFlight = false;
+      if (undoTurnBtn) {
+        undoTurnBtn.disabled = !undoAvailable;
+        undoTurnBtn.textContent = "Undo last change";
+      }
+      if (turnRecoveryTextEl) turnRecoveryTextEl.textContent = "Undo could not be completed. Try again.";
     }
     if (e.type === "title") {
       const row = threadsCache.find((s) => s.id === sessionId);
