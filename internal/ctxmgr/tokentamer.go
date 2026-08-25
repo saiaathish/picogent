@@ -92,11 +92,19 @@ func ToolAwareCompact(msgs []llm.Message) []llm.Message {
 		case isReadLike(name) && !recent && len(content) > SkeletonMinChars:
 			m.Content = skeletonize(content, path)
 		case isBashLike(name):
-			m.Content = clipTool(content, BashMaxChars, recent)
+			if recent {
+				m.Content = clipTool(content, BashMaxChars, true)
+			} else {
+				m.Content = digestTool(name, content)
+			}
 		case isSearchLike(name):
-			m.Content = clipTool(content, SearchMaxChars, recent)
+			if recent {
+				m.Content = clipTool(content, SearchMaxChars, true)
+			} else {
+				m.Content = digestTool(name, content)
+			}
 		case !recent && len(content) > FreshToolMaxChars:
-			m.Content = clipTool(content, StaleToolMaxChars, false)
+			m.Content = digestTool(name, content)
 		case recent && len(content) > FreshToolMaxChars*2:
 			m.Content = clipTool(content, FreshToolMaxChars*2, true)
 		}

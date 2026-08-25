@@ -59,6 +59,31 @@ func TestToolAwareCompactClipsOldBash(t *testing.T) {
 	}
 }
 
+func TestToolAwareCompactRetainsFailureFromStaleBash(t *testing.T) {
+	long := strings.Repeat("normal output\n", 120) + "FAIL internal/auth: TestLogin\n" + strings.Repeat("normal output\n", 120) + "exit status 1\n"
+	msgs := []llm.Message{
+		{Role: "tool", Name: "bash", Content: long},
+		{Role: "tool", Name: "bash", Content: long},
+		{Role: "tool", Name: "bash", Content: long},
+		{Role: "tool", Name: "bash", Content: long},
+		{Role: "tool", Name: "bash", Content: long},
+		{Role: "tool", Name: "bash", Content: long},
+	}
+	out := ToolAwareCompact(msgs)
+	if !strings.Contains(out[0].Content, "signal: FAIL internal/auth: TestLogin") {
+		t.Fatalf("stale bash lost failure target: %q", out[0].Content)
+	}
+	if !strings.Contains(out[0].Content, "signal: exit status 1") {
+		t.Fatalf("stale bash lost exit metadata: %q", out[0].Content)
+	}
+	if len(out[0].Content) > maxDigestedToolChars {
+		t.Fatalf("stale bash digest length=%d, want <= %d", len(out[0].Content), maxDigestedToolChars)
+	}
+	if out[5].Content != clipTool(long, BashMaxChars, true) {
+		t.Fatal("recent bash output changed outside its existing cap")
+	}
+}
+
 func TestDeduplicateToolResultsKeepsLatestReadAndRepoMap(t *testing.T) {
 	msgs := []llm.Message{
 		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read_file", Arguments: `{"path":"internal/a.go"}`}}},
