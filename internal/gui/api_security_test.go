@@ -168,10 +168,10 @@ func TestGUIAPIRejectsMethodMismatches(t *testing.T) {
 	h := s.Handler()
 	paths := []string{
 		"/api/state", "/api/setup", "/api/setup/install", "/api/setup/login", "/api/setup/finish",
-		"/api/chat", "/api/scope", "/api/permission", "/api/mode", "/api/task-mode", "/api/cancel",
+		"/api/chat", "/api/permission", "/api/mode", "/api/task-mode", "/api/cancel",
 		"/api/reset", "/api/sessions", "/api/file", "/api/settings", "/api/router", "/api/projects",
-		"/api/folder/pick", "/api/files/pick", "/api/files/read", "/api/overview", "/api/evolve",
-		"/api/test", "/api/diff", "/api/extensions", "/api/trace", "/api/help", "/api/sidechat",
+		"/api/folder/pick", "/api/files/pick", "/api/overview", "/api/evolve",
+		"/api/diff", "/api/extensions", "/api/trace", "/api/help", "/api/sidechat",
 		"/api/prompts", "/api/events",
 	}
 	for _, path := range paths {

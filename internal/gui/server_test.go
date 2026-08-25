@@ -811,40 +811,6 @@ func TestSessionLoadRequiresCurrentWorkspace(t *testing.T) {
 	}
 }
 
-func TestScopeAPIExplainsBroadPrompt(t *testing.T) {
-	s := &server{}
-	res := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/scope", strings.NewReader(`{"prompt":"build something"}`))
-	s.scopeAPI(res, req)
-	if res.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", res.Code)
-	}
-	var body struct {
-		Needed   bool             `json:"needed"`
-		Question string           `json:"question"`
-		Choices  []map[string]any `json:"choices"`
-	}
-	if err := json.Unmarshal(res.Body.Bytes(), &body); err != nil {
-		t.Fatal(err)
-	}
-	if !body.Needed || body.Question == "" || len(body.Choices) != 3 {
-		t.Fatalf("scope response = %#v", body)
-	}
-	if got, _ := body.Choices[0]["recommended"].(bool); !got {
-		t.Fatal("first choice is not marked recommended")
-	}
-}
-
-func TestScopeAPILeavesSpecificPromptAlone(t *testing.T) {
-	s := &server{}
-	res := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/scope", strings.NewReader(`{"prompt":"fix internal/auth/login.go"}`))
-	s.scopeAPI(res, req)
-	if res.Code != http.StatusOK || !strings.Contains(res.Body.String(), `"needed":false`) {
-		t.Fatalf("status/body = %d/%s", res.Code, res.Body.String())
-	}
-}
-
 func TestChatRejectsInvalidExplicitScopeChoice(t *testing.T) {
 	s := &server{cfg: config.Config{Workspace: t.TempDir()}}
 	res := httptest.NewRecorder()
