@@ -121,14 +121,6 @@ func reliabilityRank(r string) int {
 	}
 }
 
-func countLocalSkills() int {
-	n, err := SyncCursorSkills()
-	if err != nil {
-		return 0
-	}
-	return len(n)
-}
-
 // AssistantFind recommends extensions for a workflow description.
 func AssistantFind(workflow string, installed map[string]bool) (string, []SearchResult) {
 	wf := strings.TrimSpace(workflow)
