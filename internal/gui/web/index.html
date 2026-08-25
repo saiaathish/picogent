@@ -91,6 +91,16 @@
       <main class="feed" id="chat-scroll">
         <div id="empty" class="hero">
 			<h1>What should we work on?</h1>
+          <section id="recent-recovery" class="recent-recovery" hidden aria-labelledby="recent-recovery-title">
+            <div class="recent-recovery-head">
+              <div>
+                <p class="eyebrow">Continue</p>
+                <h2 id="recent-recovery-title">Recent chats</h2>
+              </div>
+              <button type="button" class="recent-recovery-all" id="open-chats">View all</button>
+            </div>
+            <div id="recent-session-list" class="recent-session-list" aria-label="Recent chats"></div>
+          </section>
           <div class="overview-card" id="overview-card" hidden>
             <div class="overview-head">
               <span class="overview-label">Repo knowledge</span>
@@ -136,6 +146,10 @@
 
       <footer class="dock">
         <div id="ext-toasts" class="ext-toasts" aria-live="polite"></div>
+        <div id="turn-recovery" class="turn-recovery" hidden aria-live="polite">
+          <span id="turn-recovery-text">Changes from the last turn can be restored.</span>
+          <button type="button" id="undo-turn" disabled>Undo last change</button>
+        </div>
         <div id="auth-banner" class="auth-banner" hidden>
           <div class="auth-banner-copy">
             <strong id="auth-banner-title">Log in to continue</strong>

@@ -97,6 +97,14 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	return msg, nil
 }
 
+// UndoAvailable reports whether the latest completed native-file turn still
+// has an in-memory checkpoint that can be restored.
+func (a *Agent) UndoAvailable() bool {
+	a.undoMu.Lock()
+	defer a.undoMu.Unlock()
+	return a.latestUndo != nil
+}
+
 func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 	if !nativeWriteRan {
 		return

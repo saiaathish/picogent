@@ -163,6 +163,7 @@ func (s *server) replaceWorkspace(cfg config.Config) (projectSwitchResult, error
 	s.mu.Unlock()
 	s.attachRouterHook()
 	_, _, _ = projects.Ensure(path)
+	s.emit(event{Type: "undo", Status: "cleared"})
 	s.emit(event{Type: "system", Text: "Opened " + projects.NameFromPath(path)})
 	s.emitTaskSnapshot(sessID)
 	s.emit(event{Type: "overview", Text: "refresh"})

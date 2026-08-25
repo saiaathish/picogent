@@ -18,6 +18,9 @@ func TestEmbeddedIndex(t *testing.T) {
 	if !strings.Contains(string(b), `id="status-announcer"`) || !strings.Contains(string(b), `aria-live="polite"`) {
 		t.Fatal("index missing non-disruptive status announcer")
 	}
+	if !strings.Contains(string(b), `id="recent-recovery"`) || !strings.Contains(string(b), `id="open-chats"`) || !strings.Contains(string(b), `id="undo-turn"`) {
+		t.Fatal("index missing visible recovery controls")
+	}
 	if strings.Contains(string(b), "scope-card") {
 		t.Fatal("index still contains the blocking scope picker")
 	}
@@ -27,6 +30,9 @@ func TestEmbeddedIndex(t *testing.T) {
 	}
 	if !strings.Contains(string(js), "/api/sessions") || !strings.Contains(string(js), "viewEpoch") || !strings.Contains(string(js), `message || "Couldn't save mode"`) {
 		t.Fatal("gui missing session client or new-chat race guard")
+	}
+	if !strings.Contains(string(js), "function renderRecentSessions()") || !strings.Contains(string(js), "setUndoAvailable(true)") || !strings.Contains(string(js), `prompt: "/undo"`) {
+		t.Fatal("gui recovery controls are not wired to session resume and undo")
 	}
 	if strings.Contains(string(js), "/api/scope") || strings.Contains(string(js), "scope_required") || strings.Contains(string(js), "hideScopeCard") || strings.Contains(string(js), "scope_notice") {
 		t.Fatal("gui still contains blocking or duplicate client-side scope handling")
@@ -48,6 +54,13 @@ func TestEmbeddedIndex(t *testing.T) {
 	doneEnd := strings.Index(string(js), `if (e.type === "side_delta")`)
 	if doneStart < 0 || doneEnd < doneStart || !strings.Contains(string(js)[doneStart:doneEnd], "finishTurnUI();") {
 		t.Fatal("done SSE path does not finalize the turn UI")
+	}
+	styles, err := gui.ReadWeb("web/styles.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(styles), ".recent-recovery") || !strings.Contains(string(styles), ".turn-recovery") {
+		t.Fatal("recovery controls are missing product styling")
 	}
 	settings, err := gui.ReadWeb("web/settings.html")
 	if err != nil {
