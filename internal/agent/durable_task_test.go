@@ -82,6 +82,32 @@ func TestDurableTaskPersistsOutsideHistoryAndResumes(t *testing.T) {
 	}
 }
 
+func TestDurableTaskLoadFailureIsSurfaced(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	path, err := store.Path("corrupt-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession("corrupt-session"); err == nil {
+		t.Fatal("corrupt task state should be reported")
+	}
+	if got := a.TaskSnapshot(); got != nil {
+		t.Fatalf("corrupt task state was accepted: %#v", got)
+	}
+}
+
 func TestDurableTaskContinuesPastRoutineDeferral(t *testing.T) {
 	workspace := t.TempDir()
 	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
