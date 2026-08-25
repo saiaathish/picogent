@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -48,7 +46,12 @@ func (readFile) Run(_ context.Context, args string, c Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	data, truncated, err := readBoundedFile(abs, maxReadBytes)
+	f, err := openWorkspaceRead(ws, abs)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	data, truncated, err := readBoundedReader(f, maxReadBytes)
 	if err != nil {
 		return "", err
 	}
@@ -118,15 +121,28 @@ func (writeFile) Run(ctx context.Context, args string, c Context) (string, error
 			return "", err
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
-		return "", err
-	}
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 	}
-	if err := os.WriteFile(abs, []byte(in.Content), 0o644); err != nil {
+	f, err := openWorkspaceWrite(ws, abs)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
+	if err := f.Truncate(0); err != nil {
+		return "", err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	if err := writeAll(f, []byte(in.Content)); err != nil {
 		return "", err
 	}
 	return "wrote " + relDisplay(ws, abs), nil
@@ -179,7 +195,12 @@ func (editFile) Run(ctx context.Context, args string, c Context) (string, error)
 	if err != nil {
 		return "", err
 	}
-	data, truncated, err := readBoundedFile(abs, maxReadBytes)
+	f, err := openWorkspaceEdit(ws, abs)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	data, truncated, err := readBoundedReader(f, maxReadBytes)
 	if err != nil {
 		return "", err
 	}
@@ -203,22 +224,20 @@ func (editFile) Run(ctx context.Context, args string, c Context) (string, error)
 			return "", err
 		}
 	}
-	if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
+	if err := f.Truncate(0); err != nil {
+		return "", err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	if err := writeAll(f, []byte(updated)); err != nil {
 		return "", err
 	}
 	return "edited " + relDisplay(ws, abs), nil
 }
 
-// readBoundedFile avoids allocating an unbounded workspace file before the
-// tool's output cap can take effect.
-func readBoundedFile(path string, limit int) ([]byte, bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, false, err
-	}
-	defer f.Close()
-
-	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+func readBoundedReader(r io.Reader, limit int) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(r, int64(limit)+1))
 	if err != nil {
 		return nil, false, err
 	}
@@ -226,6 +245,20 @@ func readBoundedFile(path string, limit int) ([]byte, bool, error) {
 		return data, false, nil
 	}
 	return data[:limit], true, nil
+}
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
 }
 
 // trimIncompleteUTF8 preserves a valid prefix when the byte cap lands in the

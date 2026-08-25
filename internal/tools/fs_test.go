@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/config"
@@ -92,6 +93,94 @@ func TestFilesystemToolsClassifyOutsideSymlink(t *testing.T) {
 				t.Fatalf("Fast decision = %s, %v; want deny", got, err)
 			}
 		})
+	}
+}
+
+func TestFilesystemToolsRejectOutsideSymlinkAtRun(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(workspace, "escape")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation requires privileges on Windows")
+		}
+		t.Fatal(err)
+	}
+
+	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	for _, tt := range []struct {
+		name string
+		args string
+	}{
+		{name: "read_file", args: `{"path":"escape/secret.txt"}`},
+		{name: "write_file", args: `{"path":"escape/secret.txt","content":"owned"}`},
+		{name: "edit_file", args: `{"path":"escape/secret.txt","old_string":"private","new_string":"owned"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tool, ok := reg.Get(tt.name)
+			if !ok {
+				t.Fatalf("missing %s", tt.name)
+			}
+			if _, err := tool.Run(context.Background(), tt.args, reg.Ctx); err == nil {
+				t.Fatalf("%s followed an outside symlink", tt.name)
+			}
+		})
+	}
+	if got, err := os.ReadFile(secret); err != nil || string(got) != "private" {
+		t.Fatalf("outside file changed: %q, %v", got, err)
+	}
+}
+
+func TestUnixWorkspaceWriteDoesNotEscapeAncestorSwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("descriptor-relative no-follow test is Unix-specific")
+	}
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	parent := filepath.Join(workspace, "parent")
+	realParent := filepath.Join(workspace, "parent-real")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideTarget := filepath.Join(outside, "marker.txt")
+	if err := os.WriteFile(outsideTarget, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	var swaps sync.WaitGroup
+	swaps.Add(1)
+	go func() {
+		defer swaps.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := os.Rename(parent, realParent); err != nil {
+				continue
+			}
+			if err := os.Symlink(outside, parent); err == nil {
+				_ = os.Remove(parent)
+			}
+			_ = os.Rename(realParent, parent)
+		}
+	}()
+
+	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	write, _ := reg.Get("write_file")
+	for i := 0; i < 250; i++ {
+		_, _ = write.Run(context.Background(), `{"path":"parent/marker.txt","content":"workspace"}`, reg.Ctx)
+	}
+	close(stop)
+	swaps.Wait()
+
+	if got, err := os.ReadFile(outsideTarget); err != nil || string(got) != "private" {
+		t.Fatalf("ancestor swap escaped workspace: %q, %v", got, err)
 	}
 }
 
