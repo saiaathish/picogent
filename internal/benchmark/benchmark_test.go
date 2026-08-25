@@ -84,6 +84,38 @@ func BenchmarkRepoMapFormat(b *testing.B) {
 	b.SetBytes(int64(len(repomap.Format(m))))
 }
 
+func BenchmarkRepoMapCapture(b *testing.B) {
+	workspace := benchmarkRepo(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		snapshot, err := repomap.Capture(context.Background(), workspace)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if snapshot.Root == "" || len(snapshot.ManifestPaths) == 0 {
+			b.Fatal("capture fixture was not represented")
+		}
+	}
+}
+
+func BenchmarkRepoMapSnapshotFormat(b *testing.B) {
+	workspace := benchmarkRepo(b)
+	snapshot, err := repomap.Capture(context.Background(), workspace)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		formatted := repomap.FormatSnapshot(snapshot)
+		if formatted == "" || len(formatted) > repomap.MaxOutputBytes {
+			b.Fatalf("formatted snapshot length = %d", len(formatted))
+		}
+	}
+	b.SetBytes(int64(len(repomap.FormatSnapshot(snapshot))))
+}
+
 func BenchmarkSessionListMeta(b *testing.B) {
 	workspace, _ := benchmarkSessions(b, 60)
 	b.ReportAllocs()
@@ -208,6 +240,7 @@ func benchmarkRepo(b *testing.B) string {
 	writeBenchmarkFile(b, filepath.Join(workspace, "README.md"), "# benchmark fixture\n")
 	writeBenchmarkFile(b, filepath.Join(workspace, "internal", "feature", "feature.go"), "package feature\n\nfunc Value() int { return 1 }\n")
 	writeBenchmarkFile(b, filepath.Join(workspace, "internal", "feature", "feature_test.go"), "package feature\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) { if Value() != 1 { t.Fatal(\"wrong\") } }\n")
+	writeBenchmarkFile(b, filepath.Join(workspace, "services", "api", "package.json"), "{}\n")
 	return workspace
 }
 

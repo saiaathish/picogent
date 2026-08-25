@@ -13,7 +13,7 @@ type repoMapTool struct{}
 func (repoMapTool) Spec() llm.ToolSpec {
 	return llm.ToolSpec{
 		Name:        "repo_map",
-		Description: "Inspect the current workspace on demand and return a compact deterministic map of languages, frameworks, package manager, commands, git state, manifests, source/test roots, and project rules. No index or background process.",
+		Description: "Inspect the current workspace on demand and return a compact deterministic map of languages, frameworks, package manager, commands, git state, exact repository provenance, manifests, source/test roots, and project rules. No index or background process.",
 		Parameters:  schema(map[string]any{}, []string{}),
 	}
 }
@@ -23,9 +23,9 @@ func (repoMapTool) Permission(_ string, _ Context) perm.Request {
 }
 
 func (repoMapTool) Run(ctx context.Context, _ string, c Context) (string, error) {
-	m, err := repomap.Inspect(ctx, c.Workspace)
+	snapshot, err := repomap.Capture(ctx, c.Workspace)
 	if err != nil {
 		return "", err
 	}
-	return repomap.Format(m), nil
+	return repomap.FormatSnapshot(snapshot), nil
 }
