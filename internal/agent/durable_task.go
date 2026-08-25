@@ -128,7 +128,7 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
 		return false
 	}
 	var candidate *taskstate.Task
-	if a.task == nil || (a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification()) || a.task.Status == taskstate.StatusBlocked {
+	if a.task == nil || (a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification()) {
 		task, ok, err := taskstate.NewFromPrompt(a.TaskSession, prompt)
 		if err != nil {
 			a.taskMu.Unlock()
@@ -146,6 +146,13 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
 	candidate.InitializeChangeSequence()
 	if candidate.Status == taskstate.StatusDone && candidate.NeedsVerification() {
 		if err := candidate.SetStatus(taskstate.StatusVerifying); err != nil {
+			a.taskMu.Unlock()
+			a.reportTaskUpdateError(ev, err)
+			return true
+		}
+	}
+	if candidate.Status == taskstate.StatusBlocked {
+		if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
 			return true

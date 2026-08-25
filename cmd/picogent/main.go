@@ -369,7 +369,7 @@ func runOnceContext(ctx context.Context, args []string) error {
 	if strings.TrimSpace(prompt) == "" {
 		return fmt.Errorf("Problem: missing prompt.\nCause:   picogent run needs text.\nFix:     picogent run \"create hello.txt\"")
 	}
-	cfg, a, err := app.Load(*dir)
+	cfg, a, err := app.LoadContext(ctx, *dir)
 	if err != nil {
 		return err
 	}
@@ -398,7 +398,7 @@ func runOnceContext(ctx context.Context, args []string) error {
 				return newHeadlessCanceledError(err)
 			}
 			if !proceed {
-				return nil
+				return newHeadlessCanceledError(context.Canceled)
 			}
 		}
 		if applied, ok := scope.Apply(prompt, preflight, choice.ID); ok {
@@ -680,9 +680,12 @@ type stdioHandler struct {
 	interruptInput func()
 	errMu          sync.Mutex
 	eventErr       error
+	streamMu       sync.Mutex
+	stream         strings.Builder
 }
 
 func (h *stdioHandler) OnText(text string) {
+	h.discardStream()
 	out := h.stdout()
 	if text == "" {
 		fmt.Fprintln(out)
@@ -691,9 +694,18 @@ func (h *stdioHandler) OnText(text string) {
 	fmt.Fprintln(out, text)
 }
 func (h *stdioHandler) OnTextDelta(delta string) {
-	fmt.Fprint(h.stdout(), delta)
+	if delta == "" {
+		return
+	}
+	h.streamMu.Lock()
+	h.stream.WriteString(delta)
+	h.streamMu.Unlock()
+}
+func (h *stdioHandler) OnTextFinal(text string) {
+	h.OnText(text)
 }
 func (h *stdioHandler) OnToolStart(call llm.ToolCall) {
+	h.discardStream()
 	fmt.Fprintf(h.stderr(), "→ %s %s\n", call.Name, short(call.Arguments, 80))
 }
 func (h *stdioHandler) OnToolEnd(_ llm.ToolCall, result string, err error) {
@@ -733,6 +745,7 @@ func (h *stdioHandler) OnNeedPermission(ctx context.Context, req perm.Request) (
 	return perm.Deny, errHeadlessPermissionDenied
 }
 func (h *stdioHandler) OnError(err error) {
+	h.discardStream()
 	if err == nil {
 		return
 	}
@@ -741,6 +754,15 @@ func (h *stdioHandler) OnError(err error) {
 		h.eventErr = err
 	}
 	h.errMu.Unlock()
+}
+
+func (h *stdioHandler) discardStream() {
+	if h == nil {
+		return
+	}
+	h.streamMu.Lock()
+	h.stream.Reset()
+	h.streamMu.Unlock()
 }
 
 func (h *stdioHandler) EventError() error {

@@ -2,6 +2,7 @@ package tools_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +13,33 @@ import (
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/tools"
 )
+
+func TestFilesystemWritesHonorCanceledContext(t *testing.T) {
+	workspace := t.TempDir()
+	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	write, _ := reg.Get("write_file")
+	if _, err := write.Run(ctx, `{"path":"new.txt","content":"must not appear"}`, reg.Ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled write = %v, want context canceled", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("canceled write created a file: %v", err)
+	}
+
+	path := filepath.Join(workspace, "existing.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	edit, _ := reg.Get("edit_file")
+	if _, err := edit.Run(ctx, `{"path":"existing.txt","old_string":"before","new_string":"after"}`, reg.Ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled edit = %v, want context canceled", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "before" {
+		t.Fatalf("canceled edit changed file: %q, %v", got, err)
+	}
+}
 
 func TestEditRequiresUniqueString(t *testing.T) {
 	dir := t.TempDir()

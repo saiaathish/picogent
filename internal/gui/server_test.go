@@ -1235,7 +1235,9 @@ func TestScopedTurnReportsTemporaryTaskModeAndRestoresIt(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	foundPlan, foundAgent := false, false
-	for {
+	eventDeadline := time.NewTimer(2 * time.Second)
+	defer eventDeadline.Stop()
+	for !foundPlan || !foundAgent {
 		select {
 		case e := <-events:
 			if e.Type != "task_mode" {
@@ -1243,11 +1245,8 @@ func TestScopedTurnReportsTemporaryTaskModeAndRestoresIt(t *testing.T) {
 			}
 			foundPlan = foundPlan || e.Text == string(agent.TaskPlan)
 			foundAgent = foundAgent || e.Text == string(agent.TaskAgent)
-		default:
-			if !foundPlan || !foundAgent {
-				t.Fatalf("task mode events did not show temporary plan and restore: plan=%v agent=%v", foundPlan, foundAgent)
-			}
-			return
+		case <-eventDeadline.C:
+			t.Fatalf("task mode events did not show temporary plan and restore: plan=%v agent=%v", foundPlan, foundAgent)
 		}
 	}
 }

@@ -474,6 +474,41 @@ func TestDurableTaskStopsAfterThreeVerificationFailures(t *testing.T) {
 	}
 }
 
+func TestBlockedDurableTaskRerunPreservesCheckpoint(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	task, err := taskstate.New("session-blocked-resume", "fix the broken signup flow", []string{"inspect", "verify"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	task.RecordChanged("signup.go")
+	task.AddVerification("go test ./...", true, "verify PASS")
+	task.Block("permission needed")
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = store
+	a.SetTaskSession(task.SessionID)
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: task.Goal}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Task == nil || result.Task.ID != task.ID || result.Task.Status != taskstate.StatusDone {
+		t.Fatalf("rerun replaced or failed to finish checkpoint: %#v", result.Task)
+	}
+	if len(result.Task.ChangedFiles) != 1 || result.Task.ChangedFiles[0] != "signup.go" || result.Task.Attempts != task.Attempts+1 {
+		t.Fatalf("rerun lost checkpoint details: %#v", result.Task)
+	}
+}
+
 func TestDurableTaskPublishesPersistedProgressSnapshots(t *testing.T) {
 	workspace := t.TempDir()
 	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})

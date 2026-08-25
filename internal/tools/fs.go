@@ -92,7 +92,12 @@ func (writeFile) Permission(args string, c Context) perm.Request {
 	return c.ClassifyPath("write_file", in.Path, c.Workspace, "write "+in.Path)
 }
 
-func (writeFile) Run(_ context.Context, args string, c Context) (string, error) {
+func (writeFile) Run(ctx context.Context, args string, c Context) (string, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
 	var in struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`
@@ -108,8 +113,18 @@ func (writeFile) Run(_ context.Context, args string, c Context) (string, error) 
 	if err != nil {
 		return "", err
 	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return "", err
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 	}
 	if err := os.WriteFile(abs, []byte(in.Content), 0o644); err != nil {
 		return "", err
@@ -139,7 +154,12 @@ func (editFile) Permission(args string, c Context) perm.Request {
 	return c.ClassifyPath("edit_file", in.Path, c.Workspace, "edit "+in.Path)
 }
 
-func (editFile) Run(_ context.Context, args string, c Context) (string, error) {
+func (editFile) Run(ctx context.Context, args string, c Context) (string, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
 	var in struct {
 		Path      string `json:"path"`
 		OldString string `json:"old_string"`
@@ -178,6 +198,11 @@ func (editFile) Run(_ context.Context, args string, c Context) (string, error) {
 		return "", fmt.Errorf("old_string found %d times in %s; make it unique", n, relDisplay(ws, abs))
 	}
 	updated := strings.Replace(text, in.OldString, in.NewString, 1)
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
 	if err := os.WriteFile(abs, []byte(updated), 0o644); err != nil {
 		return "", err
 	}
