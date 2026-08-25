@@ -14,12 +14,32 @@ import (
 const CurrentVersion = 1
 
 const (
-	maxTaskSteps    = 8
-	maxChangedFiles = 128
-	maxVerification = 32
-	maxOutcomeNotes = 8
-	maxEvidence     = 16
-	maxTaskAttempts = 128
+	maxTaskGoal            = 600
+	maxTaskIdentity        = 200
+	maxTaskSteps           = 8
+	maxStepDescription     = 300
+	maxChangedFiles        = 128
+	maxChangedFilePath     = 500
+	maxVerification        = 32
+	maxVerificationCommand = 300
+	maxVerificationSummary = 800
+	maxOutcomeNotes        = 8
+	maxOutcomeNote         = 500
+	maxEvidence            = 16
+	maxEvidenceKind        = 48
+	maxEvidenceStatus      = 32
+	maxEvidenceSource      = 64
+	maxEvidenceSummary     = 800
+	maxEvidenceReference   = 300
+	maxEvidenceConfidence  = 24
+	maxIntentClass         = 48
+	maxIntentAction        = 64
+	maxIntentCompleteness  = 32
+	maxIntentScope         = 300
+	maxIntentRisk          = 32
+	maxIntentConfidence    = 24
+	maxTaskAttempts        = 128
+	maxBlockedBy           = 500
 )
 
 // Status is the current phase of a task.
@@ -118,9 +138,13 @@ type Task struct {
 
 // New creates a task associated with a persisted chat session.
 func New(sessionID, goal string, steps []string) (*Task, error) {
-	goal = compactText(goal, 600)
+	sessionID = strings.TrimSpace(sessionID)
+	goal = compactText(goal, maxTaskGoal)
 	if strings.TrimSpace(sessionID) == "" {
 		return nil, errors.New("task session id is required")
+	}
+	if len(sessionID) > maxTaskIdentity {
+		return nil, errors.New("task session id is too long")
 	}
 	if goal == "" {
 		return nil, errors.New("task goal is required")
@@ -140,7 +164,7 @@ func New(sessionID, goal string, steps []string) (*Task, error) {
 		UpdatedAt: now,
 	}
 	for _, step := range steps {
-		if step = compactText(step, 300); step != "" {
+		if step = compactText(step, maxStepDescription); step != "" {
 			t.Steps = append(t.Steps, Step{Description: step})
 		}
 	}
@@ -164,18 +188,21 @@ func (t *Task) Validate() error {
 	if strings.TrimSpace(t.Goal) == "" {
 		return errors.New("task goal is required")
 	}
-	if len(t.Goal) > 600 {
+	if len(t.Goal) > maxTaskGoal {
 		return errors.New("task goal is too long")
 	}
-	if len(t.ID) > 200 || len(t.SessionID) > 200 {
+	if len(t.ID) > maxTaskIdentity || len(t.SessionID) > maxTaskIdentity {
 		return errors.New("task identity is too long")
 	}
 	if t.Intent != nil {
 		if strings.TrimSpace(t.Intent.Outcome) == "" {
 			return errors.New("task intent outcome is required")
 		}
-		if len(t.Intent.Outcome) > 600 {
+		if len(t.Intent.Outcome) > maxTaskGoal {
 			return errors.New("task intent outcome is too long")
+		}
+		if len(t.Intent.Class) > maxIntentClass || len(t.Intent.Action) > maxIntentAction || len(t.Intent.Completeness) > maxIntentCompleteness || len(t.Intent.Scope) > maxIntentScope || len(t.Intent.Risk) > maxIntentRisk || len(t.Intent.Confidence) > maxIntentConfidence {
+			return errors.New("task intent metadata is too long")
 		}
 	}
 	if len(t.Steps) > maxTaskSteps {
@@ -188,7 +215,7 @@ func (t *Task) Validate() error {
 		return errors.New("task changed-file list is too long")
 	}
 	for i, path := range t.ChangedFiles {
-		if strings.TrimSpace(path) == "" || len(path) > 500 {
+		if strings.TrimSpace(path) == "" || len(path) > maxChangedFilePath {
 			return fmt.Errorf("task changed file %d is empty or too long", i)
 		}
 	}
@@ -201,7 +228,7 @@ func (t *Task) Validate() error {
 			return fmt.Errorf("task %s list is too long", name)
 		}
 		for i, note := range notes {
-			if strings.TrimSpace(note) == "" || len(note) > 500 {
+			if strings.TrimSpace(note) == "" || len(note) > maxOutcomeNote {
 				return fmt.Errorf("task %s %d is empty or too long", name, i)
 			}
 		}
@@ -213,7 +240,7 @@ func (t *Task) Validate() error {
 		return errors.New("task verification history is too long")
 	}
 	for i, verification := range t.Verification {
-		if len(verification.Command) > 300 || len(verification.Summary) > 800 {
+		if len(verification.Command) > maxVerificationCommand || len(verification.Summary) > maxVerificationSummary {
 			return fmt.Errorf("task verification %d is too long", i)
 		}
 	}
@@ -221,7 +248,10 @@ func (t *Task) Validate() error {
 		if strings.TrimSpace(evidence.Kind) == "" || strings.TrimSpace(evidence.Status) == "" {
 			return fmt.Errorf("task evidence %d is missing kind or status", i)
 		}
-		if strings.TrimSpace(evidence.Summary) == "" || len(evidence.Summary) > 800 {
+		if len(evidence.Kind) > maxEvidenceKind || len(evidence.Status) > maxEvidenceStatus || len(evidence.Source) > maxEvidenceSource || len(evidence.Summary) > maxEvidenceSummary || len(evidence.Reference) > maxEvidenceReference || len(evidence.Confidence) > maxEvidenceConfidence {
+			return fmt.Errorf("task evidence %d is too long", i)
+		}
+		if strings.TrimSpace(evidence.Summary) == "" {
 			return fmt.Errorf("task evidence %d summary is empty or too long", i)
 		}
 		if evidence.ChangeSeq < 0 || evidence.ChangeSeq > t.ChangeSeq {
@@ -229,7 +259,7 @@ func (t *Task) Validate() error {
 		}
 	}
 	for i, criterion := range t.DefinitionOfDone {
-		if strings.TrimSpace(criterion.Description) == "" || len(criterion.Description) > 300 {
+		if strings.TrimSpace(criterion.Description) == "" || len(criterion.Description) > maxStepDescription {
 			return fmt.Errorf("task completion criterion %d is empty", i)
 		}
 	}
@@ -248,8 +278,11 @@ func (t *Task) Validate() error {
 	if t.VerifiedChangeSeq < -1 || t.VerifiedChangeSeq > t.ChangeSeq {
 		return fmt.Errorf("task verified change sequence %d is invalid for change sequence %d", t.VerifiedChangeSeq, t.ChangeSeq)
 	}
+	if len(t.BlockedBy) > maxBlockedBy {
+		return errors.New("task blocker is too long")
+	}
 	for i, step := range t.Steps {
-		if strings.TrimSpace(step.Description) == "" || len(step.Description) > 300 {
+		if strings.TrimSpace(step.Description) == "" || len(step.Description) > maxStepDescription {
 			return fmt.Errorf("task step %d is empty or too long", i)
 		}
 	}
@@ -372,9 +405,9 @@ func (t *Task) AddVerification(command string, passed bool, summary string) {
 		return
 	}
 	verification := Verification{
-		Command: compactText(command, 300),
+		Command: compactText(command, maxVerificationCommand),
 		Passed:  passed,
-		Summary: compactText(summary, 800),
+		Summary: compactText(summary, maxVerificationSummary),
 		At:      time.Now().UTC(),
 	}
 	if len(t.Verification) >= maxVerification {
@@ -405,12 +438,12 @@ func (t *Task) AddEvidence(e Evidence) {
 	if t == nil {
 		return
 	}
-	e.Kind = compactText(e.Kind, 48)
-	e.Status = compactText(e.Status, 32)
-	e.Source = compactText(e.Source, 64)
-	e.Summary = compactText(e.Summary, 800)
-	e.Reference = compactText(e.Reference, 300)
-	e.Confidence = compactText(e.Confidence, 24)
+	e.Kind = compactText(e.Kind, maxEvidenceKind)
+	e.Status = compactText(e.Status, maxEvidenceStatus)
+	e.Source = compactText(e.Source, maxEvidenceSource)
+	e.Summary = compactText(e.Summary, maxEvidenceSummary)
+	e.Reference = compactText(e.Reference, maxEvidenceReference)
+	e.Confidence = compactText(e.Confidence, maxEvidenceConfidence)
 	if e.Kind == "" || e.Status == "" || e.Summary == "" {
 		return
 	}
@@ -466,7 +499,7 @@ func addOutcomeNote(dst *[]string, note string) {
 	if dst == nil {
 		return
 	}
-	note = compactText(note, 500)
+	note = compactText(note, maxOutcomeNote)
 	if note == "" {
 		return
 	}
@@ -519,7 +552,7 @@ func (t *Task) Block(reason string) {
 		return
 	}
 	t.Status = StatusBlocked
-	t.BlockedBy = compactText(reason, 500)
+	t.BlockedBy = compactText(reason, maxBlockedBy)
 	t.touch()
 }
 

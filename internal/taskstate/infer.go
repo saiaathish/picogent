@@ -213,7 +213,7 @@ func inferredSteps(prompt string) []string {
 }
 
 func normalizeGoal(prompt string) string {
-	goal := compactText(prompt, 600)
+	goal := compactText(prompt, maxTaskGoal)
 	lower := strings.ToLower(goal)
 	for _, prefix := range []string{"please ", "could you please ", "can you please ", "would you please "} {
 		if strings.HasPrefix(lower, prefix) {

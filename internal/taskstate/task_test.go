@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -232,6 +233,16 @@ func TestValidateRejectsUnboundedLegacyCollections(t *testing.T) {
 	task.ChangedFiles = make([]string, maxChangedFiles+1)
 	if err := task.Validate(); err == nil {
 		t.Fatal("oversized changed files should fail validation")
+	}
+	task.ChangedFiles = nil
+	task.Intent = &IntentContract{Outcome: task.Goal, Action: strings.Repeat("a", maxIntentAction+1)}
+	if err := task.Validate(); err == nil {
+		t.Fatal("oversized intent metadata should fail validation")
+	}
+	task.Intent = nil
+	task.Evidence = []Evidence{{Kind: "inspection", Status: "CONFIRMED", Summary: "bounded", Reference: strings.Repeat("a", maxEvidenceReference+1)}}
+	if err := task.Validate(); err == nil {
+		t.Fatal("oversized evidence metadata should fail validation")
 	}
 }
 
