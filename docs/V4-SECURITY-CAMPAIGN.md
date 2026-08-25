@@ -1,0 +1,64 @@
+# V4 security campaign
+
+Status: active. This is a bounded manual audit record, not a hosted security
+certification or a claim that every hostile-runtime scenario is closed.
+
+## Confirmed hardening
+
+### Network fetch
+
+`web_fetch` previously validated a hostname with DNS and then handed the URL to
+the default HTTP transport, which could resolve the hostname again. That left a
+DNS-rebinding window between validation and connection.
+
+The focused fix resolves and validates every answer again inside the dialer,
+dials the validated IP directly, rejects any mixed public/private answer set,
+and disables environment proxy routing for this guarded request. Redirects are
+validated independently and use the same dialer.
+
+Coverage on the security branch:
+
+- mixed public/private DNS answers are rejected;
+- the dial target is an IP address rather than the hostname;
+- private and local literal targets remain rejected;
+- `FuzzWebFetchIPBoundary` passed for a two-second local run.
+
+### Prompt trust boundaries
+
+Repository rules, learned memory, and installed skill text are now framed as
+untrusted advisory content. The system prompt explicitly keeps system policy,
+the user's request, permission gates, and live tool evidence authoritative.
+Instruction-like text from those sources cannot authorize secrets, risky
+actions, permission bypasses, or unrelated edits. The boundary is covered by a
+prompt-construction test.
+
+## Existing boundaries rechecked
+
+- Workspace MCP configuration is not autoloaded; only user-owned MCP config is
+  loaded because connecting a server can execute a command or contact a URL
+  before an individual MCP tool reaches the permission gate.
+- MCP subprocesses receive a small inherited environment plus explicitly
+  configured values; ordinary shell execution filters credential and loader
+  variables.
+- Static symlink escapes are rejected by permission classification, built-in
+  file tools, and checkpoint capture. `FuzzResolveWorkspacePathBoundary` passed
+  for a two-second local run.
+
+## Open or unrecorded risks
+
+- File writes, checkpoints, and restore operations still use path-based I/O
+  after resolution. A hostile process that swaps a path component between the
+  safety check and the operation is not covered by the ordinary symlink tests;
+  descriptor-relative/no-follow runtime proof remains `UNVERIFIED`.
+- Trace events clip values but do not provide a complete secret-redaction
+  policy for prompts, tool arguments, MCP output, or crash diagnostics.
+- Explicit setup flows can run package-manager installs and official
+  `curl | bash` installers. These are user-invoked setup actions, but their
+  provenance, rollback, and least-privilege behavior need a separate audit.
+- Git status/diff and external MCP responses need adversarial hook, textconv,
+  prompt-injection, and secret-leakage runtime tests.
+- The hosted deep security scan was unavailable in the earlier campaign; no
+  scan ID, manifest, or no-findings result is claimed.
+
+The v4 release gate must keep these items visible and must not convert the
+confirmed tests above into a general security-ready claim.
