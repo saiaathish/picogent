@@ -215,6 +215,29 @@ func TestStreamedStaleFooterIsReplacedWithCanonicalUndo(t *testing.T) {
 	}
 }
 
+func TestSuppressUndoDoesNotAdvertiseProcessLocalCommand(t *testing.T) {
+	dir := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "note.txt", "content": "after"})
+	a := undoTestAgent(t, dir, []llm.ChatResponse{
+		toolResponse("1", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}, nil)
+	h := &textCapture{}
+	_, res, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "write note"}, h, agent.RunOptions{SuppressUndo: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.UndoAvailable {
+		t.Fatalf("process-local checkpoint was lost: %+v", res)
+	}
+	if strings.Contains(res.Text, "Undo: /undo") || strings.Contains(h.visible, "Undo: /undo") {
+		t.Fatalf("headless-style output advertised process-local undo: %q", res.Text)
+	}
+	if !strings.Contains(res.Text, "Undo: unavailable") {
+		t.Fatalf("output did not explain unavailable headless undo: %q", res.Text)
+	}
+}
+
 type cancelAfterWriteClient struct {
 	args  string
 	calls int
@@ -244,6 +267,13 @@ type finalTextCapture struct {
 
 func (h *finalTextCapture) OnTextDelta(delta string) { h.visible += delta }
 func (h *finalTextCapture) OnTextFinal(text string)  { h.visible = text }
+
+type textCapture struct {
+	agent.NopHandler
+	visible string
+}
+
+func (h *textCapture) OnText(text string) { h.visible = text }
 
 func (c *cancelAfterWriteClient) Chat(context.Context, llm.ChatRequest) (llm.ChatResponse, error) {
 	c.calls++

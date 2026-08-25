@@ -2,11 +2,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
@@ -14,12 +23,22 @@ import (
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/scope"
+	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 )
 
 func TestVersion(t *testing.T) {
 	if err := run([]string{"version"}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHeadlessInvocationDoesNotInterceptGUIShutdown(t *testing.T) {
+	if headlessInvocation([]string{"gui"}) || headlessInvocation([]string{"tui"}) || headlessInvocation(nil) {
+		t.Fatal("GUI/TUI/default invocations must retain normal signal shutdown")
+	}
+	if !headlessInvocation([]string{"run", "say hello"}) || !headlessInvocation([]string{"--yes", "say hello"}) {
+		t.Fatal("headless command forms must receive signal cancellation")
 	}
 }
 
@@ -118,6 +137,182 @@ func TestHeadlessPermissionDenialUsesExitCodeTwo(t *testing.T) {
 	}
 	if got := exitCode(errors.New("provider failed")); got != 1 {
 		t.Fatalf("provider exit code = %d, want 1", got)
+	}
+}
+
+func TestHeadlessOutcomeClassificationUsesTaskEvidence(t *testing.T) {
+	blocked := &taskstate.Task{Status: taskstate.StatusBlocked, BlockedBy: "permission needed"}
+	if err := classifyHeadlessOutcome(context.Background(), "", agent.Result{Task: blocked}, nil); exitCode(err) != 2 {
+		t.Fatalf("blocked outcome = %v, exit=%d; want exit 2", err, exitCode(err))
+	}
+	unverified := &taskstate.Task{
+		Status:            taskstate.StatusVerifying,
+		ChangedFiles:      []string{"note.txt"},
+		ChangeSeq:         1,
+		VerifiedChangeSeq: 0,
+	}
+	if err := classifyHeadlessOutcome(context.Background(), "", agent.Result{Task: unverified}, nil); exitCode(err) != 3 {
+		t.Fatalf("unverified outcome = %v, exit=%d; want exit 3", err, exitCode(err))
+	}
+	if err := classifyHeadlessOutcome(context.Background(), "finish the project", agent.Result{}, nil); exitCode(err) != 3 {
+		t.Fatalf("missing goal evidence = %v, exit=%d; want exit 3", err, exitCode(err))
+	}
+	if err := classifyHeadlessOutcome(context.Background(), "", agent.Result{}, errors.New("provider failed")); exitCode(err) != 1 {
+		t.Fatalf("failed outcome = %v, exit=%d; want exit 1", err, exitCode(err))
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := classifyHeadlessOutcome(ctx, "", agent.Result{}, nil); exitCode(err) != 130 {
+		t.Fatalf("canceled outcome = %v, exit=%d; want exit 130", err, exitCode(err))
+	}
+}
+
+func TestStdioSeparatesAnswerPromptsAndDiagnostics(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	h := &stdioHandler{
+		in:     bufio.NewReader(strings.NewReader("y\n")),
+		out:    &stdout,
+		errOut: &stderr,
+	}
+	h.OnToolStart(llm.ToolCall{Name: "read_file", Arguments: `{"path":"note.txt"}`})
+	h.OnToolEnd(llm.ToolCall{Name: "read_file"}, "contents", nil)
+	decision, err := h.OnNeedPermission(context.Background(), perm.Request{Summary: "write note.txt"})
+	if err != nil || decision != perm.Allow {
+		t.Fatalf("permission = %s, %v; want allow", decision, err)
+	}
+	h.OnText("answer")
+	if got := stdout.String(); got != "answer\n" {
+		t.Fatalf("stdout = %q, want only final answer", got)
+	}
+	for _, want := range []string{"read_file", "contents", "Allow write note.txt?"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr = %q, missing %q", stderr.String(), want)
+		}
+	}
+	h.OnError(errors.New("deferred failure"))
+	if got := stderr.String(); strings.Contains(got, "deferred failure") {
+		t.Fatalf("event errors must be emitted once by the command boundary, got %q", got)
+	}
+	if !strings.Contains(h.EventError().Error(), "deferred failure") {
+		t.Fatalf("event error was not retained: %v", h.EventError())
+	}
+}
+
+func TestStdioPermissionReadHonorsCancellation(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	defer reader.Close()
+	var stderr bytes.Buffer
+	h := &stdioHandler{
+		in:             bufio.NewReader(reader),
+		errOut:         &stderr,
+		interruptInput: func() { _ = reader.Close() },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.OnNeedPermission(ctx, perm.Request{Summary: "write note.txt"})
+		done <- err
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("permission cancellation = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("permission prompt did not stop after cancellation")
+	}
+}
+
+func TestHeadlessSubprocessStreamsAndExitCodes(t *testing.T) {
+	workspace := t.TempDir()
+	home := t.TempDir()
+	codexHome := t.TempDir()
+	var fail atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail.Load() {
+			http.Error(w, `{"error":{"message":"fake provider failure"}}`, http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"fake provider answer"}}]}`)
+	}))
+	defer server.Close()
+
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", codexHome)
+	t.Setenv("PICOGENT_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("PICOGENT_PROVIDER", "")
+	t.Setenv("PICOGENT_BASE_URL", "")
+	t.Setenv("PICOGENT_ROUTER", "0")
+	t.Setenv("PICOGENT_MODE", "")
+	cfg := config.Default()
+	cfg.SetupComplete = true
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOpenAI
+	cfg.APIKey = "test-key"
+	cfg.BaseURL = server.URL
+	cfg.Model = "fake-model"
+	cfg.Router.Enabled = false
+	cfg.Router.UseLLMAdvisor = false
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	packageDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(t.TempDir(), "picogent")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = packageDir
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build headless binary: %v\n%s", err, out)
+	}
+
+	childEnv := os.Environ()
+	runChild := func() (stdout, stderr bytes.Buffer, err error) {
+		cmd := exec.Command(binary, "run", "--dir", workspace, "say hello")
+		cmd.Env = childEnv
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		err = cmd.Run()
+		return stdout, stderr, err
+	}
+	stdout, stderr, err := runChild()
+	if err != nil {
+		t.Fatalf("successful subprocess: %v\nstdout=%q\nstderr=%q", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "fake provider answer") {
+		t.Fatalf("stdout = %q, missing provider answer", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "Allow ") || strings.Contains(stdout.String(), "Problem:") {
+		t.Fatalf("stdout contains prompt/diagnostic: %q", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "Problem:") {
+		t.Fatalf("successful stderr contains failure diagnostic: %q", stderr.String())
+	}
+
+	fail.Store(true)
+	stdout, stderr, err = runChild()
+	if err == nil {
+		t.Fatalf("failing subprocess unexpectedly succeeded: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("failing subprocess error = %v, want exit 1", err)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("failed run wrote answer to stdout: %q", stdout.String())
+	}
+	if got := strings.Count(stderr.String(), "Problem: the model call failed."); got != 1 {
+		t.Fatalf("stderr = %q, expected one model diagnostic, count=%d", stderr.String(), got)
 	}
 }
 
