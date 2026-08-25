@@ -3,6 +3,8 @@ package agent
 import (
 	"strings"
 	"testing"
+
+	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
 func TestDurableRecoveryHintClassifiesCommonFailures(t *testing.T) {
@@ -22,6 +24,23 @@ func TestDurableRecoveryHintClassifiesCommonFailures(t *testing.T) {
 				t.Fatalf("hint=%q want substring %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRepeatedVerificationFailureRequiresDifferentRepairRoute(t *testing.T) {
+	a := &Agent{task: &taskstate.Task{Verification: []taskstate.Verification{
+		{Summary: "verify FAIL old_string not found in auth.go"},
+		{Summary: " VERIFY   fail old_string not found in auth.go "},
+	}}}
+	if !a.repeatedVerificationFailure() {
+		t.Fatal("identical normalized verification failures were not detected")
+	}
+	if got := durableRepairPrompt("verify FAIL old_string not found in auth.go", true); !strings.Contains(got, "materially different safe repair") {
+		t.Fatalf("repair prompt did not demand route diversity: %q", got)
+	}
+	a.task.Verification[1].Summary = "verify FAIL command not found: gofmt"
+	if a.repeatedVerificationFailure() {
+		t.Fatal("different failure fingerprints were treated as repeated")
 	}
 }
 

@@ -482,7 +482,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			res.Verified = lastVerification
 			if a.continueAfterVerificationFailure(text, round, res.Verified, ev, cfg.MaxToolRounds) {
-				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified)})
+				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified, a.repeatedVerificationFailure())})
 				continue
 			}
 			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
