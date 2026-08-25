@@ -43,13 +43,18 @@ prompt-construction test.
 - Static symlink escapes are rejected by permission classification, built-in
   file tools, and checkpoint capture. `FuzzResolveWorkspacePathBoundary` passed
   for a two-second local run.
+- `read_file`, `write_file`, and `edit_file` now perform their actual I/O
+  through a secure workspace opener. Unix builds walk directory descriptors
+  with `openat`/`mkdirat` and `O_NOFOLLOW`; Windows builds use
+  `OPEN_REPARSE_POINT` handles and verify the final handle path before use.
+  Focused tests cover direct outside-symlink use and a Unix ancestor-swap
+  stress case. Hosted Windows runtime evidence is still pending.
 
 ## Open or unrecorded risks
 
-- File writes, checkpoints, and restore operations still use path-based I/O
-  after resolution. A hostile process that swaps a path component between the
-  safety check and the operation is not covered by the ordinary symlink tests;
-  descriptor-relative/no-follow runtime proof remains `UNVERIFIED`.
+- Checkpoint capture and restore still use path-based I/O after resolution. A
+  separate descriptor-relative audit and runtime proof is required before
+  checkpoint TOCTOU safety can be marked confirmed.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
 - Explicit setup flows can run package-manager installs and official
