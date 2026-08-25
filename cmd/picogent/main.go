@@ -78,12 +78,23 @@ func (e *headlessOutcomeError) Unwrap() error {
 }
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if err := runContext(ctx, os.Args[1:]); err != nil {
+	args := os.Args[1:]
+	var err error
+	if headlessInvocation(args) {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		err = runContext(ctx, args)
+		stop()
+	} else {
+		err = run(args)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(exitCode(err))
 	}
+}
+
+func headlessInvocation(args []string) bool {
+	return len(args) > 0 && (args[0] == "run" || strings.HasPrefix(args[0], "-"))
 }
 
 func exitCode(err error) int {

@@ -33,6 +33,15 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+func TestHeadlessInvocationDoesNotInterceptGUIShutdown(t *testing.T) {
+	if headlessInvocation([]string{"gui"}) || headlessInvocation([]string{"tui"}) || headlessInvocation(nil) {
+		t.Fatal("GUI/TUI/default invocations must retain normal signal shutdown")
+	}
+	if !headlessInvocation([]string{"run", "say hello"}) || !headlessInvocation([]string{"--yes", "say hello"}) {
+		t.Fatal("headless command forms must receive signal cancellation")
+	}
+}
+
 func TestChooseScopeUsesNumberedChoiceAndDefault(t *testing.T) {
 	p, ok := scope.Analyze("build something")
 	if !ok {
