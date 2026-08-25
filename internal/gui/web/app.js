@@ -656,12 +656,6 @@ async function switchProject(id) {
 
 $("add-project").onclick = pickProjectFolder;
 
-async function runTests() {
-  if (busy) return;
-  pushActivity("test", "Running tests…");
-  await fetch("/api/test", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-}
-
 function syncScrim() {
   const on = chatsOpen || reviewOpen || sideOpen;
   scrim.hidden = !on;
@@ -1854,10 +1848,6 @@ function applySlash(it) {
 
 document.querySelectorAll(".rec").forEach((b) => {
   b.onclick = () => {
-    if (b.dataset.action === "test") {
-      runTests();
-      return;
-    }
     if (b.dataset.action === "pick") {
       pickProjectFolder();
       return;

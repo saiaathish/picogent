@@ -349,7 +349,6 @@ func (s *server) Handler() http.Handler {
 	api("/api/setup/login", []string{http.MethodPost}, s.setupLogin)
 	api("/api/setup/finish", []string{http.MethodPost}, s.setupFinish)
 	api("/api/chat", []string{http.MethodPost}, s.chat)
-	api("/api/scope", []string{http.MethodPost}, s.scopeAPI)
 	api("/api/permission", []string{http.MethodPost}, s.permission)
 	api("/api/mode", []string{http.MethodPost}, s.setMode)
 	api("/api/task-mode", []string{http.MethodPost}, s.setTaskMode)
@@ -362,10 +361,8 @@ func (s *server) Handler() http.Handler {
 	api("/api/projects", []string{http.MethodGet, http.MethodPost}, s.projectsAPI)
 	api("/api/folder/pick", []string{http.MethodPost}, s.folderPickAPI)
 	api("/api/files/pick", []string{http.MethodPost}, s.filesPickAPI)
-	api("/api/files/read", []string{http.MethodPost}, s.filesReadAPI)
 	api("/api/overview", []string{http.MethodGet}, s.overviewAPI)
 	api("/api/evolve", []string{http.MethodGet, http.MethodDelete}, s.evolveAPI)
-	api("/api/test", []string{http.MethodPost}, s.testAPI)
 	api("/api/diff", []string{http.MethodGet}, s.diffAPI)
 	api("/api/extensions", []string{http.MethodGet, http.MethodPost}, s.extensionsAPI)
 	api("/api/trace", []string{http.MethodGet}, s.traceAPI)
@@ -1668,39 +1665,6 @@ func (s *server) cancelChat(w http.ResponseWriter, r *http.Request) {
 		s.emit(event{Type: "task_mode", Text: string(restoreMode)})
 	}
 	w.WriteHeader(204)
-}
-
-// scopeAPI performs the cheap, deterministic preflight used by the browser
-// UI. It does not call a provider or inspect the repository, so asking whether
-// a request is broad never costs a model turn.
-func (s *server) scopeAPI(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", http.StatusMethodNotAllowed)
-		return
-	}
-	var in struct {
-		Prompt string `json:"prompt"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	prompt := strings.TrimSpace(in.Prompt)
-	if prompt == "" {
-		http.Error(w, "empty prompt", http.StatusBadRequest)
-		return
-	}
-	p, needed := scope.Analyze(prompt)
-	w.Header().Set("Content-Type", "application/json")
-	if !needed {
-		_ = json.NewEncoder(w).Encode(map[string]any{"needed": false})
-		return
-	}
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"needed":   true,
-		"question": p.Question,
-		"choices":  p.Choices,
-	})
 }
 
 func (s *server) chat(w http.ResponseWriter, r *http.Request) {

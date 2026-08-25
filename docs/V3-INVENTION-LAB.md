@@ -98,3 +98,21 @@ adversarial: all five prototypes are deterministic; only repair-diversity change
 These results prove the candidate predicates and their rejection criteria, not
 model-level repair quality. The shipped mechanism therefore remains small,
 advisory, and covered by the repository's deterministic agent tests.
+
+## Phase 27 follow-up deletion wave
+
+The second audit used current in-tree callers and the GUI security route table
+as the deletion boundary. It removed three GUI surfaces with no shipped caller:
+
+- `/api/files/read`, which accepted arbitrary paths and duplicated the file
+  picker’s attachment reader;
+- `/api/test` and its unreachable `data-action="test"` client branch, which
+  duplicated the live bash-tool test activity path; and
+- `/api/scope`, because `/api/chat` now performs scope analysis inline and the
+  browser explicitly has no standalone scope flow.
+
+The removal also deleted their direct handlers/tests and security allowlist
+entries. Reset/session rotation, live bash test events, the diff endpoint, and
+consumer-dependent verification aliases were retained because they still have
+in-tree behavior or unresolved compatibility scope. The follow-up GUI package
+test and the full repository suite pass after the deletion.

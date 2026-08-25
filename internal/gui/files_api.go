@@ -36,27 +36,6 @@ func (s *server) filesPickAPI(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"files": out})
 }
 
-func (s *server) filesReadAPI(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
-		return
-	}
-	var in struct {
-		Paths []string `json:"paths"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	out, err := readAttachmentPaths(in.Paths)
-	if err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"files": out})
-}
-
 type attachmentFile struct {
 	Name string `json:"name"`
 	MIME string `json:"mime"`
