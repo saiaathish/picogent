@@ -20,16 +20,42 @@ const durableRepairMarker = "Internal verification-repair instruction:"
 // persistence failure to the user.
 var errTaskMutationSkipped = errors.New("durable task mutation skipped")
 
-func durableRepairPrompt(evidence string) string {
+func durableRepairPrompt(evidence string, repeated bool) string {
 	evidence = strings.TrimSpace(evidence)
 	if len(evidence) > 4000 {
 		evidence = evidence[:4000] + "…"
 	}
 	prompt := durableRepairMarker + ` verification failed. Inspect this evidence, repair the smallest responsible area, and run verify again. Do not ask whether to continue.`
+	if repeated {
+		prompt += ` The same verification failure repeated: do not repeat the previous edit or command. Reread the current target, state a different hypothesis, and choose a materially different safe repair; if no distinct route exists, report blocked.`
+	}
 	if hint := durableRecoveryHint(evidence); hint != "" {
 		prompt += "\nRecovery hint: " + hint
 	}
 	return prompt + "\n\n" + evidence
+}
+
+// repeatedVerificationFailure is a small escape hatch for autonomous repair
+// loops. Once the exact normalized failure repeats, the next repair prompt
+// must demand a different hypothesis instead of silently retrying the same
+// route. It is advisory only; the verifier and task failure budget remain
+// authoritative.
+func (a *Agent) repeatedVerificationFailure() bool {
+	task := a.TaskSnapshot()
+	if task == nil || len(task.Verification) < 2 {
+		return false
+	}
+	last := task.Verification[len(task.Verification)-1]
+	previous := task.Verification[len(task.Verification)-2]
+	if last.Passed || previous.Passed {
+		return false
+	}
+	lastFingerprint := verificationFailureFingerprint(last.Summary)
+	return lastFingerprint != "" && lastFingerprint == verificationFailureFingerprint(previous.Summary)
+}
+
+func verificationFailureFingerprint(evidence string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(evidence))), " ")
 }
 
 func durableRecoveryHint(evidence string) string {

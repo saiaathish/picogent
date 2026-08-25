@@ -472,6 +472,17 @@ func TestDurableTaskStopsAfterThreeVerificationFailures(t *testing.T) {
 	if checks != 3 || result.Task == nil || result.Task.Status != taskstate.StatusBlocked || result.Task.BlockedBy != "verification repeatedly failed" {
 		t.Fatalf("checks=%d task=%#v", checks, result.Task)
 	}
+	diversityGateSeen := false
+	for _, call := range fake.Calls {
+		for _, msg := range call.Messages {
+			if strings.Contains(msg.Content, "same verification failure repeated") {
+				diversityGateSeen = true
+			}
+		}
+	}
+	if !diversityGateSeen {
+		t.Fatal("repeated verification failure did not request a different repair route")
+	}
 }
 
 func TestBlockedDurableTaskRerunPreservesCheckpoint(t *testing.T) {
