@@ -13,6 +13,11 @@ import (
 
 const CurrentVersion = 1
 
+const (
+	maxOutcomeNotes = 8
+	maxEvidence     = 16
+)
+
 // Status is the current phase of a task.
 type Status string
 
@@ -37,6 +42,20 @@ type Verification struct {
 	Passed  bool      `json:"passed"`
 	Summary string    `json:"summary,omitempty"`
 	At      time.Time `json:"at"`
+}
+
+// Evidence is a compact, source-labelled fact used to reason about an
+// outcome. Raw command output stays outside durable state; Summary is a
+// bounded distillation and Reference points at the useful source.
+type Evidence struct {
+	Kind       string    `json:"kind"`
+	Status     string    `json:"status"`
+	Source     string    `json:"source,omitempty"`
+	Summary    string    `json:"summary"`
+	Reference  string    `json:"reference,omitempty"`
+	Confidence string    `json:"confidence,omitempty"`
+	ChangeSeq  int       `json:"change_seq,omitempty"`
+	At         time.Time `json:"at"`
 }
 
 // IntentContract is the compact, internal interpretation of a user request.
@@ -83,6 +102,10 @@ type Task struct {
 	// pass.
 	VerifiedChangeSeq int            `json:"verified_change_seq,omitempty"`
 	Verification      []Verification `json:"verification,omitempty"`
+	Constraints       []string       `json:"constraints,omitempty"`
+	Risks             []string       `json:"risks,omitempty"`
+	Uncertainty       []string       `json:"uncertainty,omitempty"`
+	Evidence          []Evidence     `json:"evidence,omitempty"`
 	BlockedBy         string         `json:"blocked_by,omitempty"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
@@ -146,6 +169,34 @@ func (t *Task) Validate() error {
 	}
 	if len(t.DefinitionOfDone) > 8 {
 		return errors.New("task definition of done is too long")
+	}
+	for name, notes := range map[string][]string{
+		"constraint":  t.Constraints,
+		"risk":        t.Risks,
+		"uncertainty": t.Uncertainty,
+	} {
+		if len(notes) > maxOutcomeNotes {
+			return fmt.Errorf("task %s list is too long", name)
+		}
+		for i, note := range notes {
+			if strings.TrimSpace(note) == "" || len(note) > 500 {
+				return fmt.Errorf("task %s %d is empty or too long", name, i)
+			}
+		}
+	}
+	if len(t.Evidence) > maxEvidence {
+		return errors.New("task evidence is too long")
+	}
+	for i, evidence := range t.Evidence {
+		if strings.TrimSpace(evidence.Kind) == "" || strings.TrimSpace(evidence.Status) == "" {
+			return fmt.Errorf("task evidence %d is missing kind or status", i)
+		}
+		if strings.TrimSpace(evidence.Summary) == "" || len(evidence.Summary) > 800 {
+			return fmt.Errorf("task evidence %d summary is empty or too long", i)
+		}
+		if evidence.ChangeSeq < 0 || evidence.ChangeSeq > t.ChangeSeq {
+			return fmt.Errorf("task evidence %d change sequence %d is invalid for change sequence %d", i, evidence.ChangeSeq, t.ChangeSeq)
+		}
 	}
 	for i, criterion := range t.DefinitionOfDone {
 		if strings.TrimSpace(criterion.Description) == "" {
@@ -296,6 +347,92 @@ func (t *Task) AddVerification(command string, passed bool, summary string) {
 		t.VerifiedChangeSeq = -1
 	}
 	t.touch()
+	t.AddEvidence(Evidence{
+		Kind:       "verification",
+		Status:     map[bool]string{true: "PASS", false: "FAIL"}[passed],
+		Source:     "workspace-tool",
+		Summary:    summary,
+		Reference:  command,
+		Confidence: "high",
+		ChangeSeq:  t.ChangeSeq,
+	})
+}
+
+// AddEvidence appends one bounded evidence record. Repeating the exact latest
+// record is ignored so retry loops do not inflate durable context.
+func (t *Task) AddEvidence(e Evidence) {
+	if t == nil {
+		return
+	}
+	e.Kind = compactText(e.Kind, 48)
+	e.Status = compactText(e.Status, 32)
+	e.Source = compactText(e.Source, 64)
+	e.Summary = compactText(e.Summary, 800)
+	e.Reference = compactText(e.Reference, 300)
+	e.Confidence = compactText(e.Confidence, 24)
+	if e.Kind == "" || e.Status == "" || e.Summary == "" {
+		return
+	}
+	if e.ChangeSeq < 0 {
+		e.ChangeSeq = 0
+	}
+	if e.ChangeSeq > t.ChangeSeq {
+		e.ChangeSeq = t.ChangeSeq
+	}
+	if e.At.IsZero() {
+		e.At = time.Now().UTC()
+	}
+	if len(t.Evidence) > 0 && t.Evidence[len(t.Evidence)-1] == e {
+		return
+	}
+	if len(t.Evidence) >= maxEvidence {
+		copy(t.Evidence, t.Evidence[len(t.Evidence)-maxEvidence+1:])
+		t.Evidence = t.Evidence[:maxEvidence-1]
+	}
+	t.Evidence = append(t.Evidence, e)
+	t.touch()
+}
+
+// AddConstraint records a compact user or project boundary.
+func (t *Task) AddConstraint(note string) {
+	if t != nil {
+		addOutcomeNote(&t.Constraints, note)
+	}
+}
+
+// AddRisk records a compact risk discovered during work.
+func (t *Task) AddRisk(note string) {
+	if t != nil {
+		addOutcomeNote(&t.Risks, note)
+	}
+}
+
+// AddUncertainty records an unresolved fact that should not be presented as
+// confirmed completion evidence.
+func (t *Task) AddUncertainty(note string) {
+	if t != nil {
+		addOutcomeNote(&t.Uncertainty, note)
+	}
+}
+
+func addOutcomeNote(dst *[]string, note string) {
+	if dst == nil {
+		return
+	}
+	note = compactText(note, 500)
+	if note == "" {
+		return
+	}
+	for _, existing := range *dst {
+		if existing == note {
+			return
+		}
+	}
+	if len(*dst) >= maxOutcomeNotes {
+		copy(*dst, (*dst)[1:])
+		*dst = (*dst)[:maxOutcomeNotes-1]
+	}
+	*dst = append(*dst, note)
 }
 
 // NeedsVerification reports whether the most recent successful mutation has

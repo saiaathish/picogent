@@ -247,6 +247,51 @@ func (a *Agent) taskPromptSuffix() string {
 			fmt.Fprintf(&b, "\n%s %s", mark, step.Description)
 		}
 	}
+	if len(t.Constraints) > 0 {
+		b.WriteString("\nConstraints:")
+		for i, note := range t.Constraints {
+			if i >= 4 {
+				break
+			}
+			b.WriteString("\n- ")
+			b.WriteString(note)
+		}
+	}
+	if len(t.Risks) > 0 {
+		b.WriteString("\nRisks:")
+		for i, note := range t.Risks {
+			if i >= 4 {
+				break
+			}
+			b.WriteString("\n- ")
+			b.WriteString(note)
+		}
+	}
+	if len(t.Uncertainty) > 0 {
+		b.WriteString("\nUnresolved:")
+		for i, note := range t.Uncertainty {
+			if i >= 4 {
+				break
+			}
+			b.WriteString("\n- ")
+			b.WriteString(note)
+		}
+	}
+	if len(t.Evidence) > 0 {
+		b.WriteString("\nRecent evidence:")
+		start := len(t.Evidence) - 3
+		if start < 0 {
+			start = 0
+		}
+		for _, evidence := range t.Evidence[start:] {
+			fmt.Fprintf(&b, "\n- %s %s: %s", evidence.Status, evidence.Kind, evidence.Summary)
+			if evidence.Reference != "" {
+				b.WriteString(" [")
+				b.WriteString(evidence.Reference)
+				b.WriteByte(']')
+			}
+		}
+	}
 	b.WriteString("\nContinue while the goal is unresolved and a safe permitted action remains.")
 	return b.String()
 }
@@ -476,6 +521,10 @@ func cloneTask(task *taskstate.Task) *taskstate.Task {
 	}
 	cp.ChangedFiles = append([]string(nil), task.ChangedFiles...)
 	cp.Verification = append([]taskstate.Verification(nil), task.Verification...)
+	cp.Constraints = append([]string(nil), task.Constraints...)
+	cp.Risks = append([]string(nil), task.Risks...)
+	cp.Uncertainty = append([]string(nil), task.Uncertainty...)
+	cp.Evidence = append([]taskstate.Evidence(nil), task.Evidence...)
 	return &cp
 }
 
