@@ -132,7 +132,7 @@ func toolSignalLines(content, summary string) []string {
 		{"undefined", weakSignal},
 	}
 
-	candidates := make([]toolSignal, 0, maxSignalCandidates)
+	var candidates []toolSignal
 	start := 0
 	for index := 0; start <= len(content); index++ {
 		relativeEnd := strings.IndexByte(content[start:], '\n')
@@ -148,14 +148,13 @@ func toolSignalLines(content, summary string) []string {
 			start = end + 1
 			continue
 		}
-		low := strings.ToLower(line)
 		score := 0
 		for _, needle := range needles {
-			if strings.Contains(low, needle.text) {
+			if containsFold(line, needle.text) {
 				score += needle.score
 			}
 		}
-		if strings.HasPrefix(low, "fail") || strings.Contains(low, " failed ") {
+		if hasPrefixFold(line, "fail") || containsFold(line, " failed ") {
 			score++
 		}
 		if score > 0 {
@@ -179,6 +178,9 @@ func toolSignalLines(content, summary string) []string {
 			break
 		}
 		start = end + 1
+	}
+	if len(candidates) == 0 {
+		return nil
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].score != candidates[j].score {
@@ -204,12 +206,76 @@ func toolSignalLines(content, summary string) []string {
 }
 
 func flattenDigestLine(line string, limit int) string {
-	line = strings.Join(strings.Fields(line), " ")
-	if limit <= 0 || utf8.RuneCountInString(line) <= limit {
+	line = strings.TrimSpace(line)
+	if limit <= 0 || line == "" {
 		return line
 	}
-	runes := []rune(line)
-	return string(runes[:limit-1]) + "…"
+	// Most tool output is already single-space text. Avoid Fields/Join and
+	// scanning the whole line on this hot path; retain full whitespace
+	// normalization for unusual output below.
+	if !strings.ContainsAny(line, "\t\r\n") && !strings.Contains(line, "  ") {
+		return clipRunes(line, limit)
+	}
+	return clipRunes(strings.Join(strings.Fields(line), " "), limit)
+}
+
+func clipRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	index := 0
+	for count := 0; count < limit && index < len(value); count++ {
+		_, size := utf8.DecodeRuneInString(value[index:])
+		index += size
+	}
+	if index == len(value) {
+		return value
+	}
+	if limit == 1 {
+		return "…"
+	}
+	index = 0
+	for count := 0; count < limit-1 && index < len(value); count++ {
+		_, size := utf8.DecodeRuneInString(value[index:])
+		index += size
+	}
+	return value[:index] + "…"
+}
+
+func containsFold(value, needle string) bool {
+	if needle == "" {
+		return true
+	}
+	if len(needle) > len(value) {
+		return false
+	}
+	for start := 0; start <= len(value)-len(needle); start++ {
+		matched := true
+		for i := range needle {
+			if asciiFold(value[start+i]) != asciiFold(needle[i]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPrefixFold(value, prefix string) bool {
+	if len(value) < len(prefix) {
+		return false
+	}
+	return containsFold(value[:len(prefix)], prefix)
+}
+
+func asciiFold(value byte) byte {
+	if value >= 'A' && value <= 'Z' {
+		return value + ('a' - 'A')
+	}
+	return value
 }
 
 func clipDigest(value string, limit int) string {
@@ -237,13 +303,21 @@ func safeDigestPrefix(value string, limit int) string {
 }
 
 func firstNonEmptyLine(s string) string {
-	for _, line := range strings.Split(s, "\n") {
+	for {
+		end := strings.IndexByte(s, '\n')
+		line := s
+		if end >= 0 {
+			line = s[:end]
+		}
 		line = strings.TrimSpace(line)
 		if line != "" {
 			return line
 		}
+		if end < 0 {
+			return ""
+		}
+		s = s[end+1:]
 	}
-	return ""
 }
 
 // SoftFit repeatedly applies cheap compressors until under soft target (or stuck).

@@ -236,6 +236,16 @@ func TestDetectPlanIgnoresNonGoFileTargets(t *testing.T) {
 	}
 }
 
+func TestDetectPlanKeepsDottedDirectoryTargets(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "go.mod", "module x\n")
+	writeVerifyFile(t, dir, filepath.Join("internal", "v1.2", "feature.go"), "package feature\n")
+	plan := DetectPlan(dir, []string{filepath.Join("internal", "v1.2")})
+	if len(plan.Targeted) != 1 || strings.Join(plan.Targeted[0].Args, " ") != "test ./internal/v1.2" {
+		t.Fatalf("dotted directory target = %+v", plan.Targeted)
+	}
+}
+
 func TestNormalizeResultRejectsContradictoryPass(t *testing.T) {
 	result := normalizeResult(Result{OK: true, Status: StatusPass, Passed: 1, Failed: 1}, Command{Runner: "go", Display: "go test ./..."}, 1)
 	if result.Status != StatusFail || result.OK || result.Reason == "" {
