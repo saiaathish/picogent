@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sync"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/checkpoint"
@@ -113,6 +114,58 @@ func TestRestoreRequiresSealAndRunsOnce(t *testing.T) {
 	if _, err := cp.Restore(); !errors.Is(err, checkpoint.ErrAlreadyRestored) {
 		t.Fatalf("second restore error=%v", err)
 	}
+}
+
+func TestConcurrentRestoreHasOneWinnerAndOneShotLoser(t *testing.T) {
+	workspace := t.TempDir()
+	write(t, workspace, "file.txt", "before", 0o644)
+	cp, err := checkpoint.Capture(workspace, []string{"file.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, workspace, "file.txt", "after", 0o644)
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+
+	type restoreResult struct {
+		result checkpoint.RestoreResult
+		err    error
+	}
+	start := make(chan struct{})
+	results := make(chan restoreResult, 2)
+	var ready sync.WaitGroup
+	ready.Add(2)
+	for range 2 {
+		go func() {
+			ready.Done()
+			<-start
+			result, err := cp.Restore()
+			results <- restoreResult{result: result, err: err}
+		}()
+	}
+	ready.Wait()
+	close(start)
+
+	winners, losers := 0, 0
+	for range 2 {
+		out := <-results
+		switch {
+		case out.err == nil:
+			winners++
+			if !out.result.Complete {
+				t.Fatalf("successful restore was not complete: %#v", out.result)
+			}
+		case errors.Is(out.err, checkpoint.ErrAlreadyRestored):
+			losers++
+		default:
+			t.Fatalf("unexpected concurrent restore error: %v", out.err)
+		}
+	}
+	if winners != 1 || losers != 1 {
+		t.Fatalf("concurrent restore outcomes = winners:%d losers:%d", winners, losers)
+	}
+	assertContents(t, workspace, "file.txt", "before")
 }
 
 func TestAddCapturesMorePathsDeduplicatesAndRejectsAfterSeal(t *testing.T) {

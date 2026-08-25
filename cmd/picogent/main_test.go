@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -221,14 +222,15 @@ func TestStdioSeparatesAnswerPromptsAndDiagnostics(t *testing.T) {
 }
 
 func TestStdioPermissionReadHonorsCancellation(t *testing.T) {
-	reader, writer := io.Pipe()
-	defer writer.Close()
-	defer reader.Close()
+	reader := &blockingPermissionReader{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
 	var stderr bytes.Buffer
 	h := &stdioHandler{
 		in:             bufio.NewReader(reader),
 		errOut:         &stderr,
-		interruptInput: func() { _ = reader.Close() },
+		interruptInput: reader.interrupt,
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -236,7 +238,11 @@ func TestStdioPermissionReadHonorsCancellation(t *testing.T) {
 		_, err := h.OnNeedPermission(ctx, perm.Request{Summary: "write note.txt"})
 		done <- err
 	}()
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-reader.started:
+	case <-time.After(time.Second):
+		t.Fatal("permission reader did not reach its blocking barrier")
+	}
 	cancel()
 	select {
 	case err := <-done:
@@ -246,6 +252,23 @@ func TestStdioPermissionReadHonorsCancellation(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("permission prompt did not stop after cancellation")
 	}
+}
+
+type blockingPermissionReader struct {
+	started     chan struct{}
+	release     chan struct{}
+	startedOnce sync.Once
+	releaseOnce sync.Once
+}
+
+func (r *blockingPermissionReader) Read([]byte) (int, error) {
+	r.startedOnce.Do(func() { close(r.started) })
+	<-r.release
+	return 0, io.EOF
+}
+
+func (r *blockingPermissionReader) interrupt() {
+	r.releaseOnce.Do(func() { close(r.release) })
 }
 
 func TestHeadlessSubprocessStreamsAndExitCodes(t *testing.T) {
