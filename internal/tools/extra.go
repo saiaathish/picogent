@@ -117,9 +117,6 @@ func (webFetch) Run(ctx context.Context, args string, _ Context) (string, error)
 	if url == "" {
 		return "", fmt.Errorf("url is required")
 	}
-	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		return "", fmt.Errorf("url must be http or https")
-	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	parsed, err := parseWebFetchURL(url)
@@ -134,7 +131,14 @@ func (webFetch) Run(ctx context.Context, args string, _ Context) (string, error)
 		return "", err
 	}
 	req.Header.Set("User-Agent", "Picogent/1.0.0")
-	client := *http.DefaultClient
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Do not route this request through an environment proxy. The SSRF guard
+	// validates the destination that Picogent will dial; a proxy would move
+	// that dial outside the validated boundary.
+	transport.Proxy = nil
+	transport.DialContext = webFetchDialContext
+	client := &http.Client{Transport: transport}
+	defer transport.CloseIdleConnections()
 	client.CheckRedirect = func(next *http.Request, _ []*http.Request) error {
 		if err := validateWebFetchURL(next.Context(), next.URL); err != nil {
 			return err
@@ -187,23 +191,67 @@ func validateWebFetchURL(ctx context.Context, u *neturl.URL) error {
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".local") {
 		return fmt.Errorf("refusing private or local URL host %q", host)
 	}
-	ips := net.ParseIP(host)
-	if ips != nil {
-		if blockedWebFetchIP(ips) {
-			return fmt.Errorf("refusing private or local URL host %q", host)
-		}
-		return nil
+	if _, err := webFetchIPs(ctx, host, net.DefaultResolver); err != nil {
+		return err
 	}
-	resolved, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	return nil
+}
+
+type webFetchIPResolver interface {
+	LookupIP(context.Context, string, string) ([]net.IP, error)
+}
+
+// webFetchIPs resolves and validates every address for host. A hostname is
+// only safe when all answers are public; otherwise a multi-answer DNS result
+// could make the request nondeterministically reach a private service.
+func webFetchIPs(ctx context.Context, host string, resolver webFetchIPResolver) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		if blockedWebFetchIP(ip) {
+			return nil, fmt.Errorf("refusing private or local URL host %q", host)
+		}
+		return []net.IP{ip}, nil
+	}
+	resolved, err := resolver.LookupIP(ctx, "ip", host)
 	if err != nil || len(resolved) == 0 {
-		return fmt.Errorf("URL host %q could not be resolved", host)
+		return nil, fmt.Errorf("URL host %q could not be resolved", host)
 	}
 	for _, ip := range resolved {
 		if blockedWebFetchIP(ip) {
-			return fmt.Errorf("refusing URL host %q because it resolves to a private or local address", host)
+			return nil, fmt.Errorf("refusing URL host %q because it resolves to a private or local address", host)
 		}
 	}
-	return nil
+	return resolved, nil
+}
+
+// webFetchDialContext pins each connection to the validated DNS answer. The
+// default transport would resolve the hostname again after validateWebFetchURL
+// returns, leaving a DNS-rebinding window between the check and the dial.
+func webFetchDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	dialer := &net.Dialer{}
+	return dialWebFetchAddress(ctx, network, address, net.DefaultResolver, dialer.DialContext)
+}
+
+func dialWebFetchAddress(ctx context.Context, network, address string, resolver webFetchIPResolver, dial func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, fmt.Errorf("invalid web fetch address %q: %w", address, err)
+	}
+	ips, err := webFetchIPs(ctx, strings.Trim(host, "[]"), resolver)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, ip := range ips {
+		conn, err := dial(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no public address available")
+	}
+	return nil, lastErr
 }
 
 func blockedWebFetchIP(ip net.IP) bool {
