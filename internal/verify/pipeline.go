@@ -3,6 +3,7 @@ package verify
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -99,7 +100,7 @@ func DetectPlan(workspace string, targets []string) Plan {
 	var targeted Command
 	switch runner {
 	case "go":
-		packages := goTargets(targets)
+		packages := goTargets(workspace, targets)
 		if len(packages) > 0 {
 			targeted = Command{Runner: "go", Args: append([]string{"test"}, packages...), Scope: ScopeTargeted}
 		}
@@ -210,7 +211,10 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 		targeted.Reason = "requested targets have no safe targeted command"
 		result.Stages[0] = targeted
 	}
-	if targeted.Status != StatusPass {
+	// An empty target list is an expected absence of targeted coverage, not a
+	// reason to skip the workspace suite. Requested targets without a safe
+	// mapping remain inconclusive and continue to fail closed.
+	if targeted.Status != StatusPass && !(targeted.Status == StatusSkipped && !requestedTargets) {
 		result.Status = targeted.Status
 		result.Reason = targeted.Reason
 		result.Duration = time.Since(started)
@@ -280,6 +284,10 @@ func normalizeResult(result Result, command Command, attempt int) Result {
 		result.Status = StatusInconclusive
 		result.Reason = "verification returned PASS without test evidence"
 	}
+	if result.Status == StatusPass && result.Failed > 0 {
+		result.Status = StatusFail
+		result.Reason = "verification reported failed tests"
+	}
 	result.OK = result.Status == StatusPass
 	return result
 }
@@ -308,12 +316,22 @@ func normalizeTargets(workspace string, targets []string) []string {
 	return unique(out)
 }
 
-func goTargets(targets []string) []string {
+func goTargets(workspace string, targets []string) []string {
 	packages := make([]string, 0, len(targets))
 	for _, target := range targets {
 		dir := target
-		if filepath.Ext(target) != "" {
+		path := filepath.Join(workspace, filepath.FromSlash(target))
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			if !strings.EqualFold(filepath.Ext(target), ".go") {
+				continue
+			}
 			dir = filepath.ToSlash(filepath.Dir(target))
+		} else if strings.EqualFold(filepath.Ext(target), ".go") {
+			dir = filepath.ToSlash(filepath.Dir(target))
+		} else if filepath.Ext(target) != "" {
+			// A dotted non-Go target is most likely documentation or another
+			// ecosystem's file. Do not turn it into an invalid Go package.
+			continue
 		}
 		if dir == "." {
 			packages = append(packages, ".")
