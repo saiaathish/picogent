@@ -8,9 +8,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
@@ -24,7 +28,9 @@ import (
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/setup"
+	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tui"
+	"github.com/saiaathish/picogent/internal/verify"
 )
 
 var version = "1.0.0"
@@ -34,14 +40,64 @@ var version = "1.0.0"
 // approval" without mistaking it for an agent crash.
 var errHeadlessPermissionDenied = errors.New("Problem: permission denied.\nCause:   headless Safe mode could not approve the requested action.\nFix:     rerun interactively and approve it, or use --yes for non-destructive in-workspace work.")
 
+type headlessOutcome uint8
+
+const (
+	headlessOutcomeBlocked headlessOutcome = iota + 1
+	headlessOutcomeCanceled
+	headlessOutcomeUnverified
+)
+
+// headlessOutcomeError keeps the CLI's machine-visible exit classification
+// attached to the human-readable error without making the agent package know
+// about command-line policy.
+type headlessOutcomeError struct {
+	outcome headlessOutcome
+	cause   error
+	message string
+}
+
+func (e *headlessOutcomeError) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.message != "" {
+		return e.message
+	}
+	if e.cause != nil {
+		return e.cause.Error()
+	}
+	return "headless run did not complete"
+}
+
+func (e *headlessOutcomeError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := runContext(ctx, os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, err.Error())
 		os.Exit(exitCode(err))
 	}
 }
 
 func exitCode(err error) int {
+	var outcome *headlessOutcomeError
+	if errors.As(err, &outcome) {
+		switch outcome.outcome {
+		case headlessOutcomeBlocked:
+			return 2
+		case headlessOutcomeCanceled:
+			return 130
+		case headlessOutcomeUnverified:
+			return 3
+		}
+	}
 	if errors.Is(err, errHeadlessPermissionDenied) {
 		return 2
 	}
@@ -49,6 +105,10 @@ func exitCode(err error) int {
 }
 
 func run(args []string) error {
+	return runContext(context.Background(), args)
+}
+
+func runContext(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		if config.NeedsSetup() {
 			return gui.Run()
@@ -63,7 +123,7 @@ func run(args []string) error {
 	case "tui":
 		return tui.Run()
 	case "run":
-		return runOnce(args[1:])
+		return runOnceContext(ctx, args[1:])
 	case "init":
 		return runInitArgs(args[1:])
 	case "login":
@@ -78,7 +138,7 @@ func run(args []string) error {
 		return nil
 	default:
 		if strings.HasPrefix(args[0], "-") {
-			return runOnce(args)
+			return runOnceContext(ctx, args)
 		}
 		printHelp()
 		return fmt.Errorf("unknown command %q", args[0])
@@ -274,7 +334,18 @@ func runInitArgs(args []string) error {
 }
 
 func runOnce(args []string) error {
+	return runOnceContext(context.Background(), args)
+}
+
+func runOnceContext(ctx context.Context, args []string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return newHeadlessCanceledError(err)
+	}
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 	dir := fs.String("dir", ".", "workspace")
 	yes := fs.Bool("yes", false, "auto-approve in-workspace writes and shell")
 	model := fs.String("model", "", "model override")
@@ -304,12 +375,17 @@ func runOnce(args []string) error {
 	// unrelated prompts share progress.
 	a.SetTaskSession(headlessTaskSessionID(originalPrompt))
 	input := bufio.NewReader(os.Stdin)
-	h := &stdioHandler{yes: *yes, in: input}
+	interruptInput := func() { _ = os.Stdin.Close() }
+	h := &stdioHandler{yes: *yes, in: input, out: os.Stdout, errOut: os.Stderr, interruptInput: interruptInput}
 	if preflight, ok := scope.Analyze(prompt); ok {
 		choice := scope.Recommended(preflight)
 		if *clarify {
 			var proceed bool
-			choice, proceed = chooseScope(preflight, input)
+			var err error
+			choice, proceed, err = chooseScopeContext(ctx, preflight, input, os.Stderr, interruptInput)
+			if err != nil {
+				return newHeadlessCanceledError(err)
+			}
 			if !proceed {
 				return nil
 			}
@@ -324,9 +400,9 @@ func runOnce(args []string) error {
 		runGoal, runGoalRevision := a.GoalStateSnapshot()
 		runGoal = strings.TrimSpace(runGoal)
 		scopeBoundary := scope.TurnBoundary(choice)
-		_, result, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{TaskMode: mode, TracePrompt: originalPrompt, DurablePrompt: originalPrompt, ScopeBoundary: scopeBoundary})
-		if err != nil {
-			return err
+		result, err := runHeadlessAgent(ctx, a, h, prompt, agent.RunOptions{TaskMode: mode, TracePrompt: originalPrompt, DurablePrompt: originalPrompt, ScopeBoundary: scopeBoundary, SuppressUndo: true})
+		if outcomeErr := classifyHeadlessOutcome(ctx, runGoal, result, err); outcomeErr != nil {
+			return outcomeErr
 		}
 		return clearHeadlessGoalAfterCompletion(a, cfg, runGoal, runGoalRevision, result)
 	}
@@ -336,15 +412,82 @@ func runOnce(args []string) error {
 	}
 	runGoal, runGoalRevision := a.GoalStateSnapshot()
 	runGoal = strings.TrimSpace(runGoal)
-	_, result, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h, agent.RunOptions{
+	result, err := runHeadlessAgent(ctx, a, h, prompt, agent.RunOptions{
 		TaskMode:      automaticMode,
 		TracePrompt:   originalPrompt,
 		DurablePrompt: originalPrompt,
+		SuppressUndo:  true,
 	})
-	if err != nil {
-		return err
+	if outcomeErr := classifyHeadlessOutcome(ctx, runGoal, result, err); outcomeErr != nil {
+		return outcomeErr
 	}
 	return clearHeadlessGoalAfterCompletion(a, cfg, runGoal, runGoalRevision, result)
+}
+
+func runHeadlessAgent(ctx context.Context, a *agent.Agent, h *stdioHandler, prompt string, opts agent.RunOptions) (agent.Result, error) {
+	_, result, err := a.RunWithOptions(ctx, nil, llm.Message{Role: "user", Content: prompt}, h, opts)
+	if err == nil {
+		err = h.EventError()
+	}
+	return result, err
+}
+
+func classifyHeadlessOutcome(ctx context.Context, expectedGoal string, result agent.Result, runErr error) error {
+	if ctx != nil && ctx.Err() != nil {
+		return newHeadlessCanceledError(ctx.Err())
+	}
+	if errors.Is(runErr, context.Canceled) || errors.Is(runErr, context.DeadlineExceeded) {
+		return newHeadlessCanceledError(runErr)
+	}
+	if result.Task != nil && result.Task.Status == taskstate.StatusBlocked {
+		reason := strings.TrimSpace(result.Task.BlockedBy)
+		if reason == "" {
+			reason = "the agent could not take the next safe action"
+		}
+		return &headlessOutcomeError{
+			outcome: headlessOutcomeBlocked,
+			cause:   runErr,
+			message: fmt.Sprintf("Problem: headless run is blocked.\nCause:   %s.\nFix:     resolve the blocker, then rerun the same command to resume the task.", reason),
+		}
+	}
+	if errors.Is(runErr, errHeadlessPermissionDenied) {
+		return &headlessOutcomeError{outcome: headlessOutcomeBlocked, cause: runErr}
+	}
+	if runErr != nil {
+		return runErr
+	}
+	if result.Task != nil && result.Task.NeedsVerification() {
+		return newHeadlessUnverifiedError(result.Verified)
+	}
+	if len(result.FilesChanged) > 0 && verify.StatusFromEvidence(result.Verified) != verify.StatusPass {
+		return newHeadlessUnverifiedError(result.Verified)
+	}
+	if strings.TrimSpace(expectedGoal) != "" && !result.GoalDone {
+		return newHeadlessUnverifiedError(result.Verified)
+	}
+	return nil
+}
+
+func newHeadlessCanceledError(cause error) error {
+	if cause == nil {
+		cause = context.Canceled
+	}
+	return &headlessOutcomeError{
+		outcome: headlessOutcomeCanceled,
+		cause:   cause,
+		message: "Problem: headless run canceled.\nCause:   the current turn was interrupted before completion.\nFix:     rerun the same command to resume the durable task.",
+	}
+}
+
+func newHeadlessUnverifiedError(evidence string) error {
+	reason := "no passing verification evidence was recorded"
+	if evidence = strings.TrimSpace(evidence); evidence != "" {
+		reason = "the latest verification was not a passing result: " + short(evidence, 240)
+	}
+	return &headlessOutcomeError{
+		outcome: headlessOutcomeUnverified,
+		message: fmt.Sprintf("Problem: headless task is not verified.\nCause:   %s.\nFix:     rerun the same command to continue until the requested outcome has passing evidence.", reason),
+	}
 }
 
 // applyHeadlessGoalInference mirrors the GUI/TUI automatic intent path. The
@@ -444,76 +587,133 @@ func headlessTaskSessionID(prompt string) string {
 }
 
 func chooseScope(p scope.Prompt, in *bufio.Reader) (scope.Choice, bool) {
+	choice, proceed, _ := chooseScopeContext(context.Background(), p, in, os.Stderr, nil)
+	return choice, proceed
+}
+
+type lineReadResult struct {
+	line string
+	err  error
+}
+
+func readLineContext(ctx context.Context, in *bufio.Reader, interrupt func()) (string, error) {
+	if in == nil {
+		return "", io.EOF
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	read := make(chan lineReadResult, 1)
+	go func() {
+		line, err := in.ReadString('\n')
+		read <- lineReadResult{line: line, err: err}
+	}()
+	select {
+	case result := <-read:
+		return result.line, result.err
+	case <-ctx.Done():
+		if interrupt != nil {
+			interrupt()
+		}
+		return "", ctx.Err()
+	}
+}
+
+func chooseScopeContext(ctx context.Context, p scope.Prompt, in *bufio.Reader, out io.Writer, interrupt func()) (scope.Choice, bool, error) {
 	choice := scope.Recommended(p)
-	fmt.Println()
-	fmt.Println("Quick question:", p.Question)
+	if out == nil {
+		out = os.Stderr
+	}
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Quick question:", p.Question)
 	for i, c := range p.Choices {
 		recommended := ""
 		if c.Recommended {
 			recommended = " (recommended)"
 		}
-		fmt.Printf("  %d. %s%s — %s\n", i+1, c.Label, recommended, c.Why)
+		fmt.Fprintf(out, "  %d. %s%s — %s\n", i+1, c.Label, recommended, c.Why)
 	}
-	fmt.Print("Choose 1-", len(p.Choices), " (Enter for recommended, type esc to cancel): ")
-	line, err := in.ReadString('\n')
+	fmt.Fprint(out, "Choose 1-", len(p.Choices), " (Enter for recommended, type esc to cancel): ")
+	line, err := readLineContext(ctx, in, interrupt)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return choice, false, err
+	}
 	if err != nil {
-		return choice, true
+		return choice, true, nil
 	}
 	line = strings.TrimSpace(strings.ToLower(line))
 	if line == "esc" || line == "cancel" {
-		fmt.Println("Canceled.")
-		return scope.Choice{}, false
+		fmt.Fprintln(out, "Canceled.")
+		return scope.Choice{}, false, nil
 	}
 	if line == "" {
-		return choice, true
+		return choice, true, nil
 	}
 	for i, c := range p.Choices {
 		if line == fmt.Sprint(i+1) {
-			return c, true
+			return c, true, nil
 		}
 	}
-	fmt.Println("Using the recommended option.")
-	return choice, true
+	fmt.Fprintln(out, "Using the recommended option.")
+	return choice, true, nil
 }
 
 type stdioHandler struct {
-	yes bool
-	in  *bufio.Reader
+	yes            bool
+	in             *bufio.Reader
+	out            io.Writer
+	errOut         io.Writer
+	interruptInput func()
+	errMu          sync.Mutex
+	eventErr       error
 }
 
 func (h *stdioHandler) OnText(text string) {
+	out := h.stdout()
 	if text == "" {
-		fmt.Println()
+		fmt.Fprintln(out)
 		return
 	}
-	fmt.Println(text)
+	fmt.Fprintln(out, text)
 }
 func (h *stdioHandler) OnTextDelta(delta string) {
-	fmt.Print(delta)
+	fmt.Fprint(h.stdout(), delta)
 }
 func (h *stdioHandler) OnToolStart(call llm.ToolCall) {
-	fmt.Fprintf(os.Stderr, "→ %s %s\n", call.Name, short(call.Arguments, 80))
+	fmt.Fprintf(h.stderr(), "→ %s %s\n", call.Name, short(call.Arguments, 80))
 }
 func (h *stdioHandler) OnToolEnd(_ llm.ToolCall, result string, err error) {
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "  error:", err)
+		fmt.Fprintln(h.stderr(), "  error:", err)
 		return
 	}
-	fmt.Fprintln(os.Stderr, " ", short(result, 120))
+	fmt.Fprintln(h.stderr(), " ", short(result, 120))
 }
-func (h *stdioHandler) OnNeedPermission(_ context.Context, req perm.Request) (perm.Decision, error) {
+func (h *stdioHandler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error) {
 	if h.yes && !req.Destructive && !req.OutsideWorkspace {
 		return perm.Allow, nil
 	}
 	if h.yes && (req.Destructive || req.OutsideWorkspace) {
 		return perm.Deny, errHeadlessPermissionDenied
 	}
-	fmt.Printf("Allow %s? [y/n] ", req.Summary)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return perm.Deny, err
+	}
+	fmt.Fprintf(h.stderr(), "Allow %s? [y/n] ", req.Summary)
 	if h.in == nil {
 		return perm.Deny, errHeadlessPermissionDenied
 	}
-	line, err := h.in.ReadString('\n')
+	line, err := readLineContext(ctx, h.in, h.interruptInput)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return perm.Deny, err
+		}
 		return perm.Deny, errHeadlessPermissionDenied
 	}
 	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y") {
@@ -521,7 +721,39 @@ func (h *stdioHandler) OnNeedPermission(_ context.Context, req perm.Request) (pe
 	}
 	return perm.Deny, errHeadlessPermissionDenied
 }
-func (h *stdioHandler) OnError(err error) { fmt.Fprintln(os.Stderr, err.Error()) }
+func (h *stdioHandler) OnError(err error) {
+	if err == nil {
+		return
+	}
+	h.errMu.Lock()
+	if h.eventErr == nil {
+		h.eventErr = err
+	}
+	h.errMu.Unlock()
+}
+
+func (h *stdioHandler) EventError() error {
+	if h == nil {
+		return nil
+	}
+	h.errMu.Lock()
+	defer h.errMu.Unlock()
+	return h.eventErr
+}
+
+func (h *stdioHandler) stdout() io.Writer {
+	if h != nil && h.out != nil {
+		return h.out
+	}
+	return os.Stdout
+}
+
+func (h *stdioHandler) stderr() io.Writer {
+	if h != nil && h.errOut != nil {
+		return h.errOut
+	}
+	return os.Stderr
+}
 
 func short(s string, n int) string {
 	s = strings.ReplaceAll(s, "\n", " ")

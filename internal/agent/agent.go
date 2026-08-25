@@ -345,6 +345,10 @@ type RunOptions struct {
 	// durable task and active-goal context so a broad resumable objective cannot
 	// override the selected work for this turn.
 	ScopeBoundary string
+	// SuppressUndo keeps one-shot callers from advertising the process-local
+	// /undo command after the process has exited. The checkpoint remains
+	// available to callers that keep the Agent alive.
+	SuppressUndo bool
 }
 
 func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message, ev EventHandler) ([]llm.Message, Result, error) {
@@ -482,7 +486,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				continue
 			}
 			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
-			normalized := normalizeExplainFooter(text, res.FilesChanged, res.UndoAvailable, res.UndoError)
+			undoAvailable, undoError := res.UndoAvailable, res.UndoError
+			if opts.SuppressUndo && undoAvailable {
+				undoAvailable = false
+				undoError = "available only during this process"
+			}
+			normalized := normalizeExplainFooter(text, res.FilesChanged, undoAvailable, undoError)
 			oldText := text
 			if normalized != text {
 				text = normalized
@@ -493,7 +502,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				if finalizer, ok := ev.(FinalTextHandler); ok {
 					finalizer.OnTextFinal(text)
 				} else {
-					if footer := explainFooter(res.FilesChanged, res.UndoAvailable, res.UndoError); normalized != oldText && footer != "" {
+					if footer := explainFooter(res.FilesChanged, undoAvailable, undoError); normalized != oldText && footer != "" {
 						ev.OnTextDelta("\n\n" + footer)
 					}
 					ev.OnText("")
