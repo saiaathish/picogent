@@ -64,8 +64,23 @@ func TestGoalRevisionPreventsSameTextABA(t *testing.T) {
 	if first == 0 || second == 0 || first == second {
 		t.Fatalf("revisions did not advance: first=%d second=%d", first, second)
 	}
-	if cleared, err := ClearIfState(ws, "finish this project", first); err != nil || cleared {
-		t.Fatalf("stale revision cleared goal: cleared=%v err=%v", cleared, err)
+	staleResult := make(chan struct {
+		cleared bool
+		err     error
+	}, 1)
+	releaseStaleCompletion := make(chan struct{})
+	go func() {
+		<-releaseStaleCompletion
+		cleared, err := ClearIfState(ws, "finish this project", first)
+		staleResult <- struct {
+			cleared bool
+			err     error
+		}{cleared: cleared, err: err}
+	}()
+	close(releaseStaleCompletion)
+	stale := <-staleResult
+	if stale.err != nil || stale.cleared {
+		t.Fatalf("stale revision cleared goal: cleared=%v err=%v", stale.cleared, stale.err)
 	}
 	if cleared, err := ClearIfState(ws, "finish this project", second); err != nil || !cleared {
 		t.Fatalf("current revision did not clear goal: cleared=%v err=%v", cleared, err)
