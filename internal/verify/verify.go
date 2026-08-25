@@ -129,6 +129,12 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 		Attempt:  attempt,
 	}
 	if err == nil {
+		if failed > 0 {
+			res.OK = false
+			res.Status = StatusFail
+			res.Reason = "verification reported failed tests"
+			return res
+		}
 		if passed == 0 && failed == 0 {
 			res.OK = false
 			res.Status = StatusInconclusive

@@ -80,6 +80,44 @@ func TestRunPipelineRejectsUncoveredTargets(t *testing.T) {
 	}
 }
 
+func TestRunPipelineWithoutTargetsRunsBroaderSuite(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "go.mod", "module x\n")
+	var commands []string
+	result := RunPipeline(t.Context(), dir, Options{
+		Executor: func(_ context.Context, _ string, command Command, _ int, _ time.Duration) Result {
+			commands = append(commands, command.Display)
+			return Result{OK: true, Status: StatusPass, Passed: 1}
+		},
+	})
+	if result.Status != StatusPass || len(result.Stages) != 2 {
+		t.Fatalf("no-target result = %+v", result)
+	}
+	if result.Stages[0].Status != StatusSkipped || result.Stages[1].Status != StatusPass {
+		t.Fatalf("no-target stages = %+v", result.Stages)
+	}
+	if strings.Join(commands, "|") != "go test ./..." {
+		t.Fatalf("no-target commands = %v", commands)
+	}
+}
+
+func TestDetectPlanIgnoresNonGoFileTargets(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "go.mod", "module x\n")
+	writeVerifyFile(t, dir, "README.md", "not Go source\n")
+	plan := DetectPlan(dir, []string{"README.md"})
+	if len(plan.Targeted) != 0 {
+		t.Fatalf("non-Go target became targeted command: %+v", plan.Targeted)
+	}
+}
+
+func TestNormalizeResultRejectsContradictoryPass(t *testing.T) {
+	result := normalizeResult(Result{OK: true, Status: StatusPass, Passed: 1, Failed: 1}, Command{Runner: "go", Display: "go test ./..."}, 1)
+	if result.Status != StatusFail || result.OK || result.Reason == "" {
+		t.Fatalf("contradictory result = %+v", result)
+	}
+}
+
 func TestDetectPlanTargetsGoPackageThenBroader(t *testing.T) {
 	dir := t.TempDir()
 	writeVerifyFile(t, dir, "go.mod", "module x\n")
