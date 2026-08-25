@@ -320,18 +320,16 @@ func goTargets(workspace string, targets []string) []string {
 	packages := make([]string, 0, len(targets))
 	for _, target := range targets {
 		dir := target
-		path := filepath.Join(workspace, filepath.FromSlash(target))
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			if !strings.EqualFold(filepath.Ext(target), ".go") {
+		ext := filepath.Ext(target)
+		if strings.EqualFold(ext, ".go") {
+			dir = filepath.ToSlash(filepath.Dir(target))
+		} else if ext != "" {
+			info, err := os.Stat(filepath.Join(workspace, filepath.FromSlash(target)))
+			if err != nil || !info.IsDir() {
+				// A dotted non-Go target is most likely documentation or another
+				// ecosystem's file. Do not turn it into an invalid Go package.
 				continue
 			}
-			dir = filepath.ToSlash(filepath.Dir(target))
-		} else if strings.EqualFold(filepath.Ext(target), ".go") {
-			dir = filepath.ToSlash(filepath.Dir(target))
-		} else if filepath.Ext(target) != "" {
-			// A dotted non-Go target is most likely documentation or another
-			// ecosystem's file. Do not turn it into an invalid Go package.
-			continue
 		}
 		if dir == "." {
 			packages = append(packages, ".")
