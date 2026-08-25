@@ -344,10 +344,6 @@ func runInitArgs(args []string) error {
 	return nil
 }
 
-func runOnce(args []string) error {
-	return runOnceContext(context.Background(), args)
-}
-
 func runOnceContext(ctx context.Context, args []string) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -595,11 +591,6 @@ func applyHeadlessYes(cfg *config.Config, a *agent.Agent) {
 func headlessTaskSessionID(prompt string) string {
 	digest := sha256.Sum256([]byte(strings.TrimSpace(prompt)))
 	return "headless-" + hex.EncodeToString(digest[:8])
-}
-
-func chooseScope(p scope.Prompt, in *bufio.Reader) (scope.Choice, bool) {
-	choice, proceed, _ := chooseScopeContext(context.Background(), p, in, os.Stderr, nil)
-	return choice, proceed
 }
 
 type lineReadResult struct {

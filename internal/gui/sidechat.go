@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -407,9 +406,4 @@ func (s *server) clearTurnProgress() {
 	s.turnStarted = time.Time{}
 	s.turnPrompt = ""
 	s.mu.Unlock()
-}
-
-// projectLeaf is a tiny helper for tests / display.
-func projectLeaf(path string) string {
-	return filepath.Base(path)
 }

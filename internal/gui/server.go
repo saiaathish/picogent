@@ -1941,23 +1941,6 @@ type guiHandler struct {
 	permCh    chan perm.Decision
 }
 
-func newGUIHandler(s *server) *guiHandler {
-	s.mu.Lock()
-	ws := s.cfg.Workspace
-	sessionID := s.sessionID
-	turnGen := s.turnGen
-	permCh := s.permCh
-	s.mu.Unlock()
-	return newGUIHandlerAtWithPerm(s, sessionID, turnGen, permCh, ws)
-}
-
-func newGUIHandlerAt(s *server, sessionID string, turnGen uint64, workspace ...string) *guiHandler {
-	s.mu.Lock()
-	permCh := s.permCh
-	s.mu.Unlock()
-	return newGUIHandlerAtWithPerm(s, sessionID, turnGen, permCh, workspace...)
-}
-
 func newGUIHandlerAtWithPerm(s *server, sessionID string, turnGen uint64, permCh chan perm.Decision, workspace ...string) *guiHandler {
 	ws := ""
 	if len(workspace) > 0 {

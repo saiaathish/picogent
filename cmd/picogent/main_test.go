@@ -47,11 +47,18 @@ func TestChooseScopeUsesNumberedChoiceAndDefault(t *testing.T) {
 	if !ok {
 		t.Fatal("expected scope prompt")
 	}
-	choice, proceed := chooseScope(p, bufio.NewReader(strings.NewReader("2\n")))
+	var output bytes.Buffer
+	choice, proceed, err := chooseScopeContext(context.Background(), p, bufio.NewReader(strings.NewReader("2\n")), &output, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !proceed || choice.ID != "full" {
 		t.Fatalf("choice = %#v, proceed=%v", choice, proceed)
 	}
-	choice, proceed = chooseScope(p, bufio.NewReader(strings.NewReader("\n")))
+	choice, proceed, err = chooseScopeContext(context.Background(), p, bufio.NewReader(strings.NewReader("\n")), &output, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !proceed || choice.ID != "small" {
 		t.Fatalf("default choice = %#v, proceed=%v", choice, proceed)
 	}
