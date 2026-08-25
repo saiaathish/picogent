@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
@@ -29,6 +30,16 @@ type Log struct {
 	seq  int
 	Now  func() time.Time
 }
+
+var (
+	// Trace details may contain user prompts, tool arguments, URLs, or tool
+	// output. Redact common credential-shaped values before clipping and
+	// persisting them; clipping alone can leave a usable prefix in the log.
+	sensitiveAssignment = regexp.MustCompile(`(?i)(\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|passwd|authorization|cookie|private[_-]?key)\b[\s"]*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}&]+)`)
+	sensitiveQuery      = regexp.MustCompile(`(?i)([?&](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|secret|password|key)=)[^&#\s]+`)
+	bearerSecret        = regexp.MustCompile(`(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+`)
+	knownToken          = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]{8,}|xox[baprs]-[A-Za-z0-9-]{8,}|AIza[A-Za-z0-9_-]{16,})\b`)
+)
 
 func dir() (string, error) {
 	home, err := config.Dir()
@@ -108,7 +119,7 @@ func (l *Log) Append(kind, tool, detail string, ok *bool, ms int64) error {
 		Kind:   kind,
 		Tool:   tool,
 		OK:     ok,
-		Detail: clip(detail, 240),
+		Detail: clip(redact(detail), 240),
 		MS:     ms,
 	}
 	b, err := json.Marshal(ev)
@@ -122,6 +133,13 @@ func (l *Log) Append(kind, tool, detail string, ok *bool, ms int64) error {
 	defer f.Close()
 	_, err = f.Write(append(b, '\n'))
 	return err
+}
+
+func redact(s string) string {
+	s = bearerSecret.ReplaceAllString(s, "Bearer [REDACTED]")
+	s = sensitiveQuery.ReplaceAllString(s, `${1}[REDACTED]`)
+	s = sensitiveAssignment.ReplaceAllString(s, `${1}"[REDACTED]"`)
+	return knownToken.ReplaceAllString(s, "[REDACTED]")
 }
 
 // Tail returns the last n events, oldest first.
