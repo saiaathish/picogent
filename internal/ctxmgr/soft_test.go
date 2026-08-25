@@ -47,6 +47,51 @@ func TestDigestStaleToolsKeepsRecent(t *testing.T) {
 	}
 }
 
+func TestDigestToolRetainsRankedFailureSignals(t *testing.T) {
+	content := strings.Join([]string{
+		"running workspace checks",
+		"noise that should be dropped",
+		"internal/auth: TestLogin",
+		"FAIL internal/auth",
+		"panic: unexpected nil session",
+		"exit status 1",
+		"final unrelated line",
+	}, "\n")
+
+	got := digestTool("bash", content)
+	for _, want := range []string{
+		"untrusted tool output",
+		"summary: running workspace checks",
+		"signal: panic: unexpected nil session",
+		"signal: exit status 1",
+		"signal: FAIL internal/auth",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("digest missing %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "noise that should be dropped") || strings.Contains(got, "final unrelated line") {
+		t.Fatalf("digest retained low-value lines: %q", got)
+	}
+	if len(got) > maxDigestedToolChars {
+		t.Fatalf("digest length=%d, want <= %d", len(got), maxDigestedToolChars)
+	}
+}
+
+func TestDigestToolFlattensMultilineSignalsAndBoundsLongLines(t *testing.T) {
+	content := "command\nerror: " + strings.Repeat("x", maxDigestedToolLine*3) + "\nexit status 2"
+	got := digestTool("verify", content)
+	if strings.Contains(got, "\nsignal: error: "+strings.Repeat("x", 20)+"\n") {
+		t.Fatal("multiline signal was not flattened and bounded")
+	}
+	if !strings.Contains(got, "signal: exit status 2") {
+		t.Fatalf("exit metadata was lost: %q", got)
+	}
+	if len(got) > maxDigestedToolChars {
+		t.Fatalf("digest length=%d, want <= %d", len(got), maxDigestedToolChars)
+	}
+}
+
 func TestSoftFitHoldsUnderTarget(t *testing.T) {
 	long := strings.Repeat("abcdefghijklmnopqrstuvwxyz\n", 400)
 	msgs := []llm.Message{{Role: "system", Content: "sys"}}

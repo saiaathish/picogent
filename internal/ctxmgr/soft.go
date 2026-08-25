@@ -2,6 +2,7 @@ package ctxmgr
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -21,6 +22,10 @@ const (
 	SoftTargetPct = 0.16
 	// SoftTrimPct triggers stronger windowing before true auto-compact.
 	SoftTrimPct = 0.24
+
+	maxDigestedToolChars   = 900
+	maxDigestedToolSignals = 6
+	maxDigestedToolLine    = 220
 )
 
 func SoftTarget(budget int) int {
@@ -71,7 +76,7 @@ func alreadyDigested(s string) bool {
 }
 
 func digestTool(name, content string) string {
-	name = strings.TrimSpace(name)
+	name = flattenDigestLine(strings.TrimSpace(name), 80)
 	if name == "" {
 		name = "tool"
 	}
@@ -81,11 +86,154 @@ func digestTool(name, content string) string {
 	if first == "" {
 		first = "(empty)"
 	}
-	if utf8.RuneCountInString(first) > 100 {
-		r := []rune(first)
-		first = string(r[:100]) + "…"
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "[digested %s · ~%d chars · %d lines · untrusted tool output]\n", name, runes, lines)
+	b.WriteString("summary: ")
+	b.WriteString(flattenDigestLine(first, maxDigestedToolLine))
+
+	for _, signal := range toolSignalLines(content, first) {
+		b.WriteString("\nsignal: ")
+		b.WriteString(flattenDigestLine(signal, maxDigestedToolLine))
 	}
-	return fmt.Sprintf("[digested %s · ~%d chars · %d lines] %s", name, runes, lines, first)
+	return clipDigest(b.String(), maxDigestedToolChars)
+}
+
+type toolSignal struct {
+	line  string
+	score int
+	index int
+}
+
+// toolSignalLines retains high-value failure metadata before stale output is
+// removed. It is deliberately lexical: it never claims that a line is true,
+// and the caller labels every retained line as untrusted tool output.
+func toolSignalLines(content, summary string) []string {
+	const (
+		strongSignal        = 3
+		weakSignal          = 1
+		maxSignalCandidates = maxDigestedToolSignals * 4
+	)
+	needles := []struct {
+		text  string
+		score int
+	}{
+		{"panic", strongSignal},
+		{"fatal", strongSignal},
+		{"traceback", strongSignal},
+		{"command not found", strongSignal},
+		{"no such file", strongSignal},
+		{"exit status", strongSignal},
+		{"error", weakSignal},
+		{"exception", weakSignal},
+		{"fail", weakSignal},
+		{"timeout", weakSignal},
+		{"timed out", weakSignal},
+		{"undefined", weakSignal},
+	}
+
+	candidates := make([]toolSignal, 0, maxSignalCandidates)
+	start := 0
+	for index := 0; start <= len(content); index++ {
+		relativeEnd := strings.IndexByte(content[start:], '\n')
+		end := len(content)
+		if relativeEnd >= 0 {
+			end = start + relativeEnd
+		}
+		line := strings.TrimSpace(content[start:end])
+		if line == "" || line == summary {
+			if relativeEnd < 0 {
+				break
+			}
+			start = end + 1
+			continue
+		}
+		low := strings.ToLower(line)
+		score := 0
+		for _, needle := range needles {
+			if strings.Contains(low, needle.text) {
+				score += needle.score
+			}
+		}
+		if strings.HasPrefix(low, "fail") || strings.Contains(low, " failed ") {
+			score++
+		}
+		if score > 0 {
+			candidate := toolSignal{line: line, score: score, index: index}
+			if len(candidates) < maxSignalCandidates {
+				candidates = append(candidates, candidate)
+			} else {
+				weakest := 0
+				for i := 1; i < len(candidates); i++ {
+					if candidates[i].score < candidates[weakest].score ||
+						(candidates[i].score == candidates[weakest].score && candidates[i].index > candidates[weakest].index) {
+						weakest = i
+					}
+				}
+				if candidate.score > candidates[weakest].score {
+					candidates[weakest] = candidate
+				}
+			}
+		}
+		if relativeEnd < 0 {
+			break
+		}
+		start = end + 1
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+		return candidates[i].index < candidates[j].index
+	})
+
+	seen := make(map[string]struct{}, maxDigestedToolSignals)
+	out := make([]string, 0, maxDigestedToolSignals)
+	for _, candidate := range candidates {
+		line := flattenDigestLine(candidate.line, maxDigestedToolLine)
+		if _, ok := seen[line]; ok {
+			continue
+		}
+		seen[line] = struct{}{}
+		out = append(out, line)
+		if len(out) == maxDigestedToolSignals {
+			break
+		}
+	}
+	return out
+}
+
+func flattenDigestLine(line string, limit int) string {
+	line = strings.Join(strings.Fields(line), " ")
+	if limit <= 0 || utf8.RuneCountInString(line) <= limit {
+		return line
+	}
+	runes := []rune(line)
+	return string(runes[:limit-1]) + "…"
+}
+
+func clipDigest(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	marker := "\n… [digest clipped] …"
+	if limit <= len(marker) {
+		return safeDigestPrefix(value, limit)
+	}
+	return safeDigestPrefix(value, limit-len(marker)) + marker
+}
+
+func safeDigestPrefix(value string, limit int) string {
+	if limit >= len(value) {
+		return value
+	}
+	if limit <= 0 {
+		return ""
+	}
+	for limit > 0 && !utf8.RuneStart(value[limit]) {
+		limit--
+	}
+	return value[:limit]
 }
 
 func firstNonEmptyLine(s string) string {
