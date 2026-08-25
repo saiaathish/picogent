@@ -5,6 +5,7 @@
 package benchmark_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
@@ -168,6 +170,41 @@ func BenchmarkVerificationEvidence(b *testing.B) {
 			b.Fatalf("status = %s", got)
 		}
 	}
+}
+
+func BenchmarkVerificationManifest(b *testing.B) {
+	pipeline := verify.PipelineResult{
+		Status:   verify.StatusPass,
+		Duration: 2400 * time.Millisecond,
+		Stages: []verify.StageResult{
+			{Scope: verify.ScopeTargeted, Status: verify.StatusPass, Evidence: []verify.Result{{
+				Scope: verify.ScopeTargeted, Runner: "go", Command: "go test ./internal/feature", Status: verify.StatusPass, Passed: 18,
+				Duration: 700 * time.Millisecond,
+			}}},
+			{Scope: verify.ScopeBroader, Status: verify.StatusPass, Evidence: []verify.Result{{
+				Scope: verify.ScopeBroader, Runner: "go", Command: "go test ./...", Status: verify.StatusPass, Passed: 30,
+				Duration: 1700 * time.Millisecond,
+			}}},
+		},
+	}
+	provenance := verify.HeadEvidence{
+		GitRoot:     "/workspace",
+		SHA:         "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		ExpectedSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Match:       verify.ManifestPass,
+		Tree:        "CLEAN",
+	}
+	var output bytes.Buffer
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		output.Reset()
+		if err := verify.WriteJSON(&output, verify.ManifestFromPipeline(pipeline, provenance)); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(output.Len()), "bytes/op")
 }
 
 func BenchmarkScriptedAgentEdit(b *testing.B) {

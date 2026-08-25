@@ -18,6 +18,10 @@ import (
 type Status string
 
 const (
+	// MaxOutputBytes bounds captured command output while preserving an
+	// explicit flag when the evidence is incomplete.
+	MaxOutputBytes = 8 << 10
+
 	StatusPass         Status = "PASS"
 	StatusFail         Status = "FAIL"
 	StatusInconclusive Status = "INCONCLUSIVE"
@@ -40,17 +44,18 @@ const (
 
 // Result is a structured test run. Existing fields remain source-compatible.
 type Result struct {
-	OK       bool          `json:"ok"`
-	Status   Status        `json:"status"`
-	Scope    Scope         `json:"scope,omitempty"`
-	Runner   string        `json:"runner"`
-	Command  string        `json:"command"`
-	Passed   int           `json:"passed"`
-	Failed   int           `json:"failed"`
-	Output   string        `json:"output"`
-	Reason   string        `json:"reason,omitempty"`
-	Duration time.Duration `json:"duration"`
-	Attempt  int           `json:"attempt,omitempty"`
+	OK              bool          `json:"ok"`
+	Status          Status        `json:"status"`
+	Scope           Scope         `json:"scope,omitempty"`
+	Runner          string        `json:"runner"`
+	Command         string        `json:"command"`
+	Passed          int           `json:"passed"`
+	Failed          int           `json:"failed"`
+	Output          string        `json:"output"`
+	OutputTruncated bool          `json:"output_truncated,omitempty"`
+	Reason          string        `json:"reason,omitempty"`
+	Duration        time.Duration `json:"duration"`
+	Attempt         int           `json:"attempt,omitempty"`
 }
 
 // Detect picks the broad test command for the workspace.
@@ -112,21 +117,20 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 	err := cmd.Run()
 	duration := time.Since(started)
 	out := buf.String()
-	if len(out) > 8<<10 {
-		out = out[:8<<10] + "\n… truncated …"
-	}
+	out, outputTruncated := boundedOutput(out)
 	passed, failed := count(out)
 	res := Result{
-		OK:       err == nil,
-		Status:   StatusPass,
-		Scope:    command.Scope,
-		Runner:   command.Runner,
-		Command:  command.Display,
-		Passed:   passed,
-		Failed:   failed,
-		Output:   strings.TrimSpace(out),
-		Duration: duration,
-		Attempt:  attempt,
+		OK:              err == nil,
+		Status:          StatusPass,
+		Scope:           command.Scope,
+		Runner:          command.Runner,
+		Command:         command.Display,
+		Passed:          passed,
+		Failed:          failed,
+		Output:          strings.TrimSpace(out),
+		OutputTruncated: outputTruncated,
+		Duration:        duration,
+		Attempt:         attempt,
 	}
 	if err == nil {
 		if failed > 0 {
@@ -153,6 +157,14 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 		res.Failed = 1
 	}
 	return res
+}
+
+func boundedOutput(output string) (string, bool) {
+	if len(output) <= MaxOutputBytes {
+		return output, false
+	}
+	const marker = "\n… truncated …"
+	return output[:MaxOutputBytes-len(marker)] + marker, true
 }
 
 var summaryCount = regexp.MustCompile(`(?i)(\d+)\s+(passed|failed)\b`)
