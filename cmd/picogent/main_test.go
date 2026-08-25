@@ -196,6 +196,21 @@ func TestStdioSeparatesAnswerPromptsAndDiagnostics(t *testing.T) {
 	if !strings.Contains(h.EventError().Error(), "deferred failure") {
 		t.Fatalf("event error was not retained: %v", h.EventError())
 	}
+	var streamed bytes.Buffer
+	streamHandler := &stdioHandler{out: &streamed, errOut: &stderr}
+	streamHandler.OnTextDelta("partial answer")
+	if streamed.Len() != 0 {
+		t.Fatalf("partial streamed answer leaked before completion: %q", streamed.String())
+	}
+	streamHandler.OnTextFinal("complete answer")
+	if got := streamed.String(); got != "complete answer\n" {
+		t.Fatalf("completed stream = %q", got)
+	}
+	streamHandler.OnTextDelta("failed answer")
+	streamHandler.OnError(errors.New("stream failed"))
+	if strings.Contains(streamed.String(), "failed answer") {
+		t.Fatalf("failed streamed answer leaked to stdout: %q", streamed.String())
+	}
 }
 
 func TestStdioPermissionReadHonorsCancellation(t *testing.T) {
@@ -278,11 +293,16 @@ func TestHeadlessSubprocessStreamsAndExitCodes(t *testing.T) {
 
 	childEnv := os.Environ()
 	runChild := func() (stdout, stderr bytes.Buffer, err error) {
-		cmd := exec.Command(binary, "run", "--dir", workspace, "say hello")
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, binary, "run", "--dir", workspace, "say hello")
 		cmd.Env = childEnv
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		err = cmd.Run()
+		if err == nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return stdout, stderr, err
 	}
 	stdout, stderr, err := runChild()
@@ -398,7 +418,7 @@ func TestHeadlessPersistsExplicitCompletionGoalBeforeRun(t *testing.T) {
 	}
 }
 
-func TestHeadlessClarifyCancelDoesNotPersistInferredGoal(t *testing.T) {
+func TestHeadlessClarifyCancelReturnsCanceledAndDoesNotPersistInferredGoal(t *testing.T) {
 	home := t.TempDir()
 	workspace := t.TempDir()
 	t.Setenv("PICOGENT_HOME", home)
@@ -425,8 +445,9 @@ func TestHeadlessClarifyCancelDoesNotPersistInferredGoal(t *testing.T) {
 		os.Stdin = oldStdin
 	}()
 
-	if err := run([]string{"run", "--clarify", "--dir", workspace, "fix all flaky tests and make CI green"}); err != nil {
-		t.Fatal(err)
+	err = run([]string{"run", "--clarify", "--dir", workspace, "fix all flaky tests and make CI green"})
+	if err == nil || exitCode(err) != 130 {
+		t.Fatalf("clarify cancellation = %v, exit=%d; want canceled/130", err, exitCode(err))
 	}
 	if got, err := goal.Load(workspace); err != nil || got != "" {
 		t.Fatalf("canceled headless scope persisted goal %q, err=%v", got, err)

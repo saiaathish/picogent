@@ -20,6 +20,9 @@ non-destructive actions within the selected workspace; destructive and
 out-of-workspace actions remain blocked. A blocked run keeps its durable task
 state so rerunning the same prompt can continue it.
 
+When `--clarify` is supplied, answering `esc` or `cancel` is an explicit
+cancellation and returns exit `130`; it is not reported as a successful run.
+
 For an inferred or explicit completion goal, exit `0` requires the agent's
 completion marker and passing verification evidence. A successful model reply
 alone is not completion proof. One-shot output does not advertise `/undo`:

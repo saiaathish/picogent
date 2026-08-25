@@ -597,6 +597,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				var outText string
 				var err error
 				run := func() {
+					if ctxErr := ctx.Err(); ctxErr != nil {
+						err = ctxErr
+						return
+					}
 					if a.runTool != nil {
 						outText, err = a.runTool(ctx, call, tool, regCtx)
 					} else {

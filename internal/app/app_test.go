@@ -1,12 +1,24 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/config"
 )
+
+func TestLoadContextStopsBeforeBuildingCanceledRun(t *testing.T) {
+	isolatedAppLoad(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, a, err := LoadContext(ctx, ".")
+	if a != nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled load = agent %v, err %v; want no agent/context canceled", a, err)
+	}
+}
 
 func isolatedAppLoad(t *testing.T) (workspace string) {
 	t.Helper()

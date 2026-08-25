@@ -25,6 +25,16 @@ import (
 )
 
 func Load(dir string) (config.Config, *agent.Agent, error) {
+	return LoadContext(context.Background(), dir)
+}
+
+// LoadContext builds an application while honoring cancellation during
+// external setup such as MCP connection attempts. Interactive callers can
+// keep using Load; headless callers pass their signal-derived context.
+func LoadContext(ctx context.Context, dir string) (config.Config, *agent.Agent, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	cfg, err := config.Load()
 	if err != nil {
 		return cfg, nil, err
@@ -40,11 +50,26 @@ func Load(dir string) (config.Config, *agent.Agent, error) {
 		return cfg, nil, err
 	}
 	cfg.Workspace = abs
-	a, err := Build(cfg)
+	if err := ctx.Err(); err != nil {
+		return cfg, nil, err
+	}
+	a, err := BuildContext(ctx, cfg)
 	return cfg, a, err
 }
 
 func Build(cfg config.Config) (*agent.Agent, error) {
+	return BuildContext(context.Background(), cfg)
+}
+
+// BuildContext is the cancelable form used by command paths that must stop
+// promptly when their owning process receives a signal.
+func BuildContext(ctx context.Context, cfg config.Config) (*agent.Agent, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	client, err := NewClient(cfg)
 	if err != nil {
 		return nil, err
@@ -56,7 +81,7 @@ func Build(cfg config.Config) (*agent.Agent, error) {
 	if servers, err := mcpbridge.LoadServers(cfg.Workspace); err != nil {
 		return nil, err
 	} else if len(servers) > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 		mgr, warns := mcpbridge.ConnectBestEffort(ctx, servers)
 		cancel()
 		for _, w := range warns {
