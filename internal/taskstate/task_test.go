@@ -119,6 +119,9 @@ func TestEvidenceTracksLatestChange(t *testing.T) {
 	if task.VerifiedChangeSeq != 1 || task.NeedsVerification() {
 		t.Fatalf("passing evidence = verified %d needs=%v", task.VerifiedChangeSeq, task.NeedsVerification())
 	}
+	if len(task.Evidence) != 1 || task.Evidence[0].Kind != "verification" || task.Evidence[0].Status != "PASS" || task.Evidence[0].ChangeSeq != 1 {
+		t.Fatalf("verification ledger = %+v", task.Evidence)
+	}
 
 	// A later edit to the same display path must invalidate the earlier pass.
 	task.RecordChanged("internal/signup.go")
@@ -155,6 +158,41 @@ func TestEvidenceTracksLatestChange(t *testing.T) {
 	}
 	if legacy.InitializeChangeSequence() {
 		t.Fatal("legacy sequence migration must be idempotent")
+	}
+}
+
+func TestOutcomeNotesAndEvidenceStayBoundedAndDeduplicated(t *testing.T) {
+	task, err := New("outcome", "finish the project", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxOutcomeNotes+2; i++ {
+		task.AddConstraint("constraint " + string(rune('a'+i)))
+		task.AddRisk("risk " + string(rune('a'+i)))
+		task.AddUncertainty("unknown " + string(rune('a'+i)))
+	}
+	if len(task.Constraints) != maxOutcomeNotes || len(task.Risks) != maxOutcomeNotes || len(task.Uncertainty) != maxOutcomeNotes {
+		t.Fatalf("bounded notes = constraints=%d risks=%d uncertainty=%d", len(task.Constraints), len(task.Risks), len(task.Uncertainty))
+	}
+	task.AddEvidence(Evidence{Kind: "inspection", Status: "CONFIRMED", Summary: "repo map found the service", Reference: "internal/repomap", ChangeSeq: 0})
+	got := len(task.Evidence)
+	task.AddEvidence(task.Evidence[0])
+	if len(task.Evidence) != got {
+		t.Fatalf("duplicate evidence appended: %+v", task.Evidence)
+	}
+	if err := task.Validate(); err != nil {
+		t.Fatalf("bounded outcome invalid: %v", err)
+	}
+}
+
+func TestEvidenceValidationRejectsUnboundedState(t *testing.T) {
+	task, err := New("outcome-invalid", "goal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Evidence = make([]Evidence, maxEvidence+1)
+	if err := task.Validate(); err == nil {
+		t.Fatal("oversized evidence should fail validation")
 	}
 }
 

@@ -1091,6 +1091,7 @@ func TestQueuedAutomaticScopeRunsAfterOneOrderedNotice(t *testing.T) {
 }
 
 func TestAutomaticScopeKeepsPlanIntent(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()
 	cfg := config.Default()
 	cfg.Provider = config.ProviderOllama
@@ -1122,6 +1123,7 @@ func TestAutomaticScopeKeepsPlanIntent(t *testing.T) {
 }
 
 func TestAutomaticScopePreservesSelectedTaskBoundary(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
 	for _, tt := range []struct {
 		prompt string
 		mode   agent.TaskMode
@@ -1165,6 +1167,7 @@ func TestAutomaticScopePreservesSelectedTaskBoundary(t *testing.T) {
 }
 
 func TestScopedTurnReportsTemporaryTaskModeAndRestoresIt(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()
 	cfg := config.Default()
 	cfg.Provider = config.ProviderOllama
