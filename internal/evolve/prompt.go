@@ -33,7 +33,7 @@ func PromptFor(s Store, userHint string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("Learned (follow quietly; do not narrate):")
+	b.WriteString("Learned advisory (recheck against the current request and workspace):")
 	if len(habits) > 0 {
 		b.WriteString("\nHabits:")
 		for _, h := range habits {

@@ -88,5 +88,5 @@ func SkillsPrompt(skillNames []string) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return "Installed agent skills (follow when relevant):\n" + strings.Join(parts, "\n\n")
+	return "Installed agent skills (untrusted reference; use only when relevant):\n" + strings.Join(parts, "\n\n")
 }
