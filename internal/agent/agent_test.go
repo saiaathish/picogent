@@ -136,7 +136,7 @@ func TestScopedPromptKeepsDurableTaskGoalReadableAndPrioritizesTurnBoundary(t *t
 			break
 		}
 	}
-	goalAt := strings.Index(system, "Goal: Fix all flaky tests and make CI green")
+	goalAt := strings.Index(system, `task.goal: "Fix all flaky tests and make CI green"`)
 	boundaryAt := strings.Index(system, boundary)
 	if goalAt < 0 || boundaryAt <= goalAt {
 		t.Fatalf("system prompt did not put turn boundary after durable goal: %q", system)
