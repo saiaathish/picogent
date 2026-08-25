@@ -49,6 +49,23 @@ V4-only additions:
 - Verification manifest projection: `4.685–4.997 µs`, `3,669 B`, `7 allocs`,
   `1,001 bytes/op`.
 
+## Binary, startup, and RSS snapshot
+
+Built from the two comparison SHAs with `go build -o <path> ./cmd/picogent`:
+
+| Signal | v3 | v4 |
+| --- | ---: | ---: |
+| Binary size | 16,745,394 B | 16,814,834 B |
+| `picogent version`, first observed invocation | 28.375 ms | 27.178 ms |
+| `picogent version`, four warm observed invocations | 5.145–6.634 ms | 5.156–5.854 ms |
+| Maximum RSS, one `version` invocation | 14,155,776 B | 13,926,400 B |
+| Peak memory footprint, same invocation | 5,669,416 B | 5,472,832 B |
+
+Startup and RSS are process-level `version` snapshots, not GUI/browser startup
+or a sustained session envelope. They are useful smoke signals only; repeat
+on supported platforms and with the GUI/TUI/headless paths before treating
+them as release budgets.
+
 Filesystem-backed repository and session measurements have wide run-to-run
 variance. The repo-map inspect v3 range includes one 56 ms run; the session
 list and load ranges are likewise not stable enough to establish a product
