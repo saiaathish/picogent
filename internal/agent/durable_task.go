@@ -127,17 +127,25 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, verifie
 
 // SetTaskSession switches durable task state with the chat session. Task state
 // stays outside chat history, so compaction cannot erase execution progress.
-func (a *Agent) SetTaskSession(sessionID string) {
+func (a *Agent) SetTaskSession(sessionID string) error {
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
 	a.TaskSession = strings.TrimSpace(sessionID)
 	a.task = nil
+	a.taskLoadErr = nil
 	if a.TaskStore == nil || a.TaskSession == "" {
-		return
+		return nil
 	}
-	if task, err := a.TaskStore.Load(a.TaskSession); err == nil {
+	task, err := a.TaskStore.Load(a.TaskSession)
+	if err == nil {
 		a.task = task
+		return nil
 	}
+	if errors.Is(err, taskstate.ErrNotFound) {
+		return nil
+	}
+	a.taskLoadErr = err
+	return err
 }
 
 // TaskSnapshot returns an isolated copy safe for UI and persistence callers.
@@ -152,6 +160,12 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
 	if a.TaskStore == nil || a.TaskSession == "" {
 		a.taskMu.Unlock()
 		return false
+	}
+	if a.taskLoadErr != nil {
+		err := a.taskLoadErr
+		a.taskMu.Unlock()
+		a.reportTaskPersistenceError(ev, fmt.Errorf("load durable task state: %w", err))
+		return true
 	}
 	var candidate *taskstate.Task
 	if a.task == nil || (a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification()) {
@@ -291,6 +305,9 @@ func (a *Agent) taskPromptSuffix() string {
 				b.WriteByte(']')
 			}
 		}
+	}
+	if t.ChangedFilesCapped {
+		b.WriteString("\nChanged-file list capped; run broader verification before claiming completion.")
 	}
 	b.WriteString("\nContinue while the goal is unresolved and a safe permitted action remains.")
 	return b.String()

@@ -14,8 +14,12 @@ import (
 const CurrentVersion = 1
 
 const (
+	maxTaskSteps    = 8
+	maxChangedFiles = 128
+	maxVerification = 32
 	maxOutcomeNotes = 8
 	maxEvidence     = 16
+	maxTaskAttempts = 128
 )
 
 // Status is the current phase of a task.
@@ -85,18 +89,19 @@ type Criterion struct {
 
 // Task is the compact state required to resume an execution loop.
 type Task struct {
-	Version          int             `json:"version"`
-	ID               string          `json:"id"`
-	SessionID        string          `json:"session_id"`
-	Goal             string          `json:"goal"`
-	Intent           *IntentContract `json:"intent,omitempty"`
-	DefinitionOfDone []Criterion     `json:"definition_of_done,omitempty"`
-	Status           Status          `json:"status"`
-	Steps            []Step          `json:"steps,omitempty"`
-	CurrentStep      int             `json:"current_step"`
-	Attempts         int             `json:"attempts"`
-	ChangedFiles     []string        `json:"changed_files,omitempty"`
-	ChangeSeq        int             `json:"change_seq,omitempty"`
+	Version            int             `json:"version"`
+	ID                 string          `json:"id"`
+	SessionID          string          `json:"session_id"`
+	Goal               string          `json:"goal"`
+	Intent             *IntentContract `json:"intent,omitempty"`
+	DefinitionOfDone   []Criterion     `json:"definition_of_done,omitempty"`
+	Status             Status          `json:"status"`
+	Steps              []Step          `json:"steps,omitempty"`
+	CurrentStep        int             `json:"current_step"`
+	Attempts           int             `json:"attempts"`
+	ChangedFiles       []string        `json:"changed_files,omitempty"`
+	ChangedFilesCapped bool            `json:"changed_files_capped,omitempty"`
+	ChangeSeq          int             `json:"change_seq,omitempty"`
 	// VerifiedChangeSeq is the latest change sequence covered by passing
 	// verification. A negative value records that the latest evidence did not
 	// pass.
@@ -159,6 +164,12 @@ func (t *Task) Validate() error {
 	if strings.TrimSpace(t.Goal) == "" {
 		return errors.New("task goal is required")
 	}
+	if len(t.Goal) > 600 {
+		return errors.New("task goal is too long")
+	}
+	if len(t.ID) > 200 || len(t.SessionID) > 200 {
+		return errors.New("task identity is too long")
+	}
 	if t.Intent != nil {
 		if strings.TrimSpace(t.Intent.Outcome) == "" {
 			return errors.New("task intent outcome is required")
@@ -167,8 +178,19 @@ func (t *Task) Validate() error {
 			return errors.New("task intent outcome is too long")
 		}
 	}
-	if len(t.DefinitionOfDone) > 8 {
+	if len(t.Steps) > maxTaskSteps {
+		return errors.New("task steps are too long")
+	}
+	if len(t.DefinitionOfDone) > maxTaskSteps {
 		return errors.New("task definition of done is too long")
+	}
+	if len(t.ChangedFiles) > maxChangedFiles {
+		return errors.New("task changed-file list is too long")
+	}
+	for i, path := range t.ChangedFiles {
+		if strings.TrimSpace(path) == "" || len(path) > 500 {
+			return fmt.Errorf("task changed file %d is empty or too long", i)
+		}
 	}
 	for name, notes := range map[string][]string{
 		"constraint":  t.Constraints,
@@ -187,6 +209,14 @@ func (t *Task) Validate() error {
 	if len(t.Evidence) > maxEvidence {
 		return errors.New("task evidence is too long")
 	}
+	if len(t.Verification) > maxVerification {
+		return errors.New("task verification history is too long")
+	}
+	for i, verification := range t.Verification {
+		if len(verification.Command) > 300 || len(verification.Summary) > 800 {
+			return fmt.Errorf("task verification %d is too long", i)
+		}
+	}
 	for i, evidence := range t.Evidence {
 		if strings.TrimSpace(evidence.Kind) == "" || strings.TrimSpace(evidence.Status) == "" {
 			return fmt.Errorf("task evidence %d is missing kind or status", i)
@@ -199,7 +229,7 @@ func (t *Task) Validate() error {
 		}
 	}
 	for i, criterion := range t.DefinitionOfDone {
-		if strings.TrimSpace(criterion.Description) == "" {
+		if strings.TrimSpace(criterion.Description) == "" || len(criterion.Description) > 300 {
 			return fmt.Errorf("task completion criterion %d is empty", i)
 		}
 	}
@@ -209,8 +239,8 @@ func (t *Task) Validate() error {
 	if t.CurrentStep < 0 || t.CurrentStep > len(t.Steps) {
 		return fmt.Errorf("current step %d out of range", t.CurrentStep)
 	}
-	if t.Attempts < 0 {
-		return errors.New("task attempts cannot be negative")
+	if t.Attempts < 0 || t.Attempts > maxTaskAttempts {
+		return errors.New("task attempts are out of range")
 	}
 	if t.ChangeSeq < 0 {
 		return errors.New("task change sequence cannot be negative")
@@ -219,8 +249,8 @@ func (t *Task) Validate() error {
 		return fmt.Errorf("task verified change sequence %d is invalid for change sequence %d", t.VerifiedChangeSeq, t.ChangeSeq)
 	}
 	for i, step := range t.Steps {
-		if strings.TrimSpace(step.Description) == "" {
-			return fmt.Errorf("task step %d is empty", i)
+		if strings.TrimSpace(step.Description) == "" || len(step.Description) > 300 {
+			return fmt.Errorf("task step %d is empty or too long", i)
 		}
 	}
 	return nil
@@ -314,6 +344,12 @@ func (t *Task) RecordChanged(path string) {
 			return
 		}
 	}
+	if len(t.ChangedFiles) >= maxChangedFiles {
+		t.ChangeSeq++
+		t.ChangedFilesCapped = true
+		t.touch()
+		return
+	}
 	t.ChangedFiles = append(t.ChangedFiles, path)
 	t.ChangeSeq++
 	t.touch()
@@ -335,12 +371,17 @@ func (t *Task) AddVerification(command string, passed bool, summary string) {
 	if t == nil {
 		return
 	}
-	t.Verification = append(t.Verification, Verification{
+	verification := Verification{
 		Command: compactText(command, 300),
 		Passed:  passed,
 		Summary: compactText(summary, 800),
 		At:      time.Now().UTC(),
-	})
+	}
+	if len(t.Verification) >= maxVerification {
+		copy(t.Verification, t.Verification[len(t.Verification)-maxVerification+1:])
+		t.Verification = t.Verification[:maxVerification-1]
+	}
+	t.Verification = append(t.Verification, verification)
 	if passed {
 		t.VerifiedChangeSeq = t.ChangeSeq
 	} else {
@@ -382,7 +423,7 @@ func (t *Task) AddEvidence(e Evidence) {
 	if e.At.IsZero() {
 		e.At = time.Now().UTC()
 	}
-	if len(t.Evidence) > 0 && t.Evidence[len(t.Evidence)-1] == e {
+	if len(t.Evidence) > 0 && sameEvidence(t.Evidence[len(t.Evidence)-1], e) {
 		return
 	}
 	if len(t.Evidence) >= maxEvidence {
@@ -391,6 +432,12 @@ func (t *Task) AddEvidence(e Evidence) {
 	}
 	t.Evidence = append(t.Evidence, e)
 	t.touch()
+}
+
+func sameEvidence(left, right Evidence) bool {
+	left.At = time.Time{}
+	right.At = time.Time{}
+	return left == right
 }
 
 // AddConstraint records a compact user or project boundary.

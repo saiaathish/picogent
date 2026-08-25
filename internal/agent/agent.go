@@ -104,6 +104,7 @@ type Agent struct {
 	stateMu      sync.RWMutex
 	taskMu       sync.RWMutex
 	task         *taskstate.Task
+	taskLoadErr  error
 	undoMu       sync.Mutex
 	latestUndo   *turnUndo
 	runTool      func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
@@ -204,6 +205,7 @@ func (a *Agent) SetSkillRules(rules string) {
 func (a *Agent) SetTaskStore(store *taskstate.Store) {
 	a.taskMu.Lock()
 	a.TaskStore = store
+	a.taskLoadErr = nil
 	a.taskMu.Unlock()
 }
 

@@ -2,6 +2,7 @@ package taskstate
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -193,6 +194,44 @@ func TestEvidenceValidationRejectsUnboundedState(t *testing.T) {
 	task.Evidence = make([]Evidence, maxEvidence+1)
 	if err := task.Validate(); err == nil {
 		t.Fatal("oversized evidence should fail validation")
+	}
+}
+
+func TestDurableCollectionsStayBounded(t *testing.T) {
+	task, err := New("bounds", "goal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < maxChangedFiles+1; i++ {
+		task.RecordChanged("file-" + string(rune('a'+i%26)) + ".go-" + fmt.Sprint(i))
+	}
+	if len(task.ChangedFiles) != maxChangedFiles || !task.ChangedFilesCapped {
+		t.Fatalf("changed files = %d capped=%v", len(task.ChangedFiles), task.ChangedFilesCapped)
+	}
+	for i := 0; i < maxVerification+4; i++ {
+		task.AddVerification("verify", false, "failure "+fmt.Sprint(i))
+	}
+	if len(task.Verification) != maxVerification {
+		t.Fatalf("verification history = %d", len(task.Verification))
+	}
+	if err := task.Validate(); err != nil {
+		t.Fatalf("bounded task invalid: %v", err)
+	}
+}
+
+func TestValidateRejectsUnboundedLegacyCollections(t *testing.T) {
+	task, err := New("legacy-bounds", "goal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Steps = make([]Step, maxTaskSteps+1)
+	if err := task.Validate(); err == nil {
+		t.Fatal("oversized steps should fail validation")
+	}
+	task.Steps = nil
+	task.ChangedFiles = make([]string, maxChangedFiles+1)
+	if err := task.Validate(); err == nil {
+		t.Fatal("oversized changed files should fail validation")
 	}
 }
 
