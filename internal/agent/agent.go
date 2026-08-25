@@ -541,6 +541,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				calledVerify = true
 				if task := a.TaskSnapshot(); task != nil {
 					call.Arguments = includeChangedVerificationTargets(call.Arguments, task.ChangedFiles)
+					if task.ChangedFilesCapped {
+						call.Arguments = broadVerificationArguments(call.Arguments)
+					}
 				}
 				a.setTaskStatus(taskstate.StatusVerifying, ev)
 			}
@@ -697,21 +700,7 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	if !ok {
 		return ""
 	}
-	targets := append([]string(nil), filesChanged...)
-	if len(targets) == 0 && needsVerification && task != nil {
-		targets = append(targets, task.ChangedFiles...)
-	}
-	seen := make(map[string]struct{}, len(targets))
-	for _, target := range targets {
-		seen[target] = struct{}{}
-	}
-	for _, target := range evolve.VerificationTargets(state.Memory, userHint) {
-		if _, ok := seen[target]; ok {
-			continue
-		}
-		seen[target] = struct{}{}
-		targets = append(targets, target)
-	}
+	targets := verificationTargetsForTask(filesChanged, task, needsVerification, state.Memory, userHint)
 	args, _ := json.Marshal(map[string]any{"targets": targets})
 	call := llm.ToolCall{ID: "verify-auto", Name: "verify", Arguments: string(args)}
 	if blocked, reason := state.TaskMode.BlockTool(call.Name); blocked {
@@ -746,6 +735,32 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	return out
 }
 
+// verificationTargetsForTask returns safe targeted inputs for one check. A
+// capped durable file list is deliberately represented by an empty target set:
+// the verifier interprets that as broader workspace coverage, which is the
+// only sound fallback when some successful mutations are no longer retained.
+func verificationTargetsForTask(filesChanged []string, task *taskstate.Task, needsVerification bool, memory evolve.Store, userHint string) []string {
+	if task != nil && task.ChangedFilesCapped {
+		return nil
+	}
+	targets := append([]string(nil), filesChanged...)
+	if len(targets) == 0 && needsVerification && task != nil {
+		targets = append(targets, task.ChangedFiles...)
+	}
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		seen[target] = struct{}{}
+	}
+	for _, target := range evolve.VerificationTargets(memory, userHint) {
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		targets = append(targets, target)
+	}
+	return targets
+}
+
 // includeChangedVerificationTargets prevents a narrow explicit verification
 // request from being treated as evidence for durable mutations it omitted.
 func includeChangedVerificationTargets(args string, changed []string) string {
@@ -776,6 +791,25 @@ func includeChangedVerificationTargets(args string, changed []string) string {
 		seen[key] = struct{}{}
 		in.Targets = append(in.Targets, path)
 	}
+	encoded, err := json.Marshal(in)
+	if err != nil {
+		return args
+	}
+	return string(encoded)
+}
+
+// broadVerificationArguments discards model-selected targets when durable
+// state reports that its retained changed-file list is incomplete. An empty
+// target set is the verify tool's explicit request for broader workspace
+// coverage.
+func broadVerificationArguments(args string) string {
+	var in struct {
+		Targets []string `json:"targets"`
+	}
+	if json.Unmarshal([]byte(args), &in) != nil {
+		return args
+	}
+	in.Targets = nil
 	encoded, err := json.Marshal(in)
 	if err != nil {
 		return args
