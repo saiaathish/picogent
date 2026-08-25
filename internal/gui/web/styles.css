@@ -1932,6 +1932,8 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 .test-result.is-pass { border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
 .test-result.is-fail { border-color: color-mix(in srgb, #c0392b 40%, var(--line)); }
+.test-result.is-skipped,
+.test-result.is-inconclusive { border-color: color-mix(in srgb, #b7791f 45%, var(--line)); }
 .test-result pre {
   margin: 8px 0 0;
   padding: 8px;
