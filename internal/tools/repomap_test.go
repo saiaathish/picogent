@@ -22,7 +22,7 @@ func TestRepoMapToolIsRegisteredAndBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `"languages"`) || !strings.Contains(out, `"Go"`) || len(out) > 12<<10 {
+	if !strings.Contains(out, `"languages"`) || !strings.Contains(out, `"Go"`) || !strings.Contains(out, `"provenance"`) || len(out) > 12<<10 {
 		t.Fatalf("unexpected repo map (%d bytes): %s", len(out), out)
 	}
 }

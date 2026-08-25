@@ -20,10 +20,11 @@ import (
 
 const (
 	// MaxOutputBytes is the hard limit for formatted repo-map output.
-	MaxOutputBytes = 12 << 10
-	maxFiles       = 20_000
-	maxListItems   = 64
-	maxValueBytes  = 512
+	MaxOutputBytes   = 12 << 10
+	maxFiles         = 20_000
+	maxListItems     = 64
+	maxValueBytes    = 512
+	maxManifestDepth = 8
 )
 
 // Commands lists deterministic commands discovered from project manifests.
@@ -62,23 +63,98 @@ type Map struct {
 	OutputTruncated bool     `json:"output_truncated,omitempty"`
 }
 
+// Snapshot is an on-demand provenance capture paired with the bounded map.
+// It deliberately has no persistence or invalidation machinery: callers take a
+// fresh snapshot whenever they need to reason about the current workspace.
+type Snapshot struct {
+	Summary                Map
+	Root                   string
+	GitRoot                string
+	Head                   string
+	HeadKnown              bool
+	DirtyKnown             bool
+	DirtyPaths             []string
+	DirtyPathsTruncated    bool
+	ManifestPaths          []string
+	ManifestPathsTruncated bool
+}
+
+// Delta describes observable provenance changes between two snapshots. It is
+// intentionally not a content-equality claim; a stable delta only means that
+// the captured metadata did not change.
+type Delta struct {
+	RootChanged          bool
+	HeadChanged          bool
+	DirtyPathsChanged    bool
+	ManifestPathsChanged bool
+	AddedDirtyPaths      []string
+	RemovedDirtyPaths    []string
+	AddedManifestPaths   []string
+	RemovedManifestPaths []string
+	RequiresRefresh      bool
+}
+
+type snapshotProvenance struct {
+	Root                   string   `json:"root"`
+	GitRoot                string   `json:"git_root,omitempty"`
+	Head                   string   `json:"head,omitempty"`
+	HeadKnown              bool     `json:"head_known"`
+	Tree                   string   `json:"tree"`
+	DirtyPathsKnown        bool     `json:"dirty_paths_known"`
+	DirtyPaths             []string `json:"dirty_paths,omitempty"`
+	DirtyPathsTruncated    bool     `json:"dirty_paths_truncated,omitempty"`
+	ManifestPaths          []string `json:"manifest_paths,omitempty"`
+	ManifestPathsTruncated bool     `json:"manifest_paths_truncated,omitempty"`
+}
+
+type snapshotOutput struct {
+	Map
+	Provenance snapshotProvenance `json:"provenance"`
+}
+
 // Inspect creates a fresh repo map. It never stores repository contents.
 func Inspect(ctx context.Context, root string) (Map, error) {
-	abs, err := filepath.Abs(root)
-	if err != nil {
-		return Map{}, err
-	}
-	st, err := os.Stat(abs)
-	if err != nil {
-		return Map{}, err
-	}
-	if !st.IsDir() {
-		return Map{}, errors.New("repo map root is not a directory")
-	}
+	m, _, err := inspect(ctx, root)
+	return m, err
+}
 
+// Capture returns a bounded map plus exact, workspace-scoped provenance.
+// Git failures are represented as unknown evidence rather than as clean state.
+func Capture(ctx context.Context, root string) (Snapshot, error) {
+	m, files, err := inspect(ctx, root)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	abs, err := absoluteDirectory(root)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	gitRoot, gitOK := gitRootFor(ctx, abs)
+	head, headKnown := fullHead(ctx, gitRoot, gitOK)
+	dirty, dirtyTruncated, dirtyKnown := dirtyPaths(ctx, abs, gitRoot, gitOK)
+	manifests, manifestsTruncated := manifestPaths(files)
+	return Snapshot{
+		Summary:                m,
+		Root:                   abs,
+		GitRoot:                gitRoot,
+		Head:                   head,
+		HeadKnown:              headKnown,
+		DirtyKnown:             dirtyKnown,
+		DirtyPaths:             dirty,
+		DirtyPathsTruncated:    dirtyTruncated,
+		ManifestPaths:          manifests,
+		ManifestPathsTruncated: manifestsTruncated,
+	}, nil
+}
+
+func inspect(ctx context.Context, root string) (Map, []string, error) {
+	abs, err := absoluteDirectory(root)
+	if err != nil {
+		return Map{}, nil, err
+	}
 	files, cutOff, err := inventory(ctx, abs)
 	if err != nil {
-		return Map{}, err
+		return Map{}, nil, err
 	}
 	m := Map{
 		Version:         1,
@@ -88,7 +164,7 @@ func Inspect(ctx context.Context, root string) (Map, error) {
 		InventoryCutOff: cutOff,
 	}
 	detectFiles(abs, files, &m)
-	return m, nil
+	return m, files, nil
 }
 
 // Generate is an alias for Inspect for callers that treat repo maps as output.
@@ -120,6 +196,163 @@ func Format(m Map) string {
 			return string(out)
 		}
 	}
+}
+
+// FormatSnapshot renders stable JSON while preserving the legacy map fields at
+// the top level and placing exact provenance under "provenance".
+func FormatSnapshot(snapshot Snapshot) string {
+	snapshot = boundedSnapshot(snapshot)
+	for {
+		out, err := json.MarshalIndent(snapshotOutput{
+			Map:        snapshot.Summary,
+			Provenance: makeSnapshotProvenance(snapshot),
+		}, "", "  ")
+		if err != nil {
+			return `{"version":1,"output_truncated":true}`
+		}
+		if len(out) <= MaxOutputBytes {
+			return string(out)
+		}
+		snapshot.Summary.OutputTruncated = true
+		if !dropOneSnapshot(&snapshot) {
+			if len(snapshot.Summary.Root) > 128 {
+				snapshot.Summary.Root = cleanValue(snapshot.Summary.Root[:128])
+			}
+			if len(snapshot.Root) > 128 {
+				snapshot.Root = cleanValue(snapshot.Root[:128])
+			}
+			out, _ = json.Marshal(snapshotOutput{
+				Map:        snapshot.Summary,
+				Provenance: makeSnapshotProvenance(snapshot),
+			})
+			if len(out) > MaxOutputBytes {
+				return `{"version":1,"output_truncated":true}`
+			}
+			return string(out)
+		}
+	}
+}
+
+func boundedSnapshot(snapshot Snapshot) Snapshot {
+	snapshot.Summary = boundedMap(snapshot.Summary)
+	snapshot.Root = cleanValue(snapshot.Root)
+	if snapshot.Root == "" {
+		snapshot.Root = snapshot.Summary.Root
+	}
+	snapshot.GitRoot = cleanValue(snapshot.GitRoot)
+	snapshot.Head = cleanValue(snapshot.Head)
+	snapshot.DirtyPaths, snapshot.DirtyPathsTruncated = boundPaths(snapshot.DirtyPaths, snapshot.DirtyPathsTruncated)
+	snapshot.ManifestPaths, snapshot.ManifestPathsTruncated = boundPaths(snapshot.ManifestPaths, snapshot.ManifestPathsTruncated)
+	return snapshot
+}
+
+func boundPaths(values []string, truncated bool) ([]string, bool) {
+	values = append([]string(nil), values...)
+	for i := range values {
+		values[i] = normalizeRelativePath(values[i])
+	}
+	values = sortedUnique(values)
+	if len(values) > maxListItems {
+		values = values[:maxListItems]
+		truncated = true
+	}
+	return values, truncated
+}
+
+func dropOneSnapshot(snapshot *Snapshot) bool {
+	if dropOne(&snapshot.Summary) {
+		return true
+	}
+	if len(snapshot.DirtyPaths) > 0 {
+		snapshot.DirtyPaths = snapshot.DirtyPaths[:len(snapshot.DirtyPaths)-1]
+		snapshot.DirtyPathsTruncated = true
+		return true
+	}
+	if len(snapshot.ManifestPaths) > 0 {
+		snapshot.ManifestPaths = snapshot.ManifestPaths[:len(snapshot.ManifestPaths)-1]
+		snapshot.ManifestPathsTruncated = true
+		return true
+	}
+	return false
+}
+
+func makeSnapshotProvenance(snapshot Snapshot) snapshotProvenance {
+	tree := "UNVERIFIED"
+	if snapshot.HeadKnown && snapshot.DirtyKnown {
+		if len(snapshot.DirtyPaths) == 0 && !snapshot.DirtyPathsTruncated {
+			tree = "CLEAN"
+		} else {
+			tree = "DIRTY"
+		}
+	}
+	return snapshotProvenance{
+		Root:                   cleanValue(snapshot.Root),
+		GitRoot:                cleanValue(snapshot.GitRoot),
+		Head:                   cleanValue(snapshot.Head),
+		HeadKnown:              snapshot.HeadKnown,
+		Tree:                   tree,
+		DirtyPathsKnown:        snapshot.DirtyKnown,
+		DirtyPaths:             snapshot.DirtyPaths,
+		DirtyPathsTruncated:    snapshot.DirtyPathsTruncated,
+		ManifestPaths:          snapshot.ManifestPaths,
+		ManifestPathsTruncated: snapshot.ManifestPathsTruncated,
+	}
+}
+
+// Compare reports only captured metadata changes. It intentionally cannot
+// establish that file contents are equal when the metadata is unchanged.
+func Compare(before, after Snapshot) Delta {
+	before = boundedSnapshot(before)
+	after = boundedSnapshot(after)
+	delta := Delta{
+		RootChanged:          snapshotRoot(before) != snapshotRoot(after),
+		HeadChanged:          before.HeadKnown != after.HeadKnown || before.Head != after.Head,
+		DirtyPathsChanged:    before.DirtyKnown != after.DirtyKnown || before.DirtyPathsTruncated != after.DirtyPathsTruncated || !sameStrings(before.DirtyPaths, after.DirtyPaths),
+		ManifestPathsChanged: before.ManifestPathsTruncated != after.ManifestPathsTruncated || !sameStrings(before.ManifestPaths, after.ManifestPaths),
+	}
+	delta.AddedDirtyPaths, delta.RemovedDirtyPaths = stringDifferences(before.DirtyPaths, after.DirtyPaths)
+	delta.AddedManifestPaths, delta.RemovedManifestPaths = stringDifferences(before.ManifestPaths, after.ManifestPaths)
+	delta.RequiresRefresh = delta.RootChanged || delta.HeadChanged || delta.DirtyPathsChanged || delta.ManifestPathsChanged
+	return delta
+}
+
+func snapshotRoot(snapshot Snapshot) string {
+	if snapshot.Root != "" {
+		return filepath.Clean(snapshot.Root)
+	}
+	return filepath.Clean(snapshot.Summary.Root)
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func stringDifferences(before, after []string) (added, removed []string) {
+	beforeSet := make(map[string]bool, len(before))
+	afterSet := make(map[string]bool, len(after))
+	for _, value := range before {
+		beforeSet[value] = true
+	}
+	for _, value := range after {
+		afterSet[value] = true
+		if !beforeSet[value] {
+			added = append(added, value)
+		}
+	}
+	for _, value := range before {
+		if !afterSet[value] {
+			removed = append(removed, value)
+		}
+	}
+	return sortedUnique(added), sortedUnique(removed)
 }
 
 func boundedMap(m Map) Map {
@@ -261,6 +494,170 @@ func walkFiles(ctx context.Context, root string) ([]string, bool, error) {
 	}
 	sort.Strings(files)
 	return files, cutOff, nil
+}
+
+func absoluteDirectory(root string) (string, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+	st, err := os.Stat(abs)
+	if err != nil {
+		return "", err
+	}
+	if !st.IsDir() {
+		return "", errors.New("repo map root is not a directory")
+	}
+	return abs, nil
+}
+
+func gitRootFor(ctx context.Context, root string) (string, bool) {
+	value, err := commandText(ctx, root, "git", "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", false
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(value) {
+		value = filepath.Join(root, value)
+	}
+	abs, err := filepath.Abs(value)
+	if err != nil {
+		return "", false
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	}
+	st, err := os.Stat(abs)
+	if err != nil || !st.IsDir() {
+		return "", false
+	}
+	return filepath.Clean(abs), true
+}
+
+func fullHead(ctx context.Context, gitRoot string, known bool) (string, bool) {
+	if !known {
+		return "", false
+	}
+	head, err := commandText(ctx, gitRoot, "git", "rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return "", false
+	}
+	head = strings.TrimSpace(head)
+	if !validCommitID(head) {
+		return "", false
+	}
+	return head, true
+}
+
+func validCommitID(value string) bool {
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	for _, r := range value {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func dirtyPaths(ctx context.Context, workspace, gitRoot string, known bool) ([]string, bool, bool) {
+	if !known {
+		return nil, false, false
+	}
+	status, err := commandText(ctx, gitRoot, "git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
+	if err != nil || len(status) >= 1<<20 {
+		return nil, false, false
+	}
+	paths := make(map[string]bool)
+	parts := bytes.Split([]byte(status), []byte{0})
+	for i := 0; i < len(parts); i++ {
+		entry := parts[i]
+		if len(entry) < 4 || entry[2] != ' ' {
+			continue
+		}
+		addWorkspacePath(paths, workspace, gitRoot, string(entry[3:]))
+		if entry[0] == 'R' || entry[0] == 'C' || entry[1] == 'R' || entry[1] == 'C' {
+			if i+1 < len(parts) {
+				i++
+				addWorkspacePath(paths, workspace, gitRoot, string(parts[i]))
+			}
+		}
+	}
+	values := make([]string, 0, len(paths))
+	for path := range paths {
+		values = append(values, path)
+	}
+	bounded, truncated := boundPaths(values, len(values) > maxListItems)
+	return bounded, truncated, true
+}
+
+func addWorkspacePath(paths map[string]bool, workspace, gitRoot, path string) {
+	path = filepath.FromSlash(path)
+	if filepath.IsAbs(path) {
+		// Git's -z status output is normally relative, but do not allow an
+		// unexpected absolute path to escape the workspace projection.
+		return
+	}
+	full := filepath.Join(gitRoot, path)
+	comparisonWorkspace := workspace
+	if resolved, err := filepath.EvalSymlinks(workspace); err == nil {
+		comparisonWorkspace = resolved
+	}
+	relative, err := filepath.Rel(comparisonWorkspace, full)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return
+	}
+	if normalized := normalizeRelativePath(relative); normalized != "" {
+		paths[normalized] = true
+	}
+}
+
+func manifestPaths(files []string) ([]string, bool) {
+	paths := make([]string, 0)
+	truncated := false
+	for _, file := range files {
+		relative := normalizeRelativePath(file)
+		if relative == "" || excludedManifestPath(relative) || !manifestNames[filepath.Base(relative)] {
+			continue
+		}
+		if strings.Count(relative, "/")+1 > maxManifestDepth {
+			truncated = true
+			continue
+		}
+		paths = append(paths, relative)
+	}
+	paths = sortedUnique(paths)
+	if len(paths) > maxListItems {
+		paths = paths[:maxListItems]
+		truncated = true
+	}
+	return paths, truncated
+}
+
+func excludedManifestPath(path string) bool {
+	parts := strings.Split(path, "/")
+	for _, part := range parts[:len(parts)-1] {
+		if ignoredDir(part) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeRelativePath(path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return ""
+	}
+	path = filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+	if path == "." || path == ".." || strings.HasPrefix(path, "../") {
+		return ""
+	}
+	return path
 }
 
 func ignoredDir(name string) bool {
