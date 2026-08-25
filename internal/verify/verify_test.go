@@ -1,9 +1,12 @@
 package verify
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -65,6 +68,128 @@ func TestRunCommandZeroEvidenceIsInconclusive(t *testing.T) {
 	res := runCommand(t.Context(), dir, Command{Runner: "go", Display: "go test ./...", Args: []string{"test", "./..."}, Scope: ScopeBroader}, 1, time.Second)
 	if res.Status != StatusInconclusive || res.OK {
 		t.Fatalf("zero-evidence command = %+v", res)
+	}
+}
+
+func TestBoundedOutputMarksTruncation(t *testing.T) {
+	out, truncated := boundedOutput(strings.Repeat("x", MaxOutputBytes+100))
+	if !truncated || len(out) > MaxOutputBytes || !strings.Contains(out, "truncated") {
+		t.Fatalf("bounded output = len %d truncated=%v", len(out), truncated)
+	}
+}
+
+func TestCollectProvenanceExactHeadAndTree(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	verifyGitRun(t, dir, "init", "--quiet")
+	verifyGitRun(t, dir, "config", "user.name", "Picogent Test")
+	verifyGitRun(t, dir, "config", "user.email", "picogent@example.test")
+	writeVerifyFile(t, dir, "go.mod", "module example.test/manifest\n\ngo 1.25\n")
+	verifyGitRun(t, dir, "add", "go.mod")
+	verifyGitRun(t, dir, "commit", "--quiet", "-m", "initial")
+	head := strings.TrimSpace(verifyGitRun(t, dir, "rev-parse", "--verify", "HEAD^{commit}"))
+
+	clean := CollectProvenance(t.Context(), dir, head)
+	if clean.Match != ManifestPass || clean.Tree != "CLEAN" || clean.SHA != head || clean.GitRoot == "" {
+		t.Fatalf("clean provenance = %+v", clean)
+	}
+	writeVerifyFile(t, dir, "go.mod", "module example.test/manifest\n\ngo 1.25\n\n// dirty\n")
+	dirty := CollectProvenance(t.Context(), dir, head)
+	if dirty.Match != ManifestPass || dirty.Tree != "DIRTY" {
+		t.Fatalf("dirty provenance = %+v", dirty)
+	}
+	wrong := CollectProvenance(t.Context(), dir, strings.Repeat("b", 40))
+	if wrong.Match != ManifestFail || wrong.Tree != "DIRTY" {
+		t.Fatalf("mismatched provenance = %+v", wrong)
+	}
+	missing := CollectProvenance(t.Context(), dir, "")
+	if missing.Match != ManifestUnverified {
+		t.Fatalf("missing expected SHA = %+v", missing)
+	}
+
+	nonGit := CollectProvenance(t.Context(), t.TempDir(), head)
+	if nonGit.Match != ManifestUnverified || nonGit.Tree != "UNVERIFIED" {
+		t.Fatalf("non-git provenance = %+v", nonGit)
+	}
+}
+
+func TestManifestPassRequiresCoverageEvidence(t *testing.T) {
+	pipeline := PipelineResult{
+		Status: StatusPass,
+		Stages: []StageResult{{
+			Scope:  ScopeBroader,
+			Status: StatusPass,
+			Evidence: []Result{{
+				Scope: ScopeBroader, Runner: "go", Command: "go test ./...", Status: StatusPass, Passed: 1,
+			}},
+		}},
+	}
+	manifest := ManifestFromPipeline(pipeline, HeadEvidence{
+		SHA:         strings.Repeat("a", 40),
+		ExpectedSHA: strings.Repeat("a", 40),
+		Match:       ManifestPass,
+		Tree:        "CLEAN",
+	})
+	if manifest.Status != ManifestUnverified || !strings.Contains(manifest.Reason, "coverage") {
+		t.Fatalf("manifest = %+v", manifest)
+	}
+	if len(manifest.Checks) != 1 || manifest.Checks[0].Coverage.Status != ManifestUnverified {
+		t.Fatalf("coverage evidence = %+v", manifest.Checks)
+	}
+}
+
+func TestManifestPropagatesPipelineStatuses(t *testing.T) {
+	for _, tc := range []struct {
+		pipeline Status
+		manifest ManifestStatus
+	}{
+		{StatusFail, ManifestFail},
+		{StatusInconclusive, ManifestInconclusive},
+		{StatusSkipped, ManifestSkipped},
+	} {
+		got := ManifestFromPipeline(PipelineResult{Status: tc.pipeline, Reason: "recorded reason"}, HeadEvidence{})
+		if got.Status != tc.manifest || got.Reason != "recorded reason" {
+			t.Fatalf("pipeline %s -> %+v", tc.pipeline, got)
+		}
+	}
+}
+
+func TestManifestTruncatedOutputIsUnverified(t *testing.T) {
+	manifest := ManifestFromPipeline(PipelineResult{
+		Status: StatusPass,
+		Stages: []StageResult{{Scope: ScopeBroader, Status: StatusPass, Evidence: []Result{{
+			Scope: ScopeBroader, Runner: "go", Command: "go test ./...", Status: StatusPass, Passed: 1, OutputTruncated: true,
+		}}}},
+	}, HeadEvidence{
+		SHA: strings.Repeat("a", 40), ExpectedSHA: strings.Repeat("a", 40), Match: ManifestPass, Tree: "CLEAN",
+	})
+	if manifest.Status != ManifestUnverified || !strings.Contains(manifest.Reason, "truncated") || !manifest.Checks[0].OutputTruncated {
+		t.Fatalf("truncated manifest = %+v", manifest)
+	}
+}
+
+func TestManifestIsBoundedAndOmitsRawOutput(t *testing.T) {
+	secret := "do-not-persist-this-command-output"
+	evidence := make([]Result, 0, 100)
+	for i := 0; i < 100; i++ {
+		evidence = append(evidence, Result{Scope: ScopeBroader, Runner: "go", Command: strings.Repeat("command-", 100), Status: StatusPass, Passed: 1, Output: secret})
+	}
+	manifest := ManifestFromPipeline(PipelineResult{
+		Status: StatusPass,
+		Stages: []StageResult{{Scope: ScopeBroader, Status: StatusPass, Evidence: evidence}},
+	}, HeadEvidence{GitRoot: strings.Repeat("/workspace", 100), SHA: strings.Repeat("a", 40), Match: ManifestUnverified, Tree: "UNVERIFIED"})
+	var output bytes.Buffer
+	if err := WriteJSON(&output, manifest); err != nil {
+		t.Fatal(err)
+	}
+	trimmed := bytes.TrimSpace(output.Bytes())
+	if len(trimmed) > MaxManifestBytes || !json.Valid(trimmed) {
+		t.Fatalf("manifest output = %d bytes", len(trimmed))
+	}
+	if bytes.Contains(trimmed, []byte(secret)) || !strings.Contains(string(trimmed), `"checks_truncated": true`) {
+		t.Fatalf("raw output or truncation evidence missing: %s", trimmed)
 	}
 }
 
@@ -260,4 +385,15 @@ func writeVerifyFile(t *testing.T, root, name, contents string) {
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func verifyGitRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return string(out)
 }
