@@ -190,7 +190,7 @@ func autoAllow(mode config.Mode, req Request) bool {
 		return false
 	}
 	switch req.Tool {
-	case "read_file", "glob", "grep", "list_dir", "repo_map", "todo_write":
+	case "read_file", "glob", "grep", "list_dir", "repo_map", "project_health", "todo_write":
 		return true
 	case "git":
 		return req.Command == "status" || req.Command == "diff"
