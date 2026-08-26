@@ -252,6 +252,30 @@ func TestFormatSnapshotIsBoundedAndTruthful(t *testing.T) {
 	}
 }
 
+func TestFormatSnapshotRedactsGitDerivedText(t *testing.T) {
+	snapshot := Snapshot{
+		Summary: Map{
+			Root: "/workspace",
+			Git:  GitState{Repository: true, Branch: "feature/api_key=branch-secret"},
+		},
+		Root:          "/workspace",
+		Head:          strings.Repeat("a", 40),
+		HeadKnown:     true,
+		DirtyKnown:    true,
+		DirtyPaths:    []string{"api_key=file-secret.txt"},
+		ManifestPaths: []string{"password=manifest-secret.json"},
+	}
+	out := FormatSnapshot(snapshot)
+	for _, secret := range []string{"branch-secret", "file-secret", "manifest-secret"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("formatted repo map retained secret %q: %s", secret, out)
+		}
+	}
+	if !strings.Contains(out, "[REDACTED]") {
+		t.Fatalf("formatted repo map did not include redaction marker: %s", out)
+	}
+}
+
 func TestCaptureNonGitIsUnverified(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "package.json", "{}\n")

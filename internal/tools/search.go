@@ -11,8 +11,10 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/saiaathish/picogent/internal/gitobs"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/redact"
 )
 
 type globTool struct{}
@@ -408,13 +410,12 @@ func (gitTool) Run(ctx context.Context, args string, c Context) (string, error) 
 }
 
 func gitOut(ctx context.Context, ws string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = ws
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	err := cmd.Run()
-	text := clip(strings.TrimSpace(out.String()))
+	result, err := gitobs.Combined(ctx, ws, args...)
+	text := redact.Text(strings.TrimSpace(result.Output))
+	if result.Truncated {
+		text += "\n… git output truncated …"
+	}
+	text = clip(text)
 	if err != nil {
 		if text == "" {
 			return "", err

@@ -1,7 +1,10 @@
 package tools
 
 import (
+	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -60,4 +63,46 @@ func TestSanitizedCommandEnvOmitsCredentialsAndStartupHooks(t *testing.T) {
 	if os.Getenv("PATH") != "" && !hasEnvKey(env, "PATH") {
 		t.Fatal("sanitized environment removed PATH")
 	}
+}
+
+func TestGitOutRedactsCredentialShapedDiff(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	repo := t.TempDir()
+	runToolsGit(t, repo, "init", "--quiet")
+	runToolsGit(t, repo, "config", "user.name", "Picogent Test")
+	runToolsGit(t, repo, "config", "user.email", "picogent@example.test")
+	path := filepath.Join(repo, "config.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runToolsGit(t, repo, "add", "config.txt")
+	runToolsGit(t, repo, "commit", "--quiet", "-m", "initial")
+	if err := os.WriteFile(path, []byte("api_key=diff-secret\npassword=another-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := gitOut(context.Background(), repo, "diff")
+	if err != nil {
+		t.Fatalf("gitOut: %v", err)
+	}
+	for _, secret := range []string{"diff-secret", "another-secret"} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("git output retained secret %q: %q", secret, got)
+		}
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("git output did not include redaction marker: %q", got)
+	}
+}
+
+func runToolsGit(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, out)
+	}
+	return string(out)
 }

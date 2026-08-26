@@ -11,11 +11,13 @@ import (
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/saiaathish/picogent/internal/gitobs"
+	"github.com/saiaathish/picogent/internal/redact"
 )
 
 const (
@@ -175,7 +177,7 @@ func Build(ctx context.Context, root string) (Map, error) { return Inspect(ctx, 
 
 // Format renders stable JSON and keeps it within MaxOutputBytes.
 func Format(m Map) string {
-	m = boundedMap(m)
+	m = redactedMap(boundedMap(m))
 	for {
 		out, err := json.MarshalIndent(m, "", "  ")
 		if err != nil {
@@ -201,7 +203,7 @@ func Format(m Map) string {
 // FormatSnapshot renders stable JSON while preserving the legacy map fields at
 // the top level and placing exact provenance under "provenance".
 func FormatSnapshot(snapshot Snapshot) string {
-	snapshot = boundedSnapshot(snapshot)
+	snapshot = redactedSnapshot(boundedSnapshot(snapshot))
 	for {
 		out, err := json.MarshalIndent(snapshotOutput{
 			Map:        snapshot.Summary,
@@ -372,6 +374,41 @@ func boundedMap(m Map) Map {
 	return m
 }
 
+func redactedMap(m Map) Map {
+	m.Root = redact.Text(m.Root)
+	m.Languages = redactList(m.Languages)
+	m.Frameworks = redactList(m.Frameworks)
+	m.PackageManagers = redactList(m.PackageManagers)
+	m.Commands.Build = redactList(m.Commands.Build)
+	m.Commands.Test = redactList(m.Commands.Test)
+	m.Commands.Lint = redactList(m.Commands.Lint)
+	m.Manifests = redactList(m.Manifests)
+	m.SourceRoots = redactList(m.SourceRoots)
+	m.TestRoots = redactList(m.TestRoots)
+	m.Rules = redactList(m.Rules)
+	m.Git.Branch = redact.Text(m.Git.Branch)
+	m.Git.Head = redact.Text(m.Git.Head)
+	return m
+}
+
+func redactedSnapshot(snapshot Snapshot) Snapshot {
+	snapshot.Summary = redactedMap(snapshot.Summary)
+	snapshot.Root = redact.Text(snapshot.Root)
+	snapshot.GitRoot = redact.Text(snapshot.GitRoot)
+	snapshot.Head = redact.Text(snapshot.Head)
+	snapshot.DirtyPaths = redactList(snapshot.DirtyPaths)
+	snapshot.ManifestPaths = redactList(snapshot.ManifestPaths)
+	return snapshot
+}
+
+func redactList(values []string) []string {
+	values = append([]string(nil), values...)
+	for i := range values {
+		values[i] = redact.Text(values[i])
+	}
+	return values
+}
+
 func dropOne(m *Map) bool {
 	lists := []*[]string{
 		&m.Manifests, &m.SourceRoots, &m.TestRoots, &m.Rules,
@@ -418,8 +455,8 @@ func gitFiles(ctx context.Context, root string) ([]string, bool, bool) {
 
 	cmdCtx, cancel := shortContext(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(cmdCtx, "git", "ls-files", "-co", "--exclude-standard", "-z")
-	cmd.Dir = root
+	cmd := gitobs.Command(cmdCtx, root, "ls-files", "-co", "--exclude-standard", "-z")
+	cmd.Stderr = io.Discard
 	pipe, err := cmd.StdoutPipe()
 	if err != nil || cmd.Start() != nil {
 		return nil, false, false
@@ -703,16 +740,14 @@ func inspectGit(ctx context.Context, root string) GitState {
 func commandText(ctx context.Context, root, name string, args ...string) (string, error) {
 	cmdCtx, cancel := shortContext(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(cmdCtx, name, args...)
-	cmd.Dir = root
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = io.Discard
-	err := cmd.Run()
-	if out.Len() > 1<<20 {
-		return out.String()[:1<<20], err
+	if name != "git" {
+		return "", errors.New("unsupported repository command")
 	}
-	return out.String(), err
+	result, err := gitobs.Output(cmdCtx, root, args...)
+	if result.Truncated {
+		return result.Output, errors.New("git output truncated")
+	}
+	return result.Output, err
 }
 
 func shortContext(ctx context.Context) (context.Context, context.CancelFunc) {
