@@ -1,9 +1,11 @@
 # Picogent v4 discovery scorecard
 
-Status: completed on 2026-08-25 against exact `main` head
-`17a82593433633dbf45cdc39afec1194afd4bed3`.
+Status: refreshed on 2026-08-26 against exact `main` head
+`745846d3b0399e58f14c8dbd6b81e66424218688`.
 
-The required 15-specialty Wave A audit was run in bounded read-only batches.
+The required 15-specialty Wave A audit was run in bounded read-only batches on
+2026-08-25; the findings below are carried forward and reconciled with the
+landed slices since that audit.
 Every specialist verified the same head and left the pre-existing worktree
 changes untouched: modified `.gitignore`, untracked `graphify-out/`, and
 untracked `picogent-go-tmp-umask`.
@@ -19,7 +21,7 @@ not enough to establish real runtime behavior.
 | Architecture | Tiny local-first, single-agent boundary; bounded state | Compact `taskstate` model | Lifecycle and persistence semantics are distributed across `agent`, `goal`, `verify`, and the surfaces | Separate GUI side-chat path and repeated surface orchestration | Add one internal outcome/turn contract around the existing task state; do not add a second planner or index |
 | Agent reasoning | Evidence-gated completion and stale-goal protection | Bounded repair loop and durable context | Keyword intent inference; repair diversity is prompt advice rather than route enforcement | Repeated admission/inference logic in GUI, TUI, and headless | Record intent revision, hypothesis/route, evidence, and stop reason in one shared contract |
 | Intent/outcome | Monotonic goal revisions, tombstones, atomic clear | Permission boundary and bounded criteria | Template-only definition of done; ambiguity, negation, and conflicting goals are not structured | Duplicate `Steps`/`DefinitionOfDone` and `Verification`/`Evidence` representations | Make criteria and criterion evidence authoritative before expanding outcome features |
-| Memory | Bounded task records and save-before-publish | Causal learning remains small and advisory | FIFO retention is not value-aware; session records have no intrinsic byte bound; cross-process task writes are last-writer-wins | Transcript-shaped session storage duplicates structured task/evidence state | Enforce a single bounded session persistence boundary and test restart/compaction |
+| Memory | Bounded task and session records with save-before-publish | Causal learning remains small and advisory | FIFO retention is not value-aware; cross-process task writes are last-writer-wins | Transcript-shaped session storage duplicates structured task/evidence state | Make retention value-aware after measuring restart and compaction behavior |
 | Context efficiency | Pair-safe compaction; 8,192-character durable context; failure signals retained | Deterministic stale-output reduction | Aggregate summarization input and token estimates are not hard-bounded/calibrated; lexical priority misses structured/non-English failures | Repeated stale skeletonization/deduplication passes | Add an aggregate `Manage`/`Summarize` budget and measure bytes, tokens, allocations, and latency |
 | Repo intelligence | On-demand deterministic map with no daemon/index/watcher | Bounded search and map output | Short-head/dirty status omits path provenance; nested roots and fallback semantics drift | Unused `Generate`/`Build` aliases and duplicate phrase/default command tables | Add a bounded provenance-bearing repo snapshot refreshed at admission and after mutation |
 | Verification | Explicit `PASS`/`FAIL`/`INCONCLUSIVE`/`SKIPPED`; targeted-to-broader stages | Changed-file cap forces broader verification | Command selection omits build/vet/race/fuzz/diff gates; textual proof truncation lacks structured metadata | Duplicate `DetectPipeline`/legacy verification paths pending caller confirmation | Add an exact-head machine-readable release evidence manifest and truthfully surface all statuses |
@@ -56,9 +58,8 @@ not enough to establish real runtime behavior.
 
 - Outcome authority is split: generic criteria, legacy verification, newer
   evidence, goal text, and `Goal complete:` presentation can drift.
-- Current-head/dirty-tree provenance, session byte bounds, cross-process writes,
-  route-aware recovery, event ordering, and filesystem TOCTOU boundaries are
-  incomplete.
+- Current-head/dirty-tree provenance, cross-process writes, route-aware
+  recovery, event ordering, and filesystem TOCTOU boundaries are incomplete.
 - GUI verification status is especially high impact: the server emits an
   unresolved status for inconclusive/skipped evidence while the client styles
   every non-failure as a pass (`internal/gui/server.go:2002-2017` and
@@ -86,7 +87,8 @@ green unit tests or hosted compile/test CI:
 - cancellation/save/publish ordering, goroutine leaks, cross-process writers,
   and Windows runtime persistence;
 - provider-token accuracy, RSS/startup/first-turn envelopes, long-session
-  growth, and large-output CPU/allocation behavior;
+  growth beyond the bounded session record, and large-output CPU/allocation
+  behavior;
 - symlink-swap/TOCTOU, child-environment secret leakage, git hook/textconv
   execution, MCP prompt injection, installer safety, and dependency/SBOM
   evidence;
@@ -108,12 +110,14 @@ These are candidates, not approved deletions:
 5. Optional provider installers and advanced first-run cards from the default
    setup path.
 
-## Selected next slice
+## Completed and selected slices
 
-Ship a focused GUI verification-truthfulness change first. Preserve the
-server-side four-state model, emit explicit client-consumable statuses, render
-`PASS`, `FAIL`, `INCONCLUSIVE`, and `SKIPPED` distinctly, and add focused
-source/behavior tests. This is small enough to review and verify while fixing a
-real user-facing false-success risk. After it lands, the next proposals should
-compete on measured evidence: bounded persistence, repo provenance, release
-evidence manifests, and deterministic concurrency/recovery harnesses.
+The focused GUI verification-truthfulness change and workspace-bound evidence
+slice are merged. The durable session boundary is also merged: records are
+capped, transient prompts and orphaned tool results are removed, newest history
+is retained, oversized loads are rejected before parsing, and legacy records
+are normalized before resume.
+
+The next proposals should compete on measured evidence: exact-head repository
+provenance, a machine-readable release evidence manifest, and deterministic
+concurrency/recovery harnesses. None of those proposals is a release claim.
