@@ -508,9 +508,10 @@ func cloneAgentForSession(src *agent.Agent, sessionID string) *agent.Agent {
 // newSessionLocked rotates the chat and agent together. Callers must hold
 // s.mu. A stale turn retains the old agent pointer and therefore can never
 // create or update durable task state for the new session.
-func (s *server) newSessionLocked() string {
+func (s *server) newSessionLocked() (string, error) {
+	var saveErr error
 	if len(s.hist) > 0 {
-		_ = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
+		saveErr = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
 	}
 	s.abortTurnLocked()
 	s.sessionID = session.New(s.cfg.Workspace).ID
@@ -521,7 +522,7 @@ func (s *server) newSessionLocked() string {
 		next.SetTaskMode(agent.TaskAgent)
 		s.ag = next
 	}
-	return s.sessionID
+	return s.sessionID, saveErr
 }
 
 func (s *server) snapshot() map[string]any {
@@ -1453,8 +1454,11 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 		llmClient := runAgent.ClientSnapshot()
 		model := runAgent.ConfigSnapshot().Model
 		_ = config.Save(s.cfg)
-		_ = session.SaveMessages(ws, sid, next)
+		saveErr := session.SaveMessages(ws, sid, next)
 		s.mu.Unlock()
+		if saveErr != nil {
+			s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
+		}
 		if result.Context.Tokens > 0 {
 			s.emit(contextEvent(result.Context))
 		}
@@ -1537,8 +1541,11 @@ func (s *server) clearGoalIf(expected string, expectedRevision, expectedEpoch, e
 
 func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
-	id := s.newSessionLocked()
+	id, saveErr := s.newSessionLocked()
 	s.mu.Unlock()
+	if saveErr != nil {
+		s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
+	}
 	s.invalidatePromptRecs()
 	s.emitTaskSnapshot(id)
 	s.emit(event{Type: "undo", Status: "cleared"})
@@ -1743,8 +1750,11 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		switch payload {
 		case "clear":
 			s.mu.Lock()
-			id := s.newSessionLocked()
+			id, saveErr := s.newSessionLocked()
 			s.mu.Unlock()
+			if saveErr != nil {
+				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
+			}
 			s.emitTaskSnapshot(id)
 			s.emit(event{Type: "undo", Status: "cleared"})
 			s.emit(event{Type: "task_mode", Text: string(agent.TaskAgent)})
@@ -2317,8 +2327,11 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 		switch in.Action {
 		case "new":
 			s.mu.Lock()
-			id := s.newSessionLocked()
+			id, saveErr := s.newSessionLocked()
 			s.mu.Unlock()
+			if saveErr != nil {
+				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
+			}
 			s.invalidatePromptRecs()
 			s.emitTaskSnapshot(id)
 			s.emit(event{Type: "undo", Status: "cleared"})
@@ -2371,13 +2384,17 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			rotated := false
+			var saveErr error
 			s.mu.Lock()
 			if s.sessionID == in.ID {
-				_ = s.newSessionLocked()
+				_, saveErr = s.newSessionLocked()
 				rotated = true
 			}
 			currentID := s.sessionID
 			s.mu.Unlock()
+			if saveErr != nil {
+				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
+			}
 			s.emitTaskSnapshot(currentID)
 			if rotated {
 				s.emit(event{Type: "undo", Status: "cleared"})
@@ -2642,6 +2659,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "couldn't save settings: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		var sessionSaveErr error
 		s.mu.Lock()
 		if workspaceChanged {
 			oldWorkspace := s.cfg.Workspace
@@ -2649,7 +2667,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			oldHistory := s.hist
 			s.abortTurnLocked()
 			if oldSession != "" && len(oldHistory) > 0 {
-				_ = session.SaveMessages(oldWorkspace, oldSession, oldHistory)
+				sessionSaveErr = session.SaveMessages(oldWorkspace, oldSession, oldHistory)
 			}
 			s.cfg = cfg
 			s.ag = nextAgent
@@ -2665,6 +2683,9 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.mu.Unlock()
+		if sessionSaveErr != nil {
+			s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", sessionSaveErr)})
+		}
 		if workspaceChanged {
 			s.attachRouterHook()
 			_, _, _ = projects.Ensure(cfg.Workspace)
