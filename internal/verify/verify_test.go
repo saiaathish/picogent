@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +113,41 @@ func TestCollectProvenanceExactHeadAndTree(t *testing.T) {
 	nonGit := CollectProvenance(t.Context(), t.TempDir(), head)
 	if nonGit.Match != ManifestUnverified || nonGit.Tree != "UNVERIFIED" {
 		t.Fatalf("non-git provenance = %+v", nonGit)
+	}
+}
+
+func TestCollectProvenanceDisablesRepositoryFsmonitor(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX helper script")
+	}
+	dir := t.TempDir()
+	verifyGitRun(t, dir, "init", "--quiet")
+	verifyGitRun(t, dir, "config", "user.name", "Picogent Test")
+	verifyGitRun(t, dir, "config", "user.email", "picogent@example.test")
+	writeVerifyFile(t, dir, "go.mod", "module example.test/manifest\n\ngo 1.25\n")
+	verifyGitRun(t, dir, "add", "go.mod")
+	verifyGitRun(t, dir, "commit", "--quiet", "-m", "initial")
+	wantHead := strings.TrimSpace(verifyGitRun(t, dir, "rev-parse", "--verify", "HEAD^{commit}"))
+
+	marker := filepath.Join(t.TempDir(), "fsmonitor-ran")
+	hook := filepath.Join(t.TempDir(), "untrusted-fsmonitor")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\n: > \"$PICOGENT_TEST_VERIFY_MARKER\"\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_TEST_VERIFY_MARKER", marker)
+	verifyGitRun(t, dir, "config", "core.fsmonitor", hook)
+	// Also try the inherited config injection path. The Git boundary must
+	// remove these variables before launching the repository command.
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.fsmonitor")
+	t.Setenv("GIT_CONFIG_VALUE_0", hook)
+
+	evidence := CollectProvenance(t.Context(), dir, wantHead)
+	if evidence.Match != ManifestPass {
+		t.Fatalf("provenance = %+v", evidence)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("repository fsmonitor hook ran: %v", err)
 	}
 }
 

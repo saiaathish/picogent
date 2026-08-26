@@ -1,20 +1,22 @@
 package gui
 
 import (
+	"context"
 	"encoding/json"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/saiaathish/picogent/internal/gitobs"
 )
 
 func diffStats(workspace, relPath string) (added, removed int) {
 	if workspace == "" || relPath == "" {
 		return 0, 0
 	}
-	cmd := exec.Command("git", "-C", workspace, "diff", "--numstat", "--", relPath)
-	out, err := cmd.Output()
-	if err == nil && len(strings.TrimSpace(string(out))) > 0 {
-		fields := strings.Fields(string(out))
+	result, err := gitobs.Output(context.Background(), workspace, "diff", "--numstat", "--", relPath)
+	if err == nil && !result.Truncated && len(strings.TrimSpace(result.Output)) > 0 {
+		fields := strings.Fields(result.Output)
 		if len(fields) >= 2 {
 			added = atoi(fields[0])
 			removed = atoi(fields[1])

@@ -3,8 +3,10 @@ package gui
 import (
 	"encoding/json"
 	"net/http"
-	"os/exec"
 	"strings"
+
+	"github.com/saiaathish/picogent/internal/gitobs"
+	"github.com/saiaathish/picogent/internal/redact"
 )
 
 func formatTestSummary(passed, failed, skipped int) string {
@@ -37,14 +39,18 @@ func (s *server) diffAPI(w http.ResponseWriter, r *http.Request) {
 	ws := s.cfg.Workspace
 	s.mu.Unlock()
 
-	// A workspace controls its Git configuration. Disable external diff and
-	// textconv helpers so this read-only endpoint cannot execute
-	// repository-configured commands.
-	args := []string{"-C", ws, "diff", "--no-ext-diff", "--no-textconv", "--"}
+	// A workspace controls its Git configuration. The shared Git boundary
+	// disables repository-configured helpers and bounds/redacts the result so
+	// this read-only endpoint cannot execute or expose their output.
+	args := []string{"diff", "--"}
 	if rel != "" {
 		args = append(args, rel)
 	}
-	out, err := exec.Command("git", args...).CombinedOutput()
+	result, err := gitobs.Combined(r.Context(), ws, args...)
+	out := redact.Text(result.Output)
+	if result.Truncated {
+		out += "\n… git output truncated …"
+	}
 	if err != nil && len(out) == 0 {
 		http.Error(w, err.Error(), 500)
 		return
@@ -52,6 +58,6 @@ func (s *server) diffAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"path": rel,
-		"diff": string(out),
+		"diff": out,
 	})
 }

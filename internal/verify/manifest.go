@@ -1,17 +1,17 @@
 package verify
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/saiaathish/picogent/internal/gitobs"
 )
 
 const (
@@ -402,15 +402,11 @@ func absoluteWorkspace(workspace string) (string, error) {
 func gitText(ctx context.Context, workspace string, args ...string) (string, bool) {
 	commandCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(commandCtx, "git", args...)
-	cmd.Dir = workspace
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = io.Discard
-	if err := cmd.Run(); err != nil || output.Len() > maxGitOutputBytes {
+	result, err := gitobs.Output(commandCtx, workspace, args...)
+	if err != nil || result.Truncated || len(result.Output) > maxGitOutputBytes {
 		return "", false
 	}
-	return output.String(), true
+	return result.Output, true
 }
 
 func validManifestCommitID(value string) bool {
