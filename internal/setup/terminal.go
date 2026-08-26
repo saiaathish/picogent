@@ -2,10 +2,16 @@ package setup
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 )
+
+// runLoginCommand is a test seam for the synchronous CLI login path. Its
+// production implementation revalidates the executable and supplies the same
+// restricted environment used by interactive provider setup.
+var runLoginCommand = runValidatedCommand
 
 // OpenInteractive runs one already-resolved executable with fixed arguments in
 // a visible terminal so beginners can finish interactive logins. It accepts an
@@ -15,6 +21,9 @@ func OpenInteractive(bin string, args ...string) error {
 	bin = strings.TrimSpace(bin)
 	if bin == "" {
 		return fmt.Errorf("empty command")
+	}
+	if setupElevatedFn() {
+		return fmt.Errorf("refusing interactive provider login from an elevated process; rerun Picogent as the normal user")
 	}
 	validatedBin, err := validateLaunchExecutable(bin)
 	if err != nil {
@@ -36,7 +45,7 @@ func OpenInteractive(bin string, args ...string) error {
 		script := fmt.Sprintf(`tell application "Terminal"
   activate
   do script %q
-end tell`, cmdLine)
+end tell`, cleanEnvironmentCommandLine(env, cmdLine))
 		cmd := exec.Command(osascript, "-e", script)
 		cmd.Env = env
 		return cmd.Start()
@@ -49,7 +58,7 @@ end tell`, cmdLine)
 		if err != nil {
 			return err
 		}
-		cmd := exec.Command(cmdShell, "/C", "start", "cmd", "/K", cmdLine)
+		cmd := exec.Command(cmdShell, windowsInteractiveArgs(cmdShell, cmdLine)...)
 		cmd.Env = env
 		return cmd.Start()
 	default:
@@ -68,7 +77,7 @@ end tell`, cmdLine)
 		}{
 			{"gnome-terminal", []string{"--", bash, "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
 			{"konsole", []string{"-e", bash, "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
-			{"xfce4-terminal", []string{"-e", bash + " --noprofile --norc -c " + shellQuote(cmdLine+"; echo; read -n 1 -s -r -p 'Press any key to close…'")}},
+			{"xfce4-terminal", xfceTerminalArgs(bash, cmdLine)},
 			{"x-terminal-emulator", []string{"-e", bash, "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
 			{"xterm", []string{"-e", bash, "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
 		} {
@@ -91,6 +100,48 @@ end tell`, cmdLine)
 		cmd.Env = env
 		return cmd.Start()
 	}
+}
+
+func runValidatedCommand(bin string, args ...string) error {
+	bin = strings.TrimSpace(bin)
+	if bin == "" {
+		return fmt.Errorf("empty command")
+	}
+	if setupElevatedFn() {
+		return fmt.Errorf("refusing provider login from an elevated process; rerun Picogent as the normal user")
+	}
+	validatedBin, err := validateLaunchExecutable(bin)
+	if err != nil {
+		return fmt.Errorf("login command %q is unavailable: %w", bin, err)
+	}
+	cmd := exec.Command(validatedBin, args...)
+	cmd.Env = interactiveEnv(validatedBin)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+func windowsInteractiveArgs(cmdShell, cmdLine string) []string {
+	return []string{"/D", "/C", "start", "", cmdShell, "/D", "/K", cmdLine}
+}
+
+func xfceTerminalArgs(bash, cmdLine string) []string {
+	script := cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"
+	return []string{"-e", shellQuote(bash) + " --noprofile --norc -c " + shellQuote(script)}
+}
+
+func cleanEnvironmentCommandLine(env []string, cmdLine string) string {
+	parts := []string{shellQuote("/usr/bin/env"), "-i"}
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok || key == "" {
+			continue
+		}
+		parts = append(parts, shellQuote(key+"="+value))
+	}
+	parts = append(parts, cmdLine)
+	return strings.Join(parts, " ")
 }
 
 func shellCommandLine(bin string, args ...string) string {

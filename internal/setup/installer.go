@@ -85,6 +85,9 @@ func installNPM(spec npmInstallSpec, say func(string)) error {
 	if err != nil {
 		return fmt.Errorf("prepare private CLI directory: %w", err)
 	}
+	if err := rejectManagedNPMConfig(root); err != nil {
+		return err
+	}
 	if err := writeProviderManifests(root); err != nil {
 		return fmt.Errorf("write pinned provider manifest: %w", err)
 	}
@@ -188,13 +191,58 @@ func trustedManagedExecutable(path string) string {
 	if err != nil {
 		return ""
 	}
-	if runtime.GOOS != "windows" {
-		st, err := os.Stat(root)
-		if err != nil || !st.IsDir() || st.Mode().Perm()&0o077 != 0 {
-			return ""
-		}
+	if !trustedManagedRoot(root) {
+		return ""
 	}
 	return trustedExecutableInRoots(path, []string{root})
+}
+
+func trustedManagedRoot(root string) bool {
+	home, err := config.Dir()
+	if err != nil {
+		return false
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	homeAbs, err := filepath.Abs(home)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(filepath.Clean(homeAbs), filepath.Clean(abs))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	for current := filepath.Clean(abs); ; current = filepath.Dir(current) {
+		st, err := os.Lstat(current)
+		if err != nil || st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
+			return false
+		}
+		if runtime.GOOS != "windows" {
+			if current == filepath.Clean(abs) && st.Mode().Perm()&0o077 != 0 {
+				return false
+			}
+			if current != filepath.Clean(abs) && st.Mode().Perm()&0o022 != 0 {
+				return false
+			}
+		}
+		if samePath(current, filepath.Clean(homeAbs)) {
+			break
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return false
+		}
+	}
+	return true
+}
+
+func samePath(left, right string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
 }
 
 // validateLaunchExecutable repeats the trust decision immediately before a
@@ -308,7 +356,7 @@ func executableAncestorsProtected(root, target string) bool {
 	}
 	for current := root; ; current = filepath.Dir(current) {
 		rootInfo, err := os.Stat(current)
-		if err != nil || !rootInfo.IsDir() || rootInfo.Mode().Perm()&0o022 != 0 {
+		if err != nil || !rootInfo.IsDir() || (rootInfo.Mode().Perm()&0o022 != 0 && rootInfo.Mode()&os.ModeSticky == 0) {
 			return false
 		}
 		parent := filepath.Dir(current)
@@ -327,7 +375,7 @@ func executableAncestorsProtected(root, target string) bool {
 		if i == len(parts)-1 {
 			continue
 		}
-		if !st.IsDir() || st.Mode().Perm()&0o022 != 0 {
+		if !st.IsDir() || (st.Mode().Perm()&0o022 != 0 && st.Mode()&os.ModeSticky == 0) {
 			return false
 		}
 	}
@@ -427,6 +475,21 @@ func writeProviderManifests(root string) error {
 		}
 	}
 	return nil
+}
+
+func rejectManagedNPMConfig(root string) error {
+	path := filepath.Join(root, ".npmrc")
+	st, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect managed npm config: %w", err)
+	}
+	if st.Mode()&os.ModeSymlink != 0 || st.IsDir() {
+		return fmt.Errorf("refusing managed npm config path %s", path)
+	}
+	return fmt.Errorf("refusing unreviewed managed npm config %s", path)
 }
 
 func replacePrivateFile(path string, data []byte) error {
@@ -544,13 +607,11 @@ func installerPath(program string) string {
 	}
 	// A node-based CLI commonly uses /usr/bin/env in its shebang. Resolve the
 	// trusted node runtime separately so an attacker-controlled PATH entry
-	// cannot replace it while npm starts.
+	// cannot replace it while npm starts. Do not append fallback trust roots:
+	// doing so would let an untrusted node in one of those roots win shebang
+	// lookup when no trusted node was found.
 	if node := externalLook("node"); node != "" {
 		addDir(filepath.Dir(node))
-	}
-	for _, root := range trustedExecutableRoots() {
-		addDir(root)
-		addDir(filepath.Join(root, "bin"))
 	}
 	return strings.Join(dirs, string(os.PathListSeparator))
 }
@@ -584,6 +645,9 @@ func (b *cappedBuffer) String() string {
 }
 
 func runTimedWithEnv(d time.Duration, name string, args []string, env []string) (string, error) {
+	if setupElevatedFn() {
+		return "", fmt.Errorf("refusing command execution from an elevated process; rerun Picogent as the normal user")
+	}
 	validated, err := validateLaunchExecutable(name)
 	if err != nil {
 		return "", err
