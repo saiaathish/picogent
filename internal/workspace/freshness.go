@@ -17,6 +17,9 @@ const (
 	// MaxTrackedFiles bounds the amount of workspace state that one evidence
 	// record can bind to. A truncated binding is never considered fresh.
 	MaxTrackedFiles = 128
+	// MaxPathInputs bounds caller-controlled path-list processing. Passing more
+	// inputs is conservatively recorded as truncation even when they repeat.
+	MaxPathInputs = MaxTrackedFiles * 4
 	// MaxFingerprintBytes keeps capture work bounded. Files larger than this
 	// limit remain explicitly unknown instead of being treated as unchanged.
 	MaxFingerprintBytes = 4 << 20
@@ -89,7 +92,7 @@ func Capture(ctx context.Context, root string, paths []string) (Observation, err
 	if !info.IsDir() {
 		return Observation{}, errors.New("workspace root is not a directory")
 	}
-	rootIdentity, err := identityForFile(f)
+	rootState, err := describeFile(f)
 	if err != nil {
 		return Observation{}, fmt.Errorf("identify workspace root: %w", err)
 	}
@@ -104,7 +107,7 @@ func Capture(ctx context.Context, root string, paths []string) (Observation, err
 	}
 	observation := Observation{
 		Root:           canonical,
-		RootIdentity:   rootIdentity,
+		RootIdentity:   rootState.Identity,
 		FilesTruncated: truncated,
 		Files:          make([]FileObservation, 0, len(tracked)),
 	}
@@ -118,13 +121,32 @@ func Capture(ctx context.Context, root string, paths []string) (Observation, err
 		}
 		observation.Files = append(observation.Files, file)
 	}
+	// The root handle above remains attached to the original directory, so a
+	// pathname replacement can otherwise mix old identity with new-root files.
+	// Reopen the caller's root name after all file reads and fail closed when it
+	// no longer names the same directory.
+	currentRoot, rootErr := os.Open(abs)
+	if rootErr != nil {
+		observation.RootIdentity.Known = false
+		return observation, nil
+	}
+	currentState, stateErr := describeFile(currentRoot)
+	_ = currentRoot.Close()
+	if stateErr != nil || !sameFileState(rootState, currentState) {
+		observation.RootIdentity.Known = false
+	}
 	return observation, nil
 }
 
 func trackedPaths(root string, paths []string) ([]string, bool, error) {
-	seen := make(map[string]struct{}, len(paths))
-	tracked := make([]string, 0, len(paths))
-	for _, path := range paths {
+	inputLimit := len(paths)
+	truncated := inputLimit > MaxPathInputs
+	if inputLimit > MaxPathInputs {
+		inputLimit = MaxPathInputs
+	}
+	seen := make(map[string]struct{}, inputLimit)
+	tracked := make([]string, 0, inputLimit)
+	for _, path := range paths[:inputLimit] {
 		if strings.TrimSpace(path) == "" {
 			continue
 		}
@@ -139,8 +161,8 @@ func trackedPaths(root string, paths []string) ([]string, bool, error) {
 		tracked = append(tracked, rel)
 	}
 	sort.Strings(tracked)
-	truncated := len(tracked) > MaxTrackedFiles
-	if truncated {
+	if len(tracked) > MaxTrackedFiles {
+		truncated = true
 		tracked = tracked[:MaxTrackedFiles]
 	}
 	return tracked, truncated, nil

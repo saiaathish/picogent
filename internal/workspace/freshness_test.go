@@ -114,6 +114,24 @@ func TestCaptureTruncationIsNeverFresh(t *testing.T) {
 	}
 }
 
+func TestCaptureBoundsPathInputProcessing(t *testing.T) {
+	root := t.TempDir()
+	paths := make([]string, MaxPathInputs+1)
+	for i := range paths {
+		paths[i] = "missing.txt"
+	}
+	observation, err := Capture(context.Background(), root, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !observation.FilesTruncated || len(observation.Files) != 1 {
+		t.Fatalf("bounded path observation = truncated=%v files=%d", observation.FilesTruncated, len(observation.Files))
+	}
+	if comparison := Compare(observation, observation); comparison.Fresh || !comparison.Unknown {
+		t.Fatalf("bounded path comparison = %+v", comparison)
+	}
+}
+
 func TestCaptureLargeFileIsUnknown(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, root, "large.bin", strings.Repeat("x", MaxFingerprintBytes+1))

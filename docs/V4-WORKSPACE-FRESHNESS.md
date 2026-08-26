@@ -6,7 +6,9 @@ yet wired into durable task completion.
 ## Contract
 
 `internal/workspace.Capture` records a fresh observation of one workspace and
-at most 128 explicitly named regular files. It stores only:
+at most 128 explicitly named regular files. It processes at most 512 caller
+path inputs; exceeding that input bound is also recorded as truncation. It
+stores only:
 
 - the canonical root path and platform filesystem identity;
 - each file's existence, identity, size, and SHA-256 digest when the file is
