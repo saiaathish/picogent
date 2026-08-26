@@ -2,7 +2,6 @@ package setup
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -17,9 +16,11 @@ func OpenInteractive(bin string, args ...string) error {
 	if bin == "" {
 		return fmt.Errorf("empty command")
 	}
-	if _, err := os.Stat(bin); err != nil {
+	validatedBin, err := validateLaunchExecutable(bin)
+	if err != nil {
 		return fmt.Errorf("login command %q is unavailable: %w", bin, err)
 	}
+	bin = validatedBin
 	cmdLine := shellCommandLine(bin, args...)
 	env := interactiveEnv(bin)
 	switch runtime.GOOS {
@@ -27,6 +28,10 @@ func OpenInteractive(bin string, args ...string) error {
 		osascript := externalLook("osascript")
 		if osascript == "" {
 			return fmt.Errorf("osascript is unavailable")
+		}
+		osascript, err = validateLaunchExecutable(osascript)
+		if err != nil {
+			return err
 		}
 		script := fmt.Sprintf(`tell application "Terminal"
   activate
@@ -40,23 +45,39 @@ end tell`, cmdLine)
 		if cmdShell == "" {
 			return fmt.Errorf("cmd.exe is unavailable")
 		}
+		cmdShell, err = validateLaunchExecutable(cmdShell)
+		if err != nil {
+			return err
+		}
 		cmd := exec.Command(cmdShell, "/C", "start", "cmd", "/K", cmdLine)
 		cmd.Env = env
 		return cmd.Start()
 	default:
 		// Linux: try common terminal emulators.
+		bash := externalLook("bash")
+		if bash == "" {
+			return fmt.Errorf("bash is unavailable")
+		}
+		bash, err = validateLaunchExecutable(bash)
+		if err != nil {
+			return err
+		}
 		for _, try := range []struct {
 			bin  string
 			args []string
 		}{
-			{"gnome-terminal", []string{"--", "bash", "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
-			{"konsole", []string{"-e", "bash", "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
-			{"xfce4-terminal", []string{"-e", "bash --noprofile --norc -c " + shellQuote(cmdLine+"; echo; read -n 1 -s -r -p 'Press any key to close…'")}},
-			{"x-terminal-emulator", []string{"-e", "bash", "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
-			{"xterm", []string{"-e", "bash", "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
+			{"gnome-terminal", []string{"--", bash, "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
+			{"konsole", []string{"-e", bash, "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
+			{"xfce4-terminal", []string{"-e", bash + " --noprofile --norc -c " + shellQuote(cmdLine+"; echo; read -n 1 -s -r -p 'Press any key to close…'")}},
+			{"x-terminal-emulator", []string{"-e", bash, "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
+			{"xterm", []string{"-e", bash, "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
 		} {
 			terminal := externalLook(try.bin)
 			if terminal == "" {
+				continue
+			}
+			terminal, err = validateLaunchExecutable(terminal)
+			if err != nil {
 				continue
 			}
 			cmd := exec.Command(terminal, try.args...)
@@ -66,10 +87,6 @@ end tell`, cmdLine)
 			}
 		}
 		// Last resort: start detached (may lack a TTY for interactive auth).
-		bash := externalLook("bash")
-		if bash == "" {
-			return fmt.Errorf("bash is unavailable")
-		}
 		cmd := exec.Command(bash, "--noprofile", "--norc", "-c", cmdLine)
 		cmd.Env = env
 		return cmd.Start()

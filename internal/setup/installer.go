@@ -2,6 +2,7 @@ package setup
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,6 +33,16 @@ var execLookPath = exec.LookPath
 var trustedExecutableFn = trustedExternalExecutable
 
 var setupElevatedFn = setupRunningElevated
+
+var (
+	// These files are reviewed source artifacts, not user-provided npm state.
+	// They are materialized into the private tools prefix before npm runs.
+	//
+	//go:embed provider-package.json
+	providerPackageJSON []byte
+	//go:embed provider-package-lock.json
+	providerPackageLockJSON []byte
+)
 
 type npmInstallSpec struct {
 	Label   string
@@ -74,6 +85,9 @@ func installNPM(spec npmInstallSpec, say func(string)) error {
 	if err != nil {
 		return fmt.Errorf("prepare private CLI directory: %w", err)
 	}
+	if err := writeProviderManifests(root); err != nil {
+		return fmt.Errorf("write pinned provider manifest: %w", err)
+	}
 	userConfig, err := os.CreateTemp(root, ".npm-userconfig-")
 	if err != nil {
 		return fmt.Errorf("create npm user config: %w", err)
@@ -105,10 +119,8 @@ func installNPM(spec npmInstallSpec, say func(string)) error {
 	// gaining execution during first-run setup. The package names and registry
 	// are compile-time allowlisted above; user npm config cannot redirect them.
 	args := []string{
-		"install",
+		"ci",
 		"--prefix", root,
-		"--no-save",
-		"--no-package-lock",
 		"--ignore-scripts",
 		"--no-audit",
 		"--no-fund",
@@ -117,9 +129,8 @@ func installNPM(spec npmInstallSpec, say func(string)) error {
 		"--userconfig", userConfigPath,
 		"--globalconfig", globalConfigPath,
 		"--cache", cacheDir,
-		spec.Package,
 	}
-	say(fmt.Sprintf("installing %s into Picogent's private CLI folder (npm registry %s; lifecycle scripts disabled)", spec.Label, npmRegistry))
+	say(fmt.Sprintf("installing pinned provider CLIs into Picogent's private CLI folder (npm registry %s; lockfile integrity enforced; lifecycle scripts disabled)", npmRegistry))
 	out, err := runInstaller(4*time.Minute, npm, args, installerEnv(npm))
 	if err != nil {
 		if detail := redactInstallerOutput(out); detail != "" {
@@ -144,6 +155,13 @@ func trustedExternalExecutable(name, path string) string {
 	if name == "" || path == "" || !filepath.IsAbs(path) {
 		return ""
 	}
+	return trustedExecutableInRoots(path, trustedExecutableRoots())
+}
+
+func trustedExecutableInRoots(path string, roots []string) string {
+	if path == "" || !filepath.IsAbs(path) {
+		return ""
+	}
 	resolved, ok := canonicalPath(path)
 	if !ok {
 		return ""
@@ -157,12 +175,42 @@ func trustedExternalExecutable(name, path string) string {
 			return ""
 		}
 	}
-	for _, root := range trustedExecutableRoots() {
-		if pathWithin(root, resolved) {
+	for _, root := range roots {
+		if pathWithin(root, resolved) && executableAncestorsProtected(root, resolved) {
 			return resolved
 		}
 	}
 	return ""
+}
+
+func trustedManagedExecutable(path string) string {
+	root, _, err := managedPaths()
+	if err != nil {
+		return ""
+	}
+	if runtime.GOOS != "windows" {
+		st, err := os.Stat(root)
+		if err != nil || !st.IsDir() || st.Mode().Perm()&0o077 != 0 {
+			return ""
+		}
+	}
+	return trustedExecutableInRoots(path, []string{root})
+}
+
+// validateLaunchExecutable repeats the trust decision immediately before a
+// command is started. The executable is returned in canonical form so an
+// already-validated symlink cannot be swapped at the managed PATH entry after
+// lookup. This narrows pathname races; an OS-level attacker that can rewrite a
+// trusted executable between this check and CreateProcess/execve remains out
+// of scope for this portable path-based launcher.
+func validateLaunchExecutable(path string) (string, error) {
+	if resolved := trustedManagedExecutable(path); resolved != "" {
+		return resolved, nil
+	}
+	if resolved := trustedExternalExecutable(filepath.Base(path), path); resolved != "" {
+		return resolved, nil
+	}
+	return "", fmt.Errorf("executable is not trusted: %q", path)
 }
 
 func trustedExecutableRoots() []string {
@@ -205,7 +253,11 @@ func prepareManagedTools() (root, bin string, err error) {
 	if err := ensurePrivateDirectory(root); err != nil {
 		return "", "", err
 	}
-	bin = filepath.Join(root, managedBinDirName)
+	nodeModules := filepath.Join(root, "node_modules")
+	if err := ensurePrivateDirectory(nodeModules); err != nil {
+		return "", "", err
+	}
+	bin = filepath.Join(nodeModules, ".bin")
 	if err := ensurePrivateDirectory(bin); err != nil {
 		return "", "", err
 	}
@@ -222,27 +274,64 @@ func managedPaths() (root, bin string, err error) {
 }
 
 func managedBinaryPath(name string) string {
-	root, bin, err := managedPaths()
+	_, bin, err := managedPaths()
 	if err != nil {
 		return ""
 	}
 	for _, candidate := range managedBinaryCandidates(bin, name) {
-		st, err := os.Stat(candidate)
-		if err != nil || st.IsDir() {
-			continue
-		}
-		if runtime.GOOS != "windows" && st.Mode().Perm()&0o111 == 0 {
-			continue
-		}
-		resolved, err := filepath.EvalSymlinks(candidate)
-		if err != nil || !pathWithin(root, resolved) {
+		resolved := trustedManagedExecutable(candidate)
+		if resolved == "" {
 			// A pre-existing symlink in the managed folder must not turn
 			// PATH lookup into an escape hatch to an arbitrary executable.
 			continue
 		}
-		return candidate
+		return resolved
 	}
 	return ""
+}
+
+func executableAncestorsProtected(root, target string) bool {
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	root, ok := canonicalPath(root)
+	if !ok {
+		return false
+	}
+	target, ok = canonicalPath(target)
+	if !ok {
+		return false
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	for current := root; ; current = filepath.Dir(current) {
+		rootInfo, err := os.Stat(current)
+		if err != nil || !rootInfo.IsDir() || rootInfo.Mode().Perm()&0o022 != 0 {
+			return false
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+	}
+	current := root
+	parts := strings.Split(rel, string(filepath.Separator))
+	for i, part := range parts {
+		current = filepath.Join(current, part)
+		st, err := os.Stat(current)
+		if err != nil {
+			return false
+		}
+		if i == len(parts)-1 {
+			continue
+		}
+		if !st.IsDir() || st.Mode().Perm()&0o022 != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func managedBinaryCandidates(binDir, name string) []string {
@@ -311,6 +400,78 @@ func ensurePrivateDirectory(path string) error {
 		}
 	}
 	return nil
+}
+
+func writeProviderManifests(root string) error {
+	for _, manifest := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "package.json", data: providerPackageJSON},
+		{name: "package-lock.json", data: providerPackageLockJSON},
+	} {
+		path := filepath.Join(root, manifest.name)
+		st, err := os.Lstat(path)
+		if err == nil {
+			if st.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("refusing symlinked provider manifest %s", path)
+			}
+			if st.IsDir() {
+				return fmt.Errorf("provider manifest %s is a directory", path)
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err := replacePrivateFile(path, manifest.data); err != nil {
+			return fmt.Errorf("replace %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func replacePrivateFile(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".picogent-manifest-")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err == nil {
+		return nil
+	} else if runtime.GOOS != "windows" {
+		return err
+	}
+
+	// Windows does not replace an existing file with Rename. Remove only the
+	// exact manifest path, never a recursively selected target, then retry the
+	// same atomic rename. If another writer races this narrow window, Rename
+	// fails closed instead of following a replacement symlink.
+	if st, statErr := os.Lstat(path); statErr != nil {
+		if !os.IsNotExist(statErr) {
+			return statErr
+		}
+	} else if st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("manifest destination is not a regular file")
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 // installerEnv is an explicit allowlist. In particular, API keys, auth
@@ -423,7 +584,14 @@ func (b *cappedBuffer) String() string {
 }
 
 func runTimedWithEnv(d time.Duration, name string, args []string, env []string) (string, error) {
-	cmd := installerCommand(name, args)
+	validated, err := validateLaunchExecutable(name)
+	if err != nil {
+		return "", err
+	}
+	cmd, err := installerCommand(validated, args)
+	if err != nil {
+		return "", err
+	}
 	cmd.Env = append([]string(nil), env...)
 	var buf cappedBuffer
 	cmd.Stdout = &buf
@@ -445,18 +613,63 @@ func runTimedWithEnv(d time.Duration, name string, args []string, env []string) 
 	}
 }
 
-func installerCommand(name string, args []string) *exec.Cmd {
+func installerCommand(name string, args []string) (*exec.Cmd, error) {
+	workingDir, filteredArgs, err := installerWorkingDirectory(args)
+	if err != nil {
+		return nil, err
+	}
+	args = filteredArgs
+	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
 		ext := strings.ToLower(filepath.Ext(name))
 		if ext == ".cmd" || ext == ".bat" {
 			shell := externalLook("cmd.exe")
 			if shell == "" {
-				return exec.Command("", "/D", "/S", "/C", shellCommandLine(name, args...))
+				return nil, fmt.Errorf("cmd.exe is not trusted")
 			}
-			return exec.Command(shell, "/D", "/S", "/C", shellCommandLine(name, args...))
+			validated, err := validateLaunchExecutable(shell)
+			if err != nil {
+				return nil, err
+			}
+			cmd = exec.Command(validated, "/D", "/S", "/C", shellCommandLine(name, args...))
+		} else {
+			cmd = exec.Command(name, args...)
 		}
+	} else {
+		cmd = exec.Command(name, args...)
 	}
-	return exec.Command(name, args...)
+	if workingDir != "" {
+		cmd.Dir = workingDir
+	}
+	return cmd, nil
+}
+
+func installerWorkingDirectory(args []string) (string, []string, error) {
+	for i, arg := range args {
+		if arg != "--prefix" {
+			continue
+		}
+		if i+1 >= len(args) || args[i+1] == "" {
+			return "", nil, fmt.Errorf("installer prefix is missing")
+		}
+		root, _, err := managedPaths()
+		if err != nil {
+			return "", nil, err
+		}
+		resolvedRoot, ok := canonicalPath(root)
+		if !ok {
+			return "", nil, fmt.Errorf("installer prefix is unavailable")
+		}
+		resolvedPrefix, ok := canonicalPath(args[i+1])
+		if !ok || !pathWithin(resolvedRoot, resolvedPrefix) || !pathWithin(resolvedPrefix, resolvedRoot) {
+			return "", nil, fmt.Errorf("installer prefix is outside Picogent's private CLI folder")
+		}
+		filtered := make([]string, 0, len(args)-2)
+		filtered = append(filtered, args[:i]...)
+		filtered = append(filtered, args[i+2:]...)
+		return resolvedRoot, filtered, nil
+	}
+	return "", args, nil
 }
 
 var (
