@@ -810,27 +810,46 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 // capped durable file list is deliberately represented by an empty target set:
 // the verifier interprets that as broader workspace coverage, which is the
 // only sound fallback when some successful mutations are no longer retained.
+// An uncapped task includes both this turn's and all retained changed paths;
+// learned targets fill only the remaining bounded observation capacity.
 func verificationTargetsForTask(filesChanged []string, task *taskstate.Task, memory evolve.Store, userHint string) []string {
 	if task != nil && task.ChangedFilesCapped {
 		return nil
 	}
 	targets := make([]string, 0, len(filesChanged))
 	seen := make(map[string]struct{}, len(filesChanged))
-	appendTargets := func(paths []string) {
-		for _, target := range paths {
+	overflow := false
+	appendTargets := func(paths []string, strict bool) {
+		for _, raw := range paths {
+			target := normalizeVerificationTarget(raw)
+			if target == "" {
+				continue
+			}
 			if _, ok := seen[target]; ok {
 				continue
+			}
+			if len(targets) >= workspace.MaxTrackedFiles {
+				overflow = strict
+				return
 			}
 			seen[target] = struct{}{}
 			targets = append(targets, target)
 		}
 	}
-	appendTargets(filesChanged)
+	appendTargets(filesChanged, true)
 	if task != nil {
-		appendTargets(task.ChangedFiles)
+		appendTargets(task.ChangedFiles, true)
 	}
-	appendTargets(evolve.VerificationTargets(memory, userHint))
+	if overflow {
+		return nil
+	}
+	appendTargets(evolve.VerificationTargets(memory, userHint), false)
 	return targets
+}
+
+func normalizeVerificationTarget(path string) string {
+	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+	return strings.TrimPrefix(path, "./")
 }
 
 // includeChangedVerificationTargets prevents a narrow explicit verification

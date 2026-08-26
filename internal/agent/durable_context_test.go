@@ -7,6 +7,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/taskstate"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 func TestDurableContextStaysWithinDeterministicBound(t *testing.T) {
@@ -136,8 +137,31 @@ func TestCappedChangedFilesForceBroaderVerification(t *testing.T) {
 
 func TestVerificationTargetsIncludeCurrentAndRetainedChanges(t *testing.T) {
 	task := &taskstate.Task{ChangedFiles: []string{"prior.go", "shared.go"}}
-	got := verificationTargetsForTask([]string{"current.go", "shared.go"}, task, evolve.Store{}, "")
+	got := verificationTargetsForTask([]string{"./current.go", "shared.go"}, task, evolve.Store{}, "")
 	if joined := strings.Join(got, ","); joined != "current.go,shared.go,prior.go" {
 		t.Fatalf("verification targets=%v, want current and retained paths once", got)
+	}
+}
+
+func TestVerificationTargetsCanonicalizeAliases(t *testing.T) {
+	task := &taskstate.Task{ChangedFiles: []string{"foo.go", "prior.go"}}
+	got := verificationTargetsForTask([]string{`./foo.go`, `new\file.go`}, task, evolve.Store{}, "")
+	if joined := strings.Join(got, ","); joined != "foo.go,new/file.go,prior.go" {
+		t.Fatalf("canonical verification targets=%v", got)
+	}
+}
+
+func TestVerificationTargetsDoNotExceedObservationBound(t *testing.T) {
+	task := &taskstate.Task{}
+	for i := 0; i < workspace.MaxTrackedFiles-1; i++ {
+		task.ChangedFiles = append(task.ChangedFiles, strings.Repeat("retained/", 2)+string(rune('a'+i/26))+string(rune('a'+i%26))+".go")
+	}
+	memory := evolve.Store{Playbooks: []evolve.Playbook{{Title: "fix auth", Body: "internal/learned.go"}}}
+	got := verificationTargetsForTask([]string{"current.go"}, task, memory, "fix auth")
+	if len(got) != workspace.MaxTrackedFiles {
+		t.Fatalf("verification target count=%d, want %d", len(got), workspace.MaxTrackedFiles)
+	}
+	if strings.Contains(strings.Join(got, ","), "internal/learned.go") {
+		t.Fatalf("learned target exceeded observation bound: %v", got)
 	}
 }
