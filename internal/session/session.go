@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
@@ -24,7 +26,30 @@ type Session struct {
 	Messages  []llm.Message `json:"messages"`
 }
 
-const MaxSessions = 60
+const (
+	MaxSessions = 60
+
+	// MaxSessionBytes is a hard upper bound for one JSON session record. It
+	// protects both disk usage and restart-time parsing from unbounded chat
+	// history growth.
+	MaxSessionBytes = 256 << 10
+	// MaxSessionMessages bounds the number of normalized messages retained in
+	// one session after a save. A lower byte limit may retain fewer messages.
+	MaxSessionMessages = 128
+
+	maxSessionTitleBytes     = 256
+	maxSessionWorkspaceBytes = 4096
+	maxSessionContentBytes   = 8 << 10
+	maxSessionToolBytes      = 4 << 10
+	maxSessionPartTextBytes  = 2 << 10
+	maxSessionPartDataBytes  = 8 << 10
+	maxSessionParts          = 4
+	maxSessionToolCalls      = 8
+)
+
+// ErrSessionTooLarge reports a session record that cannot be safely loaded or
+// represented within the durable session boundary.
+var ErrSessionTooLarge = errors.New("session record exceeds size limit")
 
 func deriveTitle(msgs []llm.Message) string {
 	for _, m := range msgs {
@@ -303,9 +328,24 @@ func SaveMessages(workspace string, id string, msgs []llm.Message) error {
 }
 
 func loadLocked(path, id string) (*Session, error) {
-	data, err := os.ReadFile(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
+	}
+	if info.Size() > MaxSessionBytes {
+		return nil, ErrSessionTooLarge
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, MaxSessionBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxSessionBytes {
+		return nil, ErrSessionTooLarge
 	}
 	var s Session
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -314,15 +354,246 @@ func loadLocked(path, id string) (*Session, error) {
 	if s.ID != id {
 		return nil, errors.New("session id mismatch")
 	}
+	if err := boundSession(&s); err != nil {
+		return nil, err
+	}
 	return &s, nil
 }
 
 func saveLocked(path string, s *Session) error {
+	if err := boundSession(s); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
+	if len(data) > MaxSessionBytes {
+		return ErrSessionTooLarge
+	}
 	return writeAtomic(path, data)
+}
+
+func boundSession(s *Session) error {
+	if s == nil {
+		return errors.New("session is nil")
+	}
+	if len(s.Workspace) > maxSessionWorkspaceBytes {
+		return ErrSessionTooLarge
+	}
+	s.Title = clipSessionText(s.Title, maxSessionTitleBytes)
+	s.Messages = boundedMessages(s.Messages, *s)
+	return nil
+}
+
+func boundedMessages(messages []llm.Message, base Session) []llm.Message {
+	if len(messages) == 0 {
+		return nil
+	}
+	normalized := make([]llm.Message, 0, len(messages))
+	for _, message := range messages {
+		// The agent regenerates its system prompt on the next turn. Do not
+		// persist that internal prompt into a user-resumable chat record.
+		if message.Role == "system" {
+			continue
+		}
+		normalized = append(normalized, boundMessage(message))
+	}
+	if len(normalized) == 0 {
+		return nil
+	}
+
+	turns := splitTurns(normalized)
+	if len(turns) == 0 {
+		return newestUnits(nil, normalized, base)
+	}
+	selected := make([][]llm.Message, 0, len(turns))
+	latest := newestUnits(turns[len(turns)-1], nil, base)
+	if len(latest) > 0 {
+		selected = append(selected, latest)
+	}
+	for i := len(turns) - 2; i >= 0 && len(selected) < MaxSessionMessages; i-- {
+		candidate := make([][]llm.Message, 0, len(selected)+1)
+		candidate = append(candidate, turns[i])
+		candidate = append(candidate, selected...)
+		flat := flattenTurns(candidate)
+		if len(flat) > MaxSessionMessages || !sessionFits(base, flat) {
+			break
+		}
+		selected = candidate
+	}
+	flat := flattenTurns(selected)
+	if len(flat) > MaxSessionMessages {
+		flat = newestUnits(nil, flat, base)
+	}
+	if !sessionFits(base, flat) {
+		flat = newestUnits(nil, flat, base)
+	}
+	if len(flat) > MaxSessionMessages {
+		flat = flat[len(flat)-MaxSessionMessages:]
+	}
+	return flat
+}
+
+func boundMessage(message llm.Message) llm.Message {
+	message.Role = clipSessionText(message.Role, 32)
+	message.Content = clipSessionText(message.Content, maxSessionContentBytes)
+	message.ToolCallID = clipSessionText(message.ToolCallID, 128)
+	message.Name = clipSessionText(message.Name, 128)
+	if len(message.Parts) > maxSessionParts {
+		message.Parts = message.Parts[:maxSessionParts]
+	}
+	if len(message.Parts) > 0 {
+		parts := make([]llm.Part, 0, len(message.Parts))
+		for _, part := range message.Parts {
+			part.Type = clipSessionText(part.Type, 32)
+			part.Text = clipSessionText(part.Text, maxSessionPartTextBytes)
+			part.MIME = clipSessionText(part.MIME, 128)
+			part.Name = clipSessionText(part.Name, 256)
+			if len(part.Data) > maxSessionPartDataBytes {
+				part.Data = nil
+				if part.Text == "" {
+					part.Text = "[attachment data omitted from saved session]"
+				}
+			} else if len(part.Data) > 0 {
+				part.Data = append([]byte(nil), part.Data...)
+			}
+			parts = append(parts, part)
+		}
+		message.Parts = parts
+	}
+	if len(message.ToolCalls) > maxSessionToolCalls {
+		message.ToolCalls = message.ToolCalls[:maxSessionToolCalls]
+	}
+	if len(message.ToolCalls) > 0 {
+		calls := make([]llm.ToolCall, 0, len(message.ToolCalls))
+		for _, call := range message.ToolCalls {
+			call.ID = clipSessionText(call.ID, 128)
+			call.ItemID = clipSessionText(call.ItemID, 128)
+			call.Name = clipSessionText(call.Name, 128)
+			call.Arguments = clipSessionText(call.Arguments, maxSessionToolBytes)
+			calls = append(calls, call)
+		}
+		message.ToolCalls = calls
+	}
+	return message
+}
+
+func splitTurns(messages []llm.Message) [][]llm.Message {
+	var turns [][]llm.Message
+	start := 0
+	for i := 1; i < len(messages); i++ {
+		if messages[i].Role == "user" {
+			turns = append(turns, append([]llm.Message(nil), messages[start:i]...))
+			start = i
+		}
+	}
+	if start < len(messages) {
+		turns = append(turns, append([]llm.Message(nil), messages[start:]...))
+	}
+	return turns
+}
+
+func newestUnits(turn []llm.Message, fallback []llm.Message, base Session) []llm.Message {
+	if len(turn) == 0 {
+		turn = fallback
+	}
+	if len(turn) == 0 {
+		return nil
+	}
+	units := messageUnits(turn)
+	if len(units) == 0 {
+		return nil
+	}
+	selected := make([]int, 0, len(units))
+	for i := len(units) - 1; i >= 0; i-- {
+		candidateIndexes := append(append([]int(nil), selected...), i)
+		candidate := flattenUnits(units, candidateIndexes)
+		if len(candidate) > MaxSessionMessages || !sessionFits(base, candidate) {
+			continue
+		}
+		selected = append(selected, i)
+	}
+	return flattenUnits(units, selected)
+}
+
+func messageUnits(messages []llm.Message) [][]llm.Message {
+	units := make([][]llm.Message, 0, len(messages))
+	for i := 0; i < len(messages); {
+		// A tool result without its matching assistant tool call cannot be
+		// replayed safely, so do not persist it as an orphaned unit.
+		if messages[i].Role == "tool" {
+			i++
+			continue
+		}
+		end := i + 1
+		if messages[i].Role == "assistant" && len(messages[i].ToolCalls) > 0 {
+			ids := make(map[string]struct{}, len(messages[i].ToolCalls))
+			for _, call := range messages[i].ToolCalls {
+				if call.ID != "" {
+					ids[call.ID] = struct{}{}
+				}
+			}
+			for end < len(messages) && messages[end].Role == "tool" {
+				if _, ok := ids[messages[end].ToolCallID]; !ok {
+					break
+				}
+				end++
+			}
+		}
+		units = append(units, append([]llm.Message(nil), messages[i:end]...))
+		i = end
+	}
+	return units
+}
+
+func flattenUnits(units []([]llm.Message), indexes []int) []llm.Message {
+	selected := make(map[int]struct{}, len(indexes))
+	for _, index := range indexes {
+		selected[index] = struct{}{}
+	}
+	var out []llm.Message
+	for i, unit := range units {
+		if _, ok := selected[i]; ok {
+			out = append(out, unit...)
+		}
+	}
+	return out
+}
+
+func flattenTurns(turns [][]llm.Message) []llm.Message {
+	var out []llm.Message
+	for _, turn := range turns {
+		out = append(out, turn...)
+	}
+	return out
+}
+
+func sessionFits(base Session, messages []llm.Message) bool {
+	base.Messages = messages
+	data, err := json.MarshalIndent(&base, "", "  ")
+	return err == nil && len(data) <= MaxSessionBytes
+}
+
+func clipSessionText(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	const marker = "\n… [session history truncated] …"
+	if limit <= len(marker) {
+		return utf8Prefix(value, limit)
+	}
+	return utf8Prefix(value, limit-len(marker)) + marker
+}
+
+func utf8Prefix(value string, limit int) string {
+	if limit >= len(value) {
+		return value
+	}
+	for limit > 0 && !utf8.RuneStart(value[limit]) {
+		limit--
+	}
+	return value[:limit]
 }
 
 func updateSession(id, workspace string, create bool, mutate func(*Session) error) (*Session, error) {

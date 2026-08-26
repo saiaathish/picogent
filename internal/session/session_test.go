@@ -2,6 +2,7 @@ package session
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -139,6 +140,152 @@ func TestSessionSaveLeavesCompleteAtomicRecord(t *testing.T) {
 		if strings.HasSuffix(entry.Name(), ".tmp") {
 			t.Fatalf("atomic save left temp file %q", entry.Name())
 		}
+	}
+}
+
+func TestSessionSaveBoundsSerializedHistoryAndKeepsNewestToolExchange(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	id := "bounded-session"
+	messages := make([]llm.Message, 0, MaxSessionMessages+40)
+	for i := 0; i < 180; i++ {
+		messages = append(messages,
+			llm.Message{Role: "user", Content: fmt.Sprintf("request %03d %s", i, strings.Repeat("u", 12000))},
+			llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: fmt.Sprintf("call-%03d", i), Name: "read_file", Arguments: `{"path":"file.txt"}`}}},
+			llm.Message{Role: "tool", ToolCallID: fmt.Sprintf("call-%03d", i), Name: "read_file", Content: strings.Repeat("tool output ", 1200)},
+			llm.Message{Role: "assistant", Content: fmt.Sprintf("response %03d", i)},
+		)
+	}
+	if err := SaveMessages(workspace, id, messages); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := s.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() > MaxSessionBytes {
+		t.Fatalf("session size=%d, want <= %d", info.Size(), MaxSessionBytes)
+	}
+	if len(s.Messages) == 0 || len(s.Messages) > MaxSessionMessages {
+		t.Fatalf("bounded message count=%d", len(s.Messages))
+	}
+	if got := s.Messages[len(s.Messages)-1].Content; got != "response 179" {
+		t.Fatalf("newest response=%q", got)
+	}
+	for i, message := range s.Messages {
+		if message.Role != "tool" {
+			continue
+		}
+		if i == 0 || s.Messages[i-1].Role != "assistant" || len(s.Messages[i-1].ToolCalls) == 0 || s.Messages[i-1].ToolCalls[0].ID != message.ToolCallID {
+			t.Fatalf("orphaned tool exchange at message %d: %#v", i, s.Messages[i-1:])
+		}
+	}
+}
+
+func TestSessionLoadRejectsOversizedRecordBeforeParsing(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	s := New(t.TempDir())
+	path, err := s.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", MaxSessionBytes+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(s.ID); !errors.Is(err, ErrSessionTooLarge) {
+		t.Fatalf("Load oversized record=%v, want %v", err, ErrSessionTooLarge)
+	}
+}
+
+func TestSessionLoadBoundsLegacyHistoryBeforeResume(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	s := New(workspace)
+	for i := 0; i < MaxSessionMessages+20; i++ {
+		s.Messages = append(s.Messages,
+			llm.Message{Role: "user", Content: fmt.Sprintf("request %03d", i)},
+			llm.Message{Role: "assistant", Content: fmt.Sprintf("response %03d", i)},
+		)
+	}
+	path, err := s.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Messages) > MaxSessionMessages {
+		t.Fatalf("resumed message count=%d, want <= %d", len(loaded.Messages), MaxSessionMessages)
+	}
+	if got := loaded.Messages[len(loaded.Messages)-1].Content; got != "response 147" {
+		t.Fatalf("resumed newest response=%q", got)
+	}
+}
+
+func TestNewestUnitsPrioritizesNewestUnitWhenOldHistoryWouldCrowdItOut(t *testing.T) {
+	base := Session{ID: "bounded", Title: "chat", Workspace: "workspace"}
+	newest := strings.Repeat("newest response ", 12000)
+	got := newestUnits([]llm.Message{
+		{Role: "user", Content: strings.Repeat("old request ", 7500)},
+		{Role: "assistant", Content: strings.Repeat("middle response ", 7500)},
+		{Role: "assistant", Content: newest},
+	}, nil, base)
+	if len(got) != 1 {
+		t.Fatalf("newest unit selection=%d messages: %#v", len(got), got)
+	}
+	if got[0].Content != newest {
+		t.Fatalf("newest unit content=%q", got[0].Content)
+	}
+}
+
+func TestSessionSaveDropsSystemAndOrphanedToolMessages(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	messages := []llm.Message{
+		{Role: "system", Content: "internal prompt"},
+		{Role: "user", Content: "request"},
+		{Role: "tool", ToolCallID: "missing", Name: "read_file", Content: "orphan"},
+		{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "call", Name: "read_file", Arguments: `{}`}}},
+		{Role: "tool", ToolCallID: "call", Name: "read_file", Content: "file contents"},
+		{Role: "assistant", Content: "done"},
+	}
+	if err := SaveMessages(workspace, "normalized-session", messages); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load("normalized-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Messages) != 4 {
+		t.Fatalf("normalized message count=%d, messages=%#v", len(s.Messages), s.Messages)
+	}
+	if s.Messages[0].Role != "user" || s.Messages[1].Role != "assistant" || s.Messages[2].Role != "tool" || s.Messages[3].Role != "assistant" {
+		t.Fatalf("normalized roles=%q, %q, %q, %q", s.Messages[0].Role, s.Messages[1].Role, s.Messages[2].Role, s.Messages[3].Role)
+	}
+	if s.Messages[2].ToolCallID != s.Messages[1].ToolCalls[0].ID {
+		t.Fatalf("tool call linkage lost: assistant=%#v tool=%#v", s.Messages[1], s.Messages[2])
 	}
 }
 
