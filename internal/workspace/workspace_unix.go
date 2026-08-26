@@ -1,45 +1,32 @@
 //go:build !windows
 
-package tools
+package workspace
 
 import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
 
-type unixWorkspaceOpenKind uint8
+type openKind uint8
 
 const (
-	unixWorkspaceRead unixWorkspaceOpenKind = iota
-	unixWorkspaceWrite
-	unixWorkspaceEdit
+	openRead openKind = iota
+	openWrite
+	openEdit
 )
 
-func openWorkspaceRead(workspace, abs string) (*os.File, error) {
-	return openUnixWorkspaceFile(workspace, abs, unixWorkspaceRead)
-}
-
-func openWorkspaceWrite(workspace, abs string) (*os.File, error) {
-	return openUnixWorkspaceFile(workspace, abs, unixWorkspaceWrite)
-}
-
-func openWorkspaceEdit(workspace, abs string) (*os.File, error) {
-	return openUnixWorkspaceFile(workspace, abs, unixWorkspaceEdit)
-}
-
-// openUnixWorkspaceFile anchors the operation at a directory descriptor and
-// walks every parent with openat(O_NOFOLLOW). Once the final descriptor is
-// returned, renaming or replacing any path component cannot redirect the I/O.
-func openUnixWorkspaceFile(workspace, abs string, kind unixWorkspaceOpenKind) (*os.File, error) {
-	rel, err := secureWorkspaceRelative(workspace, abs)
+func open(root, path string, kind openKind) (*os.File, error) {
+	rel, err := Relative(root, path)
 	if err != nil {
 		return nil, err
 	}
-	createParents := kind == unixWorkspaceWrite
-	parent, leaf, err := openUnixWorkspaceParent(workspace, rel, createParents)
+	createParents := kind == openWrite
+	parent, leaf, err := openParent(root, rel, createParents)
 	if err != nil {
 		return nil, err
 	}
@@ -47,23 +34,21 @@ func openUnixWorkspaceFile(workspace, abs string, kind unixWorkspaceOpenKind) (*
 
 	flags := unix.O_CLOEXEC | unix.O_NOFOLLOW
 	switch kind {
-	case unixWorkspaceRead:
+	case openRead:
 		flags |= unix.O_RDONLY
-	case unixWorkspaceWrite:
-		// Do not truncate while opening. The caller checks cancellation and
-		// then truncates the already-validated descriptor.
+	case openWrite:
 		flags |= unix.O_WRONLY | unix.O_CREAT
-	case unixWorkspaceEdit:
+	case openEdit:
 		flags |= unix.O_RDWR
 	default:
-		return nil, fmt.Errorf("unknown secure workspace operation")
+		return nil, fmt.Errorf("unknown workspace operation")
 	}
 
 	fd, err := unix.Openat(parent, leaf, flags, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("open workspace file %q: %w", rel, err)
 	}
-	f := os.NewFile(uintptr(fd), abs)
+	f := os.NewFile(uintptr(fd), path)
 	if f == nil {
 		_ = unix.Close(fd)
 		return nil, fmt.Errorf("open workspace file %q: could not wrap descriptor", rel)
@@ -80,12 +65,12 @@ func openUnixWorkspaceFile(workspace, abs string, kind unixWorkspaceOpenKind) (*
 	return f, nil
 }
 
-func openUnixWorkspaceParent(workspace, rel string, create bool) (int, string, error) {
-	parts, err := securePathParts(rel)
+func openParent(root, rel string, create bool) (int, string, error) {
+	parts, err := pathParts(rel)
 	if err != nil {
 		return -1, "", err
 	}
-	fd, err := unix.Open(workspace, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	fd, err := openUnixRoot(root)
 	if err != nil {
 		return -1, "", fmt.Errorf("open workspace directory: %w", err)
 	}
@@ -107,4 +92,32 @@ func openUnixWorkspaceParent(workspace, rel string, create bool) (int, string, e
 		current = child
 	}
 	return current, parts[len(parts)-1], nil
+}
+
+func openUnixRoot(root string) (int, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return -1, err
+	}
+	if !filepath.IsAbs(root) {
+		return -1, fmt.Errorf("workspace root is not absolute")
+	}
+	current, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return -1, err
+	}
+	parts := strings.Split(strings.TrimPrefix(filepath.Clean(root), string(filepath.Separator)), string(filepath.Separator))
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		child, openErr := unix.Openat(current, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		if openErr != nil {
+			_ = unix.Close(current)
+			return -1, openErr
+		}
+		_ = unix.Close(current)
+		current = child
+	}
+	return current, nil
 }

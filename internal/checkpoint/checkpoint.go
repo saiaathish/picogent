@@ -6,12 +6,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 var (
@@ -559,11 +562,34 @@ func securePath(root, rel string) (string, error) {
 }
 
 func readWorkspaceFile(root, rel string) (fileState, error) {
-	path, err := securePath(root, rel)
+	f, err := workspace.OpenRead(root, rel)
+	if errors.Is(err, fs.ErrNotExist) {
+		state := fileState{}
+		state.sum = fingerprintFor(state)
+		return state, nil
+	}
 	if err != nil {
 		return fileState{}, err
 	}
-	return readRegularFile(path)
+	defer f.Close()
+	return readRegularFileHandle(f)
+}
+
+func readRegularFileHandle(f *os.File) (fileState, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return fileState{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return fileState{}, errors.New("checkpoint path is not a regular file")
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return fileState{}, err
+	}
+	state := fileState{exists: true, mode: restorableMode(info.Mode()), data: data}
+	state.sum = fingerprintFor(state)
+	return state, nil
 }
 
 func readRegularFile(path string) (fileState, error) {

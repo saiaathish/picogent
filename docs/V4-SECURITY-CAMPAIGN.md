@@ -44,17 +44,22 @@ prompt-construction test.
   file tools, and checkpoint capture. `FuzzResolveWorkspacePathBoundary` passed
   for a two-second local run.
 - `read_file`, `write_file`, and `edit_file` now perform their actual I/O
-  through a secure workspace opener. Unix builds walk directory descriptors
-  with `openat`/`mkdirat` and `O_NOFOLLOW`; Windows builds use
-  `OPEN_REPARSE_POINT` handles and verify the final handle path before use.
-  Focused tests cover direct outside-symlink use and a Unix ancestor-swap
-  stress case. Hosted Windows runtime evidence is still pending.
+  through a secure workspace opener. Unix builds walk every root and child
+  component through directory descriptors with `openat`/`mkdirat` and
+  `O_NOFOLLOW`; Windows builds use `NtCreateFile` RootDirectory handles with
+  `OBJ_DONT_REPARSE` and `FILE_OPEN_REPARSE_POINT`. Focused tests cover direct
+  outside-symlink use, root-ancestor rejection, and Unix ancestor-swap stress.
+  Hosted Windows runtime evidence is still pending.
+- Checkpoint capture, seal, and preflight fingerprint reads use the same
+  secure opener. Restore staging, publication, deletion, and rollback remain
+  path-based and are intentionally not covered by this checkpoint.
 
 ## Open or unrecorded risks
 
-- Checkpoint capture and restore still use path-based I/O after resolution. A
-  separate descriptor-relative audit and runtime proof is required before
-  checkpoint TOCTOU safety can be marked confirmed.
+- Checkpoint restore staging, publication, deletion, and rollback still use
+  path-based I/O after resolution. A separate descriptor-relative restore
+  design and runtime proof is required before checkpoint restore TOCTOU safety
+  can be marked confirmed.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
 - Explicit setup flows can run package-manager installs and official
