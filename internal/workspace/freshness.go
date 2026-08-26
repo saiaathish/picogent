@@ -22,7 +22,9 @@ const (
 	MaxPathInputs = MaxTrackedFiles * 4
 	// MaxFingerprintBytes keeps capture work bounded. Files larger than this
 	// limit remain explicitly unknown instead of being treated as unchanged.
-	MaxFingerprintBytes = 4 << 20
+	MaxFingerprintBytes = 1 << 20
+	// MaxTrackedPathBytes bounds the serialized path carried by an observation.
+	MaxTrackedPathBytes = 500
 )
 
 // Identity is an opaque filesystem identity. Volume and File are populated by
@@ -49,10 +51,10 @@ type FileObservation struct {
 // Observation binds a bounded set of file bytes to one workspace identity.
 // It contains no file contents and is safe to persist as compact evidence.
 type Observation struct {
-	Root             string             `json:"root"`
-	RootIdentity     Identity           `json:"root_identity"`
-	Files            []FileObservation  `json:"files,omitempty"`
-	FilesTruncated   bool               `json:"files_truncated,omitempty"`
+	Root           string            `json:"root"`
+	RootIdentity   Identity          `json:"root_identity"`
+	Files          []FileObservation `json:"files,omitempty"`
+	FilesTruncated bool              `json:"files_truncated,omitempty"`
 }
 
 // Comparison describes whether two observations can be used as the same
@@ -96,10 +98,24 @@ func Capture(ctx context.Context, root string, paths []string) (Observation, err
 	if err != nil {
 		return Observation{}, fmt.Errorf("identify workspace root: %w", err)
 	}
-	canonical := abs
-	if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
-		canonical = filepath.Clean(resolved)
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return Observation{}, fmt.Errorf("resolve workspace root symlinks: %w", err)
 	}
+	canonical = filepath.Clean(canonical)
+	canonicalRoot, err := os.Open(canonical)
+	if err != nil {
+		return Observation{}, fmt.Errorf("open resolved workspace root: %w", err)
+	}
+	defer canonicalRoot.Close()
+	canonicalState, err := describeFile(canonicalRoot)
+	if err != nil {
+		return Observation{}, fmt.Errorf("identify resolved workspace root: %w", err)
+	}
+	if !rootState.IsDir || !canonicalState.IsDir || !sameFileState(rootState, canonicalState) {
+		return Observation{}, errors.New("workspace root changed while resolving")
+	}
+	rootState = canonicalState
 
 	tracked, truncated, err := trackedPaths(abs, paths)
 	if err != nil {
@@ -123,8 +139,7 @@ func Capture(ctx context.Context, root string, paths []string) (Observation, err
 	}
 	// The root handle above remains attached to the original directory, so a
 	// pathname replacement can otherwise mix old identity with new-root files.
-	// Reopen the caller's root name after all file reads and fail closed when it
-	// no longer names the same directory.
+	// Reopen both the caller's name and the resolved name after all file reads.
 	currentRoot, rootErr := os.Open(abs)
 	if rootErr != nil {
 		observation.RootIdentity.Known = false
@@ -132,7 +147,18 @@ func Capture(ctx context.Context, root string, paths []string) (Observation, err
 	}
 	currentState, stateErr := describeFile(currentRoot)
 	_ = currentRoot.Close()
-	if stateErr != nil || !sameFileState(rootState, currentState) {
+	if stateErr != nil || !currentState.IsDir || !sameFileState(rootState, currentState) {
+		observation.RootIdentity.Known = false
+		return observation, nil
+	}
+	currentCanonical, canonicalErr := os.Open(canonical)
+	if canonicalErr != nil {
+		observation.RootIdentity.Known = false
+		return observation, nil
+	}
+	canonicalState, canonicalStateErr := describeFile(currentCanonical)
+	_ = currentCanonical.Close()
+	if canonicalStateErr != nil || !canonicalState.IsDir || !sameFileState(rootState, canonicalState) {
 		observation.RootIdentity.Known = false
 	}
 	return observation, nil
@@ -172,6 +198,7 @@ type fileState struct {
 	Identity Identity
 	Size     int64
 	ModTime  int64
+	IsDir    bool
 }
 
 func captureFile(ctx context.Context, root, rel string) (FileObservation, error) {
@@ -201,12 +228,11 @@ func captureFile(ctx context.Context, root, rel string) (FileObservation, error)
 		return FileObservation{}, err
 	}
 
-	hash := sha256.New()
-	count, err := io.CopyN(hash, f, MaxFingerprintBytes+1)
-	if err != nil && !errors.Is(err, io.EOF) {
+	digest, known, err := digestFile(ctx, f)
+	if err != nil {
 		return FileObservation{}, err
 	}
-	if count > MaxFingerprintBytes {
+	if !known {
 		return observation, nil
 	}
 	if err := ctx.Err(); err != nil {
@@ -231,17 +257,48 @@ func captureFile(ctx context.Context, root, rel string) (FileObservation, error)
 		return FileObservation{}, err
 	}
 	currentState, stateErr := describeFile(current)
-	_ = current.Close()
 	if stateErr != nil {
+		_ = current.Close()
 		return FileObservation{}, stateErr
 	}
 	if !sameFileState(before, currentState) {
+		_ = current.Close()
+		return observation, nil
+	}
+	currentDigest, currentKnown, err := digestFile(ctx, current)
+	currentAfter, currentAfterErr := describeFile(current)
+	_ = current.Close()
+	if err != nil {
+		return FileObservation{}, err
+	}
+	if currentAfterErr != nil {
+		return FileObservation{}, currentAfterErr
+	}
+	if !currentKnown || !sameFileState(currentState, currentAfter) || currentDigest != digest {
 		return observation, nil
 	}
 
-	observation.Digest = hex.EncodeToString(hash.Sum(nil))
+	observation.Digest = digest
 	observation.Known = true
 	return observation, nil
+}
+
+func digestFile(ctx context.Context, f *os.File) (string, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	hash := sha256.New()
+	count, err := io.CopyN(hash, f, MaxFingerprintBytes+1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return "", false, err
+	}
+	if count > MaxFingerprintBytes {
+		return "", false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return "", false, err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), true, nil
 }
 
 func describeFile(f *os.File) (fileState, error) {
@@ -253,7 +310,7 @@ func describeFile(f *os.File) (fileState, error) {
 	if err != nil {
 		return fileState{}, err
 	}
-	return fileState{Identity: identity, Size: info.Size(), ModTime: info.ModTime().UnixNano()}, nil
+	return fileState{Identity: identity, Size: info.Size(), ModTime: info.ModTime().UnixNano(), IsDir: info.IsDir()}, nil
 }
 
 func sameFileState(left, right fileState) bool {
@@ -264,6 +321,12 @@ func sameFileState(left, right fileState) bool {
 // identity or digest invalidates the old evidence; an unknown or truncated
 // capture remains unverified rather than being called fresh.
 func Compare(before, after Observation) Comparison {
+	if reason := invalidObservation(before); reason != "" {
+		return Comparison{Unknown: true, Reason: reason}
+	}
+	if reason := invalidObservation(after); reason != "" {
+		return Comparison{Unknown: true, Reason: reason}
+	}
 	if !before.RootIdentity.Known || !after.RootIdentity.Known {
 		return Comparison{Unknown: true, Reason: "workspace identity is unknown"}
 	}
@@ -272,6 +335,9 @@ func Compare(before, after Observation) Comparison {
 	}
 	if before.FilesTruncated || after.FilesTruncated {
 		return Comparison{Unknown: true, Reason: "tracked file set is truncated"}
+	}
+	if len(before.Files) == 0 || len(after.Files) == 0 {
+		return Comparison{Unknown: true, Reason: "no tracked file evidence"}
 	}
 	if len(before.Files) != len(after.Files) {
 		return Comparison{Unknown: true, Reason: "tracked file set changed"}
@@ -301,4 +367,48 @@ func Compare(before, after Observation) Comparison {
 		}
 	}
 	return Comparison{Fresh: true}
+}
+
+func invalidObservation(observation Observation) string {
+	if strings.TrimSpace(observation.Root) == "" {
+		return "workspace root is missing"
+	}
+	if len(observation.Root) > MaxTrackedPathBytes*2 {
+		return "workspace root is too long"
+	}
+	if observation.RootIdentity.Known && observation.RootIdentity.Volume == 0 && observation.RootIdentity.File == 0 {
+		return "workspace identity is malformed"
+	}
+	if len(observation.Files) > MaxTrackedFiles {
+		return "tracked file set exceeds bound"
+	}
+	seen := make(map[string]struct{}, len(observation.Files))
+	for _, file := range observation.Files {
+		if strings.TrimSpace(file.Path) == "" || len(file.Path) > MaxTrackedPathBytes || filepath.IsAbs(file.Path) {
+			return "tracked file path is malformed"
+		}
+		rel, err := Relative(observation.Root, file.Path)
+		if err != nil || filepath.Clean(rel) != filepath.Clean(file.Path) {
+			return "tracked file path is outside workspace"
+		}
+		if _, ok := seen[file.Path]; ok {
+			return "tracked file set contains duplicates"
+		}
+		seen[file.Path] = struct{}{}
+		if file.Size < 0 || file.Size > MaxFingerprintBytes {
+			return "tracked file size is invalid"
+		}
+		if file.Known && file.Exists {
+			if !file.Identity.Known || file.Identity.Volume == 0 && file.Identity.File == 0 {
+				return "tracked file identity is malformed"
+			}
+			if len(file.Digest) != sha256.Size*2 {
+				return "tracked file digest is malformed"
+			}
+			if _, err := hex.DecodeString(file.Digest); err != nil {
+				return "tracked file digest is malformed"
+			}
+		}
+	}
+	return ""
 }

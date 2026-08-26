@@ -147,6 +147,32 @@ func TestCaptureLargeFileIsUnknown(t *testing.T) {
 	}
 }
 
+func TestCompareWithoutTrackedFilesIsUnknown(t *testing.T) {
+	root := t.TempDir()
+	observation, err := Capture(context.Background(), root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comparison := Compare(observation, observation)
+	if comparison.Fresh || !comparison.Unknown {
+		t.Fatalf("root-only comparison = %+v", comparison)
+	}
+}
+
+func TestCompareRejectsMalformedPublicObservation(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, root, "tracked.txt", "content\n")
+	observation, err := Capture(context.Background(), root, []string{"tracked.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation.Files[0].Identity.Known = false
+	comparison := Compare(observation, observation)
+	if comparison.Fresh || !comparison.Unknown {
+		t.Fatalf("malformed comparison = %+v", comparison)
+	}
+}
+
 func TestCaptureRejectsUnsafeFilePath(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.txt")

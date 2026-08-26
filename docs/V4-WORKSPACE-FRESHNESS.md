@@ -12,7 +12,7 @@ stores only:
 
 - the canonical root path and platform filesystem identity;
 - each file's existence, identity, size, and SHA-256 digest when the file is
-  at most 4 MiB;
+  at most 1 MiB;
 - explicit `Known` and truncation state.
 
 Missing files are known observations. Unsafe paths, symlinked file components,
