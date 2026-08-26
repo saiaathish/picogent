@@ -43,8 +43,8 @@ an explicit allowlisted environment rather than the Picogent process's API
 keys, auth variables, loader hooks, npm configuration overrides, or ambient
 PATH entries. The resolved package manager and provider binaries must come
 from known runtime prefixes, and automatic installation refuses an elevated
-Unix process. Installer output is capped and credential-shaped values are
-redacted before it reaches setup logs.
+Unix process or elevated Windows token. Installer output is capped and
+credential-shaped values are redacted before it reaches setup logs.
 
 OpenCode and Antigravity are now manual-install providers: setup reports their
 official documentation locations and login accepts only an argv-shaped,
@@ -84,10 +84,10 @@ absence of remote provider shell installation.
   broad checkpoint safety claim.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
-- The npm provider packages are intentionally not version-pinned or backed by
-  a repository-specific integrity manifest yet; the current boundary proves
-  registry/package allowlisting and disables lifecycle scripts, but not full
-  dependency/SBOM provenance or reproducible installation.
+- The npm provider packages are pinned to reviewed versions but are not yet
+  backed by a repository-specific integrity manifest or SBOM; the current
+  boundary proves registry/package allowlisting and disables lifecycle
+  scripts, but not full dependency provenance.
 - Git status/diff and external MCP responses need adversarial hook, textconv,
   prompt-injection, and secret-leakage runtime tests.
 - The hosted deep security scan was unavailable in the earlier campaign; no

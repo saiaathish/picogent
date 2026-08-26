@@ -24,7 +24,7 @@ func OpenInteractive(bin string, args ...string) error {
 	env := interactiveEnv(bin)
 	switch runtime.GOOS {
 	case "darwin":
-		osascript := look("osascript")
+		osascript := externalLook("osascript")
 		if osascript == "" {
 			return fmt.Errorf("osascript is unavailable")
 		}
@@ -36,7 +36,7 @@ end tell`, cmdLine)
 		cmd.Env = env
 		return cmd.Start()
 	case "windows":
-		cmdShell := look("cmd.exe")
+		cmdShell := externalLook("cmd.exe")
 		if cmdShell == "" {
 			return fmt.Errorf("cmd.exe is unavailable")
 		}
@@ -55,17 +55,18 @@ end tell`, cmdLine)
 			{"x-terminal-emulator", []string{"-e", "bash", "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
 			{"xterm", []string{"-e", "bash", "--noprofile", "--norc", "-c", cmdLine + "; echo; read -n 1 -s -r -p 'Press any key to close…'"}},
 		} {
-			if look(try.bin) == "" {
+			terminal := externalLook(try.bin)
+			if terminal == "" {
 				continue
 			}
-			cmd := exec.Command(try.bin, try.args...)
+			cmd := exec.Command(terminal, try.args...)
 			cmd.Env = env
 			if err := cmd.Start(); err == nil {
 				return nil
 			}
 		}
 		// Last resort: start detached (may lack a TTY for interactive auth).
-		bash := look("bash")
+		bash := externalLook("bash")
 		if bash == "" {
 			return fmt.Errorf("bash is unavailable")
 		}

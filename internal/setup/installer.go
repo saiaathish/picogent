@@ -42,12 +42,12 @@ type npmInstallSpec struct {
 var (
 	codexNPMSpec = npmInstallSpec{
 		Label:   "Codex CLI",
-		Package: "@openai/codex",
+		Package: "@openai/codex@0.149.1",
 		Binary:  "codex",
 	}
 	claudeNPMSpec = npmInstallSpec{
 		Label:   "Claude Code CLI",
-		Package: "@anthropic-ai/claude-code",
+		Package: "@anthropic-ai/claude-code@2.1.246",
 		Binary:  "claude",
 	}
 )
@@ -449,7 +449,7 @@ func installerCommand(name string, args []string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
 		ext := strings.ToLower(filepath.Ext(name))
 		if ext == ".cmd" || ext == ".bat" {
-			shell := look("cmd.exe")
+			shell := externalLook("cmd.exe")
 			if shell == "" {
 				return exec.Command("", "/D", "/S", "/C", shellCommandLine(name, args...))
 			}
