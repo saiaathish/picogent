@@ -217,7 +217,15 @@ func TestSetupDoesNotAutoExecuteRemoteProviderInstallers(t *testing.T) {
 }
 
 func TestTrustedExternalExecutableRejectsUntrustedPath(t *testing.T) {
-	root := t.TempDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp(home, ".picogent-installer-untrusted-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	npm := filepath.Join(root, "npm")
 	if err := os.WriteFile(npm, []byte("#!/bin/sh\n"), 0o700); err != nil {
 		t.Fatal(err)
