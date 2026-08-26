@@ -237,6 +237,20 @@ func currentCriterion(task *taskstate.Task) int {
 	if task == nil {
 		return -1
 	}
+	// DefinitionOfDone is the outcome contract. Steps are its progress
+	// projection, so a drifted task with an extra criterion must not appear
+	// complete merely because every legacy step was marked done.
+	if len(task.DefinitionOfDone) > 0 {
+		for index, criterion := range task.DefinitionOfDone {
+			if strings.TrimSpace(criterion.Description) == "" {
+				continue
+			}
+			if index >= len(task.Steps) || !task.Steps[index].Done {
+				return index
+			}
+		}
+		return -1
+	}
 	start := task.CurrentStep
 	if start < 0 {
 		start = 0
@@ -244,13 +258,6 @@ func currentCriterion(task *taskstate.Task) int {
 	for index := start; index < len(task.Steps); index++ {
 		if !task.Steps[index].Done {
 			return index
-		}
-	}
-	if len(task.Steps) == 0 {
-		for index := range task.DefinitionOfDone {
-			if task.DefinitionOfDone[index].Description != "" {
-				return index
-			}
 		}
 	}
 	return -1
