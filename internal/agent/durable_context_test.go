@@ -117,7 +117,7 @@ func TestCappedChangedFilesForceBroaderVerification(t *testing.T) {
 		ChangedFiles:       []string{"retained.go"},
 		ChangedFilesCapped: true,
 	}
-	if got := verificationTargetsForTask([]string{"current.go"}, task, true, evolve.Store{}, ""); got != nil {
+	if got := verificationTargetsForTask([]string{"current.go"}, task, evolve.Store{}, ""); got != nil {
 		t.Fatalf("capped durable targets=%v, want empty for broader verification", got)
 	}
 
@@ -131,5 +131,13 @@ func TestCappedChangedFilesForceBroaderVerification(t *testing.T) {
 	}
 	if len(payload.Targets) != 0 {
 		t.Fatalf("broad verification retained targeted paths: %v", payload.Targets)
+	}
+}
+
+func TestVerificationTargetsIncludeCurrentAndRetainedChanges(t *testing.T) {
+	task := &taskstate.Task{ChangedFiles: []string{"prior.go", "shared.go"}}
+	got := verificationTargetsForTask([]string{"current.go", "shared.go"}, task, evolve.Store{}, "")
+	if joined := strings.Join(got, ","); joined != "current.go,shared.go,prior.go" {
+		t.Fatalf("verification targets=%v, want current and retained paths once", got)
 	}
 }

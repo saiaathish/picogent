@@ -774,7 +774,7 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	if !ok {
 		return verificationEvidence{}
 	}
-	targets := verificationTargetsForTask(filesChanged, task, needsVerification, state.Memory, userHint)
+	targets := verificationTargetsForTask(filesChanged, task, state.Memory, userHint)
 	args, _ := json.Marshal(map[string]any{"targets": targets})
 	call := llm.ToolCall{ID: "verify-auto", Name: "verify", Arguments: string(args)}
 	if blocked, reason := state.TaskMode.BlockTool(call.Name); blocked {
@@ -810,25 +810,26 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 // capped durable file list is deliberately represented by an empty target set:
 // the verifier interprets that as broader workspace coverage, which is the
 // only sound fallback when some successful mutations are no longer retained.
-func verificationTargetsForTask(filesChanged []string, task *taskstate.Task, needsVerification bool, memory evolve.Store, userHint string) []string {
+func verificationTargetsForTask(filesChanged []string, task *taskstate.Task, memory evolve.Store, userHint string) []string {
 	if task != nil && task.ChangedFilesCapped {
 		return nil
 	}
-	targets := append([]string(nil), filesChanged...)
-	if len(targets) == 0 && needsVerification && task != nil {
-		targets = append(targets, task.ChangedFiles...)
-	}
-	seen := make(map[string]struct{}, len(targets))
-	for _, target := range targets {
-		seen[target] = struct{}{}
-	}
-	for _, target := range evolve.VerificationTargets(memory, userHint) {
-		if _, ok := seen[target]; ok {
-			continue
+	targets := make([]string, 0, len(filesChanged))
+	seen := make(map[string]struct{}, len(filesChanged))
+	appendTargets := func(paths []string) {
+		for _, target := range paths {
+			if _, ok := seen[target]; ok {
+				continue
+			}
+			seen[target] = struct{}{}
+			targets = append(targets, target)
 		}
-		seen[target] = struct{}{}
-		targets = append(targets, target)
 	}
+	appendTargets(filesChanged)
+	if task != nil {
+		appendTargets(task.ChangedFiles)
+	}
+	appendTargets(evolve.VerificationTargets(memory, userHint))
 	return targets
 }
 
