@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/config"
@@ -152,6 +153,7 @@ func TestUnixWorkspaceWriteDoesNotEscapeAncestorSwap(t *testing.T) {
 
 	stop := make(chan struct{})
 	var swaps sync.WaitGroup
+	var swapCount atomic.Int32
 	swaps.Add(1)
 	go func() {
 		defer swaps.Done()
@@ -165,6 +167,7 @@ func TestUnixWorkspaceWriteDoesNotEscapeAncestorSwap(t *testing.T) {
 				continue
 			}
 			if err := os.Symlink(outside, parent); err == nil {
+				swapCount.Add(1)
 				_ = os.Remove(parent)
 			}
 			_ = os.Rename(realParent, parent)
@@ -173,14 +176,23 @@ func TestUnixWorkspaceWriteDoesNotEscapeAncestorSwap(t *testing.T) {
 
 	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
 	write, _ := reg.Get("write_file")
+	successfulWrites := 0
 	for i := 0; i < 250; i++ {
-		_, _ = write.Run(context.Background(), `{"path":"parent/marker.txt","content":"workspace"}`, reg.Ctx)
+		if _, err := write.Run(context.Background(), `{"path":"parent/marker.txt","content":"workspace"}`, reg.Ctx); err == nil {
+			successfulWrites++
+		}
 	}
 	close(stop)
 	swaps.Wait()
 
 	if got, err := os.ReadFile(outsideTarget); err != nil || string(got) != "private" {
 		t.Fatalf("ancestor swap escaped workspace: %q, %v", got, err)
+	}
+	if swapCount.Load() == 0 {
+		t.Fatal("ancestor swap never completed")
+	}
+	if successfulWrites == 0 {
+		t.Fatal("all writes failed; race test did not exercise a successful secure write")
 	}
 }
 

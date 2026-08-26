@@ -9,6 +9,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 type readFile struct{}
@@ -31,7 +32,12 @@ func (readFile) Permission(args string, c Context) perm.Request {
 	return c.ClassifyPath("read_file", in.Path, c.Workspace, "read "+in.Path)
 }
 
-func (readFile) Run(_ context.Context, args string, c Context) (string, error) {
+func (readFile) Run(ctx context.Context, args string, c Context) (string, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
 	var in struct {
 		Path string `json:"path"`
 	}
@@ -46,7 +52,7 @@ func (readFile) Run(_ context.Context, args string, c Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	f, err := openWorkspaceRead(ws, abs)
+	f, err := workspace.OpenRead(ws, abs)
 	if err != nil {
 		return "", err
 	}
@@ -54,6 +60,11 @@ func (readFile) Run(_ context.Context, args string, c Context) (string, error) {
 	data, truncated, err := readBoundedReader(f, maxReadBytes)
 	if err != nil {
 		return "", err
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 	}
 	if truncated {
 		data, err = trimIncompleteUTF8(data)
@@ -126,7 +137,7 @@ func (writeFile) Run(ctx context.Context, args string, c Context) (string, error
 			return "", err
 		}
 	}
-	f, err := openWorkspaceWrite(ws, abs)
+	f, err := workspace.OpenWrite(ws, abs)
 	if err != nil {
 		return "", err
 	}
@@ -195,7 +206,7 @@ func (editFile) Run(ctx context.Context, args string, c Context) (string, error)
 	if err != nil {
 		return "", err
 	}
-	f, err := openWorkspaceEdit(ws, abs)
+	f, err := workspace.OpenEdit(ws, abs)
 	if err != nil {
 		return "", err
 	}
