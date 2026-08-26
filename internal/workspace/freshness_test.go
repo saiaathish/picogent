@@ -173,6 +173,19 @@ func TestCompareRejectsMalformedPublicObservation(t *testing.T) {
 	}
 }
 
+func TestCompareRejectsAbsentFileMetadata(t *testing.T) {
+	root := t.TempDir()
+	observation, err := Capture(context.Background(), root, []string{"missing.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation.Files[0].Identity = Identity{Volume: 1, File: 2, Known: true}
+	comparison := Compare(observation, observation)
+	if comparison.Fresh || !comparison.Unknown {
+		t.Fatalf("absent metadata comparison = %+v", comparison)
+	}
+}
+
 func TestCaptureRejectsUnsafeFilePath(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside.txt")

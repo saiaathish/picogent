@@ -451,7 +451,7 @@ func TestGoalCompleteMarksResult(t *testing.T) {
 	}
 }
 
-func TestActiveGoalCompletionRequiresPassingEvidenceWithoutChanges(t *testing.T) {
+func TestActiveGoalCompletionRejectsUnboundEvidenceWithoutChanges(t *testing.T) {
 	dir := t.TempDir()
 	checks := 0
 	fake := &llm.Scripted{Responses: []llm.ChatResponse{
@@ -482,14 +482,14 @@ func TestActiveGoalCompletionRequiresPassingEvidenceWithoutChanges(t *testing.T)
 	if checks != 1 {
 		t.Fatalf("completion verification calls = %d, want 1", checks)
 	}
-	if res.Task == nil || res.Task.Status != taskstate.StatusDone || res.Task.NeedsVerification() {
-		t.Fatalf("completion task = %#v, want done with passing evidence", res.Task)
+	if res.Task == nil || res.Task.Status != taskstate.StatusBlocked || !res.Task.NeedsVerification() {
+		t.Fatalf("completion task = %#v, want blocked with inconclusive evidence", res.Task)
 	}
-	if len(res.Task.Verification) != 1 || res.Task.VerifiedChangeSeq != 0 {
+	if len(res.Task.Verification) != 1 || res.Task.VerifiedChangeSeq != -1 || res.Task.Verification[0].Passed || !strings.HasPrefix(res.Task.Verification[0].Summary, "verify INCONCLUSIVE") {
 		t.Fatalf("completion evidence = %#v", res.Task)
 	}
-	if !res.GoalDone {
-		t.Fatal("passing completion evidence should set GoalDone")
+	if res.GoalDone {
+		t.Fatal("unbound completion evidence must not set GoalDone")
 	}
 }
 

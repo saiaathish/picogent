@@ -1,7 +1,7 @@
 # v4 workspace freshness experiment
 
-Status: bounded primitive on the `codex/v4-workspace-freshness` branch; not
-yet wired into durable task completion.
+Status: bounded primitive wired into durable verification on the
+`codex/v4-evidence-binding` branch.
 
 ## Contract
 
@@ -33,6 +33,7 @@ persisted task revisions and reject stale cross-process writers before any
 durable diagnosis or evidence can authorize completion.
 
 The tests cover same-path external rewrites, no-op writes, file creation,
-workspace replacement, truncation, oversized files, and unsafe paths. Live
-Windows reparse-point behavior and long-running concurrent mutation remain
+workspace replacement, truncation, oversized files, and unsafe paths. Durable
+agent tests additionally cover restart revalidation and event-time mutation.
+Live Windows reparse-point behavior and long-running concurrent mutation remain
 hosted verification work.

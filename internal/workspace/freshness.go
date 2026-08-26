@@ -369,6 +369,16 @@ func Compare(before, after Observation) Comparison {
 	return Comparison{Fresh: true}
 }
 
+// Validate checks the structural shape of an observation. Unknown fields may
+// describe incomplete historical evidence, but malformed metadata is rejected
+// before a persisted observation can be treated as a valid boundary.
+func (o Observation) Validate() error {
+	if reason := invalidObservation(o); reason != "" {
+		return errors.New(reason)
+	}
+	return nil
+}
+
 func invalidObservation(observation Observation) string {
 	if strings.TrimSpace(observation.Root) == "" {
 		return "workspace root is missing"
@@ -397,6 +407,9 @@ func invalidObservation(observation Observation) string {
 		seen[file.Path] = struct{}{}
 		if file.Size < 0 || file.Size > MaxFingerprintBytes {
 			return "tracked file size is invalid"
+		}
+		if !file.Exists && (file.Identity != (Identity{}) || file.Size != 0 || file.Digest != "") {
+			return "absent file observation has metadata"
 		}
 		if file.Known && file.Exists {
 			if !file.Identity.Known || file.Identity.Volume == 0 && file.Identity.File == 0 {

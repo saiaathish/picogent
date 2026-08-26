@@ -1,11 +1,16 @@
 package taskstate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 func TestNewAndProgress(t *testing.T) {
@@ -160,6 +165,90 @@ func TestEvidenceTracksLatestChange(t *testing.T) {
 	}
 	if legacy.InitializeChangeSequence() {
 		t.Fatal("legacy sequence migration must be idempotent")
+	}
+}
+
+func TestVerificationObservationBindsAndInvalidatesPassingEvidence(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "fixed.txt")
+	if err := os.WriteFile(path, []byte("fixed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	observation, err := workspace.Capture(context.Background(), root, []string{"fixed.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := New("observation-binding", "fix the file", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordChanged("fixed.txt")
+	task.AddVerificationWithObservation("go test ./...", true, "verify PASS\n1 passed", &observation)
+	if task.NeedsVerification() || task.Verification[0].Observation == nil {
+		t.Fatalf("bound passing evidence = %#v", task)
+	}
+	// The task owns an isolated observation rather than the caller's slice.
+	observation.Files[0].Digest = strings.Repeat("0", 64)
+	if task.Verification[0].Observation.Files[0].Digest == observation.Files[0].Digest {
+		t.Fatal("verification observation aliases caller data")
+	}
+	if !task.InvalidateLatestVerification("workspace content changed") {
+		t.Fatal("passing evidence was not invalidated")
+	}
+	if task.Verification[0].Passed || !strings.HasPrefix(task.Verification[0].Summary, "verify INCONCLUSIVE") || !task.NeedsVerification() {
+		t.Fatalf("invalidated evidence = %#v", task.Verification[0])
+	}
+	if len(task.Evidence) != 2 || task.Evidence[1].Status != "INCONCLUSIVE" {
+		t.Fatalf("invalidation ledger = %#v", task.Evidence)
+	}
+}
+
+func TestVerificationEvidenceUsesCanonicalStatuses(t *testing.T) {
+	tests := []struct {
+		name       string
+		passed     bool
+		summary    string
+		wantStatus string
+		wantPassed bool
+	}{
+		{name: "inconclusive", passed: false, summary: "verify INCONCLUSIVE timeout", wantStatus: "INCONCLUSIVE"},
+		{name: "skipped", passed: false, summary: "verify SKIPPED no runner", wantStatus: "SKIPPED"},
+		{name: "lookalike pass", passed: true, summary: "verify PASSIVE output", wantStatus: "INCONCLUSIVE"},
+		{name: "legacy bool", passed: true, summary: "pass", wantStatus: "PASS", wantPassed: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task, err := New("verification-status-"+tt.name, "goal", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			task.AddVerification("verify", tt.passed, tt.summary)
+			if len(task.Evidence) != 1 || task.Evidence[0].Status != tt.wantStatus {
+				t.Fatalf("evidence = %+v, want status %s", task.Evidence, tt.wantStatus)
+			}
+			if got := task.Verification[0].Passed; got != tt.wantPassed {
+				t.Fatalf("passed = %v, want %v", got, tt.wantPassed)
+			}
+		})
+	}
+}
+
+func TestValidateRejectsMalformedPersistedObservation(t *testing.T) {
+	task, err := New("malformed-observation", "goal", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordChanged("missing.txt")
+	task.Verification = []Verification{{
+		Passed:  true,
+		Summary: "verify PASS",
+		Observation: &workspace.Observation{
+			Root:  t.TempDir(),
+			Files: []workspace.FileObservation{{Path: "missing.txt", Known: true, Size: 1}},
+		},
+	}}
+	if err := task.Validate(); err == nil {
+		t.Fatal("malformed persisted observation should fail validation")
 	}
 }
 

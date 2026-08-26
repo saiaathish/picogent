@@ -1,6 +1,7 @@
 # v4 task-state compare-and-swap experiment
 
-Status: bounded persistence hardening on the `codex/v4-taskstate-cas` branch.
+Status: bounded persistence hardening used by durable evidence binding on the
+`codex/v4-evidence-binding` branch.
 
 ## Contract
 
@@ -24,5 +25,6 @@ do not detect an external A→B→A edit, and do not authorize completion. The
 workspace observation and a later evidence-binding slice must supply those
 checks.
 
-Tests cover same-process stale saves, legacy generation-zero migration, and
-two real child processes that load the same revision and race to save it.
+Tests cover same-process stale saves, legacy generation-zero migration, two
+real child processes that load the same revision and race to save it, and
+agent publication that keeps a conflicting task revision out of memory.

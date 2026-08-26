@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/saiaathish/picogent/internal/verify"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 const CurrentVersion = 1
@@ -62,10 +65,11 @@ type Step struct {
 // Verification records concise evidence from a check. Output should be
 // summarized before storage so task state remains cheap to inject after resume.
 type Verification struct {
-	Command string    `json:"command,omitempty"`
-	Passed  bool      `json:"passed"`
-	Summary string    `json:"summary,omitempty"`
-	At      time.Time `json:"at"`
+	Command     string                 `json:"command,omitempty"`
+	Passed      bool                   `json:"passed"`
+	Summary     string                 `json:"summary,omitempty"`
+	Observation *workspace.Observation `json:"observation,omitempty"`
+	At          time.Time              `json:"at"`
 }
 
 // Evidence is a compact, source-labelled fact used to reason about an
@@ -109,9 +113,9 @@ type Criterion struct {
 
 // Task is the compact state required to resume an execution loop.
 type Task struct {
-	Version            int             `json:"version"`
-	ID                 string          `json:"id"`
-	SessionID          string          `json:"session_id"`
+	Version   int    `json:"version"`
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
 	// Revision is the persisted compare-and-swap generation. A zero value is
 	// accepted for legacy or not-yet-saved state; Store.Save advances it only
 	// after confirming that the on-disk generation still matches.
@@ -246,6 +250,11 @@ func (t *Task) Validate() error {
 	for i, verification := range t.Verification {
 		if len(verification.Command) > maxVerificationCommand || len(verification.Summary) > maxVerificationSummary {
 			return fmt.Errorf("task verification %d is too long", i)
+		}
+		if verification.Observation != nil {
+			if err := verification.Observation.Validate(); err != nil {
+				return fmt.Errorf("task verification %d observation: %w", i, err)
+			}
 		}
 	}
 	for i, evidence := range t.Evidence {
@@ -405,20 +414,51 @@ func (t *Task) InitializeChangeSequence() bool {
 
 // AddVerification appends concise verification evidence.
 func (t *Task) AddVerification(command string, passed bool, summary string) {
+	t.AddVerificationWithObservation(command, passed, summary, nil)
+}
+
+// AddVerificationWithObservation appends verification evidence bound to the
+// observed workspace bytes. A nil observation remains valid as historical
+// state, but it cannot authorize a fresh completion.
+func (t *Task) AddVerificationWithObservation(command string, passed bool, summary string, observation *workspace.Observation) {
 	if t == nil {
 		return
 	}
+	evidenceStatus := verify.StatusFromEvidence(summary)
+	if !strings.HasPrefix(strings.ToUpper(strings.TrimSpace(summary)), "VERIFY ") {
+		// Preserve the pre-v4 bool-based API for older callers whose summaries
+		// did not carry a machine-readable status token.
+		if passed {
+			evidenceStatus = verify.StatusPass
+		} else {
+			evidenceStatus = verify.StatusFail
+		}
+	} else if evidenceStatus != verify.StatusPass {
+		// A canonical non-PASS token cannot be upgraded by a contradictory
+		// bool supplied by a caller.
+		passed = false
+	} else if !passed {
+		// Contradictory PASS text is not completion evidence.
+		evidenceStatus = verify.StatusInconclusive
+	}
 	verification := Verification{
-		Command: compactText(command, maxVerificationCommand),
-		Passed:  passed,
-		Summary: compactText(summary, maxVerificationSummary),
-		At:      time.Now().UTC(),
+		Command:     compactText(command, maxVerificationCommand),
+		Passed:      passed,
+		Summary:     compactText(summary, maxVerificationSummary),
+		Observation: cloneObservation(observation),
+		At:          time.Now().UTC(),
 	}
 	if len(t.Verification) >= maxVerification {
 		copy(t.Verification, t.Verification[len(t.Verification)-maxVerification+1:])
 		t.Verification = t.Verification[:maxVerification-1]
 	}
 	t.Verification = append(t.Verification, verification)
+	// Only the latest check can authorize the current task generation. Drop
+	// older bindings so repeated verification cannot grow task state with
+	// duplicate bounded workspace snapshots.
+	for i := range t.Verification[:len(t.Verification)-1] {
+		t.Verification[i].Observation = nil
+	}
 	if passed {
 		t.VerifiedChangeSeq = t.ChangeSeq
 	} else {
@@ -427,13 +467,47 @@ func (t *Task) AddVerification(command string, passed bool, summary string) {
 	t.touch()
 	t.AddEvidence(Evidence{
 		Kind:       "verification",
-		Status:     map[bool]string{true: "PASS", false: "FAIL"}[passed],
+		Status:     string(evidenceStatus),
 		Source:     "workspace-tool",
 		Summary:    summary,
 		Reference:  command,
 		Confidence: "high",
 		ChangeSeq:  t.ChangeSeq,
 	})
+}
+
+// InvalidateLatestVerification converts a passing record into explicit
+// inconclusive evidence when its workspace binding is stale or unavailable.
+// The original observation is retained for diagnosis, but it is no longer
+// represented as a passing check.
+func (t *Task) InvalidateLatestVerification(reason string) bool {
+	if t == nil || len(t.Verification) == 0 {
+		return false
+	}
+	latest := &t.Verification[len(t.Verification)-1]
+	if !latest.Passed {
+		return false
+	}
+	reason = compactText(reason, maxVerificationSummary-22)
+	summary := "verify INCONCLUSIVE"
+	if reason != "" {
+		summary += " — " + reason
+	}
+	latest.Passed = false
+	latest.Summary = compactText(summary, maxVerificationSummary)
+	latest.At = time.Now().UTC()
+	t.VerifiedChangeSeq = -1
+	t.touch()
+	t.AddEvidence(Evidence{
+		Kind:       "verification",
+		Status:     "INCONCLUSIVE",
+		Source:     "workspace-observation",
+		Summary:    latest.Summary,
+		Reference:  "workspace.Observation",
+		Confidence: "high",
+		ChangeSeq:  t.ChangeSeq,
+	})
+	return true
 }
 
 // AddEvidence appends one bounded evidence record. Repeating the exact latest
@@ -475,6 +549,15 @@ func sameEvidence(left, right Evidence) bool {
 	left.At = time.Time{}
 	right.At = time.Time{}
 	return left == right
+}
+
+func cloneObservation(observation *workspace.Observation) *workspace.Observation {
+	if observation == nil {
+		return nil
+	}
+	clone := *observation
+	clone.Files = append([]workspace.FileObservation(nil), observation.Files...)
+	return &clone
 }
 
 // AddConstraint records a compact user or project boundary.

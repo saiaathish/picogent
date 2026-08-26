@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -85,9 +86,9 @@ func stripDurableInternal(msgs []llm.Message) []llm.Message {
 	return out
 }
 
-func (a *Agent) continueAfterVerificationFailure(text string, round int, verified string, ev EventHandler, maxToolRounds int) bool {
-	if verified != "" {
-		a.noteTaskVerification(verified, ev)
+func (a *Agent) continueAfterVerificationFailure(text string, round int, evidence verificationEvidence, ev EventHandler, maxToolRounds int) bool {
+	if evidence.output != "" {
+		a.noteTaskVerification(evidence, ev)
 	}
 	if round+1 >= maxToolRounds || strings.Contains(strings.ToLower(text), "blocked:") {
 		return false
@@ -128,6 +129,7 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, verifie
 // SetTaskSession switches durable task state with the chat session. Task state
 // stays outside chat history, so compaction cannot erase execution progress.
 func (a *Agent) SetTaskSession(sessionID string) error {
+	workspaceRoot := a.ConfigSnapshot().Workspace
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
 	a.TaskSession = strings.TrimSpace(sessionID)
@@ -138,6 +140,18 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	}
 	task, err := a.TaskStore.Load(a.TaskSession)
 	if err == nil {
+		invalidated, revalidateErr := revalidatePersistedTask(workspaceRoot, task)
+		if revalidateErr != nil {
+			a.taskLoadErr = revalidateErr
+			return revalidateErr
+		}
+		if invalidated {
+			if err := a.TaskStore.Save(task); err != nil {
+				revalidateErr := fmt.Errorf("persist invalidated verification: %w", err)
+				a.taskLoadErr = revalidateErr
+				return revalidateErr
+			}
+		}
 		a.task = task
 		return nil
 	}
@@ -256,16 +270,21 @@ func (a *Agent) continueAfterDeferral(text string, round int, ev EventHandler, m
 	})
 }
 
-func (a *Agent) noteTaskVerification(output string, ev EventHandler) {
-	if strings.TrimSpace(output) == "" {
+func (a *Agent) noteTaskVerification(evidence verificationEvidence, ev EventHandler) {
+	if strings.TrimSpace(evidence.output) == "" {
 		return
 	}
-	passed := verificationStatus(output) == "PASS"
+	stored := evidence.output
+	passed := verificationStatus(stored) == "PASS"
+	if passed && !verificationObservationUsable(evidence) {
+		stored = inconclusiveVerification(evidence.observationReason)
+		passed = false
+	}
 	a.mutateTask(ev, func(task *taskstate.Task) error {
-		task.AddVerification("verify", passed, output)
+		task.AddVerificationWithObservation("verify", passed, stored, evidence.observation)
 		return nil
 	})
-	a.rememberVerification(output)
+	a.rememberVerification(stored)
 }
 
 // rememberVerification turns current evidence into a bounded causal memory
@@ -326,6 +345,66 @@ func verificationStatus(output string) string {
 	return string(verify.StatusFromEvidence(output))
 }
 
+func revalidatePersistedTask(root string, task *taskstate.Task) (bool, error) {
+	if task == nil || len(task.Verification) == 0 {
+		return false, nil
+	}
+	latest := task.Verification[len(task.Verification)-1]
+	if !latest.Passed {
+		return false, nil
+	}
+	reason := "persisted verification has no complete PASS status"
+	if verificationStatus(latest.Summary) == "PASS" {
+		evidence := verificationEvidence{
+			output:            latest.Summary,
+			targets:           observationPaths(latest.Observation),
+			observation:       cloneWorkspaceObservation(latest.Observation),
+			observationUsable: latest.Observation != nil,
+		}
+		fresh, checkReason := recheckVerificationEvidence(context.Background(), root, evidence)
+		if fresh {
+			return false, nil
+		}
+		if checkReason != "" {
+			reason = "persisted workspace evidence is stale: " + checkReason
+		}
+	}
+	if !task.InvalidateLatestVerification(reason) {
+		return false, nil
+	}
+	if task.Status == taskstate.StatusDone {
+		if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func (a *Agent) revalidateVerificationBeforeCompletion(ctx context.Context, root string, evidence verificationEvidence, ev EventHandler) (string, bool) {
+	fresh, reason := recheckVerificationEvidence(ctx, root, evidence)
+	if fresh {
+		return evidence.output, true
+	}
+	if reason == "" {
+		reason = "workspace evidence is not fresh"
+	}
+	inconclusive := inconclusiveVerification("completion evidence is stale: " + reason)
+	a.invalidateLatestTaskVerification(reason, ev)
+	return inconclusive, false
+}
+
+func (a *Agent) invalidateLatestTaskVerification(reason string, ev EventHandler) bool {
+	return a.mutateTask(ev, func(task *taskstate.Task) error {
+		if !task.InvalidateLatestVerification(reason) {
+			return errTaskMutationSkipped
+		}
+		if task.Status == taskstate.StatusDone {
+			return task.SetStatus(taskstate.StatusVerifying)
+		}
+		return nil
+	})
+}
+
 func (a *Agent) blockDurableTask(reason string, ev EventHandler) {
 	a.mutateTask(ev, func(task *taskstate.Task) error {
 		task.Block(reason)
@@ -340,7 +419,12 @@ func (a *Agent) finishDurableTask(text, blocker string, ev EventHandler) {
 		} else if task.Status == taskstate.StatusBlocked {
 			// Preserve the specific blocker recorded earlier in the turn.
 		} else if task.ConsecutiveVerificationFailures() > 0 {
-			if task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {
+			status := verificationStatus(task.Verification[len(task.Verification)-1].Summary)
+			if status == "INCONCLUSIVE" || status == "SKIPPED" {
+				if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
+					return err
+				}
+			} else if task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {
 				task.Block("verification repeatedly failed")
 			} else if err := task.SetStatus(taskstate.StatusWorking); err != nil {
 				return err
@@ -447,6 +531,9 @@ func cloneTask(task *taskstate.Task) *taskstate.Task {
 	}
 	cp.ChangedFiles = append([]string(nil), task.ChangedFiles...)
 	cp.Verification = append([]taskstate.Verification(nil), task.Verification...)
+	for i := range cp.Verification {
+		cp.Verification[i].Observation = cloneWorkspaceObservation(task.Verification[i].Observation)
+	}
 	cp.Constraints = append([]string(nil), task.Constraints...)
 	cp.Risks = append([]string(nil), task.Risks...)
 	cp.Uncertainty = append([]string(nil), task.Uncertainty...)
