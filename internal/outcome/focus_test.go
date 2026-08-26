@@ -60,6 +60,26 @@ func TestSelectFallsBackToCurrentCriterion(t *testing.T) {
 	}
 }
 
+func TestSelectTreatsDefinitionOfDoneAsAuthoritativeWhenCollectionsDrift(t *testing.T) {
+	task := &taskstate.Task{
+		Status:      taskstate.StatusWorking,
+		CurrentStep: 2,
+		Steps: []taskstate.Step{
+			{Description: "inspect", Done: true},
+			{Description: "implement", Done: true},
+		},
+		DefinitionOfDone: []taskstate.Criterion{
+			{Description: "inspect", Required: true},
+			{Description: "implement", Required: true},
+			{Description: "verify the outcome", Required: true},
+		},
+	}
+	got := Select(task, projecthealth.Report{Schema: projecthealth.Schema})
+	if got.Kind != KindCriterion || got.CriterionIndex != 2 {
+		t.Fatalf("decision = %+v", got)
+	}
+}
+
 func TestSelectDoesNotTrustUnknownFindingAction(t *testing.T) {
 	got := Select(nil, reportWithFindings(projecthealth.Finding{
 		ID:         "evil",
