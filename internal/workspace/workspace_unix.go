@@ -35,7 +35,9 @@ func open(root, path string, kind openKind) (*os.File, error) {
 	flags := unix.O_CLOEXEC | unix.O_NOFOLLOW
 	switch kind {
 	case openRead:
-		flags |= unix.O_RDONLY
+		// Nonblocking open prevents a FIFO or other special file from
+		// suspending the freshness capture before the regular-file check.
+		flags |= unix.O_RDONLY | unix.O_NONBLOCK
 	case openWrite:
 		flags |= unix.O_WRONLY | unix.O_CREAT
 	case openEdit:
