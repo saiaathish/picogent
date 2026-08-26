@@ -32,6 +32,27 @@ Instruction-like text from those sources cannot authorize secrets, risky
 actions, permission bypasses, or unrelated edits. The boundary is covered by a
 prompt-construction test.
 
+### Installer safety
+
+The first-run installer no longer runs remote shell text. Codex and Claude
+installation uses only compile-time allowlisted package names from the
+explicit `https://registry.npmjs.org/` registry, a private
+`~/.picogent/tools` prefix, isolated npm config/cache files, and
+`--ignore-scripts`, `--no-audit`, and `--no-fund`. The package manager receives
+an explicit allowlisted environment rather than the Picogent process's API
+keys, auth variables, loader hooks, npm configuration overrides, or ambient
+PATH entries. The resolved package manager and provider binaries must come
+from known runtime prefixes, and automatic installation refuses an elevated
+Unix process or elevated Windows token. Installer output is capped and
+credential-shaped values are redacted before it reaches setup logs.
+
+OpenCode and Antigravity are now manual-install providers: setup reports their
+official documentation locations and login accepts only an argv-shaped,
+already-resolved CLI command. No `curl | bash` path or automatic Homebrew
+fallback remains. Deterministic hostile tests cover the npm argument boundary,
+private prefix, environment filtering, output redaction/capping, and the
+absence of remote provider shell installation.
+
 ## Existing boundaries rechecked
 
 - Workspace MCP configuration is not autoloaded; only user-owned MCP config is
@@ -63,9 +84,10 @@ prompt-construction test.
   broad checkpoint safety claim.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
-- Explicit setup flows can run package-manager installs and official
-  `curl | bash` installers. These are user-invoked setup actions, but their
-  provenance, rollback, and least-privilege behavior need a separate audit.
+- The npm provider packages are pinned to reviewed versions but are not yet
+  backed by a repository-specific integrity manifest or SBOM; the current
+  boundary proves registry/package allowlisting and disables lifecycle
+  scripts, but not full dependency provenance.
 - Git status/diff and external MCP responses need adversarial hook, textconv,
   prompt-injection, and secret-leakage runtime tests.
 - The hosted deep security scan was unavailable in the earlier campaign; no
