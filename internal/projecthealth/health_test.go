@@ -78,6 +78,19 @@ func TestTruncatedInventoryIsAttentionNotHealth(t *testing.T) {
 	}
 }
 
+func TestTruncatedManifestPathsAreAttentionNotComplete(t *testing.T) {
+	report := FromSnapshot(repomap.Snapshot{
+		Summary:                repomap.Map{Languages: []string{"Go"}},
+		ManifestPathsTruncated: true,
+	})
+	if report.Status != StateAttention || report.Findings[0].ID != "diagnosis-incomplete" {
+		t.Fatalf("truncated manifest report = %#v", report)
+	}
+	if !report.Shape.ScanTruncated {
+		t.Fatal("manifest truncation was not retained in project shape")
+	}
+}
+
 func TestFormatIsBoundedAndDoesNotIncludeRawCommandOutput(t *testing.T) {
 	report := Report{
 		Schema: Schema,

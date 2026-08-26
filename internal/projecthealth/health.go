@@ -128,7 +128,7 @@ func FromSnapshot(snapshot repomap.Snapshot) Report {
 			Manifests:       copyStrings(m.Manifests),
 			Commands:        m.Commands,
 			InventoryFiles:  m.InventoryFiles,
-			ScanTruncated:   m.InventoryCutOff || m.OutputTruncated,
+			ScanTruncated:   m.InventoryCutOff || m.OutputTruncated || snapshot.ManifestPathsTruncated,
 		},
 		Provenance: Provenance{
 			Head:       bounded(snapshot.Head),
@@ -173,7 +173,7 @@ func dimensions(snapshot repomap.Snapshot) []Dimension {
 		{Name: "release", State: StateUnverified, Summary: "release readiness was not evaluated"},
 		{Name: "environment", State: StateObserved, Summary: projectShapeSummary(m)},
 	}
-	if m.InventoryCutOff || m.OutputTruncated {
+	if m.InventoryCutOff || m.OutputTruncated || snapshot.ManifestPathsTruncated {
 		for i := range dimensions {
 			if dimensions[i].Name == "environment" {
 				dimensions[i].State = StateAttention
@@ -204,7 +204,7 @@ func findings(snapshot repomap.Snapshot) []Finding {
 	var out []Finding
 	add := func(f Finding) { out = append(out, f) }
 
-	if m.InventoryCutOff || m.OutputTruncated {
+	if m.InventoryCutOff || m.OutputTruncated || snapshot.ManifestPathsTruncated {
 		add(Finding{
 			ID:         "diagnosis-incomplete",
 			Dimension:  "environment",
