@@ -21,18 +21,26 @@ func OpenInteractive(bin string, args ...string) error {
 		return fmt.Errorf("login command %q is unavailable: %w", bin, err)
 	}
 	cmdLine := shellCommandLine(bin, args...)
-	env := installerEnv(bin)
+	env := interactiveEnv(bin)
 	switch runtime.GOOS {
 	case "darwin":
+		osascript := look("osascript")
+		if osascript == "" {
+			return fmt.Errorf("osascript is unavailable")
+		}
 		script := fmt.Sprintf(`tell application "Terminal"
   activate
   do script %q
 end tell`, cmdLine)
-		cmd := exec.Command("osascript", "-e", script)
+		cmd := exec.Command(osascript, "-e", script)
 		cmd.Env = env
 		return cmd.Start()
 	case "windows":
-		cmd := exec.Command("cmd", "/C", "start", "cmd", "/K", cmdLine)
+		cmdShell := look("cmd.exe")
+		if cmdShell == "" {
+			return fmt.Errorf("cmd.exe is unavailable")
+		}
+		cmd := exec.Command(cmdShell, "/C", "start", "cmd", "/K", cmdLine)
 		cmd.Env = env
 		return cmd.Start()
 	default:
@@ -57,7 +65,11 @@ end tell`, cmdLine)
 			}
 		}
 		// Last resort: start detached (may lack a TTY for interactive auth).
-		cmd := exec.Command("bash", "--noprofile", "--norc", "-c", cmdLine)
+		bash := look("bash")
+		if bash == "" {
+			return fmt.Errorf("bash is unavailable")
+		}
+		cmd := exec.Command(bash, "--noprofile", "--norc", "-c", cmdLine)
 		cmd.Env = env
 		return cmd.Start()
 	}

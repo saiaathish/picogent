@@ -17,7 +17,7 @@ import (
 const (
 	npmRegistry         = "https://registry.npmjs.org/"
 	managedToolsDirName = "tools"
-	managedBinDirName   = "bin"
+	managedBinDirName   = "node_modules/.bin"
 	maxInstallerOutput  = 64 * 1024
 )
 
@@ -338,13 +338,24 @@ func installerEnv(program string) []string {
 	add("TMP", os.TempDir())
 	add("TEMP", os.TempDir())
 	for _, key := range []string{
-		"SystemRoot", "WINDIR", "APPDATA", "LOCALAPPDATA", "ComSpec",
+		"SystemRoot", "WINDIR", "APPDATA", "LOCALAPPDATA",
 		"LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "TERM", "COLORTERM",
-		"DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XAUTHORITY",
 	} {
 		add(key, os.Getenv(key))
 	}
 	add("PATH", installerPath(program))
+	return env
+}
+
+func interactiveEnv(program string) []string {
+	env := installerEnv(program)
+	for _, key := range []string{"DISPLAY", "WAYLAND_DISPLAY", "DBUS_SESSION_BUS_ADDRESS", "XAUTHORITY"} {
+		value := os.Getenv(key)
+		if value == "" {
+			continue
+		}
+		env = append(env, key+"="+value)
+	}
 	return env
 }
 
@@ -438,9 +449,9 @@ func installerCommand(name string, args []string) *exec.Cmd {
 	if runtime.GOOS == "windows" {
 		ext := strings.ToLower(filepath.Ext(name))
 		if ext == ".cmd" || ext == ".bat" {
-			shell := os.Getenv("ComSpec")
+			shell := look("cmd.exe")
 			if shell == "" {
-				shell = "cmd.exe"
+				return exec.Command("", "/D", "/S", "/C", shellCommandLine(name, args...))
 			}
 			return exec.Command(shell, "/D", "/S", "/C", shellCommandLine(name, args...))
 		}

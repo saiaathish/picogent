@@ -47,7 +47,9 @@ func TestInstallNPMUsesPrivatePrefixAndSanitizedEnvironment(t *testing.T) {
 		gotName = name
 		gotArgs = append([]string(nil), args...)
 		gotEnv = append([]string(nil), env...)
-		binDir := filepath.Join(home, managedToolsDirName, managedBinDirName)
+		// This mirrors npm's local-prefix layout; do not derive it from the
+		// production lookup constant or the test could mask a layout bug.
+		binDir := filepath.Join(home, managedToolsDirName, "node_modules", ".bin")
 		if err := os.MkdirAll(binDir, 0o700); err != nil {
 			return "", err
 		}
@@ -195,6 +197,23 @@ func TestInstallNPMRedactsAndBoundsFailureOutput(t *testing.T) {
 	_, _ = capped.Write([]byte(strings.Repeat("x", maxInstallerOutput*2)))
 	if len(capped.String()) > maxInstallerOutput+64 || !strings.Contains(capped.String(), "output truncated") {
 		t.Fatalf("capped output length/marker invalid: %d", len(capped.String()))
+	}
+}
+
+func TestInstallerEnvSeparatesDesktopSessionCapabilities(t *testing.T) {
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/tmp/picogent-test-bus")
+	t.Setenv("XAUTHORITY", "/tmp/picogent-test-xauth")
+	base := installerEnv("")
+	baseMap := installerEnvMap(base)
+	if _, ok := baseMap["DBUS_SESSION_BUS_ADDRESS"]; ok {
+		t.Fatalf("package-manager environment inherited DBus session capability: %v", baseMap)
+	}
+	if _, ok := baseMap["XAUTHORITY"]; ok {
+		t.Fatalf("package-manager environment inherited X11 authority: %v", baseMap)
+	}
+	interactive := installerEnvMap(interactiveEnv(""))
+	if interactive["DBUS_SESSION_BUS_ADDRESS"] == "" || interactive["XAUTHORITY"] == "" {
+		t.Fatalf("interactive environment lost desktop handoff variables: %v", interactive)
 	}
 }
 
