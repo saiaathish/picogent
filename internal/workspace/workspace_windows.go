@@ -254,3 +254,75 @@ func normalizeFinalPath(path string) string {
 	}
 	return strings.TrimRight(path, `\`)
 }
+
+func remove(root, path string) error {
+	rel, err := Relative(root, path)
+	if err != nil {
+		return err
+	}
+	parts, err := pathParts(rel)
+	if err != nil {
+		return err
+	}
+	parent, err := openWindowsRoot(root)
+	if err != nil {
+		return err
+	}
+	current := parent
+	for _, part := range parts[:len(parts)-1] {
+		child, openErr := openWindowsDirectory(current, part, false)
+		if openErr != nil {
+			_ = windows.CloseHandle(current)
+			return fmt.Errorf("open workspace directory %q: %w", part, openErr)
+		}
+		_ = windows.CloseHandle(current)
+		current = child
+	}
+
+	objectName, err := windows.NewNTUnicodeString(parts[len(parts)-1])
+	if err != nil {
+		_ = windows.CloseHandle(current)
+		return err
+	}
+	oa := objectAttributes(objectName, current)
+	var iosb windows.IO_STATUS_BLOCK
+	var allocation int64
+	var handle windows.Handle
+	err = windows.NtCreateFile(
+		&handle,
+		windows.DELETE|windows.FILE_GENERIC_READ,
+		&oa,
+		&iosb,
+		&allocation,
+		0,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_OPEN,
+		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT,
+		0,
+		0,
+	)
+	_ = windows.CloseHandle(current)
+	if err != nil {
+		return fmt.Errorf("remove workspace file %q: %w", rel, translateNTError(err))
+	}
+	f := os.NewFile(uintptr(handle), path)
+	if f == nil {
+		_ = windows.CloseHandle(handle)
+		return fmt.Errorf("remove workspace file %q: could not wrap handle", rel)
+	}
+	defer f.Close()
+	if err := verifyHandle(root, f, false); err != nil {
+		return fmt.Errorf("remove workspace file %q failed containment check: %w", rel, err)
+	}
+	var disposition uint32 = windows.FILE_DISPOSITION_DELETE
+	if err := windows.NtSetInformationFile(
+		windows.Handle(f.Fd()),
+		&iosb,
+		(*byte)(unsafe.Pointer(&disposition)),
+		uint32(unsafe.Sizeof(disposition)),
+		windows.FileDispositionInformationEx,
+	); err != nil {
+		return fmt.Errorf("remove workspace file %q: %w", rel, translateNTError(err))
+	}
+	return nil
+}
