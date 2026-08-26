@@ -3,6 +3,7 @@ package gui
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 
@@ -153,14 +154,18 @@ func (s *server) replaceWorkspace(cfg config.Config) (projectSwitchResult, error
 	oldSession := s.sessionID
 	oldHist := s.hist
 	s.abortTurnLocked()
+	var saveErr error
 	if oldSession != "" && len(oldHist) > 0 {
-		_ = session.SaveMessages(oldWorkspace, oldSession, oldHist)
+		saveErr = session.SaveMessages(oldWorkspace, oldSession, oldHist)
 	}
 	s.cfg = cfg
 	s.ag = a
 	s.hist = hist
 	s.sessionID = sessID
 	s.mu.Unlock()
+	if saveErr != nil {
+		s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
+	}
 	s.attachRouterHook()
 	_, _, _ = projects.Ensure(path)
 	s.emit(event{Type: "undo", Status: "cleared"})

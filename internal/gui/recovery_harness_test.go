@@ -42,8 +42,11 @@ func TestReconnectSnapshotDoesNotResurfaceRetiredTask(t *testing.T) {
 	}
 
 	s.mu.Lock()
-	newSession := s.newSessionLocked()
+	newSession, saveErr := s.newSessionLocked()
 	s.mu.Unlock()
+	if saveErr != nil {
+		t.Fatalf("save session during rotation: %v", saveErr)
+	}
 	current := s.snapshot()
 	if current["session_id"] != newSession {
 		t.Fatalf("reconnect session = %v, want %q", current["session_id"], newSession)

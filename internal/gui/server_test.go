@@ -1469,6 +1469,37 @@ func TestClearRotatesDurableTaskSession(t *testing.T) {
 	}
 }
 
+func TestResetEmitsSessionSaveFailure(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+
+	workspace := t.TempDir()
+	events := make(chan event, 8)
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	s := &server{
+		cfg:       cfg,
+		sessionID: "session-before-reset",
+		hist:      []llm.Message{{Role: "user", Content: "request"}},
+		permCh:    make(chan perm.Decision, 1),
+		subs:      []chan event{events},
+	}
+	res := httptest.NewRecorder()
+	s.reset(res, httptest.NewRequest(http.MethodPost, "/api/reset", nil))
+	if res.Code != http.StatusOK {
+		t.Fatalf("reset status = %d, want %d", res.Code, http.StatusOK)
+	}
+	for len(events) > 0 {
+		if e := <-events; e.Type == "error" && strings.Contains(e.Text, "couldn't save session") {
+			return
+		}
+	}
+	t.Fatal("reset did not emit session-save failure")
+}
+
 func TestStaleTurnUsesCapturedAgentSessionAfterReset(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()

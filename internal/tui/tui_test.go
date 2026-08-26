@@ -38,6 +38,26 @@ func TestAssistantFinalReplacesStreamedText(t *testing.T) {
 	}
 }
 
+func TestDoneReportsSessionSaveFailure(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+
+	workspace := t.TempDir()
+	m := &model{
+		cfg:       config.Config{Workspace: workspace},
+		sessionID: "save-failure",
+		lines:     []logLine{{Kind: "user", Text: "request"}},
+		vp:        viewport.New(80, 20),
+	}
+	_, _ = m.Update(doneMsg{history: []llm.Message{{Role: "user", Content: "request"}}})
+	if len(m.lines) == 0 || m.lines[len(m.lines)-1].Kind != "error" || !strings.Contains(m.lines[len(m.lines)-1].Text, "couldn't save session") {
+		t.Fatalf("done result = %#v, want visible session-save error", m.lines)
+	}
+}
+
 func TestBroadPromptStartsWithRecommendedScope(t *testing.T) {
 	workspace := t.TempDir()
 	cfg := config.Default()

@@ -333,7 +333,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.turnMode = nil
 		if msg.history != nil {
 			m.history = msg.history
-			_ = session.SaveMessages(m.cfg.Workspace, m.sessionID, m.history)
+			if err := session.SaveMessages(m.cfg.Workspace, m.sessionID, m.history); err != nil {
+				m.lines = append(m.lines, logLine{Kind: "error", Text: fmt.Sprintf("couldn't save session: %v", err)})
+			}
 		}
 		if msg.result.Task != nil && msg.result.Task.SessionID == m.sessionID {
 			m.task = msg.result.Task
