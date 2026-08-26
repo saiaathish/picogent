@@ -19,10 +19,12 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/outcome"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/projecthealth"
 	"github.com/saiaathish/picogent/internal/repomap"
 	"github.com/saiaathish/picogent/internal/session"
+	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 	"github.com/saiaathish/picogent/internal/verify"
 )
@@ -149,6 +151,33 @@ func BenchmarkProjectHealthFormat(b *testing.B) {
 		}
 	}
 	b.SetBytes(int64(len(projecthealth.Format(report))))
+}
+
+func BenchmarkOutcomeFocus(b *testing.B) {
+	task := &taskstate.Task{
+		Status: taskstate.StatusWorking,
+		Intent: &taskstate.IntentContract{NeedsTests: true},
+	}
+	report := projecthealth.Report{
+		Schema: projecthealth.Schema,
+		Status: projecthealth.StateAttention,
+		Findings: []projecthealth.Finding{
+			{ID: "build-unverified", Dimension: "build", Priority: 64},
+			{ID: "tests-unverified", Dimension: "tests", Priority: 76},
+			{ID: "uncommitted-work", Dimension: "release", Priority: 32},
+		},
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		decision := outcome.Select(task, report)
+		if decision.FindingID != "tests-unverified" {
+			b.Fatalf("focus = %+v", decision)
+		}
+		if outcome.Instruction(decision) == "" {
+			b.Fatal("focus instruction is empty")
+		}
+	}
 }
 
 func BenchmarkSessionListMeta(b *testing.B) {

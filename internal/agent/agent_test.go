@@ -259,6 +259,75 @@ func TestExplicitVerifyPopulatesResultEvidence(t *testing.T) {
 	}
 }
 
+func TestProjectHealthAddsTransientOutcomeFocusToNextRound(t *testing.T) {
+	dir := t.TempDir()
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "health", Name: "project_health", Arguments: `{}`}}}},
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "list", Name: "list_dir", Arguments: `{"path":"."}`}}}},
+		{Message: llm.Message{Role: "assistant", Content: "I inspected the project."}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
+
+	history, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "make this project ready"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls) != 3 {
+		t.Fatalf("model calls = %d, want 3", len(fake.Calls))
+	}
+	var focus string
+	for _, message := range fake.Calls[1].Messages {
+		if message.Role == "system" && strings.Contains(message.Content, "Internal outcome focus:") {
+			focus = message.Content
+			break
+		}
+	}
+	if !strings.Contains(focus, "project-shape-unknown") || !strings.Contains(focus, "not user authorization") {
+		t.Fatalf("next-round focus = %q", focus)
+	}
+	for _, message := range fake.Calls[2].Messages {
+		if strings.Contains(message.Content, "Internal outcome focus:") {
+			t.Fatalf("focus leaked beyond one model request: %q", message.Content)
+		}
+	}
+	for _, message := range history {
+		if strings.Contains(message.Content, "Internal outcome focus:") {
+			t.Fatalf("transient focus leaked into returned history: %q", message.Content)
+		}
+	}
+}
+
+func TestProjectHealthFocusIsSkippedWhenCoBatchedWithWrite(t *testing.T) {
+	dir := t.TempDir()
+	writeArgs, _ := json.Marshal(map[string]string{"path": "created.txt", "content": "created"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "health", Name: "project_health", Arguments: `{}`},
+			{ID: "write", Name: "write_file", Arguments: string(writeArgs)},
+		}}},
+		{Message: llm.Message{Role: "assistant", Content: "the file is written"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
+
+	if _, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "create the file"}, allowAll{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(fake.Calls))
+	}
+	for _, message := range fake.Calls[1].Messages {
+		if strings.Contains(message.Content, "Internal outcome focus:") {
+			t.Fatalf("stale focus was injected after a co-batched write: %q", message.Content)
+		}
+	}
+}
+
 func TestAutoVerifyAddsRelevantPlaybookTargets(t *testing.T) {
 	dir := t.TempDir()
 	args, _ := json.Marshal(map[string]string{"path": "internal/auth/auth.go", "content": "package auth\n"})

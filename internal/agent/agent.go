@@ -446,15 +446,22 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	calledVerify := false
 	lastVerification := ""
 	taskBlocker := ""
+	nextOutcomeFocus := ""
 
 	for round := 0; round < cfg.MaxToolRounds; round++ {
 		if r, ok := state.LLM.(*llm.Router); ok {
 			r.SetUserPrompt(userText)
 		}
 		streamed := false
+		requestMessages := msgs
+		if nextOutcomeFocus != "" {
+			requestMessages = append([]llm.Message(nil), msgs...)
+			requestMessages = append(requestMessages, llm.Message{Role: "system", Content: nextOutcomeFocus})
+			nextOutcomeFocus = ""
+		}
 		out, err := state.LLM.Chat(ctx, llm.ChatRequest{
 			Model:        cfg.Model,
-			Messages:     msgs,
+			Messages:     requestMessages,
 			Tools:        reg.Specs(),
 			ToolRound:    round,
 			Escalate:     round >= 10,
@@ -680,6 +687,16 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		}
 		for _, path := range successfulWrites {
 			a.noteTaskChanged(path, ev)
+		}
+		// A project-health observation is useful for choosing the next safe
+		// action, but only a sole read-only call is fresh enough to guide the
+		// next model request. Keep the guidance out of msgs so it cannot leak
+		// into returned or persisted conversation history.
+		if len(pending) == 1 && len(successfulWrites) == 0 {
+			ex := pending[0]
+			if ex.ran && ex.err == nil && ex.call.Name == "project_health" {
+				nextOutcomeFocus = outcomeFocusForTool(a.TaskSnapshot(), ex.call.Name, ex.text)
+			}
 		}
 		if len(pending) > 0 {
 			lastToolKind = classifyToolKind(pending[len(pending)-1].call.Name)
