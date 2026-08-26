@@ -62,6 +62,22 @@ func TestFromSnapshotPreservesUnknownProvenanceAndProjectShape(t *testing.T) {
 	}
 }
 
+func TestTruncatedInventoryIsAttentionNotHealth(t *testing.T) {
+	report := FromSnapshot(repomap.Snapshot{Summary: repomap.Map{
+		Languages:       []string{"Go"},
+		InventoryFiles:  20_000,
+		InventoryCutOff: true,
+	}})
+	if report.Status != StateAttention || report.Findings[0].ID != "diagnosis-incomplete" {
+		t.Fatalf("truncated report = %#v", report)
+	}
+	for _, dimension := range report.Dimensions {
+		if dimension.Name == "environment" && dimension.State != StateAttention {
+			t.Fatalf("environment state = %#v", dimension)
+		}
+	}
+}
+
 func TestFormatIsBoundedAndDoesNotIncludeRawCommandOutput(t *testing.T) {
 	report := Report{
 		Schema: Schema,
@@ -87,6 +103,9 @@ func TestFormatIsBoundedAndDoesNotIncludeRawCommandOutput(t *testing.T) {
 	}
 	if !strings.Contains(formatted, `"schema": "picogent.project-health.v1"`) {
 		t.Fatalf("schema missing from %s", formatted)
+	}
+	if formatted != Format(report) {
+		t.Fatal("formatting the same report was not deterministic")
 	}
 }
 
