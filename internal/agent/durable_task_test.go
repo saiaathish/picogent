@@ -15,6 +15,7 @@ import (
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
+	workspacepkg "github.com/saiaathish/picogent/internal/workspace"
 )
 
 type taskRecordingHandler struct {
@@ -514,6 +515,13 @@ func TestDurableTaskStopsAfterThreeVerificationFailures(t *testing.T) {
 func TestBlockedDurableTaskRerunPreservesCheckpoint(t *testing.T) {
 	workspace := t.TempDir()
 	store := taskstate.NewStore(t.TempDir())
+	if err := os.WriteFile(filepath.Join(workspace, "signup.go"), []byte("package signup\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	observation, err := workspacepkg.Capture(context.Background(), workspace, []string{"signup.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	task, err := taskstate.New("session-blocked-resume", "fix the broken signup flow", []string{"inspect", "verify"})
 	if err != nil {
 		t.Fatal(err)
@@ -522,7 +530,7 @@ func TestBlockedDurableTaskRerunPreservesCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	task.RecordChanged("signup.go")
-	task.AddVerification("go test ./...", true, "verify PASS")
+	task.AddVerificationWithObservation("go test ./...", true, "verify PASS", &observation)
 	task.Block("permission needed")
 	if err := store.Save(task); err != nil {
 		t.Fatal(err)
@@ -696,7 +704,10 @@ func TestDurableTaskResumesActiveCompletionIntentAfterMissingEvidence(t *testing
 	if checks != 1 {
 		t.Fatalf("resume verification calls = %d, want 1", checks)
 	}
-	if result.Task == nil || result.Task.Status != taskstate.StatusDone || result.Task.NeedsVerification() || !result.GoalDone {
-		t.Fatalf("resumed completion = %#v goalDone=%v, want verified done", result.Task, result.GoalDone)
+	if result.Task == nil || result.Task.Status != taskstate.StatusBlocked || !result.Task.NeedsVerification() || result.GoalDone {
+		t.Fatalf("resumed completion = %#v goalDone=%v, want blocked on unbound evidence", result.Task, result.GoalDone)
+	}
+	if len(result.Task.Verification) == 0 || result.Task.Verification[len(result.Task.Verification)-1].Passed || !strings.HasPrefix(result.Task.Verification[len(result.Task.Verification)-1].Summary, "verify INCONCLUSIVE") {
+		t.Fatalf("resumed evidence = %#v", result.Task.Verification)
 	}
 }

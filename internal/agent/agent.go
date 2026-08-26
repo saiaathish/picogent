@@ -18,6 +18,7 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 	"github.com/saiaathish/picogent/internal/trace"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 const systemPromptBase = `You are Picogent — the user's coding assistant.
@@ -445,6 +446,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	lastToolKind := ""
 	calledVerify := false
 	lastVerification := ""
+	lastVerificationEvidence := verificationEvidence{}
 	taskBlocker := ""
 	nextOutcomeFocus := ""
 
@@ -504,13 +506,24 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				a.requireTaskVerification(ev)
 			}
 			res.FilesChanged = sortedChanged(changed)
-			if autoVerified := a.maybeVerify(ctx, ev, userText, res.FilesChanged, calledVerify, completionEvidenceRequired, state, gate); autoVerified != "" {
-				lastVerification = autoVerified
+			autoEvidence := a.maybeVerify(ctx, ev, userText, res.FilesChanged, calledVerify, completionEvidenceRequired, state, gate)
+			if autoEvidence.output != "" {
+				if a.TaskSnapshot() != nil || completionEvidenceRequired {
+					autoEvidence = normalizeVerificationEvidence(autoEvidence)
+				}
+				lastVerification = autoEvidence.output
+				lastVerificationEvidence = autoEvidence
 			}
 			res.Verified = lastVerification
-			if a.continueAfterVerificationFailure(text, round, res.Verified, ev, cfg.MaxToolRounds) {
+			if a.continueAfterVerificationFailure(text, round, autoEvidence, ev, cfg.MaxToolRounds) {
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified, a.repeatedVerificationFailure())})
 				continue
+			}
+			if completionEvidenceRequired && verificationStatus(lastVerification) == "PASS" {
+				if refreshed, ok := a.revalidateVerificationBeforeCompletion(ctx, regCtx.Workspace, lastVerificationEvidence, ev); !ok {
+					lastVerification = refreshed
+					res.Verified = refreshed
+				}
 			}
 			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 			undoAvailable, undoError := res.UndoAvailable, res.UndoError
@@ -553,11 +566,15 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 
 		res.ToolRounds = round + 1
 		type executed struct {
-			call llm.ToolCall
-			req  perm.Request
-			text string
-			err  error
-			ran  bool
+			call                llm.ToolCall
+			req                 perm.Request
+			text                string
+			err                 error
+			ran                 bool
+			verificationTargets []string
+			observation         *workspace.Observation
+			observationUsable   bool
+			observationReason   string
 		}
 		var pending []executed
 
@@ -626,9 +643,15 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				pending[i].ran = true
 				var outText string
 				var err error
+				var verification verificationEvidence
 				run := func() {
 					if ctxErr := ctx.Err(); ctxErr != nil {
 						err = ctxErr
+						return
+					}
+					if call.Name == "verify" {
+						verification = executeVerification(ctx, tool, call, regCtx, a.runTool)
+						outText, err = verification.output, verification.err
 						return
 					}
 					if a.runTool != nil {
@@ -647,6 +670,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				if err != nil {
 					pending[i].text = "error: " + err.Error()
 				}
+				if call.Name == "verify" {
+					pending[i].verificationTargets = append([]string(nil), verification.targets...)
+					pending[i].observation = cloneWorkspaceObservation(verification.observation)
+					pending[i].observationUsable = verification.observationUsable
+					pending[i].observationReason = verification.observationReason
+				}
 				ev.OnToolEnd(call, outText, err)
 				ok := err == nil
 				_ = traceLog.Append("tool_end", call.Name, outText, &ok, 0)
@@ -663,8 +692,18 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			if ex.call.Name == "verify" {
 				a.setTaskStatus(taskstate.StatusVerifying, ev)
-				lastVerification = ex.text
-				a.noteTaskVerification(ex.text, ev)
+				lastVerificationEvidence = verificationEvidence{
+					output:            ex.text,
+					targets:           append([]string(nil), ex.verificationTargets...),
+					observation:       cloneWorkspaceObservation(ex.observation),
+					observationUsable: ex.observationUsable,
+					observationReason: ex.observationReason,
+				}
+				if a.TaskSnapshot() != nil {
+					lastVerificationEvidence = normalizeVerificationEvidence(lastVerificationEvidence)
+				}
+				lastVerification = lastVerificationEvidence.output
+				a.noteTaskVerification(lastVerificationEvidence, ev)
 			}
 		}
 
@@ -718,22 +757,22 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	return final, res, err
 }
 
-func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint string, filesChanged []string, already bool, completionEvidenceRequired bool, state RuntimeState, gate *perm.Gate) string {
+func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint string, filesChanged []string, already bool, completionEvidenceRequired bool, state RuntimeState, gate *perm.Gate) verificationEvidence {
 	task := a.TaskSnapshot()
 	needsVerification := false
 	if task != nil {
 		needsVerification = task.NeedsVerification()
 	}
 	if ((already || len(filesChanged) == 0) && !needsVerification && !completionEvidenceRequired) || state.Tools == nil {
-		return ""
+		return verificationEvidence{}
 	}
 	regCtx := state.Tools.ContextSnapshot()
 	if regCtx.Verify == nil && regCtx.VerifyTargets == nil {
-		return ""
+		return verificationEvidence{}
 	}
 	tool, ok := state.Tools.Get("verify")
 	if !ok {
-		return ""
+		return verificationEvidence{}
 	}
 	targets := verificationTargetsForTask(filesChanged, task, needsVerification, state.Memory, userHint)
 	args, _ := json.Marshal(map[string]any{"targets": targets})
@@ -741,7 +780,7 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	if blocked, reason := state.TaskMode.BlockTool(call.Name); blocked {
 		ev.OnToolStart(call)
 		ev.OnToolEnd(call, reason, nil)
-		return reason
+		return verificationEvidence{output: reason, observationReason: "verification blocked"}
 	}
 	a.setTaskStatus(taskstate.StatusVerifying, ev)
 	ev.OnToolStart(call)
@@ -758,16 +797,13 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 		ev.OnToolEnd(call, msg, err)
 		okv := false
 		_ = state.Trace.Append("verify", "verify", msg, &okv, 0)
-		return msg
+		return verificationEvidence{output: msg, err: err, observationReason: "verification permission was not granted"}
 	}
-	out, err := tool.Run(ctx, call.Arguments, regCtx)
-	if err != nil {
-		out = "error: " + err.Error()
-	}
-	ev.OnToolEnd(call, out, err)
-	okv := err == nil && strings.Contains(strings.ToLower(out), "pass") && !strings.Contains(strings.ToLower(out), "inconclusive")
-	_ = state.Trace.Append("verify", "verify", out, &okv, 0)
-	return out
+	evidence := executeVerification(ctx, tool, call, regCtx, nil)
+	ev.OnToolEnd(call, evidence.output, evidence.err)
+	okv := evidence.err == nil && strings.Contains(strings.ToLower(evidence.output), "pass") && !strings.Contains(strings.ToLower(evidence.output), "inconclusive")
+	_ = state.Trace.Append("verify", "verify", evidence.output, &okv, 0)
+	return evidence
 }
 
 // verificationTargetsForTask returns safe targeted inputs for one check. A
