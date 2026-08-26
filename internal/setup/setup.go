@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -116,8 +115,8 @@ func homeComponent() Component {
 }
 
 func gitComponent() Component {
-	p, err := exec.LookPath("git")
-	if err != nil {
+	p := look("git")
+	if p == "" {
 		return Component{ID: "git", Name: "Git", Detail: "not on PATH", CanFix: false, FixHint: "Install Git, then click Install again."}
 	}
 	return Component{ID: "git", Name: "Git", OK: true, Detail: p}
@@ -401,6 +400,23 @@ func StartCodexCLILogin() error {
 		return fmt.Errorf("Codex CLI is not installed yet")
 	}
 	return OpenInteractive(bin, "login")
+}
+
+// RunCodexCLILogin keeps the synchronous CLI login path on the same validated
+// executable and restricted environment boundary as GUI/provider setup.
+func RunCodexCLILogin() error {
+	bin := look("codex")
+	if bin == "" {
+		say := func(string) {}
+		if err := installNPM(codexNPMSpec, say); err != nil {
+			return fmt.Errorf("Codex CLI is not installed and auto-install failed: %w", err)
+		}
+		bin = look("codex")
+	}
+	if bin == "" {
+		return fmt.Errorf("Problem: Codex CLI is not installed.\nCause:   `codex` is not on a trusted PATH.\nFix:     install the Codex CLI, then run picogent login")
+	}
+	return runLoginCommand(bin, "login")
 }
 
 func Apply(cfg config.Config, workspace, mode, model string) (config.Config, error) {

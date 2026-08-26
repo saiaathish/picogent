@@ -43,8 +43,18 @@ an explicit allowlisted environment rather than the Picogent process's API
 keys, auth variables, loader hooks, npm configuration overrides, or ambient
 PATH entries. The resolved package manager and provider binaries must come
 from known runtime prefixes, and automatic installation refuses an elevated
-Unix process or elevated Windows token. Installer output is capped and
-credential-shaped values are redacted before it reaches setup logs.
+Unix process or elevated Windows token. Interactive provider login also refuses
+to launch from an elevated Picogent process, including when a provider was
+already installed. Installer output is capped and credential-shaped values are
+redacted before it reaches setup logs.
+
+Managed provider lookup also rejects symlinked tools roots and checks every
+ancestor on the path before accepting an installed binary. Windows login
+launches pass the validated absolute `cmd.exe` path and disable Command
+Processor AutoRun for both command interpreters. The synchronous `picogent
+login` route uses the same validated executable and restricted environment, and
+installer `PATH` contains only the resolved package-manager and Node runtime
+directories; XFCE terminal commands quote the validated Bash path.
 
 OpenCode and Antigravity are now manual-install providers: setup reports their
 official documentation locations and login accepts only an argv-shaped,
@@ -84,10 +94,24 @@ absence of remote provider shell installation.
   broad checkpoint safety claim.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
-- The npm provider packages are pinned to reviewed versions but are not yet
-  backed by a repository-specific integrity manifest or SBOM; the current
-  boundary proves registry/package allowlisting and disables lifecycle
-  scripts, but not full dependency provenance.
+- The npm provider packages and their platform-specific optional packages are
+  now backed by the reviewed `internal/setup/provider-package-lock.json`; setup
+  materializes that lock and uses npm's integrity-checked lock resolution with
+  lifecycle scripts disabled. A pre-existing project `.npmrc` in the managed
+  prefix is rejected so scoped registries and transport settings cannot silently
+  override the reviewed install policy. This is provenance evidence, not a
+  signed release attestation or a complete external SBOM, and it remains
+  dependent on the trusted npm/Node client and registry transport.
+- Managed and external executable paths are canonicalized and revalidated at
+  launch. This rejects path changes observed before process start, but the
+  portable path-based launcher cannot eliminate an OS-level replacement race
+  between its final check and `execve`/`CreateProcess`; live hostile runtime
+  coverage for that gap remains open. Unix lookup also rejects writable
+  ancestors except protected sticky system temporary directories; Windows ACL
+  enforcement remains unverified.
+- macOS Terminal.app launch now prefixes the provider command with an explicit
+  `/usr/bin/env -i` allowlist, but Terminal profile startup and Apple Event
+  behavior remain live-runtime proof gaps.
 - Git status/diff and external MCP responses need adversarial hook, textconv,
   prompt-injection, and secret-leakage runtime tests.
 - The hosted deep security scan was unavailable in the earlier campaign; no

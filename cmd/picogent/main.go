@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strings"
 	"sync"
@@ -211,15 +210,7 @@ func runLogin(args []string) error {
 }
 
 func runCodexLogin() error {
-	codex, err := exec.LookPath("codex")
-	if err != nil {
-		return fmt.Errorf("Problem: Codex CLI is not installed.\nCause:   `codex` is not on PATH.\nFix:     install the Codex CLI, then run picogent login")
-	}
-	cmd := exec.Command(codex, "login")
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	if err := setup.RunCodexCLILogin(); err != nil {
 		return err
 	}
 	if !codexauth.LoggedIn() {
