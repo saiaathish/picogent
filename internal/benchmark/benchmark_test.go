@@ -20,6 +20,7 @@ import (
 	"github.com/saiaathish/picogent/internal/ctxmgr"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/projecthealth"
 	"github.com/saiaathish/picogent/internal/repomap"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/tools"
@@ -116,6 +117,38 @@ func BenchmarkRepoMapSnapshotFormat(b *testing.B) {
 		}
 	}
 	b.SetBytes(int64(len(repomap.FormatSnapshot(snapshot))))
+}
+
+func BenchmarkProjectHealth(b *testing.B) {
+	workspace := benchmarkRepo(b)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		report, err := projecthealth.Assess(context.Background(), workspace)
+		if err != nil {
+			b.Fatal(err)
+		}
+		if report.Schema != projecthealth.Schema || len(projecthealth.Format(report)) > projecthealth.MaxOutputBytes {
+			b.Fatal("project health report was invalid or unbounded")
+		}
+	}
+}
+
+func BenchmarkProjectHealthFormat(b *testing.B) {
+	workspace := benchmarkRepo(b)
+	report, err := projecthealth.Assess(context.Background(), workspace)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		formatted := projecthealth.Format(report)
+		if formatted == "" || len(formatted) > projecthealth.MaxOutputBytes {
+			b.Fatalf("formatted project health length = %d", len(formatted))
+		}
+	}
+	b.SetBytes(int64(len(projecthealth.Format(report))))
 }
 
 func BenchmarkSessionListMeta(b *testing.B) {

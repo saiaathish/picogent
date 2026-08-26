@@ -120,6 +120,14 @@ func TestSafeRequiresApprovalForVerify(t *testing.T) {
 	}
 }
 
+func TestProjectHealthIsReadOnlyAndAutoAllowed(t *testing.T) {
+	g := perm.New(config.ModeSafe, "/tmp/ws", nil)
+	d, err := g.Check(nil, perm.Request{Tool: "project_health", Path: "/tmp/ws"})
+	if err != nil || d != perm.Allow {
+		t.Fatalf("project health decision = %s, %v; want allow", d, err)
+	}
+}
+
 func TestFastMCPAsksForWriteTools(t *testing.T) {
 	g := perm.New(config.ModeFast, "/tmp/ws", nil)
 	d, _ := g.Check(nil, perm.Request{Tool: "mcp_github_create_issue"})
