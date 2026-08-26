@@ -11,7 +11,10 @@ import (
 	"sync"
 )
 
-var ErrNotFound = errors.New("task state not found")
+var (
+	ErrNotFound         = errors.New("task state not found")
+	ErrRevisionConflict = errors.New("task state revision conflict")
+)
 
 // Store persists one task per chat session. Files stay separate from chat history.
 type Store struct {
@@ -40,8 +43,27 @@ func (s *Store) Path(sessionID string) (string, error) {
 	return filepath.Join(s.dir, sessionID+".json"), nil
 }
 
-// Save atomically persists task state with private file permissions.
+// Save atomically persists task state with private file permissions. The
+// task's current Revision is the expected on-disk generation; a successful
+// save advances it by one. This makes ordinary Save calls compare-and-swap
+// operations rather than last-writer-wins updates.
 func (s *Store) Save(task *Task) error {
+	if task == nil {
+		return errors.New("task is nil")
+	}
+	return s.SaveIfRevision(task, task.Revision)
+}
+
+// SaveIfRevision atomically persists task state only when expected matches
+// both the caller's task generation and the current on-disk generation. A
+// conflict leaves the caller's task unchanged and returns ErrRevisionConflict.
+func (s *Store) SaveIfRevision(task *Task, expected uint64) error {
+	if task == nil {
+		return errors.New("task is nil")
+	}
+	if task.Revision != expected {
+		return fmt.Errorf("%w: task revision %d does not match expected %d", ErrRevisionConflict, task.Revision, expected)
+	}
 	if err := task.Validate(); err != nil {
 		return err
 	}
@@ -55,8 +77,44 @@ func (s *Store) Save(task *Task) error {
 	if err := os.MkdirAll(s.dir, 0o700); err != nil {
 		return fmt.Errorf("create task store: %w", err)
 	}
-	task.touch()
-	tmp, err := os.CreateTemp(s.dir, ".task-*.tmp")
+	unlock, err := acquireTaskStoreLock(s.dir)
+	if err != nil {
+		return fmt.Errorf("lock task store: %w", err)
+	}
+	defer unlock()
+
+	current, err := loadTaskFile(path, task.SessionID)
+	if errors.Is(err, ErrNotFound) {
+		if expected != 0 {
+			return revisionConflict(expected, 0)
+		}
+	} else if err != nil {
+		return fmt.Errorf("read current task state: %w", err)
+	} else if current.Revision != expected {
+		return revisionConflict(expected, current.Revision)
+	}
+	if expected == ^uint64(0) {
+		return errors.New("task state revision exhausted")
+	}
+	candidate := *task
+	candidate.Revision = expected + 1
+	candidate.touch()
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
+	if err := saveTaskFile(path, &candidate); err != nil {
+		return err
+	}
+	*task = candidate
+	return nil
+}
+
+func revisionConflict(expected, actual uint64) error {
+	return fmt.Errorf("%w: expected %d, found %d", ErrRevisionConflict, expected, actual)
+}
+
+func saveTaskFile(path string, task *Task) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".task-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create task temp file: %w", err)
 	}
@@ -93,6 +151,18 @@ func (s *Store) Load(sessionID string) (*Task, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create task store: %w", err)
+	}
+	unlock, err := acquireTaskStoreLock(s.dir)
+	if err != nil {
+		return nil, fmt.Errorf("lock task store: %w", err)
+	}
+	defer unlock()
+	return loadTaskFile(path, sessionID)
+}
+
+func loadTaskFile(path, sessionID string) (*Task, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
@@ -131,6 +201,14 @@ func (s *Store) Delete(sessionID string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+		return fmt.Errorf("create task store: %w", err)
+	}
+	unlock, err := acquireTaskStoreLock(s.dir)
+	if err != nil {
+		return fmt.Errorf("lock task store: %w", err)
+	}
+	defer unlock()
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("delete task state: %w", err)
 	}

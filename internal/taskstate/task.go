@@ -112,6 +112,10 @@ type Task struct {
 	Version            int             `json:"version"`
 	ID                 string          `json:"id"`
 	SessionID          string          `json:"session_id"`
+	// Revision is the persisted compare-and-swap generation. A zero value is
+	// accepted for legacy or not-yet-saved state; Store.Save advances it only
+	// after confirming that the on-disk generation still matches.
+	Revision           uint64          `json:"revision,omitempty"`
 	Goal               string          `json:"goal"`
 	Intent             *IntentContract `json:"intent,omitempty"`
 	DefinitionOfDone   []Criterion     `json:"definition_of_done,omitempty"`
