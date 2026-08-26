@@ -266,11 +266,15 @@ func captureFile(ctx context.Context, root, rel string) (FileObservation, error)
 		return observation, nil
 	}
 	currentDigest, currentKnown, err := digestFile(ctx, current)
+	currentAfter, currentAfterErr := describeFile(current)
 	_ = current.Close()
 	if err != nil {
 		return FileObservation{}, err
 	}
-	if !currentKnown || currentDigest != digest {
+	if currentAfterErr != nil {
+		return FileObservation{}, currentAfterErr
+	}
+	if !currentKnown || !sameFileState(currentState, currentAfter) || currentDigest != digest {
 		return observation, nil
 	}
 
