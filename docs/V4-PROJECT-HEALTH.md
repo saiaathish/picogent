@@ -16,6 +16,23 @@ start a watcher, or claim that an inferred command passes. `UNKNOWN` and
 `UNVERIFIED` are deliberately retained so the existing verifier and live tools
 remain the completion authority.
 
+## Local cost evidence
+
+At implementation checkpoint `e4fbb90`, on an Apple M3 arm64 macOS host with
+Go `1.26.6`, the deterministic benchmark was:
+
+```sh
+go test ./internal/benchmark -run '^$' \
+  -bench '^BenchmarkProjectHealth' -benchtime=100ms -benchmem -count=3
+```
+
+The fresh-snapshot path measured `31.1–35.1 ms/op`, `292–312 KiB/op`, and
+`3,038–3,046 allocs/op`. This includes the existing repository snapshot and
+Git observation, so it is not a standalone diagnosis cost. Formatting an
+already-captured report measured `281–288 µs/op`, `46.4–46.5 KiB/op`, and
+`1,196 allocs/op`. These are local regression signals, not product latency
+SLAs or provider-token cost evidence.
+
 The priority number is only a deterministic ordering aid. It combines the
 importance of the observation and the cost of leaving it unresolved; it is not
 a probability, health percentage, or security rating. Repository filenames and
