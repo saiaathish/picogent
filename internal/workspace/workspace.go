@@ -86,3 +86,12 @@ func OpenWrite(root, path string) (*os.File, error) {
 func OpenEdit(root, path string) (*os.File, error) {
 	return open(root, path, openEdit)
 }
+
+// Remove removes the final regular-file name below root without following a
+// symlink or reparse point. It is intentionally name-based at the final
+// component, so an attacker can cause a safe failure or removal of the
+// replaced name inside the workspace, but can never redirect deletion outside
+// the descriptor-anchored root.
+func Remove(root, path string) error {
+	return remove(root, path)
+}

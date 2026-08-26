@@ -121,3 +121,19 @@ func openUnixRoot(root string) (int, error) {
 	}
 	return current, nil
 }
+
+func remove(root, path string) error {
+	rel, err := Relative(root, path)
+	if err != nil {
+		return err
+	}
+	parent, leaf, err := openParent(root, rel, false)
+	if err != nil {
+		return err
+	}
+	defer unix.Close(parent)
+	if err := unix.Unlinkat(parent, leaf, 0); err != nil {
+		return fmt.Errorf("remove workspace file %q: %w", rel, err)
+	}
+	return nil
+}

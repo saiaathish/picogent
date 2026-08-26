@@ -199,10 +199,10 @@ func (c *Checkpoint) ChangedPaths() ([]string, error) {
 }
 
 // Restore puts every checkpointed path back to its pre-turn state. It first
-// checks all fingerprints, so a normal conflict changes nothing. File installs
-// are staged beside their destination and published without overwriting an
-// existing name. If a later operation fails, completed operations are rolled
-// back on a best-effort basis and the result says whether rollback succeeded.
+// checks all fingerprints, so a normal conflict changes nothing. Each write
+// and removal is performed through the secure workspace primitive; if a later
+// operation fails, the in-memory post-turn states are replayed on a best-effort
+// basis and the result says whether rollback succeeded.
 func (c *Checkpoint) Restore() (RestoreResult, error) {
 	var result RestoreResult
 	if c == nil {
@@ -235,7 +235,7 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 			result.Unchanged = append(result.Unchanged, filepath.ToSlash(c.entries[i].path))
 			continue
 		}
-		mutations = append(mutations, mutation{entry: &c.entries[i]})
+		mutations = append(mutations, mutation{entry: &c.entries[i], after: current})
 	}
 	if len(result.Conflicts) > 0 {
 		sortConflicts(result.Conflicts)
@@ -251,12 +251,6 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 		return result, nil
 	}
 
-	if err := stageMutations(c.root, mutations); err != nil {
-		cleanupStages(mutations)
-		result.Failures = append(result.Failures, failure(err.path, err.operation, err.err))
-		return result, fmt.Errorf("checkpoint restore staging failed: %w", err.err)
-	}
-
 	for i := range mutations {
 		if opErr := applyMutation(c.root, &mutations[i]); opErr != nil {
 			if errors.Is(opErr.err, ErrConflict) {
@@ -267,8 +261,6 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 				result.Failures = append(result.Failures, failure(opErr.path, opErr.operation, opErr.err))
 			}
 			result.RolledBack = rollback(c.root, mutations[:i+1], &result)
-			appendRecoveryPaths(mutations[:i+1], &result)
-			cleanupStages(mutations)
 			if len(result.Conflicts) > 0 {
 				return result, ErrConflict
 			}
@@ -283,14 +275,7 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 		} else {
 			result.Removed = append(result.Removed, path)
 		}
-		if mutations[i].backup != "" {
-			if err := os.Remove(mutations[i].backup); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				result.Failures = append(result.Failures, failure(mutations[i].entry.path, "cleanup", err))
-			}
-			mutations[i].backup = ""
-		}
 	}
-	cleanupStages(mutations)
 	sort.Strings(result.Restored)
 	sort.Strings(result.Removed)
 	sort.Strings(result.Unchanged)
@@ -304,9 +289,7 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 
 type mutation struct {
 	entry   *entry
-	stage   string
-	backup  string
-	claimed bool
+	after   fileState
 	applied bool
 }
 
@@ -316,97 +299,24 @@ type operationError struct {
 	err       error
 }
 
-func stageMutations(root string, mutations []mutation) *operationError {
-	for i := range mutations {
-		path, err := securePath(root, mutations[i].entry.path)
-		if err != nil {
-			return &operationError{mutations[i].entry.path, "validate", err}
-		}
-		parent := filepath.Dir(path)
-		probe, err := os.CreateTemp(parent, ".picogent-undo-probe-*")
-		if err != nil {
-			return &operationError{mutations[i].entry.path, "stage", err}
-		}
-		probeName := probe.Name()
-		if err := probe.Close(); err != nil {
-			_ = os.Remove(probeName)
-			return &operationError{mutations[i].entry.path, "stage", err}
-		}
-		if err := os.Remove(probeName); err != nil {
-			return &operationError{mutations[i].entry.path, "stage", err}
-		}
-
-		if !mutations[i].entry.before.exists {
-			continue
-		}
-		f, err := os.CreateTemp(parent, ".picogent-undo-stage-*")
-		if err != nil {
-			return &operationError{mutations[i].entry.path, "stage", err}
-		}
-		mutations[i].stage = f.Name()
-		if _, err = f.Write(mutations[i].entry.before.data); err == nil {
-			err = f.Sync()
-		}
-		if closeErr := f.Close(); err == nil {
-			err = closeErr
-		}
-		if err == nil {
-			err = os.Chmod(mutations[i].stage, mutations[i].entry.before.mode)
-		}
-		if err != nil {
-			return &operationError{mutations[i].entry.path, "stage", err}
-		}
-	}
-	return nil
-}
-
 func applyMutation(root string, m *mutation) *operationError {
-	path, err := securePath(root, m.entry.path)
-	if err != nil {
-		return &operationError{m.entry.path, "validate", err}
-	}
-	current, err := readRegularFile(path)
+	current, err := readWorkspaceFile(root, m.entry.path)
 	if err != nil {
 		return &operationError{m.entry.path, "inspect", err}
 	}
 	if current.sum != m.entry.expected {
 		return &operationError{m.entry.path, "conflict", ErrConflict}
 	}
-
-	if current.exists {
-		backup, err := unusedTempName(filepath.Dir(path), ".picogent-undo-backup-*")
-		if err != nil {
-			return &operationError{m.entry.path, "backup", err}
-		}
-		if err := os.Rename(path, backup); err != nil {
-			return &operationError{m.entry.path, "backup", err}
-		}
-		m.backup = backup
-		m.claimed = true
-		claimed, err := readRegularFile(backup)
-		if err != nil || claimed.sum != m.entry.expected {
-			if err == nil {
-				err = ErrConflict
-			}
-			if restoreErr := os.Rename(backup, path); restoreErr == nil {
-				m.backup = ""
-				m.claimed = false
-			}
-			return &operationError{m.entry.path, "conflict", err}
-		}
-	}
-
+	m.after = current
+	m.applied = true
 	if m.entry.before.exists {
-		if err := os.Link(m.stage, path); err != nil {
-			return &operationError{m.entry.path, "publish", err}
+		if err := writeWorkspaceState(root, m.entry.path, m.entry.before); err != nil {
+			return &operationError{m.entry.path, "write", err}
 		}
-		m.applied = true
-		if err := os.Remove(m.stage); err != nil {
-			return &operationError{m.entry.path, "publish", err}
-		}
-		m.stage = ""
-	} else {
-		m.applied = true
+		return nil
+	}
+	if err := workspace.Remove(root, m.entry.path); err != nil {
+		return &operationError{m.entry.path, "remove", err}
 	}
 	return nil
 }
@@ -415,70 +325,26 @@ func rollback(root string, mutations []mutation, result *RestoreResult) bool {
 	ok := true
 	for i := len(mutations) - 1; i >= 0; i-- {
 		m := &mutations[i]
-		path, err := securePath(root, m.entry.path)
+		if !m.applied {
+			continue
+		}
+		current, err := readWorkspaceFile(root, m.entry.path)
 		if err != nil {
-			result.Failures = append(result.Failures, failure(m.entry.path, "rollback validate", err))
+			result.Failures = append(result.Failures, failure(m.entry.path, "rollback inspect", err))
 			ok = false
 			continue
 		}
-		if m.applied && m.entry.before.exists {
-			state, inspectErr := readRegularFile(path)
-			if inspectErr != nil || state.sum != m.entry.before.sum {
-				if inspectErr == nil {
-					inspectErr = ErrConflict
-				}
-				result.Failures = append(result.Failures, failure(m.entry.path, "rollback conflict", inspectErr))
-				ok = false
-				continue
-			}
-			if err := os.Remove(path); err != nil {
-				result.Failures = append(result.Failures, failure(m.entry.path, "rollback remove", err))
-				ok = false
-				continue
-			}
+		if current.sum != m.entry.before.sum {
+			result.Failures = append(result.Failures, failure(m.entry.path, "rollback conflict", ErrConflict))
+			ok = false
+			continue
 		}
-		if m.claimed && m.backup != "" {
-			if _, err := os.Lstat(path); err == nil {
-				result.Failures = append(result.Failures, failure(m.entry.path, "rollback conflict", ErrConflict))
-				ok = false
-				continue
-			} else if !errors.Is(err, fs.ErrNotExist) {
-				result.Failures = append(result.Failures, failure(m.entry.path, "rollback inspect", err))
-				ok = false
-				continue
-			}
-			if err := os.Rename(m.backup, path); err != nil {
-				result.Failures = append(result.Failures, failure(m.entry.path, "rollback restore", err))
-				ok = false
-				continue
-			}
-			m.backup = ""
-			m.claimed = false
+		if err := writeWorkspaceState(root, m.entry.path, m.after); err != nil {
+			result.Failures = append(result.Failures, failure(m.entry.path, "rollback restore", err))
+			ok = false
 		}
 	}
 	return ok
-}
-
-func cleanupStages(mutations []mutation) {
-	for i := range mutations {
-		if mutations[i].stage != "" {
-			_ = os.Remove(mutations[i].stage)
-		}
-	}
-}
-
-func appendRecoveryPaths(mutations []mutation, result *RestoreResult) {
-	for i := range mutations {
-		if mutations[i].backup == "" {
-			continue
-		}
-		result.Failures = append(result.Failures, Failure{
-			Path:         filepath.ToSlash(mutations[i].entry.path),
-			Operation:    "recovery",
-			Message:      "displaced contents preserved after incomplete rollback",
-			RecoveryPath: mutations[i].backup,
-		})
-	}
 }
 
 func resolveWorkspace(workspace string) (string, string, error) {
@@ -575,6 +441,48 @@ func readWorkspaceFile(root, rel string) (fileState, error) {
 	return readRegularFileHandle(f)
 }
 
+func writeWorkspaceState(root, rel string, state fileState) error {
+	if !state.exists {
+		err := workspace.Remove(root, rel)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	f, err := workspace.OpenWrite(root, rel)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if err := writeAll(f, state.data); err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	return f.Chmod(state.mode)
+}
+
+func writeAll(w io.Writer, data []byte) error {
+	for len(data) > 0 {
+		n, err := w.Write(data)
+		if err != nil {
+			return err
+		}
+		if n <= 0 {
+			return io.ErrShortWrite
+		}
+		data = data[n:]
+	}
+	return nil
+}
+
 func readRegularFileHandle(f *os.File) (fileState, error) {
 	info, err := f.Stat()
 	if err != nil {
@@ -584,28 +492,6 @@ func readRegularFileHandle(f *os.File) (fileState, error) {
 		return fileState{}, errors.New("checkpoint path is not a regular file")
 	}
 	data, err := io.ReadAll(f)
-	if err != nil {
-		return fileState{}, err
-	}
-	state := fileState{exists: true, mode: restorableMode(info.Mode()), data: data}
-	state.sum = fingerprintFor(state)
-	return state, nil
-}
-
-func readRegularFile(path string) (fileState, error) {
-	info, err := os.Lstat(path)
-	if errors.Is(err, fs.ErrNotExist) {
-		state := fileState{}
-		state.sum = fingerprintFor(state)
-		return state, nil
-	}
-	if err != nil {
-		return fileState{}, err
-	}
-	if !info.Mode().IsRegular() {
-		return fileState{}, errors.New("checkpoint path is not a regular file")
-	}
-	data, err := os.ReadFile(path)
 	if err != nil {
 		return fileState{}, err
 	}
@@ -632,22 +518,6 @@ func fingerprintFor(state fileState) fingerprint {
 	var sum fingerprint
 	copy(sum[:], h.Sum(nil))
 	return sum
-}
-
-func unusedTempName(dir, pattern string) (string, error) {
-	f, err := os.CreateTemp(dir, pattern)
-	if err != nil {
-		return "", err
-	}
-	name := f.Name()
-	if err := f.Close(); err != nil {
-		_ = os.Remove(name)
-		return "", err
-	}
-	if err := os.Remove(name); err != nil {
-		return "", err
-	}
-	return name, nil
 }
 
 func failure(path, operation string, err error) Failure {

@@ -56,10 +56,11 @@ prompt-construction test.
 
 ## Open or unrecorded risks
 
-- Checkpoint restore staging, publication, deletion, and rollback still use
-  path-based I/O after resolution. A separate descriptor-relative restore
-  design and runtime proof is required before checkpoint restore TOCTOU safety
-  can be marked confirmed.
+- Checkpoint restore now uses descriptor-relative secure writes and deletion,
+  with in-memory post-turn states for best-effort rollback. The operation is
+  intentionally not a multi-file atomic transaction; hostile-runtime restore
+  stress and cross-platform deletion evidence remain required before this is a
+  broad checkpoint safety claim.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
 - Explicit setup flows can run package-manager installs and official

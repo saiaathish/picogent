@@ -38,3 +38,37 @@ func TestUnixOpenRejectsSymlinkedWorkspaceAncestor(t *testing.T) {
 		t.Fatal("OpenRead followed a symlinked workspace ancestor")
 	}
 }
+
+func TestRemoveDoesNotFollowOutsideSymlink(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "owned.txt"), []byte("owned"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(root, "owned.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "owned.txt")); !os.IsNotExist(err) {
+		t.Fatalf("removed file still exists: %v", err)
+	}
+
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, filepath.Join(root, "escape")); err != nil {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation requires privileges on Windows")
+		}
+		t.Fatal(err)
+	}
+	if err := Remove(root, "escape"); err == nil && runtime.GOOS == "windows" {
+		t.Fatal("Windows Remove unexpectedly followed a reparse point")
+	}
+	if got, err := os.ReadFile(secret); err != nil || string(got) != "private" {
+		t.Fatalf("outside file changed: %q, %v", got, err)
+	}
+}
