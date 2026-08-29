@@ -105,6 +105,7 @@ func TestWriteAtomicReadersNeverObservePartialData(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer close(done)
 		<-start
 		for i := 1; i <= rounds; i++ {
 			if err := WriteAtomic(path, []byte(fmt.Sprintf("version-%d:%s", i, strings.Repeat("x", 2048))), 0o600); err != nil {
@@ -112,7 +113,6 @@ func TestWriteAtomicReadersNeverObservePartialData(t *testing.T) {
 				return
 			}
 		}
-		close(done)
 	}()
 	for i := 0; i < 3; i++ {
 		wg.Add(1)
