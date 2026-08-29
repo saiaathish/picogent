@@ -228,6 +228,65 @@ func TestDurableTaskResumesUnverifiedWriteWithAutomaticVerification(t *testing.T
 	}
 }
 
+func TestDurableTaskAutomaticVerificationIncludesRetainedChanges(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "first.txt"), []byte("first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "session-cumulative-verification-targets"
+	task, err := taskstate.New(sessionID, "fix both files", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordChanged("first.txt")
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+
+	secondArgs, err := json.Marshal(map[string]string{"path": "second.txt", "content": "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "second", Name: "write_file", Arguments: string(secondArgs)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: both files are verified"}},
+	}}
+	var gotTargets []string
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(_ context.Context, targets []string) (string, error) {
+			gotTargets = append([]string(nil), targets...)
+			return "verify PASS\n2 files passed", nil
+		},
+	})
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = store
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "continue fixing the task"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(gotTargets, ",") != "second.txt,first.txt" {
+		t.Fatalf("automatic verification targets=%v, want current and retained changes", gotTargets)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone || result.Task.ChangeSeq != 2 || result.Task.VerifiedChangeSeq != 2 {
+		t.Fatalf("cumulative verification task=%#v", result.Task)
+	}
+}
+
 func TestDurableTaskResumesLegacyCompletedChangesForVerification(t *testing.T) {
 	workspace := t.TempDir()
 	store := taskstate.NewStore(t.TempDir())
