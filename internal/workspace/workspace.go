@@ -1,7 +1,7 @@
 // Package workspace provides descriptor-safe access to workspace-relative
 // files and directories. Callers must still perform their own permission
 // decision; this package protects the subsequent filesystem operation from
-// symlink and reparse-point path substitution.
+// symlink, hard-link, and reparse-point path substitution.
 package workspace
 
 import (
@@ -17,6 +17,13 @@ import (
 // ErrContentConflict reports that a file changed after an edit operation read
 // it. The caller must re-read the file and recompute the edit.
 var ErrContentConflict = errors.New("workspace file changed during edit")
+
+func rejectHardLinkCount(count uint64) error {
+	if count > 1 {
+		return errors.New("workspace files with multiple hard links are not allowed")
+	}
+	return nil
+}
 
 // Relative returns a clean, non-empty path relative to root. path may be an
 // absolute path or a path relative to root; it must not escape root.
@@ -106,7 +113,7 @@ func directoryParts(root, path string) ([]string, error) {
 }
 
 // OpenRead opens a regular file below root without following path-component
-// symlinks or reparse points.
+// symlinks, hard links, or reparse points.
 func OpenRead(root, path string) (*os.File, error) {
 	return open(root, path, openRead)
 }
@@ -132,14 +139,15 @@ func ReadDir(root, path string) ([]os.DirEntry, error) {
 }
 
 // OpenWrite opens or creates a regular file below root without following
-// path-component symlinks or reparse points. It does not truncate the file;
-// callers can validate cancellation before truncating the returned handle.
+// path-component symlinks, hard links, or reparse points. It does not truncate
+// the file; callers can validate cancellation before truncating the returned
+// handle.
 func OpenWrite(root, path string) (*os.File, error) {
 	return open(root, path, openWrite)
 }
 
 // OpenEdit opens an existing regular file below root for read/write without
-// following path-component symlinks or reparse points.
+// following path-component symlinks, hard links, or reparse points.
 func OpenEdit(root, path string) (*os.File, error) {
 	return open(root, path, openEdit)
 }
@@ -147,7 +155,8 @@ func OpenEdit(root, path string) (*os.File, error) {
 // WriteAtomic writes a complete file below root and publishes it as one
 // filesystem replacement. Missing parent directories are created like
 // OpenWrite. Existing regular files retain their permission bits; symlinked
-// or non-regular targets are rejected. Ordinary path readers therefore see
+// or non-regular targets are rejected, as are regular files with multiple hard
+// links. Ordinary path readers therefore see
 // either the previous complete file or the new complete file, not a live
 // truncate-and-rewrite. Like all pathname-based filesystem publication, this
 // does not make a directory writable by an uncooperative same-UID attacker
@@ -204,7 +213,7 @@ func writeWorkspaceAll(file *os.File, data []byte) error {
 }
 
 // Remove removes the final regular-file name below root without following a
-// symlink or reparse point. It is intentionally name-based at the final
+// symlink, hard link, or reparse point. It is intentionally name-based at the final
 // component, so an attacker can cause a safe failure or removal of the
 // replaced name inside the workspace, but can never redirect deletion outside
 // the descriptor-anchored root.

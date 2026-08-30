@@ -73,6 +73,10 @@ func open(root, path string, kind openKind) (*os.File, error) {
 		_ = f.Close()
 		return nil, fmt.Errorf("workspace path %q is not a regular file", rel)
 	}
+	if err := rejectHardLinkFile(f); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("open workspace file %q: %w", rel, err)
+	}
 	return f, nil
 }
 
@@ -323,6 +327,9 @@ func workspaceTargetMode(parent int, leaf string) (uint32, bool, error) {
 	targetMode := uint32(target.Mode)
 	switch targetMode & uint32(unix.S_IFMT) {
 	case uint32(unix.S_IFREG):
+		if err := rejectHardLinkCount(uint64(target.Nlink)); err != nil {
+			return 0, false, err
+		}
 		return targetMode & 0o7777, true, nil
 	case uint32(unix.S_IFLNK):
 		return 0, false, fmt.Errorf("workspace path %q is a symbolic link", leaf)

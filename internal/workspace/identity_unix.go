@@ -22,3 +22,18 @@ func identityForFile(f *os.File) (Identity, error) {
 	}
 	return Identity{Volume: uint64(stat.Dev), File: uint64(stat.Ino), Known: true}, nil
 }
+
+func rejectHardLinkFile(f *os.File) error {
+	if f == nil {
+		return errors.New("file is nil")
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat == nil {
+		return errors.New("filesystem link count is unavailable")
+	}
+	return rejectHardLinkCount(uint64(stat.Nlink))
+}

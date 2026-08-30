@@ -196,6 +196,40 @@ func TestWriteAtomicRejectsSymlinkEntries(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRejectsHardLinkedFiles(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	linked := filepath.Join(root, "linked.txt")
+	if err := os.WriteFile(secret, []byte("private\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(secret, linked); err != nil {
+		t.Skipf("hard links unavailable in test environment: %v", err)
+	}
+
+	for name, open := range map[string]func() (*os.File, error){
+		"read":  func() (*os.File, error) { return OpenRead(root, "linked.txt") },
+		"write": func() (*os.File, error) { return OpenWrite(root, "linked.txt") },
+		"edit":  func() (*os.File, error) { return OpenEdit(root, "linked.txt") },
+	} {
+		file, err := open()
+		if err == nil {
+			_ = file.Close()
+			t.Fatalf("%s opened a hard-linked workspace file", name)
+		}
+	}
+	if err := WriteAtomic(root, "linked.txt", []byte("must not replace\n")); err == nil {
+		t.Fatal("WriteAtomic accepted a hard-linked target")
+	}
+	if err := Remove(root, "linked.txt"); err == nil {
+		t.Fatal("Remove accepted a hard-linked target")
+	}
+	if got, err := os.ReadFile(secret); err != nil || string(got) != "private\n" {
+		t.Fatalf("hard-linked outside file changed: %q, %v", got, err)
+	}
+}
+
 func TestRemoveDoesNotFollowOutsideSymlink(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
