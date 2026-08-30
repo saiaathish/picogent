@@ -30,7 +30,7 @@ func openSecureParent(path string, create bool) (secureParent, error) {
 	if err != nil {
 		return nil, err
 	}
-	current, err := openWindowsRoot(rootPath, create)
+	current, err := openWindowsRoot(rootPath)
 	if err != nil {
 		return nil, err
 	}
@@ -354,26 +354,16 @@ func renameWindowsHandle(source, parent windows.Handle, name string) error {
 
 func (p *windowsParent) sync() error { return nil }
 
-func openWindowsRoot(path string, create bool) (windows.Handle, error) {
-	access := uint32(windows.FILE_GENERIC_READ)
-	if create {
-		access |= windows.FILE_GENERIC_WRITE
-	}
-	return openWindowsHandle(0, ntPath(path), access, windows.FILE_OPEN, windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT)
+func openWindowsRoot(path string) (windows.Handle, error) {
+	return openWindowsHandle(0, ntPath(path), windows.FILE_GENERIC_READ, windows.FILE_OPEN, windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT)
 }
 
 func openWindowsDirectory(parent windows.Handle, name string, create bool) (windows.Handle, error) {
-	access := uint32(windows.FILE_GENERIC_READ)
-	if create {
-		// The parent handle must carry directory-create rights when a caller
-		// may create this component or a child file below the final directory.
-		access |= windows.FILE_GENERIC_WRITE
-	}
 	disposition := uint32(windows.FILE_OPEN)
 	if create {
 		disposition = windows.FILE_OPEN_IF
 	}
-	return openWindowsHandle(parent, name, access, disposition, windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT)
+	return openWindowsHandle(parent, name, windows.FILE_GENERIC_READ, disposition, windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT)
 }
 
 func openWindowsFile(parent windows.Handle, name string, access, disposition uint32) (windows.Handle, error) {
