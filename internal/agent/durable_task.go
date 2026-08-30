@@ -561,6 +561,13 @@ func cloneTask(task *taskstate.Task) *taskstate.Task {
 	cp.Risks = append([]string(nil), task.Risks...)
 	cp.Uncertainty = append([]string(nil), task.Uncertainty...)
 	cp.Evidence = append([]taskstate.Evidence(nil), task.Evidence...)
+	cp.Turns = append([]taskstate.TurnRecord(nil), task.Turns...)
+	for i := range cp.Turns {
+		if task.Turns[i].FinishedAt != nil {
+			finished := *task.Turns[i].FinishedAt
+			cp.Turns[i].FinishedAt = &finished
+		}
+	}
 	return &cp
 }
 
