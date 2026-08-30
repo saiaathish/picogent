@@ -137,6 +137,22 @@ func TestUndoConflictDoesNotInvalidateDurableEvidence(t *testing.T) {
 	}
 }
 
+func TestUndoPreservesCompletedRestoreWarning(t *testing.T) {
+	warning := errors.New("checkpoint restored but temporary file cleanup failed")
+	result := checkpoint.RestoreResult{Restored: []string{"fixed.txt"}, Complete: true}
+
+	msg, complete, err := formatUndoRestore(result, warning)
+	if !complete {
+		t.Fatal("completed restore was treated as incomplete")
+	}
+	if !strings.Contains(msg, "restored fixed.txt") {
+		t.Fatalf("restore message = %q", msg)
+	}
+	if err == nil || !strings.Contains(err.Error(), "cleanup failed") || !errors.Is(err, warning) {
+		t.Fatalf("restore warning = %v", err)
+	}
+}
+
 func newDurableUndoFixture(t *testing.T, status taskstate.Status) (*Agent, *taskstate.Store, *taskstate.Task) {
 	t.Helper()
 	root := t.TempDir()

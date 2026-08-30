@@ -50,6 +50,10 @@ func (u *turnUndo) seal() ([]string, error) {
 
 func (u *turnUndo) restore() (string, bool, error) {
 	result, err := u.checkpoint.Restore()
+	return formatUndoRestore(result, err)
+}
+
+func formatUndoRestore(result checkpoint.RestoreResult, err error) (string, bool, error) {
 	// Restore can return a cleanup warning after all workspace mutations have
 	// been published. Complete is authoritative for whether the checkpoint is
 	// consumed and durable evidence must be invalidated.
