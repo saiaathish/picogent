@@ -1,6 +1,7 @@
 package taskstate
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 var (
@@ -43,6 +46,38 @@ func (s *Store) Path(sessionID string) (string, error) {
 	return filepath.Join(s.dir, sessionID+".json"), nil
 }
 
+// AcquireSessionLock reserves one durable task session for the lifetime of a
+// turn. Per-operation CAS protects individual checkpoint writes, but it cannot
+// stop two processes from making the same workspace changes concurrently. The
+// lock is a kernel-backed file lock, so it is released automatically if the
+// owning process exits.
+func (s *Store) AcquireSessionLock(sessionID string) (func() error, error) {
+	path, err := s.Path(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := securefile.EnsureDir(s.dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create task store: %w", err)
+	}
+	file, err := securefile.OpenLockFile(path + ".run.lock")
+	if err != nil {
+		return nil, fmt.Errorf("open task session lock: %w", err)
+	}
+	unlock, err := securefile.TryLockFile(file, true)
+	if err != nil {
+		_ = file.Close()
+		return nil, fmt.Errorf("task session %q is already running: %w", sessionID, err)
+	}
+	var once sync.Once
+	var releaseErr error
+	return func() error {
+		once.Do(func() {
+			releaseErr = errors.Join(unlock(), file.Close())
+		})
+		return releaseErr
+	}, nil
+}
+
 // Save atomically persists task state with private file permissions. The
 // task's current Revision is the expected on-disk generation; a successful
 // save advances it by one. This makes ordinary Save calls compare-and-swap
@@ -64,9 +99,6 @@ func (s *Store) SaveIfRevision(task *Task, expected uint64) error {
 	if task.Revision != expected {
 		return fmt.Errorf("%w: task revision %d does not match expected %d", ErrRevisionConflict, task.Revision, expected)
 	}
-	if err := task.Validate(); err != nil {
-		return err
-	}
 	path, err := s.Path(task.SessionID)
 	if err != nil {
 		return err
@@ -74,7 +106,7 @@ func (s *Store) SaveIfRevision(task *Task, expected uint64) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+	if err := securefile.EnsureDir(s.dir, 0o700); err != nil {
 		return fmt.Errorf("create task store: %w", err)
 	}
 	unlock, err := acquireTaskStoreLock(s.dir)
@@ -97,6 +129,13 @@ func (s *Store) SaveIfRevision(task *Task, expected uint64) error {
 		return errors.New("task state revision exhausted")
 	}
 	candidate := *task
+	// Never write a legacy terminal marker that lacks the authoritative v4
+	// completion predicate. Keep the caller's value unchanged until the CAS
+	// write succeeds, just as with any other failed save.
+	candidate.NormalizeLegacyCompletion()
+	if err := candidate.Validate(); err != nil {
+		return err
+	}
 	candidate.Revision = expected + 1
 	candidate.touch()
 	if err := candidate.Validate(); err != nil {
@@ -114,31 +153,13 @@ func revisionConflict(expected, actual uint64) error {
 }
 
 func saveTaskFile(path string, task *Task) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".task-*.tmp")
+	data, err := json.MarshalIndent(task, "", "  ")
 	if err != nil {
-		return fmt.Errorf("create task temp file: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return fmt.Errorf("protect task temp file: %w", err)
-	}
-	enc := json.NewEncoder(tmp)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(task); err != nil {
-		tmp.Close()
 		return fmt.Errorf("encode task state: %w", err)
 	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("sync task state: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close task state: %w", err)
-	}
-	if err := replaceFile(tmpName, path); err != nil {
-		return fmt.Errorf("replace task state: %w", err)
+	data = append(data, '\n')
+	if err := securefile.WriteAtomic(path, data, 0o600); err != nil {
+		return fmt.Errorf("write task state: %w", err)
 	}
 	return nil
 }
@@ -151,7 +172,7 @@ func (s *Store) Load(sessionID string) (*Task, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+	if err := securefile.EnsureDir(s.dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create task store: %w", err)
 	}
 	unlock, err := acquireTaskStoreLock(s.dir)
@@ -159,19 +180,35 @@ func (s *Store) Load(sessionID string) (*Task, error) {
 		return nil, fmt.Errorf("lock task store: %w", err)
 	}
 	defer unlock()
-	return loadTaskFile(path, sessionID)
+	task, err := loadTaskFile(path, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if !task.NormalizeLegacyCompletion() {
+		return task, nil
+	}
+	if task.Revision == ^uint64(0) {
+		return nil, errors.New("task state revision exhausted while normalizing legacy completion")
+	}
+	task.Revision++
+	if err := task.Validate(); err != nil {
+		return nil, fmt.Errorf("validate normalized task state: %w", err)
+	}
+	if err := saveTaskFile(path, task); err != nil {
+		return nil, fmt.Errorf("persist normalized task state: %w", err)
+	}
+	return task, nil
 }
 
 func loadTaskFile(path, sessionID string) (*Task, error) {
-	f, err := os.Open(path)
+	data, err := securefile.ReadFileLimited(path, 1<<20)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
-		return nil, fmt.Errorf("open task state: %w", err)
+		return nil, fmt.Errorf("read task state: %w", err)
 	}
-	defer f.Close()
-	dec := json.NewDecoder(io.LimitReader(f, 1<<20))
+	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var task Task
 	if err := dec.Decode(&task); err != nil {
@@ -201,7 +238,7 @@ func (s *Store) Delete(sessionID string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(s.dir, 0o700); err != nil {
+	if err := securefile.EnsureDir(s.dir, 0o700); err != nil {
 		return fmt.Errorf("create task store: %w", err)
 	}
 	unlock, err := acquireTaskStoreLock(s.dir)
@@ -209,7 +246,7 @@ func (s *Store) Delete(sessionID string) error {
 		return fmt.Errorf("lock task store: %w", err)
 	}
 	defer unlock()
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := securefile.RemoveFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("delete task state: %w", err)
 	}
 	return nil

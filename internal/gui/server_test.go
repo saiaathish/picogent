@@ -47,6 +47,31 @@ func TestVerificationEventStatusPreservesEveryOutcome(t *testing.T) {
 	}
 }
 
+func TestGUIRebuildAgentPreservesRuntimeAlwaysAllowedTools(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	gate := perm.New(config.ModeFast, workspace, nil)
+	gate.AddAlwaysAllowed("verify")
+	old := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
+	s := &server{cfg: cfg, ag: old}
+
+	if err := s.rebuildAgent(); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	got := s.ag.Gate.AlwaysAllowedTools()
+	s.mu.Unlock()
+	for _, tool := range got {
+		if tool == "verify" {
+			return
+		}
+	}
+	t.Fatalf("rebuilt agent lost runtime approval: %v", got)
+}
+
 func TestTaskProgressClearEventKeepsNullTaskEnvelope(t *testing.T) {
 	raw, err := json.Marshal(event{Type: "task_progress", SessionID: "session-current"})
 	if err != nil {
@@ -1007,7 +1032,9 @@ func TestQueuedAutomaticScopeRunsAfterOneOrderedNotice(t *testing.T) {
 		{Message: llm.Message{Role: "assistant", Content: "first done"}},
 		{Message: llm.Message{Role: "assistant", Content: "scoped second done"}},
 	}}
-	ag := agent.New(cfg, scripted, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	gate := perm.New(config.ModeFast, workspace, nil)
+	gate.AddAlwaysAllowed("verify")
+	ag := agent.New(cfg, scripted, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
 	events := make(chan event, 128)
 	s := &server{cfg: cfg, ag: ag, sessionID: "queued-scope-order", permCh: make(chan perm.Decision, 1), subs: []chan event{events}}
 	entered := make(chan struct{})

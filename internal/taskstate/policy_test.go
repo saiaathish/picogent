@@ -3,6 +3,10 @@ package taskstate
 import "testing"
 
 func TestPolicyContinuationAndStopRules(t *testing.T) {
+	markReady := func(task *Task) {
+		task.DefinitionOfDone = []Criterion{{Description: "work", Required: true}}
+		task.RecordCriterionVerification(0, "PASS", "criterion passed", "verify")
+	}
 	base := func() *Task {
 		task, err := New("s", "fix it", []string{"work"})
 		if err != nil {
@@ -17,8 +21,8 @@ func TestPolicyContinuationAndStopRules(t *testing.T) {
 		signals Signals
 		want    StopReason
 	}{
-		{"goal signal", nil, Signals{GoalResolved: true, SafeNextAction: true}, StopGoalComplete},
-		{"done state", func(v *Task) { v.Status = StatusDone }, Signals{SafeNextAction: true}, StopGoalComplete},
+		{"goal signal", func(v *Task) { markReady(v) }, Signals{GoalResolved: true, SafeNextAction: true}, StopGoalComplete},
+		{"done state", func(v *Task) { markReady(v); v.Status = StatusDone }, Signals{SafeNextAction: true}, StopGoalComplete},
 		{"permission", nil, Signals{PermissionNeeded: true, SafeNextAction: true}, StopPermissionNeeded},
 		{"choice", nil, Signals{UserChoiceRequired: true, SafeNextAction: true}, StopUserChoiceRequired},
 		{"no safe action", nil, Signals{}, StopUserChoiceRequired},
@@ -74,6 +78,8 @@ func TestPolicyPrecedenceAndDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	task.Status = StatusWorking
+	task.DefinitionOfDone = []Criterion{{Description: "fix", Required: true}}
+	task.RecordCriterionVerification(0, "PASS", "criterion passed", "verify")
 	task.Attempts = DefaultPolicy().MaxAttempts
 	got := ShouldContinue(task, Signals{GoalResolved: true, PermissionNeeded: true})
 	if got.Reason != StopGoalComplete {

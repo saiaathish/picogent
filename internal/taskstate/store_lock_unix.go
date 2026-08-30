@@ -3,10 +3,9 @@
 package taskstate
 
 import (
-	"os"
 	"sync"
 
-	"golang.org/x/sys/unix"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 // The process mutex prevents same-process Store values from depending on the
@@ -15,18 +14,19 @@ var taskStoresProcessLock sync.Mutex
 
 func acquireTaskStoreLock(dir string) (func(), error) {
 	taskStoresProcessLock.Lock()
-	f, err := os.OpenFile(dir+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := securefile.OpenLockFile(dir + ".lock")
 	if err != nil {
 		taskStoresProcessLock.Unlock()
 		return nil, err
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+	unlock, err := securefile.LockFile(f, true)
+	if err != nil {
 		_ = f.Close()
 		taskStoresProcessLock.Unlock()
 		return nil, err
 	}
 	return func() {
-		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+		_ = unlock()
 		_ = f.Close()
 		taskStoresProcessLock.Unlock()
 	}, nil

@@ -53,16 +53,31 @@ func (h *taskRecordingHandler) OnError(err error) {
 
 func TestDurableTaskPersistsOutsideHistoryAndResumes(t *testing.T) {
 	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "signup.go"), []byte("package signup\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	store := taskstate.NewStore(t.TempDir())
 	cfg := config.Default()
 	cfg.Workspace = workspace
 	cfg.Provider = config.ProviderOllama
-	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
-	a := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}, reg, perm.New(config.ModeFast, workspace, nil))
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "verify", Name: "verify", Arguments: `{"targets":["signup.go"]}`}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(_ context.Context, targets []string) (string, error) {
+			if strings.Join(targets, ",") != "signup.go" {
+				t.Fatalf("verification targets = %v, want signup.go", targets)
+			}
+			return "verify PASS\naudit checks passed", nil
+		},
+	})
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
 	a.TaskStore = store
 	a.SetTaskSession("session-1")
 
-	history, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "audit the auth flow"}, allowAll{})
+	history, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "audit the signup flow"}, allowAll{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -589,7 +604,7 @@ func TestBlockedDurableTaskRerunPreservesCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	task.RecordChanged("signup.go")
-	task.AddVerificationWithObservation("go test ./...", true, "verify PASS", &observation)
+	task.AddVerificationForCriteria([]int{0, 1}, "go test ./...", true, "verify PASS", &observation)
 	task.Block("permission needed")
 	if err := store.Save(task); err != nil {
 		t.Fatal(err)

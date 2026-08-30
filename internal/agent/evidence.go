@@ -120,27 +120,32 @@ func normalizeVerificationEvidence(evidence verificationEvidence) verificationEv
 }
 
 func recheckVerificationEvidence(ctx context.Context, root string, evidence verificationEvidence) (bool, string) {
+	_, fresh, reason := recheckVerificationEvidenceObservation(ctx, root, evidence)
+	return fresh, reason
+}
+
+func recheckVerificationEvidenceObservation(ctx context.Context, root string, evidence verificationEvidence) (*workspace.Observation, bool, string) {
 	if !verificationObservationUsable(evidence) {
 		if reason := strings.TrimSpace(evidence.observationReason); reason != "" {
-			return false, reason
+			return nil, false, reason
 		}
-		return false, "workspace observation is not usable"
+		return nil, false, "workspace observation is not usable"
 	}
 	after, reason := captureVerificationObservation(ctx, root, observationPaths(evidence.observation))
 	if reason != "" {
-		return false, reason
+		return after, false, reason
 	}
 	if after == nil {
-		return false, "workspace observation is missing"
+		return nil, false, "workspace observation is missing"
 	}
 	comparison := workspace.Compare(*evidence.observation, *after)
 	if !comparison.Fresh {
 		if comparison.Reason == "" {
-			return false, "workspace evidence is not fresh"
+			return after, false, "workspace evidence is not fresh"
 		}
-		return false, comparison.Reason
+		return after, false, comparison.Reason
 	}
-	return true, ""
+	return after, true, ""
 }
 
 func inconclusiveVerification(reason string) string {

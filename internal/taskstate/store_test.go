@@ -2,16 +2,40 @@ package taskstate
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/saiaathish/picogent/internal/securefile"
 )
+
+func TestStoreSessionLockRejectsConcurrentOwner(t *testing.T) {
+	store := NewStore(t.TempDir())
+	release, err := store.AcquireSessionLock("same-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.AcquireSessionLock("same-session")
+	if err == nil || second != nil || !errors.Is(err, securefile.ErrLocked) {
+		t.Fatalf("second session owner = release-nil=%v err=%v, want ErrLocked", second == nil, err)
+	}
+	if err := release(); err != nil {
+		t.Fatal(err)
+	}
+	third, err := store.AcquireSessionLock("same-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := third(); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestStoreRoundTripDeleteAndPermissions(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "nested", "tasks")
@@ -42,10 +66,10 @@ func TestStoreRoundTripDeleteAndPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(task, loaded) {
-		t.Fatalf("round trip mismatch:\nwant %+v\n got %+v", task, loaded)
+	if loaded.Version != task.Version || loaded.ID != task.ID || loaded.SessionID != task.SessionID || loaded.Revision != task.Revision || loaded.Goal != task.Goal || loaded.ChangeSeq != task.ChangeSeq || loaded.VerifiedChangeSeq != task.VerifiedChangeSeq {
+		t.Fatalf("round trip metadata mismatch:\nwant %+v\n got %+v", task, loaded)
 	}
-	if loaded.ChangeSeq != 1 || loaded.VerifiedChangeSeq != 1 || loaded.NeedsVerification() {
+	if loaded.ChangeSeq != 1 || loaded.VerifiedChangeSeq != 1 || !loaded.NeedsVerification() {
 		t.Fatalf("round-tripped evidence = %+v", loaded)
 	}
 	entries, err := os.ReadDir(dir)
@@ -63,6 +87,79 @@ func TestStoreRoundTripDeleteAndPermissions(t *testing.T) {
 	}
 	if _, err := store.Load(task.SessionID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("load missing = %v", err)
+	}
+}
+
+func TestStoreNormalizesUnprovenLegacyDoneState(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+	task, err := New("legacy-done", "finish safely", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Status = StatusDone
+	data, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.Path(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := store.Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != StatusWorking || loaded.Revision != 1 || loaded.EffectiveStatus() != StatusWorking {
+		t.Fatalf("legacy done was not normalized = %#v", loaded)
+	}
+	reloaded, err := store.Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Status != StatusWorking || reloaded.Revision != loaded.Revision {
+		t.Fatalf("normalized state was not durable = %#v", reloaded)
+	}
+}
+
+func TestStoreRejectsSymlinkedStateTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	dir := t.TempDir()
+	outside := t.TempDir()
+	path := filepath.Join(dir, "symlinked.json")
+	sentinel := filepath.Join(outside, "sentinel.json")
+	if err := os.WriteFile(sentinel, []byte("outside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(sentinel, path); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(dir)
+	task, err := New("symlinked", "preserve the outside file", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(task); err == nil {
+		t.Fatal("save followed a symlinked task target")
+	}
+	got, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "outside\n" {
+		t.Fatalf("outside target changed: %q", got)
+	}
+	if task.Revision != 0 {
+		t.Fatalf("failed save advanced revision to %d", task.Revision)
 	}
 }
 
@@ -168,6 +265,9 @@ func TestStoreLegacyZeroRevisionCanBeClaimedOnce(t *testing.T) {
 }
 
 func TestStoreCrossProcessRejectsStaleRevision(t *testing.T) {
+	// This is cooperative process-level stress for the task-store lock/CAS.
+	// It is not evidence against an uncooperative same-UID filesystem writer.
+	const writers = 8
 	dir := t.TempDir()
 	store := NewStore(dir)
 	task, err := New("cross-process", "reject stale writers", []string{"work"})
@@ -187,7 +287,7 @@ func TestStoreCrossProcessRejectsStaleRevision(t *testing.T) {
 		result string
 		output bytes.Buffer
 	}
-	children := make([]child, 2)
+	children := make([]child, writers)
 	defer func() {
 		for i := range children {
 			if children[i].cmd != nil && children[i].cmd.Process != nil {
@@ -244,8 +344,8 @@ func TestStoreCrossProcessRejectsStaleRevision(t *testing.T) {
 			t.Fatalf("child %d result = %q", i, data)
 		}
 	}
-	if successes != 1 || conflicts != 1 {
-		t.Fatalf("cross-process results = successes %d conflicts %d", successes, conflicts)
+	if successes != 1 || conflicts != writers-1 {
+		t.Fatalf("cross-process results = successes %d conflicts %d, want 1/%d", successes, conflicts, writers-1)
 	}
 	final, err := store.Load(task.SessionID)
 	if err != nil {

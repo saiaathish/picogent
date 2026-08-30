@@ -92,6 +92,21 @@ func TestInferBuildsIntentContractAndDefinitionOfDone(t *testing.T) {
 	if ui.Intent == nil || ui.Intent.Class != "ui" || !ui.Intent.NeedsVisual {
 		t.Fatalf("ui intent = %+v", ui.Intent)
 	}
+
+	uiReview := Infer("review the browser UI visually")
+	if uiReview.Intent == nil || uiReview.Intent.Class != "review" || !uiReview.Intent.NeedsVisual {
+		t.Fatalf("UI review did not retain visual requirement: %+v", uiReview.Intent)
+	}
+}
+
+func TestInferDocumentationRequestIsTaskLike(t *testing.T) {
+	got := Infer("instead, document the note workflow")
+	if !got.TaskLike || got.Intent == nil {
+		t.Fatalf("documentation request was not inferred: %+v", got)
+	}
+	if got.Intent.Class != "documentation" || got.Intent.NeedsTests {
+		t.Fatalf("documentation intent = %+v", got.Intent)
+	}
 }
 
 func TestNewFromPromptPersistsIntentContract(t *testing.T) {

@@ -158,7 +158,7 @@ func recentDurableEvidence(items []taskstate.Evidence, limit int) []string {
 	}
 	out := make([]string, 0, len(items))
 	for _, item := range items {
-		value := item.Status + " kind=" + item.Kind + " source=" + item.Source + " summary=" + item.Summary
+		value := item.Status + " kind=" + string(item.Kind) + " source=" + item.Source + " summary=" + item.Summary
 		if item.Reference != "" {
 			value += " reference=" + item.Reference
 		}
