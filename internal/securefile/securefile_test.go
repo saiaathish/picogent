@@ -153,3 +153,28 @@ func TestWriteAtomicReadersNeverObservePartialData(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOpenLockFileCreatesMissingParent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "trace.lock")
+	file, err := OpenLockFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := LockFile(file, true)
+	if err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := unlock(); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil {
+		t.Fatal(err)
+	} else if !info.Mode().IsRegular() {
+		t.Fatalf("lock path is not a regular file: %s", info.Mode())
+	}
+}
