@@ -65,6 +65,8 @@ func TestUndoRecoversAfterCASConflict(t *testing.T) {
 		t.Fatal(err)
 	}
 	other.NoteAttempt()
+	other.RecordChanged("concurrent.txt")
+	other.Turns[0].Hypothesis = "concurrent history marker"
 	if err := store.Save(other); err != nil {
 		t.Fatal(err)
 	}
