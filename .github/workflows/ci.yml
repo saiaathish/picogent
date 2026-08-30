@@ -21,9 +21,16 @@ jobs:
         run: go test ./...
       - name: v0.2 release acceptance
         run: go test ./internal/acceptance -run TestV02ReleaseLoop -count=1
+      - name: Vet
+        run: go vet ./...
       - name: Race test (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: go test -race ./internal/agent ./internal/gui ./internal/tui ./internal/taskstate ./internal/acceptance
+      - name: Fuzz security boundaries (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          go test ./internal/perm -run '^$' -fuzz '^FuzzResolveWorkspacePathBoundary$' -fuzztime=2s
+          go test ./internal/tools -run '^$' -fuzz '^FuzzWebFetchIPBoundary$' -fuzztime=2s
       - name: Build
         run: go build -o picogent ./cmd/picogent
       - name: GUI listens
@@ -60,8 +67,20 @@ jobs:
           print("gui smoke ok", d.get("mode"), d.get("workspace"))
           PY
 
+  security:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -show verbose ./...
+
   release-evidence:
-    needs: test
+    needs: [test, security]
     runs-on: ubuntu-latest
     permissions:
       contents: read
