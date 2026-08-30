@@ -281,7 +281,16 @@ func (a *Agent) noteTaskVerification(evidence verificationEvidence, ev EventHand
 		passed = false
 	}
 	a.mutateTask(ev, func(task *taskstate.Task) error {
-		task.AddVerificationWithObservation("verify", passed, stored, evidence.observation)
+		criteria := task.RequiredCriterionIndices()
+		if len(criteria) == 0 {
+			task.AddVerificationWithObservation("verify", passed, stored, evidence.observation)
+			return nil
+		}
+		// One successful, workspace-bound verifier run is the trusted producer
+		// for the bounded definition-of-done criteria. Bind it explicitly so the
+		// durable completion predicate cannot be satisfied by aggregate narration
+		// or an unscoped passing status alone.
+		task.AddVerificationForCriteria(criteria, "verify", passed, stored, evidence.observation)
 		return nil
 	})
 	a.rememberVerification(stored)
@@ -373,6 +382,17 @@ func revalidatePersistedTask(root string, task *taskstate.Task) (bool, error) {
 		return false, nil
 	}
 	if task.Status == taskstate.StatusDone {
+		if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
+			return false, err
+		}
+	} else if task.Status == taskstate.StatusPlanning {
+		if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+			return false, err
+		}
+		if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
+			return false, err
+		}
+	} else if task.Status != taskstate.StatusVerifying && task.Status != taskstate.StatusBlocked {
 		if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
 			return false, err
 		}

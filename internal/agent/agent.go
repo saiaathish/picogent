@@ -760,10 +760,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint string, filesChanged []string, already bool, completionEvidenceRequired bool, state RuntimeState, gate *perm.Gate) verificationEvidence {
 	task := a.TaskSnapshot()
 	needsVerification := false
+	hasRequiredProof := false
 	if task != nil {
 		needsVerification = task.NeedsVerification()
+		hasRequiredProof = len(task.RequiredCriterionIndices()) > 0 || len(task.RequiredEvidenceKinds()) > 0
 	}
-	if ((already || len(filesChanged) == 0) && !needsVerification && !completionEvidenceRequired) || state.Tools == nil {
+	if (already && !needsVerification) || (len(filesChanged) == 0 && !needsVerification && !completionEvidenceRequired && !hasRequiredProof) || state.Tools == nil {
 		return verificationEvidence{}
 	}
 	regCtx := state.Tools.ContextSnapshot()
