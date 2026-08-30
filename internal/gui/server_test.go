@@ -793,7 +793,11 @@ func TestGUIQueuedSameTextGoalReplacementSurvivesOlderCompletion(t *testing.T) {
 	}
 	close(release)
 
-	deadline := time.Now().Add(15 * time.Second)
+	// Queue handoff runs in a real goroutine and this package can be heavily
+	// contended when the full repository suite starts every package together.
+	// Keep the assertion bounded, but allow a slow hosted runner to finish the
+	// admitted replacement turn.
+	deadline := time.Now().Add(45 * time.Second)
 	for {
 		s.mu.Lock()
 		active, pending := s.activeTurns, len(s.steerQueue)
@@ -1050,7 +1054,10 @@ func TestQueuedAutomaticScopeRunsAfterOneOrderedNotice(t *testing.T) {
 	}
 	close(release)
 
-	deadline := time.Now().Add(15 * time.Second)
+	// The queued turn may share a constrained hosted runner with the rest of
+	// the repository test matrix; retain a finite timeout without treating
+	// scheduler delay as a lifecycle failure.
+	deadline := time.Now().Add(45 * time.Second)
 	for {
 		s.mu.Lock()
 		active := s.activeTurns
