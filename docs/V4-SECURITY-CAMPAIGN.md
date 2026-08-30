@@ -145,6 +145,7 @@ close the open or unrecorded risks below.
 | #142 | CLI final error diagnostic sanitization | `bd64577` | `1e65301` | `33314642093` | `33314774741` |
 | #144 | GUI error event boundary sanitization | `fbc95f0` | `5355113` | `33315264433` | `33315385828` |
 | #146 | Selected GUI HTTP error sanitization | `ccd4d61` | `d65c36f` | `33315831874` | `33315951810` |
+| #148 | Project API HTTP error sanitization | `411a001` | `f7c7fe7` | `33317001455` | `33317144181` |
 
 ## Open or unrecorded risks
 
