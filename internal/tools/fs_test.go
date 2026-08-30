@@ -120,6 +120,7 @@ func TestFilesystemToolsRejectOutsideSymlinkAtRun(t *testing.T) {
 		{name: "read_file", args: `{"path":"escape/secret.txt"}`},
 		{name: "write_file", args: `{"path":"escape/secret.txt","content":"owned"}`},
 		{name: "edit_file", args: `{"path":"escape/secret.txt","old_string":"private","new_string":"owned"}`},
+		{name: "list_dir", args: `{"path":"escape"}`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tool, ok := reg.Get(tt.name)
