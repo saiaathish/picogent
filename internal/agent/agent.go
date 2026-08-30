@@ -461,6 +461,61 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		durablePrompt = userText
 	}
 	taskPersistenceFailed := a.beginDurableTask(durablePrompt, ev)
+	var turnSequence uint64
+	if !taskPersistenceFailed {
+		if task := a.TaskSnapshot(); task != nil {
+			var started bool
+			turnSequence, started = a.beginDurableTurn(durableTurnStartRoute(task, taskMode), ev)
+			if !started {
+				taskPersistenceFailed = true
+			}
+		}
+	}
+
+	var res Result
+	changed := map[string]struct{}{}
+	turnUndo := newTurnUndo(regCtx.Workspace)
+	nativeWriteRan := false
+	mutationCount := 0
+	lastToolKind := ""
+	verificationCurrent := false
+	lastVerification := ""
+	lastVerificationEvidence := verificationEvidence{}
+	taskBlocker := ""
+	nextOutcomeFocus := ""
+	turnClosed := turnSequence == 0
+	closeTurn := func(interrupted bool, route taskstate.TurnRoute, hypothesis, evidence string, stop taskstate.StopReason, toolRounds int) {
+		if turnSequence == 0 || turnClosed {
+			return
+		}
+		if ctx.Err() != nil {
+			interrupted = true
+			route = taskstate.TurnRouteRecover
+			hypothesis = "turn canceled before completion"
+			stop = taskstate.StopCanceled
+		}
+		if a.closeDurableTurn(turnSequence, interrupted, route, hypothesis, evidence, stop, toolRounds, mutationCount, ev) {
+			turnClosed = true
+		}
+	}
+	closeTurnFor := func(failed, goalDone bool, stop taskstate.StopReason) {
+		task := a.TaskSnapshot()
+		interrupted := ctx.Err() != nil
+		if interrupted {
+			stop = taskstate.StopCanceled
+		} else if failed && stop == taskstate.StopNone {
+			stop = taskstate.StopResourceUnavailable
+		}
+		filesChanged := sortedChanged(changed)
+		closeTurn(interrupted, durableTurnRouteForOutcome(task, taskMode, lastVerification, taskBlocker, filesChanged, goalDone, interrupted, failed), durableTurnHypothesis(task, taskMode, lastVerification, taskBlocker, filesChanged, goalDone, interrupted, failed), lastVerification, stop, res.ToolRounds)
+	}
+	defer func() {
+		if turnSequence == 0 || turnClosed {
+			return
+		}
+		closeTurnFor(true, false, taskstate.StopResourceUnavailable)
+	}()
+
 	// Always refresh the system prompt so mid-chat task mode / goal changes take effect.
 	msgs := make([]llm.Message, 0, len(history)+3)
 	msgs = append(msgs, llm.Message{Role: "system", Content: systemPromptFor(state, userText, a.taskPromptSuffix(), opts.ScopeBoundary)})
@@ -475,17 +530,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	compactMsgs, ctxStats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 	msgs = compactMsgs
 
-	var res Result
 	res.Context = ctxStats
-	changed := map[string]struct{}{}
-	turnUndo := newTurnUndo(regCtx.Workspace)
-	nativeWriteRan := false
-	lastToolKind := ""
-	verificationCurrent := false
-	lastVerification := ""
-	lastVerificationEvidence := verificationEvidence{}
-	taskBlocker := ""
-	nextOutcomeFocus := ""
 
 	for round := 0; round < cfg.MaxToolRounds; round++ {
 		if r, ok := state.LLM.(*llm.Router); ok {
@@ -520,6 +565,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			ev.OnError(wrapped)
 			res.FilesChanged = sortedChanged(changed)
 			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
+			closeTurnFor(true, false, taskstate.StopResourceUnavailable)
 			return msgs, res, wrapped
 		}
 		msg := out.Message
@@ -594,6 +640,14 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			goalEvidencePassed := !completionEvidenceRequired || verificationStatus(lastVerification) == "PASS"
 			taskComplete := res.Task == nil || (res.Task.Status == taskstate.StatusDone && !res.Task.NeedsVerification())
 			res.GoalDone = completionMarker && goalEvidencePassed && !taskPersistenceFailed && strings.TrimSpace(opts.ScopeBoundary) == "" && taskComplete
+			stop := taskstate.StopNone
+			if res.GoalDone || (res.Task != nil && res.Task.Status == taskstate.StatusDone) {
+				stop = taskstate.StopGoalComplete
+			} else if res.Task != nil && res.Task.Status == taskstate.StatusBlocked {
+				stop = res.Task.StopReason
+			}
+			closeTurnFor(false, res.GoalDone, stop)
+			res.Task = a.TaskSnapshot()
 			_ = traceLog.Append("turn_end", "", text, trace.Bool(true), 0)
 			msgs = stripDurableInternal(msgs)
 			final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
@@ -646,6 +700,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				ev.OnToolEnd(call, "", err)
 				res.FilesChanged = sortedChanged(changed)
 				a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
+				closeTurnFor(true, false, taskstate.StopResourceUnavailable)
 				return msgs, res, err
 			}
 			if dec == perm.Deny {
@@ -741,6 +796,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				a.setTaskStatus(taskstate.StatusWorking, ev)
 			}
 			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
+				mutationCount++
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
 					changed[p] = struct{}{}
 					successfulWrites = append(successfulWrites, p)
@@ -776,6 +832,8 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	res.FilesChanged = sortedChanged(changed)
 	a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 	a.blockDurableTask("task budget exhausted", ev)
+	res.Task = a.TaskSnapshot()
+	closeTurnFor(false, false, taskstate.StopBudgetExhausted)
 	res.Task = a.TaskSnapshot()
 	ev.OnError(err)
 	msgs = stripDurableInternal(msgs)
