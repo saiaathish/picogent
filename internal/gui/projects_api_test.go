@@ -14,8 +14,8 @@ func TestProjectsAPIErrorResponsesSanitizeUntrustedText(t *testing.T) {
 	const secret = "projects-api-secret"
 
 	t.Run("registry load", func(t *testing.T) {
-		home := filepath.Join(t.TempDir(), "access_token="+secret)
-		if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
+		home := t.TempDir()
+		if err := os.WriteFile(filepath.Join(home, "projects.yaml"), []byte("projects: access_token="+secret+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("PICOGENT_HOME", home)
@@ -39,6 +39,9 @@ func TestProjectsAPIErrorResponsesSanitizeUntrustedText(t *testing.T) {
 		res := httptest.NewRecorder()
 		(&server{}).projectsAPI(res, httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(string(body))))
 		assertSanitizedProjectsAPIError(t, res, http.StatusBadRequest, secret)
+		if !strings.Contains(res.Body.String(), "[REDACTED]") {
+			t.Fatalf("project API error did not record a redaction marker: %q", res.Body.String())
+		}
 	})
 }
 
@@ -53,8 +56,5 @@ func assertSanitizedProjectsAPIError(t *testing.T, res *httptest.ResponseRecorde
 	}
 	if strings.Contains(body, "\x1b") || strings.Contains(body, "\naccess_token") {
 		t.Fatalf("project API error retained terminal/newline injection: %q", body)
-	}
-	if !strings.Contains(body, "[REDACTED]") {
-		t.Fatalf("project API error did not record a redaction marker: %q", body)
 	}
 }
