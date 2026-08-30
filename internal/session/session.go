@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -78,10 +79,100 @@ type Meta struct {
 // message history out of this decode avoids running the full retention and
 // redaction pipeline when a caller only needs a session summary.
 type sessionMeta struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Workspace string    `json:"workspace"`
-	Updated   time.Time `json:"updated"`
+	ID        string              `json:"id"`
+	Title     string              `json:"title"`
+	Workspace string              `json:"workspace"`
+	Updated   time.Time           `json:"updated"`
+	Messages  sessionMessagesJSON `json:"messages"`
+}
+
+// sessionMessagesJSON validates the outer shape of the persisted message
+// history without materializing that history for metadata-only operations.
+// Load still performs the complete typed decode and normalization.
+type sessionMessagesJSON struct{}
+
+func (sessionMessagesJSON) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 4 && trimmed[0] == 'n' && trimmed[1] == 'u' && trimmed[2] == 'l' && trimmed[3] == 'l' {
+		return nil
+	}
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return errors.New("session messages must be an array")
+	}
+	for index := 1; ; {
+		index = skipJSONSpace(trimmed, index)
+		if index >= len(trimmed) {
+			return errors.New("session messages have an unterminated array")
+		}
+		if trimmed[index] == ']' {
+			return nil
+		}
+		if trimmed[index] == '{' {
+			index = skipJSONComposite(trimmed, index)
+			if index < 0 {
+				return errors.New("session messages contain an unterminated object")
+			}
+		} else if index+4 <= len(trimmed) && trimmed[index] == 'n' && trimmed[index+1] == 'u' && trimmed[index+2] == 'l' && trimmed[index+3] == 'l' {
+			// encoding/json accepts null as a zero-value message.
+			index += 4
+		} else {
+			return errors.New("session messages must contain objects")
+		}
+		index = skipJSONSpace(trimmed, index)
+		if index >= len(trimmed) {
+			return errors.New("session messages have an unterminated array")
+		}
+		if trimmed[index] == ']' {
+			return nil
+		}
+		if trimmed[index] != ',' {
+			return errors.New("session messages must be comma-separated")
+		}
+		index++
+	}
+}
+
+func skipJSONSpace(data []byte, index int) int {
+	for index < len(data) {
+		switch data[index] {
+		case ' ', '\t', '\n', '\r':
+			index++
+		default:
+			return index
+		}
+	}
+	return index
+}
+
+func skipJSONComposite(data []byte, index int) int {
+	depth := 0
+	inString := false
+	escaped := false
+	for ; index < len(data); index++ {
+		char := data[index]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 {
+				return index + 1
+			}
+		}
+	}
+	return -1
 }
 
 func New(workspace string) *Session {

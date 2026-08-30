@@ -146,6 +146,66 @@ func TestListMetaDerivesTitleForLegacySessionWithoutStoredTitle(t *testing.T) {
 	}
 }
 
+func TestListMetaRejectsInvalidMessageHistoryShapes(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PICOGENT_HOME", root)
+	workspace := filepath.Join(root, "project")
+	dir, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	type record struct {
+		ID        string          `json:"id"`
+		Title     string          `json:"title"`
+		Workspace string          `json:"workspace"`
+		Updated   time.Time       `json:"updated"`
+		Messages  json.RawMessage `json:"messages"`
+	}
+	shapes := []string{"{}", `"not a message array"`, `["not a message"]`}
+	for i, shape := range shapes {
+		s := record{
+			ID:        fmt.Sprintf("invalid-messages-%d", i),
+			Title:     "invalid",
+			Workspace: workspace,
+			Updated:   time.Now().UTC(),
+			Messages:  json.RawMessage(shape),
+		}
+		data, err := json.Marshal(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, s.ID+".json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	valid := record{
+		ID:        "valid-messages",
+		Title:     "valid",
+		Workspace: workspace,
+		Updated:   time.Now().UTC(),
+		Messages:  json.RawMessage(`[]`),
+	}
+	data, err := json.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, valid.ID+".json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	metas, err := ListMeta(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 || metas[0].ID != valid.ID {
+		t.Fatalf("metadata for invalid message histories = %#v", metas)
+	}
+}
+
 func TestSessionSaveLeavesCompleteAtomicRecord(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()
