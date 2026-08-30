@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -36,6 +38,59 @@ func TestAssistantFinalReplacesStreamedText(t *testing.T) {
 	_, _ = m.Update(logMsg{Kind: "assistant_final", Text: "Undo: /undo"})
 	if len(m.lines) != 1 || m.lines[0].Text != "Undo: /undo" {
 		t.Fatalf("lines = %#v", m.lines)
+	}
+}
+
+func TestUndoRefreshesCurrentTaskSnapshot(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "session-undo-tui"
+	cfg := config.Default()
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := perm.New(config.ModeFast, workspace, nil)
+	gate.AddAlwaysAllowed("verify")
+	ag := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: note updated"}},
+	}}, tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		Verify:    func(context.Context) (string, error) { return "verify PASS\n1 passed", nil },
+	}), gate)
+	ag.SetTaskStore(store)
+	if err := ag.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := ag.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, agent.NopHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone {
+		t.Fatalf("pre-undo task = %#v, want done", result.Task)
+	}
+
+	m := &model{
+		cfg:       cfg,
+		ag:        ag,
+		sessionID: sessionID,
+		task:      result.Task,
+		lines:     []logLine{{Kind: "system", Text: "ready"}},
+		vp:        viewport.New(80, 20),
+	}
+	m.slashLocal("undo")
+	if m.task == nil || m.task.SessionID != sessionID {
+		t.Fatalf("undo task = %#v, want current session task", m.task)
+	}
+	if m.task.Status != taskstate.StatusVerifying {
+		t.Fatalf("undo task status = %q, want %q", m.task.Status, taskstate.StatusVerifying)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "note.txt")); !os.IsNotExist(err) {
+		t.Fatalf("undo did not remove note.txt: %v", err)
 	}
 }
 

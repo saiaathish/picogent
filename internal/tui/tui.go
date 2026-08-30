@@ -659,6 +659,8 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		if err != nil {
 			kind = "error"
 			text = err.Error()
+		} else if m.ag != nil {
+			m.task = m.ag.TaskSnapshot()
 		}
 		m.lines = append(m.lines, logLine{Kind: kind, Text: text})
 	case payload == "status":
