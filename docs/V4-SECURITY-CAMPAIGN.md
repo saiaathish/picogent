@@ -100,9 +100,11 @@ and cleanup never unlinks a replacement inode.
   Hosted CI run `33304380869` passed the Windows workspace tests, build, and
   GUI smoke at source commit `ff91cf3`; this is direct hosted runtime evidence
   for that path, not proof of Windows ACL enforcement or hostile races.
-- Checkpoint capture, seal, and preflight fingerprint reads use the same
-  secure opener. Restore staging, publication, deletion, and rollback remain
-  path-based and are intentionally not covered by this checkpoint.
+- Checkpoint capture, seal, preflight fingerprint reads, restore publication,
+  deletion, and rollback use the secure workspace primitives. Each restored
+  file's complete bytes and mode are published atomically; the sequence across
+  multiple files is intentionally not a multi-file transaction, and hostile
+  same-UID pathname races remain outside the helper's guarantee.
 - Secure opens, atomic writes, and removals reject regular files with multiple
   hard links on Unix and Windows. Checkpoint restore also rejects a post-seal
   replacement hard link before mutating any path; this prevents a workspace
@@ -110,11 +112,12 @@ and cleanup never unlinks a replacement inode.
 
 ## Open or unrecorded risks
 
-- Checkpoint restore now uses descriptor-relative secure writes and deletion,
-  with in-memory post-turn states for best-effort rollback. The operation is
-  intentionally not a multi-file atomic transaction; hostile-runtime restore
-  stress and cross-platform deletion evidence remain required before this is a
-  broad checkpoint safety claim.
+- Checkpoint restore now publishes each restored file's complete bytes and mode
+  atomically and only marks a mutation applied after that publication or
+  deletion succeeds. Rollback still uses in-memory post-turn states and is
+  best-effort. The operation is intentionally not a multi-file atomic
+  transaction; hostile-runtime restore stress and cross-platform deletion
+  evidence remain required before this is a broad checkpoint safety claim.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
 - The npm provider packages and their platform-specific optional packages are
