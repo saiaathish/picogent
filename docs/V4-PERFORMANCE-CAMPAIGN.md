@@ -1,7 +1,8 @@
 # V4 performance campaign
 
-Status: measured locally on 2026-08-25. This document records deterministic
-local controls; it does not claim live-provider quality or end-to-end product
+Status: historical comparison captured on 2026-08-25, with a current-head
+refresh captured on 2026-08-30. This document records deterministic local
+controls; it does not claim live-provider quality or end-to-end product
 performance.
 
 ## Comparison
@@ -100,9 +101,34 @@ Context-heavy work remains approximately flat with overlapping ranges. Other
 v4 additions have measurable cost, especially provenance capture; that cost is
 recorded rather than hidden. No broad claim that v4 is faster is justified.
 
+## Current-head microbenchmark refresh
+
+The same benchmark command was rerun on the exact merged v4 head
+`cb69c4bb820f49d10f49d702e3ee061ca4a22ec2` and the clean v3 baseline
+`a07943b31044049afb0142f39198244cd3c75218` on an Apple M3 arm64 Mac with
+Go `go1.26.6`. The command and three-run settings are the same as above.
+
+| Operation | v3 time | v4 time | v3 memory / allocs | v4 memory / allocs |
+| --- | ---: | ---: | ---: | ---: |
+| Context manage, working set | 41.933–44.446 µs | 37.168–37.281 µs | 105,065–105,072 B / 243 | 67,459–67,464 B / 185 |
+| Context manage, context-heavy | 2.288–2.333 ms | 2.314–2.321 ms | 485,922–486,491 B / 658–659 | 485,925–486,407 B / 658–659 |
+| Repo-map inspect | 22.602–23.494 ms | 22.022–22.087 ms | 48,702–54,760 B / 249–250 | 118,121–125,203 B / 288–290 |
+| Repo-map format | 2.786–2.802 µs | 32.785–33.349 µs | 2,370 B / 12 | 7,053–7,065 B / 244 |
+| Session metadata list, 60 records | 7.051–8.619 ms | 9.536–16.127 ms | 183,168–183,200 B / 1,962 | 924,914–928,649 B / 10,667–10,669 |
+| Session load | 198.876–526.745 µs | 285.336–369.454 µs | 3,368 B / 37 | 15,593–15,613 B / 182 |
+| Verification plan | 1.895–2.027 µs | 1.959–1.977 µs | 864 B / 15 | 864 B / 15 |
+| Verification evidence status | 3.434–3.450 µs | 3.306–3.414 µs | 1,792 B / 1 | 1,792 B / 1 |
+
+The current head retains the working-set and verification improvements, while
+repo-map formatting and session retention are materially more expensive than
+the v3 fixture. The repo-map inspect time overlaps, but its allocations do
+not. These results make a targeted retention/provenance optimization a better
+next experiment than a general performance claim.
+
 ## Current-head long-horizon composition probe
 
-The current `origin/main` head (`9104061f59837845fb186e9032b9ea40c60aef67`)
+The current `origin/main` head at measurement time
+(`cb69c4bb820f49d10f49d702e3ee061ca4a22ec2`)
 now has a deterministic composition probe in
 `internal/agent/long_horizon_test.go`. It drives 96 logical turns, saves and
 reloads the session and task state on every turn, runs context management, and
@@ -120,17 +146,17 @@ go test ./internal/agent -run '^$' \
 
 | Signal | Three observed runs |
 | --- | ---: |
-| 96-turn save/reload envelope | 2.574–2.835 s/op |
-| Allocated bytes | 795.2–795.8 MB/op |
-| Allocations | 459,479–459,696/op |
+| 96-turn save/reload envelope | 3.369–3.615 s/op |
+| Allocated bytes | 918.9–920.4 MB/op |
+| Allocations | 1,768,233–1,768,554/op |
 | Retained session messages | 128/op |
 | Retained task turns / evidence | 16 / 16 per op |
-| Durable context peak | 1,263 chars/op |
+| Durable context peak | 1,493 chars/op |
 | Managed context peak | 632 tokens/op |
-| Session / task JSON peak | 26,579–26,580 / 8,511–8,512 bytes/op |
+| Session / task JSON peak | 26,563 / 8,506–8,512 bytes/op |
 
-The measured allocation cost is a useful regression signal and motivates a
-separate optimization experiment; it is not a release budget. The test also
+The higher current-head allocation cost is a useful regression signal and
+motivates a separate optimization experiment; it is not a release budget. The test also
 covers a cooperative fresh-process restart: an active durable turn is loaded,
 marked interrupted, and persisted by a new process. Hostile process death,
 sustained RSS, live-provider quality, rendered surfaces, and v3-v4 comparative

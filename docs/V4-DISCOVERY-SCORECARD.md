@@ -1,7 +1,7 @@
 # Picogent v4 discovery scorecard
 
-Status: refreshed on 2026-08-26 against exact `main` head
-`745846d3b0399e58f14c8dbd6b81e66424218688`.
+Status: refreshed on 2026-08-30 against exact `main` head
+`cb69c4bb820f49d10f49d702e3ee061ca4a22ec2`.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25; the findings below are carried forward and reconciled with the
@@ -24,13 +24,13 @@ not enough to establish real runtime behavior.
 | Memory | Bounded task and session records with save-before-publish | Causal learning remains small and advisory | FIFO retention is not value-aware; cross-process task writes are last-writer-wins | Transcript-shaped session storage duplicates structured task/evidence state | Make retention value-aware after measuring restart and compaction behavior |
 | Context efficiency | Pair-safe compaction; 8,192-character durable context; failure signals retained | Deterministic stale-output reduction | Aggregate summarization input and token estimates are not hard-bounded/calibrated; lexical priority misses structured/non-English failures | Repeated stale skeletonization/deduplication passes | Add an aggregate `Manage`/`Summarize` budget and measure bytes, tokens, allocations, and latency |
 | Repo intelligence | On-demand deterministic map with no daemon/index/watcher | Bounded search and map output | Short-head/dirty status omits path provenance; nested roots and fallback semantics drift | Duplicate phrase/default command tables | Add a bounded provenance-bearing repo snapshot refreshed at admission and after mutation |
-| Verification | Explicit `PASS`/`FAIL`/`INCONCLUSIVE`/`SKIPPED`; targeted-to-broader stages | Changed-file cap forces broader verification | Command selection omits build/vet/race/fuzz/diff gates; textual proof truncation lacks structured metadata | Legacy verification paths pending caller confirmation | Add an exact-head machine-readable release evidence manifest and truthfully surface all statuses |
+| Verification | Explicit `PASS`/`FAIL`/`INCONCLUSIVE`/`SKIPPED`; targeted-to-broader stages; exact-head manifest | Changed-file cap forces broader verification; hosted matrix now runs vet and bounded fuzz gates | Task-local verification does not yet aggregate every release gate; textual proof truncation lacks structured metadata | Legacy verification paths pending caller confirmation | Keep the exact-head manifest and CI quality gates aligned; add structured gate results without broadening completion authority |
 | Repair/recovery | Local checkpoint/undo conflict safety and fail-closed permissions | Durable task resume and GUI steering | Retry taxonomy, route diversity, partial rollback reporting, and process-restart undo are incomplete | Prompt recovery hints would duplicate a future durable recovery ledger | Test and then persist side-effect/recovery metadata; do not replace checkpoint safety prematurely |
-| Performance | Deterministic local microbenchmarks exist | Bounded output/context controls | No current v3-v4 process envelope, RSS, cold/warm startup, or long-horizon measurements | Repeated large-output scans and unbounded summary construction may waste CPU | Build a cold/warm first-turn envelope benchmark before claiming performance gains |
-| Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Centralize subprocess policy with sanitized environment, hardened git flags, and descriptor-relative writes |
-| Concurrency | Goal ABA defense and save-before-publish invariants | Unix/Windows lock primitives and stale callbacks | Cancellation/event ordering, cross-surface races, and parallel tool dependencies lack current stress evidence | New orchestration would add complexity before invariants are measured | Add barrier-driven cancellation/save/publish/reconnect harness and run race tests |
+| Performance | Deterministic local microbenchmarks and a long-horizon resume envelope exist | Bounded output/context controls | Current refresh shows large repo-map/session allocation overhead; GUI/TUI/headless process envelopes remain unmeasured | Repeated large-output scans and unbounded summary construction may waste CPU | Profile retention/provenance overhead and rerun v3-v4 comparisons before claiming performance gains |
+| Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Hosted `govulncheck` now scans the dependency graph; tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Add hostile runtime evidence and preserve explicit limits around dependency reachability and path races |
+| Concurrency | Goal ABA defense, save-before-publish invariants, and hosted Linux race coverage | Unix/Windows lock primitives and deterministic recovery harnesses | Cancellation/event ordering, cross-surface reconnect behavior, and cross-process writers lack complete stress evidence | New orchestration would add complexity before invariants are measured | Add barrier-driven cancellation/save/publish/reconnect harness and run it on every release candidate |
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
-| GUI | Stale-turn guards, permission generations, and bounded SSE server | Lifecycle and undo wiring | Client can render inconclusive/skipped verification as success; reconnect/event-loss recovery is weak | Narrow events trigger broad reloads; side chat bypasses core task/evidence path | Make verification status canonical and render four distinct states with focused browser coverage |
+| GUI | Stale-turn guards, permission generations, bounded SSE server, and four-state verification presentation | Lifecycle and undo wiring | Reconnect/event-loss recovery and rendered end-to-end journeys remain unverified | Narrow events trigger broad reloads; side chat bypasses core task/evidence path | Add owned-browser reconnect, permission, undo, and recovery evidence before release claims |
 | TUI/headless | Headless stdout/stderr and fail-closed permission behavior; resume state | CLI dispatch and exit classes | Non-TTY/TUI behavior and session-save failures are not proven or always surfaced | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Surface persistence failures and test subprocess exit/EOF/signal contracts |
 | Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing is duplicated; docs retain stale benchmark anchors | Duplicate control-plane paths and stale benchmark anchors | Delete only after caller/API confirmation; first reduce duplicated control-plane semantics |
 
@@ -58,12 +58,11 @@ not enough to establish real runtime behavior.
 
 - Outcome authority is split: generic criteria, legacy verification, newer
   evidence, goal text, and `Goal complete:` presentation can drift.
-- Current-head/dirty-tree provenance, cross-process writes, route-aware
-  recovery, event ordering, and filesystem TOCTOU boundaries are incomplete.
-- GUI verification status is especially high impact: the server emits an
-  unresolved status for inconclusive/skipped evidence while the client styles
-  every non-failure as a pass (`internal/gui/server.go:2002-2017` and
-  `internal/gui/web/app.js:2210-2228`).
+- Current-head/dirty-tree provenance is now captured by the exact-head
+  manifest, but cross-process writes, route-aware recovery, event ordering,
+  and filesystem TOCTOU boundaries remain incomplete.
+- GUI verification events now preserve PASS, FAIL, SKIPPED, and INCONCLUSIVE;
+  the rendered reconnect and recovery journeys remain unverified.
 
 ### Wasteful
 
@@ -77,7 +76,7 @@ not enough to establish real runtime behavior.
 ## Missing proof that blocks a release claim
 
 The following remain `UNRECORDED` or `UNVERIFIED` and must not be implied by
-green unit tests or hosted compile/test CI:
+green unit tests or bounded hosted quality gates:
 
 - v3-versus-v4 outcome quality for vague, multi-file, debugging, refactoring,
   security, and long-horizon tasks;
@@ -91,9 +90,10 @@ green unit tests or hosted compile/test CI:
   behavior;
 - symlink-swap/TOCTOU, child-environment secret leakage, git hook/textconv
   execution, MCP prompt injection, installer safety, and dependency/SBOM
-  evidence;
-- fresh hosted security scanning. A prior hosted security scan could not start
-  because its SQLite database was read-only; no hosted scan is claimed here.
+  evidence beyond the hosted vulnerability reachability scan;
+- hostile/deep security scanning and signed release attestation. Hosted
+  `govulncheck` now passes on the dependency graph, but it is not a substitute
+  for those runtime and supply-chain audits.
 
 ## Deletion queue
 
@@ -114,8 +114,10 @@ The focused GUI verification-truthfulness change and workspace-bound evidence
 slice are merged. The durable session boundary is also merged: records are
 capped, transient prompts and orphaned tool results are removed, newest history
 is retained, oversized loads are rejected before parsing, and legacy records
-are normalized before resume.
+are normalized before resume. The current main also runs cross-platform vet,
+bounded security-boundary fuzzing, and a pinned hosted vulnerability scan;
+`golang.org/x/sys` is at the fixed `v0.44.0` release.
 
-The next proposals should compete on measured evidence: exact-head repository
-provenance, a machine-readable release evidence manifest, and deterministic
-concurrency/recovery harnesses. None of those proposals is a release claim.
+The next proposals should compete on measured evidence: retention/provenance
+optimization, deterministic cancellation and recovery harnesses, and owned-
+browser GUI evidence. None of those proposals is a release claim.
