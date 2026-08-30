@@ -144,6 +144,7 @@ close the open or unrecorded risks below.
 | #140 | TUI diagnostic redaction | `93eabe3` | `4c52e79` | `33313929799` | `33314065875` |
 | #142 | CLI final error diagnostic sanitization | `bd64577` | `1e65301` | `33314642093` | `33314774741` |
 | #144 | GUI error event boundary sanitization | `fbc95f0` | `5355113` | `33315264433` | `33315385828` |
+| #146 | Selected GUI HTTP error sanitization | `ccd4d61` | `d65c36f` | `33315831874` | `33315951810` |
 
 ## Open or unrecorded risks
 
