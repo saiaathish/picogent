@@ -37,6 +37,23 @@ func TestTextPreservesOrdinaryText(t *testing.T) {
 	}
 }
 
+func TestNeedsRedactionMatchesCredentialShapes(t *testing.T) {
+	for _, value := range []string{
+		`api_key="api-secret"`,
+		`https://user:password@example.test/path`,
+		"Bearer bearer-secret",
+		"sk-live-secret-value",
+		"-----BEGIN OPENSSH PRIVATE KEY-----secret-----END OPENSSH PRIVATE KEY-----",
+	} {
+		if !NeedsRedaction(value) {
+			t.Fatalf("NeedsRedaction(%q) = false", value)
+		}
+	}
+	if NeedsRedaction("password documentation and tokenization notes") {
+		t.Fatal("NeedsRedaction flagged ordinary text")
+	}
+}
+
 func TestDiagnosticRedactsFlattensAndBounds(t *testing.T) {
 	const secret = "diagnostic-secret"
 	got := Diagnostic("\x1b[31maccess_token="+secret+"\nforged", 30)

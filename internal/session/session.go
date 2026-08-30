@@ -47,6 +47,9 @@ const (
 	maxSessionPartDataBytes  = 8 << 10
 	maxSessionParts          = 4
 	maxSessionToolCalls      = 8
+	// Leave ample room for JSON indentation and escaping before returning a
+	// decoded session without the full size-fitting pass.
+	maxSessionFastPathBytes = MaxSessionBytes / 16
 )
 
 // ErrSessionTooLarge reports a session record that cannot be safely loaded or
@@ -437,10 +440,95 @@ func loadLocked(path, id string) (*Session, error) {
 	if s.ID != id {
 		return nil, errors.New("session id mismatch")
 	}
-	if err := boundSession(&s); err != nil {
-		return nil, err
+	if sessionNeedsNormalization(&s, len(data)) {
+		if err := boundSession(&s); err != nil {
+			return nil, err
+		}
 	}
 	return &s, nil
+}
+
+// sessionNeedsNormalization is deliberately conservative. It only permits a
+// fast return for small, already-bounded records whose decoded values cannot
+// be changed by boundSession. Records near the durable byte limit, legacy
+// histories, and anything containing a potentially sensitive or oversized
+// value take the existing full normalization path.
+func sessionNeedsNormalization(s *Session, encodedSize int) bool {
+	if s == nil || encodedSize > maxSessionFastPathBytes {
+		return true
+	}
+	if len(s.Workspace) > maxSessionWorkspaceBytes || len(s.Title) > maxSessionTitleBytes || redact.NeedsRedaction(s.Title) {
+		return true
+	}
+	if len(s.Messages) > MaxSessionMessages {
+		return true
+	}
+	if s.Messages != nil && len(s.Messages) == 0 {
+		// boundedMessages canonicalizes an empty, present array to nil.
+		return true
+	}
+	for _, message := range s.Messages {
+		if messageNeedsNormalization(message) {
+			return true
+		}
+	}
+	return hasOrphanedToolMessages(s.Messages)
+}
+
+func messageNeedsNormalization(message llm.Message) bool {
+	if message.Role == "system" || len(message.Role) > 32 || len(message.Content) > maxSessionContentBytes || redact.NeedsRedaction(message.Content) || len(message.ToolCallID) > 128 || len(message.Name) > 128 {
+		return true
+	}
+	if len(message.Parts) > maxSessionParts || len(message.ToolCalls) > maxSessionToolCalls {
+		return true
+	}
+	for _, part := range message.Parts {
+		if partNeedsNormalization(part) {
+			return true
+		}
+	}
+	for _, call := range message.ToolCalls {
+		if toolCallNeedsNormalization(call) {
+			return true
+		}
+	}
+	return false
+}
+
+func partNeedsNormalization(part llm.Part) bool {
+	return len(part.Type) > 32 || len(part.Text) > maxSessionPartTextBytes || redact.NeedsRedaction(part.Text) || len(part.MIME) > 128 || len(part.Name) > 256 || len(part.Data) > maxSessionPartDataBytes
+}
+
+func toolCallNeedsNormalization(call llm.ToolCall) bool {
+	return len(call.ID) > 128 || len(call.ItemID) > 128 || len(call.Name) > 128 || len(call.Arguments) > maxSessionToolBytes || redact.NeedsRedaction(call.Arguments)
+}
+
+func hasOrphanedToolMessages(messages []llm.Message) bool {
+	for i, message := range messages {
+		if message.Role != "tool" {
+			continue
+		}
+		assistant := i - 1
+		for assistant >= 0 && messages[assistant].Role == "tool" {
+			assistant--
+		}
+		if assistant < 0 || messages[assistant].Role != "assistant" || !hasToolCallID(messages[assistant].ToolCalls, message.ToolCallID) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasToolCallID(calls []llm.ToolCall, id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, call := range calls {
+		if call.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func loadMetaLocked(path, id string) (sessionMeta, error) {
