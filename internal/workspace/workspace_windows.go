@@ -22,7 +22,7 @@ const (
 )
 
 func isWorkspaceNotExist(err error) bool {
-	return os.IsNotExist(err)
+	return os.IsNotExist(err) || errors.Is(err, os.ErrNotExist)
 }
 
 func open(root, path string, kind openKind) (*os.File, error) {
