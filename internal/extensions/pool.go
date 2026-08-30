@@ -1,20 +1,20 @@
 package extensions
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/mcpbridge"
 )
 
 // Pool manages on-demand extension activation — only loads what's needed per task.
 type Pool struct {
-	Workspace string
-	Essential []string
-	Transient []string
+	Workspace     string
+	Essential     []string
+	Transient     []string
+	activatedUndo []UndoEntry
 }
 
 // NewPool creates a pool from config lists.
@@ -26,14 +26,28 @@ func NewPool(workspace string, essential, transient []string) *Pool {
 	}
 }
 
-// EnsureForPrompt activates extensions matching the prompt (transient, not permanent).
+// EnsureForPrompt is retained as a compatibility seam for callers that used
+// to ask the pool to auto-load recommendations. Turn preparation must remain
+// read-only: even a skill recommendation may require a Git clone and a config
+// write, while an MCP activation may execute a command or contact an endpoint.
+// Explicit extension actions are the only path that may call activate.
 func (p *Pool) EnsureForPrompt(prompt string) ([]string, error) {
-	installed, _ := InstalledSet(p.Workspace, nil)
+	if p == nil {
+		return nil, nil
+	}
+	installed, err := InstalledSet(p.Workspace, nil)
+	if err != nil {
+		return nil, err
+	}
+	// Reset stale rollback bookkeeping without touching the filesystem. Rollback
+	// entries are created only by explicit activation callers.
+	p.activatedUndo = nil
 	dismissed := map[string]bool{}
 	recs := Recommend(prompt, installed, dismissed)
 
-	// Also search Claude library by keyword.
-	claudeItems, _ := LoadClaudeLibrary()
+	// Search only an already-loaded/local Claude cache. This call intentionally
+	// has no network or persistence fallback.
+	claudeItems, _ := LoadClaudeLibraryCached()
 	lower := strings.ToLower(prompt)
 	for _, it := range claudeItems {
 		if matchScore(lower, it.Keywords) >= 8 && !installed[it.ID] {
@@ -43,39 +57,79 @@ func (p *Pool) EnsureForPrompt(prompt string) ([]string, error) {
 			})
 		}
 	}
+	// Keep the recommendation calculation here so callers receive the same
+	// local-only discovery/error behavior as the GUI path. The old method
+	// returned activated IDs, but reporting a recommendation as activated would
+	// make callers persist state that was never installed.
+	_ = recs
+	return nil, nil
+}
 
-	var activated []string
-	seen := map[string]bool{}
-	for _, id := range p.Essential {
-		seen[id] = true
+func autoActivationAllowed(it Item) bool {
+	if strings.HasPrefix(it.ID, "claude:") {
+		return false
 	}
-	for _, id := range p.Transient {
-		seen[id] = true
-	}
+	return it.Kind == KindSkill
+}
 
-	for _, it := range recs {
-		if seen[it.ID] || p.isEssential(it.ID) {
-			continue
-		}
-		if err := p.activate(it); err != nil {
-			continue
-		}
-		p.Transient = appendUnique(p.Transient, it.ID)
-		activated = append(activated, it.ID)
-		seen[it.ID] = true
+// RollbackActivated restores the external state changed by the most recent
+// EnsureForPrompt call. It is used when a runtime replacement is rejected
+// after activation, so an old skill or MCP entry is never deleted as a side
+// effect of abandoning a candidate.
+func (p *Pool) RollbackActivated() error {
+	if p == nil {
+		return nil
 	}
-	return activated, nil
+	var errs []error
+	remaining := make([]UndoEntry, 0, len(p.activatedUndo))
+	for i := len(p.activatedUndo) - 1; i >= 0; i-- {
+		entry := p.activatedUndo[i]
+		// Undo may close its value's snapshot after a successful restore. Use an
+		// owned clone so a retained entry remains a valid retry record if the
+		// restore fails or a caller needs to inspect it after this attempt.
+		if err := Undo(entry.Clone()); err != nil {
+			errs = append(errs, err)
+			remaining = append(remaining, entry)
+		} else {
+			p.Transient = removeExtensionID(p.Transient, entry.ExtID)
+		}
+	}
+	// Keep failed entries so a caller can retry recovery or surface the exact
+	// still-mutated state instead of making a one-shot rollback irreversible.
+	for i, j := 0, len(remaining)-1; i < j; i, j = i+1, j-1 {
+		remaining[i], remaining[j] = remaining[j], remaining[i]
+	}
+	p.activatedUndo = remaining
+	return errors.Join(errs...)
+}
+
+func removeExtensionID(list []string, id string) []string {
+	out := list[:0]
+	for _, current := range list {
+		if current != id {
+			out = append(out, current)
+		}
+	}
+	return out
 }
 
 // CleanupTransient deactivates extensions that aren't essential.
 func (p *Pool) CleanupTransient() error {
+	snapshot, err := CaptureState(p.Workspace, p.Transient)
+	if err != nil {
+		return err
+	}
+	defer snapshot.Close()
 	var keep []string
 	for _, id := range p.Transient {
 		if p.isEssential(id) {
 			keep = append(keep, id)
 			continue
 		}
-		_ = p.deactivate(id)
+		if err := p.deactivate(id); err != nil {
+			rollbackErr := snapshot.Restore()
+			return errors.Join(err, rollbackErr)
+		}
 	}
 	p.Transient = keep
 	return nil
@@ -90,25 +144,34 @@ func (p *Pool) isEssential(id string) bool {
 	return false
 }
 
-func (p *Pool) activate(it Item) error {
+func (p *Pool) activate(it Item) (UndoEntry, error) {
 	if strings.HasPrefix(it.ID, "claude:") {
-		return ActivateClaudePlugin(strings.TrimPrefix(it.ID, "claude:"))
+		before, err := CaptureState(p.Workspace, []string{it.ID})
+		if err != nil {
+			return UndoEntry{}, err
+		}
+		if err := ActivateClaudePlugin(strings.TrimPrefix(it.ID, "claude:")); err != nil {
+			rollbackErr := before.Restore()
+			before.Close()
+			return UndoEntry{}, errors.Join(err, rollbackErr)
+		}
+		return UndoEntry{ID: fmt.Sprintf("pool-%d", time.Now().UnixNano()), ExtID: it.ID, Kind: it.Kind, before: before}, nil
 	}
 	if it.Kind == KindMCP && it.MCP != nil {
-		name := mcpServerName(it)
-		return mcpbridge.SaveServer(name, *it.MCP)
+		_, entry, err := Install(it, p.Workspace)
+		return entry, err
 	}
 	if it.Kind == KindSkill {
-		_, _, err := Install(it, p.Workspace)
-		return err
+		_, entry, err := Install(it, p.Workspace)
+		return entry, err
 	}
-	return nil
+	return UndoEntry{ID: fmt.Sprintf("pool-%d", time.Now().UnixNano()), ExtID: it.ID, Kind: it.Kind}, nil
 }
 
 func (p *Pool) deactivate(id string) error {
 	if strings.HasPrefix(id, "claude:") {
 		name := strings.TrimPrefix(id, "claude:")
-		return mcpbridge.RemoveServersWithPrefix("claude-" + name)
+		return removeClaudePluginMCP(name)
 	}
 	it := ByID(id)
 	if it == nil {
@@ -118,100 +181,9 @@ func (p *Pool) deactivate(id string) error {
 		return mcpbridge.RemoveServer(mcpServerName(*it))
 	}
 	if it.Kind == KindSkill && it.SkillPath != "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		return os.RemoveAll(filepath.Join(home, ".cursor", "skills-cursor", it.SkillPath))
+		return removeSkill(it.SkillPath)
 	}
 	return nil
-}
-
-// ActivateClaudePlugin loads MCP + skills from a local Claude Code plugin cache.
-func ActivateClaudePlugin(name string) error {
-	dir := ClaudePluginDir(name)
-	if dir == "" {
-		return fmt.Errorf("claude plugin %q not cached — open Claude Code once to sync the marketplace", name)
-	}
-	mcpPath := filepath.Join(dir, ".mcp.json")
-	data, err := os.ReadFile(mcpPath)
-	if err != nil {
-		// Plugin without MCP — still valid; skills load via ClaudePluginSkills.
-		return nil
-	}
-	servers, err := parseClaudeMCPJSON(data)
-	if err != nil {
-		return err
-	}
-	prefix := "claude-" + name
-	for srvName, cfg := range servers {
-		key := prefix
-		if srvName != name && srvName != "" {
-			key = prefix + "-" + srvName
-		}
-		if err := mcpbridge.SaveServer(key, cfg); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ClaudePluginSkills reads skill summaries from a Claude plugin directory.
-func ClaudePluginSkills(name string) string {
-	dir := ClaudePluginDir(name)
-	if dir == "" {
-		return ""
-	}
-	skillsDir := filepath.Join(dir, "skills")
-	entries, err := os.ReadDir(skillsDir)
-	if err != nil {
-		return ""
-	}
-	var parts []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		skillMD := filepath.Join(skillsDir, e.Name(), "SKILL.md")
-		data, err := os.ReadFile(skillMD)
-		if err != nil {
-			continue
-		}
-		body := strings.TrimSpace(string(data))
-		if len(body) > 800 {
-			body = body[:800] + "…"
-		}
-		parts = append(parts, "### "+e.Name()+"\n"+body)
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return "Active Claude plugin skills (" + name + "):\n" + strings.Join(parts, "\n\n")
-}
-
-func parseClaudeMCPJSON(data []byte) (map[string]mcpbridge.ServerConfig, error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, err
-	}
-	if wrapped, ok := raw["mcpServers"]; ok {
-		var servers map[string]mcpbridge.ServerConfig
-		if err := json.Unmarshal(wrapped, &servers); err != nil {
-			return nil, err
-		}
-		return servers, nil
-	}
-	out := map[string]mcpbridge.ServerConfig{}
-	for name, chunk := range raw {
-		var cfg mcpbridge.ServerConfig
-		if err := json.Unmarshal(chunk, &cfg); err != nil {
-			continue
-		}
-		if cfg.Command != "" || cfg.URL != "" {
-			out[name] = cfg
-		}
-	}
-	return out, nil
 }
 
 func appendUnique(list []string, v string) []string {

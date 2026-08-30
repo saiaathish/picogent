@@ -1,6 +1,7 @@
 package extensions
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,14 +13,24 @@ func LocalSkillResults(query string, installed map[string]bool) []SearchResult {
 	if err != nil || len(names) == 0 {
 		return nil
 	}
-	home, _ := os.UserHomeDir()
-	root := filepath.Join(home, ".cursor", "skills-cursor")
+	root, _, err := openSkillsRoot(false)
+	if err != nil {
+		return nil
+	}
+	defer root.Close()
 	var out []SearchResult
 	for _, name := range names {
 		id := "skill-local:" + name
 		desc := "Local skill from your Cursor skills folder."
-		skillMD := filepath.Join(root, name, "SKILL.md")
-		if data, err := os.ReadFile(skillMD); err == nil {
+		rel, pathErr := normalizeSkillPath(name)
+		if pathErr != nil {
+			continue
+		}
+		if valid, validErr := validSkillAtRoot(root, rel); validErr != nil || !valid {
+			continue
+		}
+		skillMD := filepath.Join(rel, "SKILL.md")
+		if data, err := readBoundedRoot(root, skillMD, 64<<10); err == nil {
 			lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 4)
 			for _, line := range lines {
 				line = strings.TrimSpace(strings.TrimPrefix(line, "#"))
@@ -52,11 +63,11 @@ func SkillsPrompt(skillNames []string) string {
 	if len(skillNames) == 0 {
 		return ""
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
+	root, _, err := openSkillsRoot(false)
+	if errors.Is(err, os.ErrNotExist) || err != nil {
 		return ""
 	}
-	root := filepath.Join(home, ".cursor", "skills-cursor")
+	defer root.Close()
 	const maxSkills = 2
 	const maxBody = 400
 	const maxTotal = 900
@@ -66,8 +77,15 @@ func SkillsPrompt(skillNames []string) string {
 		if i >= maxSkills {
 			break
 		}
-		skillMD := filepath.Join(root, name, "SKILL.md")
-		data, err := os.ReadFile(skillMD)
+		rel, err := normalizeSkillPath(name)
+		if err != nil {
+			continue
+		}
+		if valid, validErr := validSkillAtRoot(root, rel); validErr != nil || !valid {
+			continue
+		}
+		skillMD := filepath.Join(rel, "SKILL.md")
+		data, err := readBoundedRoot(root, skillMD, maxBody)
 		if err != nil {
 			continue
 		}
