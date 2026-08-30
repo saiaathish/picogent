@@ -1846,7 +1846,10 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 			}
 			s.emit(event{Type: "system", Text: st})
 		case "diff":
-			s.emit(event{Type: "system", Text: slash.GitDiff()})
+			s.mu.Lock()
+			workspace := s.cfg.Workspace
+			s.mu.Unlock()
+			s.emit(event{Type: "system", Text: slash.GitDiff(workspace)})
 		case "goal:show":
 			s.mu.Lock()
 			workspace := s.cfg.Workspace
