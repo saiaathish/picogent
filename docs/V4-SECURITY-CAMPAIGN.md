@@ -95,13 +95,18 @@ and cleanup never unlinks a replacement inode.
   component through directory descriptors with `openat`/`mkdirat` and
   `O_NOFOLLOW`; Windows builds use `NtCreateFile` RootDirectory handles with
   `OBJ_DONT_REPARSE` and `FILE_OPEN_REPARSE_POINT`. Focused tests cover direct
-  outside-symlink use, root-ancestor rejection, and Unix ancestor-swap stress.
+  outside-symlink use, hard-linked files, root-ancestor rejection, and Unix
+  ancestor-swap stress.
   Hosted CI run `33304380869` passed the Windows workspace tests, build, and
   GUI smoke at source commit `ff91cf3`; this is direct hosted runtime evidence
   for that path, not proof of Windows ACL enforcement or hostile races.
 - Checkpoint capture, seal, and preflight fingerprint reads use the same
   secure opener. Restore staging, publication, deletion, and rollback remain
   path-based and are intentionally not covered by this checkpoint.
+- Secure opens, atomic writes, and removals reject regular files with multiple
+  hard links on Unix and Windows. Checkpoint restore also rejects a post-seal
+  replacement hard link before mutating any path; this prevents a workspace
+  name from being used to read or write an outside inode through a hard link.
 
 ## Open or unrecorded risks
 
