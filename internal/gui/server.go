@@ -744,7 +744,7 @@ func (s *server) routerAPI(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.routerSnapshot())
 	default:
-		http.Error(w, "GET or POST only", 405)
+		writeGUIError(w, "GET or POST only", 405)
 	}
 }
 
@@ -769,7 +769,7 @@ func (s *server) setupStatus(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+		writeGUIError(w, "POST only", 405)
 		return
 	}
 	log, err := setup.InstallCores()
@@ -779,7 +779,7 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	out := map[string]any{"log": log, "ok": err == nil}
 	if err != nil {
-		out["error"] = err.Error()
+		out["error"] = guiDiagnostic(err.Error())
 		w.WriteHeader(500)
 	}
 	s.mu.Lock()
@@ -791,7 +791,7 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+		writeGUIError(w, "POST only", 405)
 		return
 	}
 	var in struct {
@@ -799,14 +799,14 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		ReturnTo string `json:"return_to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	switch strings.ToLower(in.Target) {
 	case "claude":
 		if err := setup.StartClaudeLogin(); err != nil {
-			http.Error(w, err.Error(), 400)
+			writeGUIError(w, err.Error(), 400)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -815,7 +815,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		})
 	case "opencode":
 		if err := setup.StartOpenCodeLogin(); err != nil {
-			http.Error(w, err.Error(), 400)
+			writeGUIError(w, err.Error(), 400)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -824,7 +824,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		})
 	case "antigravity", "agy":
 		if err := setup.StartAntigravityLogin(); err != nil {
-			http.Error(w, err.Error(), 400)
+			writeGUIError(w, err.Error(), 400)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -833,7 +833,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		})
 	case "codex-cli":
 		if err := setup.StartCodexCLILogin(); err != nil {
-			http.Error(w, err.Error(), 400)
+			writeGUIError(w, err.Error(), 400)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -848,7 +848,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// Fall back to CLI login in a Terminal window.
 			if e2 := setup.StartCodexCLILogin(); e2 != nil {
-				http.Error(w, err.Error(), 500)
+				writeGUIError(w, err.Error(), 500)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -863,7 +863,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+		writeGUIError(w, "POST only", 405)
 		return
 	}
 	var in struct {
@@ -872,7 +872,7 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 		Model     string `json:"model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	s.mu.Lock()
@@ -880,12 +880,12 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	next, err := setup.Apply(cfg, in.Workspace, in.Mode, in.Model)
 	if err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	a, err := app.Build(next)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeGUIError(w, err.Error(), 500)
 		return
 	}
 	s.mu.Lock()
@@ -909,12 +909,12 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 		Mode string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	m := config.Mode(in.Mode)
 	if !m.Valid() {
-		http.Error(w, "invalid mode", 400)
+		writeGUIError(w, "invalid mode", 400)
 		return
 	}
 	s.configTxMu.Lock()
@@ -927,7 +927,7 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 	next.SetUserMode(m)
 	if err := s.persistConfig(next); err != nil {
 		s.mu.Unlock()
-		http.Error(w, "couldn't save mode: "+err.Error(), http.StatusInternalServerError)
+		writeGUIError(w, "couldn't save mode: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.cfg = next
@@ -959,12 +959,12 @@ func (s *server) setTaskMode(w http.ResponseWriter, r *http.Request) {
 		TaskMode string `json:"task_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	m := agent.ParseTaskMode(in.TaskMode)
 	if !m.Valid() {
-		http.Error(w, "invalid task mode", 400)
+		writeGUIError(w, "invalid task mode", 400)
 		return
 	}
 	s.mu.Lock()

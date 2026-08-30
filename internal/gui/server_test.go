@@ -153,7 +153,8 @@ func TestSetModePersistsDeliberateChoiceWithEnvironmentOverride(t *testing.T) {
 }
 
 func TestSetModeDoesNotReportOrApplyUnsavedChange(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "not-a-directory")
+	const secret = "gui-mode-secret"
+	home := filepath.Join(t.TempDir(), "access_token="+secret+"\n\x1b[31mnot-a-directory")
 	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -175,6 +176,16 @@ func TestSetModeDoesNotReportOrApplyUnsavedChange(t *testing.T) {
 	}
 	if !strings.Contains(res.Body.String(), "couldn't save mode") {
 		t.Fatalf("set mode error = %q", res.Body.String())
+	}
+	body := res.Body.String()
+	if strings.Contains(body, secret) {
+		t.Fatalf("set mode error leaked secret: %q", body)
+	}
+	if strings.Contains(body, "\x1b") || strings.Contains(body, "\naccess_token=") {
+		t.Fatalf("set mode error retained terminal/newline injection: %q", body)
+	}
+	if !strings.Contains(body, "[REDACTED]") {
+		t.Fatalf("set mode error did not record a redaction marker: %q", body)
 	}
 	if s.cfg.Mode != config.ModeFast || s.cfg.PersistentMode() != config.ModeSafe {
 		t.Fatalf("server config changed after failed save: %#v", s.cfg)
