@@ -18,6 +18,9 @@ type turnUndo struct {
 	checkpoint        *checkpoint.Checkpoint
 	sessionID         string
 	sessionGeneration uint64
+	restored          bool
+	restoreMessage    string
+	restoreErr        error
 }
 
 const maxUndoTaskPersistenceAttempts = 3
@@ -53,8 +56,19 @@ func (u *turnUndo) seal() ([]string, error) {
 }
 
 func (u *turnUndo) restore() (string, bool, error) {
+	// A complete restore consumes the checkpoint. Cache its result so a later
+	// retry of durable task persistence does not attempt to restore it again.
+	if u.restored {
+		return u.restoreMessage, true, u.restoreErr
+	}
 	result, err := u.checkpoint.Restore()
-	return formatUndoRestore(result, err)
+	msg, complete, restoreErr := formatUndoRestore(result, err)
+	if complete {
+		u.restored = true
+		u.restoreMessage = msg
+		u.restoreErr = restoreErr
+	}
+	return msg, complete, restoreErr
 }
 
 func formatUndoRestore(result checkpoint.RestoreResult, err error) (string, bool, error) {
@@ -125,7 +139,6 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		}
 		return "", restoreErr
 	}
-	a.latestUndo = nil
 	undoMutation := func(task *taskstate.Task) error {
 		wasDone := task.Status == taskstate.StatusDone
 		changed := task.InvalidateWorkspaceEvidence("undo restored workspace files")
@@ -142,12 +155,13 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	}
 	err = a.persistUndoTaskMutation(undoMutation)
 	if err != nil && !errors.Is(err, errTaskMutationSkipped) {
-		stateErr := fmt.Errorf("files restored but durable task state was not saved: %w", err)
+		stateErr := fmt.Errorf("files restored but durable task state was not saved; retry /undo to finish recovery: %w", err)
 		if restoreErr != nil {
 			return "", errors.Join(stateErr, restoreErr)
 		}
 		return "", stateErr
 	}
+	a.latestUndo = nil
 	if restoreErr != nil {
 		return "", restoreErr
 	}

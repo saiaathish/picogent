@@ -91,7 +91,7 @@ func TestUndoRecoversAfterCASConflict(t *testing.T) {
 	}
 }
 
-func TestUndoPreservesCASFailureWhenLatestTaskCannotBeLoaded(t *testing.T) {
+func TestUndoRetainsCheckpointUntilDurableRecovery(t *testing.T) {
 	a, store, task := newDurableUndoFixture(t, taskstate.StatusWorking)
 	path, err := store.Path(task.SessionID)
 	if err != nil {
@@ -102,15 +102,33 @@ func TestUndoPreservesCASFailureWhenLatestTaskCannotBeLoaded(t *testing.T) {
 	}
 
 	_, err = a.UndoLastTurn()
-	if err == nil || !strings.Contains(err.Error(), "files restored but durable task state was not saved") || !errors.Is(err, taskstate.ErrRevisionConflict) || !errors.Is(err, taskstate.ErrNotFound) {
+	if err == nil || !strings.Contains(err.Error(), "files restored but durable task state was not saved") || !strings.Contains(err.Error(), "retry /undo") || !errors.Is(err, taskstate.ErrRevisionConflict) || !errors.Is(err, taskstate.ErrNotFound) {
 		t.Fatalf("unrecoverable undo CAS failure = %v", err)
 	}
 	assertUndoFileContent(t, filepath.Join(a.ConfigSnapshot().Workspace, "fixed.txt"), "before\n")
-	if a.UndoAvailable() {
-		t.Fatal("checkpoint remained available after files were restored")
+	if !a.UndoAvailable() {
+		t.Fatal("checkpoint was discarded before durable recovery completed")
 	}
 	if got := a.TaskSnapshot(); got == nil || got.Revision != task.Revision || got.VerifiedChangeSeq != task.ChangeSeq || !got.Verification[len(got.Verification)-1].Passed {
 		t.Fatalf("unrecoverable CAS published invalidated task = %#v", got)
+	}
+
+	// Recreate the missing durable record, then retry. The workspace is already
+	// restored, so this must retry only the task mutation.
+	recreated := cloneTask(task)
+	recreated.Revision = 0
+	if err := store.Save(recreated); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.UndoLastTurn(); err != nil {
+		t.Fatalf("undo retry = %v", err)
+	}
+	if a.UndoAvailable() {
+		t.Fatal("checkpoint remained available after durable recovery")
+	}
+	got := a.TaskSnapshot()
+	if got == nil || got.Revision != recreated.Revision+1 || got.VerifiedChangeSeq != -1 || got.Verification[len(got.Verification)-1].Passed {
+		t.Fatalf("retried invalidation = %#v", got)
 	}
 }
 
