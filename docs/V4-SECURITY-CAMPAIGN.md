@@ -174,6 +174,7 @@ close the open or unrecorded risks below.
 | #156 | Core GUI API HTTP error sanitization | `1df554a` | `377aee1` | `33321115688` | `33321261954` |
 | #158 | Durable session history redaction | `4ff29bc` | `37570b4` | `33322930998` | `33323068108` |
 | #160 | Workspace-scoped slash diff observation | `6e041d2` | `c12e327` | `33323943756` | `33324107750` |
+| #162 | Production health focus through durable Outcome Engine | `bb1c6a7` | `18da466` | `33325729058` | `33325880483` |
 
 ## Open or unrecorded risks
 
