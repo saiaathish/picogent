@@ -169,12 +169,6 @@ func inspect(ctx context.Context, root string) (Map, []string, error) {
 	return m, files, nil
 }
 
-// Generate is an alias for Inspect for callers that treat repo maps as output.
-func Generate(ctx context.Context, root string) (Map, error) { return Inspect(ctx, root) }
-
-// Build is an alias for Inspect.
-func Build(ctx context.Context, root string) (Map, error) { return Inspect(ctx, root) }
-
 // Format renders stable JSON and keeps it within MaxOutputBytes.
 func Format(m Map) string {
 	m = redactedMap(boundedMap(m))

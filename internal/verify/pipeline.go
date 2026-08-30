@@ -118,9 +118,6 @@ func DetectPlan(workspace string, targets []string) Plan {
 	return plan
 }
 
-// DetectPipeline is an alias for DetectPlan.
-func DetectPipeline(workspace string, targets []string) Plan { return DetectPlan(workspace, targets) }
-
 // RunPipeline performs detected targeted verification, then broader verification.
 func RunPipeline(ctx context.Context, workspace string, options Options) PipelineResult {
 	started := time.Now()

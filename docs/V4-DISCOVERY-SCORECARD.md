@@ -23,8 +23,8 @@ not enough to establish real runtime behavior.
 | Intent/outcome | Monotonic goal revisions, tombstones, atomic clear | Permission boundary and bounded criteria | Template-only definition of done; ambiguity, negation, and conflicting goals are not structured | Duplicate `Steps`/`DefinitionOfDone` and `Verification`/`Evidence` representations | Make criteria and criterion evidence authoritative before expanding outcome features |
 | Memory | Bounded task and session records with save-before-publish | Causal learning remains small and advisory | FIFO retention is not value-aware; cross-process task writes are last-writer-wins | Transcript-shaped session storage duplicates structured task/evidence state | Make retention value-aware after measuring restart and compaction behavior |
 | Context efficiency | Pair-safe compaction; 8,192-character durable context; failure signals retained | Deterministic stale-output reduction | Aggregate summarization input and token estimates are not hard-bounded/calibrated; lexical priority misses structured/non-English failures | Repeated stale skeletonization/deduplication passes | Add an aggregate `Manage`/`Summarize` budget and measure bytes, tokens, allocations, and latency |
-| Repo intelligence | On-demand deterministic map with no daemon/index/watcher | Bounded search and map output | Short-head/dirty status omits path provenance; nested roots and fallback semantics drift | Unused `Generate`/`Build` aliases and duplicate phrase/default command tables | Add a bounded provenance-bearing repo snapshot refreshed at admission and after mutation |
-| Verification | Explicit `PASS`/`FAIL`/`INCONCLUSIVE`/`SKIPPED`; targeted-to-broader stages | Changed-file cap forces broader verification | Command selection omits build/vet/race/fuzz/diff gates; textual proof truncation lacks structured metadata | Duplicate `DetectPipeline`/legacy verification paths pending caller confirmation | Add an exact-head machine-readable release evidence manifest and truthfully surface all statuses |
+| Repo intelligence | On-demand deterministic map with no daemon/index/watcher | Bounded search and map output | Short-head/dirty status omits path provenance; nested roots and fallback semantics drift | Duplicate phrase/default command tables | Add a bounded provenance-bearing repo snapshot refreshed at admission and after mutation |
+| Verification | Explicit `PASS`/`FAIL`/`INCONCLUSIVE`/`SKIPPED`; targeted-to-broader stages | Changed-file cap forces broader verification | Command selection omits build/vet/race/fuzz/diff gates; textual proof truncation lacks structured metadata | Legacy verification paths pending caller confirmation | Add an exact-head machine-readable release evidence manifest and truthfully surface all statuses |
 | Repair/recovery | Local checkpoint/undo conflict safety and fail-closed permissions | Durable task resume and GUI steering | Retry taxonomy, route diversity, partial rollback reporting, and process-restart undo are incomplete | Prompt recovery hints would duplicate a future durable recovery ledger | Test and then persist side-effect/recovery metadata; do not replace checkpoint safety prematurely |
 | Performance | Deterministic local microbenchmarks exist | Bounded output/context controls | No current v3-v4 process envelope, RSS, cold/warm startup, or long-horizon measurements | Repeated large-output scans and unbounded summary construction may waste CPU | Build a cold/warm first-turn envelope benchmark before claiming performance gains |
 | Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Centralize subprocess policy with sanitized environment, hardened git flags, and descriptor-relative writes |
@@ -32,7 +32,7 @@ not enough to establish real runtime behavior.
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
 | GUI | Stale-turn guards, permission generations, and bounded SSE server | Lifecycle and undo wiring | Client can render inconclusive/skipped verification as success; reconnect/event-loss recovery is weak | Narrow events trigger broad reloads; side chat bypasses core task/evidence path | Make verification status canonical and render four distinct states with focused browser coverage |
 | TUI/headless | Headless stdout/stderr and fail-closed permission behavior; resume state | CLI dispatch and exit classes | Non-TTY/TUI behavior and session-save failures are not proven or always surfaced | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Surface persistence failures and test subprocess exit/EOF/signal contracts |
-| Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing is duplicated; docs retain stale benchmark anchors | In-repo-unused `repomap.Generate`, `repomap.Build`, and `verify.DetectPipeline` aliases | Delete only after caller/API confirmation; first reduce duplicated control-plane semantics |
+| Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing is duplicated; docs retain stale benchmark anchors | Duplicate control-plane paths and stale benchmark anchors | Delete only after caller/API confirmation; first reduce duplicated control-plane semantics |
 
 ## Cross-cutting scorecard
 
@@ -99,15 +99,13 @@ green unit tests or hosted compile/test CI:
 
 These are candidates, not approved deletions:
 
-1. `repomap.Generate`, `repomap.Build`, and `verify.DetectPipeline` after
-   external API compatibility is confirmed.
-2. The separate GUI side-chat path if a user-value benchmark does not justify
+1. The separate GUI side-chat path if a user-value benchmark does not justify
    its task/evidence bypass.
-3. Duplicate GUI/TUI admission wrappers after a shared outcome transition path
+2. Duplicate GUI/TUI admission wrappers after a shared outcome transition path
    has equivalent coverage.
-4. Prompt-only repair diversity hints after structural route/recovery evidence
+3. Prompt-only repair diversity hints after structural route/recovery evidence
    exists.
-5. Optional provider installers and advanced first-run cards from the default
+4. Optional provider installers and advanced first-run cards from the default
    setup path.
 
 ## Completed and selected slices
