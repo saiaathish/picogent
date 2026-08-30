@@ -221,6 +221,62 @@ func TestStdioSeparatesAnswerPromptsAndDiagnostics(t *testing.T) {
 	}
 }
 
+func TestStdioDiagnosticsRedactSecretsAndControlBytes(t *testing.T) {
+	const (
+		argumentSecret   = "headless-argument-secret"
+		resultSecret     = "headless-result-secret"
+		errorSecret      = "headless-error-secret"
+		permissionSecret = "headless-permission-secret"
+	)
+	var stderr bytes.Buffer
+	h := &stdioHandler{
+		in:     bufio.NewReader(strings.NewReader("n\n")),
+		errOut: &stderr,
+	}
+	h.OnToolStart(llm.ToolCall{
+		Name:      "mcp\nforged",
+		Arguments: "\x1b[31m{\"access_token\":\"" + argumentSecret + "\"}",
+	})
+	h.OnToolEnd(llm.ToolCall{Name: "mcp"}, `{"api_key":"`+resultSecret+`"}`, nil)
+	h.OnToolEnd(llm.ToolCall{Name: "mcp"}, "", errors.New("tool failed\npassword="+errorSecret))
+	_, _ = h.OnNeedPermission(context.Background(), perm.Request{Summary: "write token=" + permissionSecret})
+
+	got := stderr.String()
+	for _, secret := range []string{argumentSecret, resultSecret, errorSecret, permissionSecret} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("diagnostic leaked secret %q: %q", secret, got)
+		}
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "mcp\nforged") {
+		t.Fatalf("diagnostic retained terminal control or a forged line: %q", got)
+	}
+	if !strings.Contains(got, "mcp forged") || !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("diagnostic lost flattened source or redaction marker: %q", got)
+	}
+}
+
+func TestDisplayErrorRedactsCredentialShapedCause(t *testing.T) {
+	const secret = "headless-cause-secret"
+	got := displayError(errors.New("provider failed: access_token=" + secret))
+	if strings.Contains(got, secret) {
+		t.Fatalf("display error leaked secret: %q", got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("display error lost redaction marker: %q", got)
+	}
+}
+
+func TestHeadlessUnverifiedErrorRedactsEvidence(t *testing.T) {
+	const secret = "headless-verification-secret"
+	err := newHeadlessUnverifiedError("verify output\napi_key=" + secret)
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("unverified diagnostic leaked secret: %q", err)
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("unverified diagnostic lost redaction marker: %q", err)
+	}
+}
+
 func TestStdioPermissionReadHonorsCancellation(t *testing.T) {
 	reader := &blockingPermissionReader{
 		started: make(chan struct{}),
