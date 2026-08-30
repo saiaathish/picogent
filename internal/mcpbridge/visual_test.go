@@ -21,7 +21,7 @@ func TestInspectCallResultKeepsOnlyValidatedImages(t *testing.T) {
 		&mcp.AudioContent{Data: []byte("audio"), MIMEType: "audio/wav"},
 	}})
 
-	if result.Text != "screenshot ready" {
+	if !strings.Contains(result.Text, mcpResultMarker) || !strings.Contains(result.Text, "screenshot ready") {
 		t.Fatalf("text result = %q", result.Text)
 	}
 	if result.ImageCount != 1 || len(result.Images) != 1 {
