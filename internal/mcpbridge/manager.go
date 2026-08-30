@@ -23,8 +23,10 @@ const connectTimeout = 20 * time.Second
 
 const (
 	mcpMetadataMarker    = "UNTRUSTED MCP METADATA"
+	mcpResultMarker      = "UNTRUSTED MCP RESULT"
 	maxMCPMetadataBytes  = 2048
 	maxMCPFieldTextBytes = 1024
+	maxMCPResultBytes    = 32 << 10
 )
 
 // ErrManagerClosed is returned when an operation is attempted through a
@@ -726,13 +728,13 @@ func formatResult(res *mcp.CallToolResult) string {
 		if out == "" {
 			out = "tool returned an error"
 		}
-		return "error: " + out
+		out = "error: " + out
+	} else if out == "" {
+		out = "ok"
 	}
-	if out == "" {
-		return "ok"
-	}
-	if len(out) > 32<<10 {
-		out = out[:32<<10] + "\n… truncated …"
+	out = mcpResultMarker + ": " + out
+	if len(out) > maxMCPResultBytes {
+		out = out[:maxMCPResultBytes] + "\n… truncated …"
 	}
 	return out
 }
