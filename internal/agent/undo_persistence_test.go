@@ -153,6 +153,55 @@ func TestUndoPreservesCompletedRestoreWarning(t *testing.T) {
 	}
 }
 
+func TestChangingTaskSessionDiscardsUndoCheckpoint(t *testing.T) {
+	a, _, _ := newDurableUndoFixture(t, taskstate.StatusWorking)
+
+	if !a.UndoAvailable() {
+		t.Fatal("fixture did not provide an undo checkpoint")
+	}
+	if err := a.SetTaskSession("new-session"); err != nil {
+		t.Fatal(err)
+	}
+	if a.UndoAvailable() {
+		t.Fatal("session change retained the old undo checkpoint")
+	}
+	if msg, err := a.UndoLastTurn(); err != nil || msg != "nothing to undo" {
+		t.Fatalf("undo after session change = (%q, %v)", msg, err)
+	}
+	assertUndoFileContent(t, filepath.Join(a.ConfigSnapshot().Workspace, "fixed.txt"), "after\n")
+}
+
+func TestLateTurnCannotRepublishUndoAfterSessionChange(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "fixed.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Capture(root, []string{"fixed.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace = root
+	cfg.Provider = config.ProviderOllama
+	a := New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: root}), perm.New(config.ModeFast, root, nil))
+	a.TaskSession = "old-session"
+	late := &turnUndo{workspace: root, checkpoint: cp, sessionID: "old-session"}
+	if err := a.SetTaskSession("new-session"); err != nil {
+		t.Fatal(err)
+	}
+
+	var result Result
+	a.finishTurnUndo(&result, late, true)
+	if result.UndoAvailable || a.UndoAvailable() {
+		t.Fatal("late old-session turn republished an undo checkpoint")
+	}
+}
+
 func newDurableUndoFixture(t *testing.T, status taskstate.Status) (*Agent, *taskstate.Store, *taskstate.Task) {
 	t.Helper()
 	root := t.TempDir()
@@ -209,7 +258,7 @@ func newDurableUndoFixture(t *testing.T, status taskstate.Status) (*Agent, *task
 	if err := cp.Seal(); err != nil {
 		t.Fatal(err)
 	}
-	a.latestUndo = &turnUndo{workspace: root, checkpoint: cp}
+	a.latestUndo = &turnUndo{workspace: root, checkpoint: cp, sessionID: task.SessionID}
 	return a, store, task
 }
 

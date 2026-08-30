@@ -14,12 +14,14 @@ import (
 // run. A path is captured once, even when the model edits it in several tool
 // rounds during the same turn.
 type turnUndo struct {
-	workspace  string
-	checkpoint *checkpoint.Checkpoint
+	workspace         string
+	checkpoint        *checkpoint.Checkpoint
+	sessionID         string
+	sessionGeneration uint64
 }
 
-func newTurnUndo(workspace string) *turnUndo {
-	return &turnUndo{workspace: workspace}
+func newTurnUndo(workspace, sessionID string, sessionGeneration uint64) *turnUndo {
+	return &turnUndo{workspace: workspace, sessionID: sessionID, sessionGeneration: sessionGeneration}
 }
 
 func (u *turnUndo) capture(path string) error {
@@ -105,6 +107,10 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	if a.latestUndo == nil {
 		return "nothing to undo", nil
 	}
+	if !a.undoBelongsToCurrentSession(a.latestUndo) {
+		a.latestUndo = nil
+		return "nothing to undo", nil
+	}
 	msg, complete, restoreErr := a.latestUndo.restore()
 	if !complete {
 		if restoreErr == nil {
@@ -170,6 +176,20 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 	}
 	res.UndoAvailable = true
 	a.undoMu.Lock()
+	if !a.undoBelongsToCurrentSession(u) {
+		a.undoMu.Unlock()
+		res.UndoAvailable = false
+		return
+	}
 	a.latestUndo = u
 	a.undoMu.Unlock()
+}
+
+func (a *Agent) undoBelongsToCurrentSession(u *turnUndo) bool {
+	if a == nil || u == nil {
+		return false
+	}
+	a.taskMu.RLock()
+	defer a.taskMu.RUnlock()
+	return u.sessionID == a.TaskSession && u.sessionGeneration == a.taskSessionGeneration
 }
