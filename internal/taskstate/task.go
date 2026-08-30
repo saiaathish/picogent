@@ -318,6 +318,11 @@ type Task struct {
 	StopReason        StopReason     `json:"stop_reason,omitempty"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
+
+	// normalizedFromDone records that Store.Load reopened an unproven terminal
+	// marker. It is runtime-only so direct store consumers remain fail-closed;
+	// an agent may restore done only after a live workspace proof is re-bound.
+	normalizedFromDone bool
 }
 
 // New creates a task associated with a persisted chat session.
@@ -602,6 +607,7 @@ func (t *Task) NormalizeLegacyCompletion() bool {
 	t.Status = StatusWorking
 	t.BlockedBy = ""
 	t.StopReason = StopNone
+	t.normalizedFromDone = true
 	t.touch()
 	return true
 }
@@ -1379,6 +1385,69 @@ func (t *Task) CriterionEvidenceState(index int) (string, bool) {
 // check. Callers that need to explain a refusal should use CompletionCheck.
 func (t *Task) CompletionReady() bool {
 	return t != nil && t.CompletionCheck().Ready
+}
+
+// ReestablishWorkspaceVerification restores runtime trust after a persisted
+// verification has been compared with a fresh live workspace observation.
+// Serialized provenance is never trusted by itself; the caller must provide
+// the observation it just captured, and this method requires it to match the
+// stored complete proof boundary before re-enabling the associated evidence.
+func (t *Task) ReestablishWorkspaceVerification(observation *workspace.Observation) bool {
+	if t == nil || observation == nil || len(t.Verification) == 0 {
+		return false
+	}
+	latest := &t.Verification[len(t.Verification)-1]
+	if !latest.Passed || latest.Observation == nil || latest.Observation.FilesTruncated || t.VerifiedChangeSeq != t.ChangeSeq {
+		return false
+	}
+	if normalizeVerificationCoverage(latest.Coverage, latest.Observation) != VerificationCoverageComplete {
+		return false
+	}
+	if comparison := workspace.Compare(*latest.Observation, *observation); !comparison.Fresh {
+		return false
+	}
+
+	changed := !latest.trusted
+	latest.trusted = true
+	for i := range t.Evidence {
+		evidence := &t.Evidence[i]
+		if evidence.trusted || evidence.ChangeSeq != t.ChangeSeq || !evidenceStatusPasses(evidence.Status) {
+			continue
+		}
+		if normalizeEvidenceKind(evidence.Kind) != EvidenceKindVerification || evidence.Origin != EvidenceOriginVerifier {
+			continue
+		}
+		if evidence.Summary != latest.Summary || evidence.Reference != latest.Command || evidence.At.Before(latest.At) {
+			continue
+		}
+		evidence.trusted = true
+		changed = true
+	}
+	if t.normalizedFromDone && t.Status == StatusWorking && t.allStepsComplete() && t.CompletionReady() {
+		t.Status = StatusDone
+		t.BlockedBy = ""
+		t.StopReason = StopNone
+		changed = true
+	}
+	if changed {
+		t.touch()
+	}
+	return changed
+}
+
+func (t *Task) allStepsComplete() bool {
+	if t == nil || len(t.Steps) == 0 {
+		return true
+	}
+	if t.CurrentStep < len(t.Steps) {
+		return false
+	}
+	for _, step := range t.Steps {
+		if !step.Done {
+			return false
+		}
+	}
+	return true
 }
 
 func (t *Task) workspaceBoundVerificationReady() bool {

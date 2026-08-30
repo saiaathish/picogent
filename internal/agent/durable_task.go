@@ -370,9 +370,12 @@ func revalidatePersistedTask(root string, task *taskstate.Task) (bool, error) {
 			observation:       cloneWorkspaceObservation(latest.Observation),
 			observationUsable: latest.Observation != nil,
 		}
-		fresh, checkReason := recheckVerificationEvidence(context.Background(), root, evidence)
+		observation, fresh, checkReason := recheckVerificationEvidenceObservation(context.Background(), root, evidence)
 		if fresh {
-			return false, nil
+			// Persisted verification records intentionally lose their runtime trust
+			// bit when serialized. A fresh comparison against the live workspace is
+			// the only boundary that may restore it during agent resume.
+			return task.ReestablishWorkspaceVerification(observation), nil
 		}
 		if checkReason != "" {
 			reason = "persisted workspace evidence is stale: " + checkReason

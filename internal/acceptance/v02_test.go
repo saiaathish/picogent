@@ -141,8 +141,8 @@ func TestV02ReleaseLoop(t *testing.T) {
 		t.Fatalf("missing staged verification evidence: %q", verification)
 	}
 	loaded, err := a.TaskStore.Load("acceptance-session")
-	if err != nil || loaded.Status != taskstate.StatusDone {
-		t.Fatalf("persisted task = %+v, err=%v", loaded, err)
+	if err != nil || loaded.Status != taskstate.StatusWorking || !loaded.NeedsVerification() {
+		t.Fatalf("directly loaded task should require live proof rebinding = %+v, err=%v", loaded, err)
 	}
 	assertFile(t, filepath.Join(workspace, "todo", "todo.go"), fixedTodo)
 

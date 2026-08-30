@@ -604,7 +604,7 @@ func TestBlockedDurableTaskRerunPreservesCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	task.RecordChanged("signup.go")
-	task.AddVerificationWithObservation("go test ./...", true, "verify PASS", &observation)
+	task.AddVerificationForCriteria([]int{0, 1}, "go test ./...", true, "verify PASS", &observation)
 	task.Block("permission needed")
 	if err := store.Save(task); err != nil {
 		t.Fatal(err)
