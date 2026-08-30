@@ -73,6 +73,12 @@ that a token is not inherited while valid passing-test evidence remains
 observable. This is a local boundary test, not proof that every external
 provider or hostile runtime path is safe.
 
+The atomic writer's same-UID replacement race after its final identity check
+remains deliberately unclaimed because POSIX has no portable
+compare-and-rename-by-inode primitive. Deterministic `securefile` tests cover
+the supported boundary: a replacement observed before publication is rejected,
+and cleanup never unlinks a replacement inode.
+
 ## Existing boundaries rechecked
 
 - Workspace MCP configuration is not autoloaded; only user-owned MCP config is

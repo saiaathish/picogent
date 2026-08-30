@@ -4,7 +4,6 @@ package securefile
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,61 +91,6 @@ func TestRemoveMatchingLeavesReplacedTemporaryEntry(t *testing.T) {
 	}
 	if string(got) != "attacker\n" {
 		t.Fatalf("replaced temporary entry changed during cleanup: %q", got)
-	}
-}
-
-func TestWriteAtomicTemporarySwapCannotPublishAttackerFile(t *testing.T) {
-	parent := t.TempDir()
-	path := filepath.Join(parent, "state.yaml")
-	known := map[string]bool{"initial\n": true}
-	for i := 0; i < 120; i++ {
-		known[fmt.Sprintf("trusted-%d\n", i)] = true
-	}
-	if err := WriteAtomic(path, []byte("initial\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	stop := make(chan struct{})
-	var attacker sync.WaitGroup
-	attacker.Add(1)
-	go func() {
-		defer attacker.Done()
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-			}
-			entries, err := os.ReadDir(parent)
-			if err != nil {
-				continue
-			}
-			for _, entry := range entries {
-				if !strings.HasPrefix(entry.Name(), ".picogent-") || !strings.HasSuffix(entry.Name(), ".tmp") {
-					continue
-				}
-				name := filepath.Join(parent, entry.Name())
-				_ = os.Rename(name, name+".saved")
-				_ = os.WriteFile(name, []byte("attacker\n"), 0o600)
-			}
-		}
-	}()
-
-	for i := 0; i < 120; i++ {
-		if err := WriteAtomic(path, []byte(fmt.Sprintf("trusted-%d\n", i)), 0o600); err != nil {
-			// A hostile temporary swap is allowed to make a particular write
-			// fail, but it must never publish the attacker's replacement.
-			continue
-		}
-	}
-	close(stop)
-	attacker.Wait()
-	got, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !known[string(got)] {
-		t.Fatalf("temporary swap published untrusted data: %q", got)
 	}
 }
 
