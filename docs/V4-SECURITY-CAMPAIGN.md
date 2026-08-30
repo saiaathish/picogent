@@ -141,6 +141,7 @@ close the open or unrecorded risks below.
 | #135 | Transient Windows session replacement retry | `be5b6db` | `556da3e` | `33311631871` | `33311763251` |
 | #136 | Security campaign evidence ledger update | `9f0bdeb` | `5ebfd8c` | `33312084576` | `33312234714` |
 | #138 | Headless CLI diagnostic redaction | `478bb73` | `77456a0` | `33312921387` | `33313055665` |
+| #140 | TUI diagnostic redaction | `93eabe3` | `4c52e79` | `33313929799` | `33314065875` |
 
 ## Open or unrecorded risks
 
