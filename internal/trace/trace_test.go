@@ -74,6 +74,44 @@ func TestAppendRedactsCredentialShapedDetails(t *testing.T) {
 	}
 }
 
+func TestAppendRedactsEveryTextualEventField(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	ws := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log, err := Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kindSecret := "kind-secret"
+	toolSecret := "tool-secret"
+	detailSecret := "detail-secret"
+	if err := log.Append(
+		"prompt token="+kindSecret,
+		"authorization="+toolSecret,
+		`{"arguments":{"access_token":"`+detailSecret+`"},"output":"mcp result"}`,
+		nil,
+		0,
+	); err != nil {
+		t.Fatal(err)
+	}
+	got := log.Tail(1)
+	if len(got) != 1 {
+		t.Fatalf("events=%d", len(got))
+	}
+	payload := strings.Join([]string{got[0].Kind, got[0].Tool, got[0].Detail}, "\n")
+	for _, secret := range []string{kindSecret, toolSecret, detailSecret} {
+		if strings.Contains(payload, secret) {
+			t.Fatalf("trace retained secret %q: %q", secret, payload)
+		}
+	}
+	if strings.Count(payload, "[REDACTED]") < 3 {
+		t.Fatalf("trace did not redact every textual field: %q", payload)
+	}
+}
+
 func TestTailRedactsLegacyCredentialShapedDetails(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("PICOGENT_HOME", home)
@@ -95,6 +133,36 @@ func TestTailRedactsLegacyCredentialShapedDetails(t *testing.T) {
 	}
 	if strings.Contains(got[0].Detail, "sk-legacy-secret") || !strings.Contains(got[0].Detail, "[REDACTED]") {
 		t.Fatalf("legacy trace detail was not redacted: %q", got[0].Detail)
+	}
+}
+
+func TestTailResanitizesLegacyTextualEventFields(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	ws := filepath.Join(t.TempDir(), "proj")
+	if err := os.MkdirAll(ws, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	log, err := Open(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := `{"seq":1,"ts":"2026-08-20T04:00:00Z","kind":"token=legacy-kind-secret","tool":"authorization=legacy-tool-secret","detail":"password=legacy-detail-secret"}` + "\n"
+	if err := os.WriteFile(log.Path(), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := log.Tail(1)
+	if len(got) != 1 {
+		t.Fatalf("events=%d", len(got))
+	}
+	payload := strings.Join([]string{got[0].Kind, got[0].Tool, got[0].Detail}, "\n")
+	for _, secret := range []string{"legacy-kind-secret", "legacy-tool-secret", "legacy-detail-secret"} {
+		if strings.Contains(payload, secret) {
+			t.Fatalf("legacy trace retained secret %q: %q", secret, payload)
+		}
+	}
+	if strings.Count(payload, "[REDACTED]") < 3 {
+		t.Fatalf("legacy trace did not redact every textual field: %q", payload)
 	}
 }
 
