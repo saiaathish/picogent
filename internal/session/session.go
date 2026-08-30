@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/saiaathish/picogent/internal/redact"
 	"io"
 	"os"
 	"path/filepath"
@@ -381,7 +382,7 @@ func boundSession(s *Session) error {
 	if len(s.Workspace) > maxSessionWorkspaceBytes {
 		return ErrSessionTooLarge
 	}
-	s.Title = clipSessionText(s.Title, maxSessionTitleBytes)
+	s.Title = sessionText(s.Title, maxSessionTitleBytes)
 	s.Messages = boundedMessages(s.Messages, *s)
 	return nil
 }
@@ -437,7 +438,7 @@ func boundedMessages(messages []llm.Message, base Session) []llm.Message {
 
 func boundMessage(message llm.Message) llm.Message {
 	message.Role = clipSessionText(message.Role, 32)
-	message.Content = clipSessionText(message.Content, maxSessionContentBytes)
+	message.Content = sessionText(message.Content, maxSessionContentBytes)
 	message.ToolCallID = clipSessionText(message.ToolCallID, 128)
 	message.Name = clipSessionText(message.Name, 128)
 	if len(message.Parts) > maxSessionParts {
@@ -447,7 +448,7 @@ func boundMessage(message llm.Message) llm.Message {
 		parts := make([]llm.Part, 0, len(message.Parts))
 		for _, part := range message.Parts {
 			part.Type = clipSessionText(part.Type, 32)
-			part.Text = clipSessionText(part.Text, maxSessionPartTextBytes)
+			part.Text = sessionText(part.Text, maxSessionPartTextBytes)
 			part.MIME = clipSessionText(part.MIME, 128)
 			part.Name = clipSessionText(part.Name, 256)
 			if len(part.Data) > maxSessionPartDataBytes {
@@ -471,12 +472,20 @@ func boundMessage(message llm.Message) llm.Message {
 			call.ID = clipSessionText(call.ID, 128)
 			call.ItemID = clipSessionText(call.ItemID, 128)
 			call.Name = clipSessionText(call.Name, 128)
-			call.Arguments = clipSessionText(call.Arguments, maxSessionToolBytes)
+			call.Arguments = sessionText(call.Arguments, maxSessionToolBytes)
 			calls = append(calls, call)
 		}
 		message.ToolCalls = calls
 	}
 	return message
+}
+
+// sessionText applies the shared credential redactor before enforcing the
+// per-field history bound. A saved transcript can contain user text, model
+// text, tool arguments, and tool results, so transcript-bearing values must
+// cross the same persistence boundary.
+func sessionText(value string, limit int) string {
+	return clipSessionText(redact.Text(value), limit)
 }
 
 func splitTurns(messages []llm.Message) [][]llm.Message {
