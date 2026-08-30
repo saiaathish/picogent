@@ -79,10 +79,10 @@ func FailureIntelligenceForTask(task *taskstate.Task) FailureIntelligence {
 		repeatCount++
 	}
 	return boundFailureIntelligence(FailureIntelligence{
-		Class:         class,
-		Fingerprint:   fingerprint,
-		RepeatCount:   repeatCount,
-		Route:         routeForFailureClass(class),
+		Class:       class,
+		Fingerprint: fingerprint,
+		RepeatCount: repeatCount,
+		Route:       routeForFailureClass(class),
 	})
 }
 
@@ -99,7 +99,7 @@ func ClassifyFailure(summary, command string) FailureClass {
 	switch {
 	case hasFailureMarker(value, "windows", "win32", "invalid win32", "filename too long", "path too long", "cannot find the path", "the system cannot find"):
 		return FailureClassWindowsPath
-	case hasFailureMarker(value, "generated file", "generated files", "code generated", "generated output", "generated drift"):
+	case hasFailureMarker(value, "generated file", "generated files", "code generated", "go generate", "generated output", "generated drift"):
 		return FailureClassGeneratedDrift
 	case hasFailureMarker(value, "uncaught typeerror", "uncaught referenceerror", "typeerror", "referenceerror", "hydration failed", "browser console", "frontend", "react", "vite", "webpack", "render error"):
 		return FailureClassFrontendRuntime
