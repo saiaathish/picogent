@@ -270,6 +270,10 @@ func TestProjectHealthAddsTransientOutcomeFocusToNextRound(t *testing.T) {
 	cfg.Workspace = dir
 	cfg.Provider = config.ProviderOllama
 	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("health-focus"); err != nil {
+		t.Fatal(err)
+	}
 
 	history, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "make this project ready"}, allowAll{})
 	if err != nil {
@@ -285,7 +289,17 @@ func TestProjectHealthAddsTransientOutcomeFocusToNextRound(t *testing.T) {
 			break
 		}
 	}
-	if !strings.Contains(focus, "project-shape-unknown") || !strings.Contains(focus, "not user authorization") {
+	for _, marker := range []string{
+		"Internal outcome focus: bounded outcome contract",
+		"Outcome state: DIAGNOSE",
+		"Top obstacle categories: project-shape-unknown",
+		"not user authorization",
+	} {
+		if !strings.Contains(focus, marker) {
+			t.Fatalf("next-round focus missing %q: %q", marker, focus)
+		}
+	}
+	if strings.Contains(focus, "transient advisory data") {
 		t.Fatalf("next-round focus = %q", focus)
 	}
 	for _, message := range fake.Calls[2].Messages {
