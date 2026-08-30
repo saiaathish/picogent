@@ -673,7 +673,7 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		}
 		m.lines = append(m.lines, logLine{Kind: "system", Text: st})
 	case payload == "diff":
-		m.lines = append(m.lines, logLine{Kind: "system", Text: slash.GitDiff()})
+		m.lines = append(m.lines, logLine{Kind: "system", Text: slash.GitDiff(m.cfg.Workspace)})
 	case strings.HasPrefix(payload, "memory:"):
 		text := strings.TrimPrefix(payload, "memory:")
 		if text == "" {
