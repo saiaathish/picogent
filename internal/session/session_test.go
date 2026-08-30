@@ -341,6 +341,110 @@ func TestSessionLoadBoundsLegacyHistoryBeforeResume(t *testing.T) {
 	}
 }
 
+func TestSessionLoadRedactsHandWrittenTranscript(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	const secret = "handwritten-load-secret"
+	s := &Session{
+		ID:        "handwritten-redaction",
+		Title:     "manual record",
+		Workspace: workspace,
+		Updated:   time.Now().UTC(),
+		Messages: []llm.Message{
+			{Role: "user", Content: `api_key="` + secret + `"`},
+			{Role: "assistant", Parts: []llm.Part{{Type: "text", Text: "password=" + secret}}},
+			{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "call-1", Name: "read_file", Arguments: `{"token":"` + secret + `"}`}}},
+			{Role: "tool", ToolCallID: "call-1", Name: "read_file", Content: "Authorization: Bearer " + secret},
+		},
+	}
+	path, err := s.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := Load(s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Messages) != len(s.Messages) {
+		t.Fatalf("loaded message count=%d, want %d", len(loaded.Messages), len(s.Messages))
+	}
+	for _, message := range loaded.Messages {
+		if strings.Contains(message.Content, secret) {
+			t.Fatalf("loaded content retained secret: %#v", message)
+		}
+		for _, part := range message.Parts {
+			if strings.Contains(part.Text, secret) {
+				t.Fatalf("loaded part retained secret: %#v", part)
+			}
+		}
+		for _, call := range message.ToolCalls {
+			if strings.Contains(call.Arguments, secret) {
+				t.Fatalf("loaded tool arguments retained secret: %#v", call)
+			}
+		}
+	}
+}
+
+func TestSessionNeedsNormalizationFailsClosed(t *testing.T) {
+	canonical := Session{
+		ID:        "canonical",
+		Title:     "canonical session",
+		Workspace: "workspace",
+		Messages: []llm.Message{
+			{Role: "user", Content: "request"},
+			{Role: "assistant", Content: "response"},
+		},
+	}
+	data, err := json.Marshal(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sessionNeedsNormalization(&canonical, len(data)) {
+		t.Fatal("canonical session took the normalization path")
+	}
+
+	tooMany := canonical
+	tooMany.Messages = make([]llm.Message, MaxSessionMessages+1)
+	withSystem := canonical
+	withSystem.Messages = append([]llm.Message{{Role: "system", Content: "internal"}}, canonical.Messages...)
+	withOrphan := canonical
+	withOrphan.Messages = append(canonical.Messages, llm.Message{Role: "tool", ToolCallID: "missing"})
+	withSecret := canonical
+	withSecret.Messages = []llm.Message{{Role: "user", Content: `token="secret"`}}
+	emptyArray := canonical
+	emptyArray.Messages = []llm.Message{}
+	cases := []struct {
+		name string
+		s    Session
+		size int
+	}{
+		{name: "too many messages", s: tooMany, size: len(data)},
+		{name: "system message", s: withSystem, size: len(data)},
+		{name: "orphan tool message", s: withOrphan, size: len(data)},
+		{name: "sensitive text", s: withSecret, size: len(data)},
+		{name: "present empty array", s: emptyArray, size: len(data)},
+		{name: "near byte limit", s: canonical, size: maxSessionFastPathBytes + 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !sessionNeedsNormalization(&tc.s, tc.size) {
+				t.Fatalf("sessionNeedsNormalization(%s) = false", tc.name)
+			}
+		})
+	}
+}
+
 func TestNewestUnitsPrioritizesNewestUnitWhenOldHistoryWouldCrowdItOut(t *testing.T) {
 	base := Session{ID: "bounded", Title: "chat", Workspace: "workspace"}
 	newest := strings.Repeat("newest response ", 12000)
