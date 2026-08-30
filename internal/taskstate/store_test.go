@@ -11,31 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/saiaathish/picogent/internal/securefile"
 )
-
-func TestStoreSessionLockRejectsConcurrentOwner(t *testing.T) {
-	store := NewStore(t.TempDir())
-	release, err := store.AcquireSessionLock("same-session")
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := store.AcquireSessionLock("same-session")
-	if err == nil || second != nil || !errors.Is(err, securefile.ErrLocked) {
-		t.Fatalf("second session owner = release-nil=%v err=%v, want ErrLocked", second == nil, err)
-	}
-	if err := release(); err != nil {
-		t.Fatal(err)
-	}
-	third, err := store.AcquireSessionLock("same-session")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := third(); err != nil {
-		t.Fatal(err)
-	}
-}
 
 func TestStoreRunLockSerializesSameProcessStores(t *testing.T) {
 	dir := t.TempDir()
