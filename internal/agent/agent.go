@@ -376,6 +376,32 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	return a.RunWithOptions(ctx, history, user, ev, RunOptions{})
 }
 
+func (a *Agent) acquireProjectRunLockForWorkspace(workspace string) (func() error, error) {
+	store := a.TaskStoreSnapshot()
+	var storeErr error
+	if store != nil {
+		release, err := store.AcquireRunLock()
+		if err == nil {
+			return release, nil
+		}
+		storeErr = err
+	}
+	if strings.TrimSpace(workspace) != "" {
+		release, err := taskstate.WorkspaceStore(workspace).AcquireRunLock()
+		if err == nil {
+			return release, nil
+		}
+		if storeErr != nil {
+			return nil, fmt.Errorf("task store lock: %v; workspace lock: %w", storeErr, err)
+		}
+		return nil, err
+	}
+	if storeErr != nil {
+		return nil, storeErr
+	}
+	return func() error { return nil }, nil
+}
+
 // RunWithOptions runs one isolated turn. Scope preflight callers use this to
 // apply a temporary Plan/Ask boundary without mutating the next turn's mode.
 func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user llm.Message, ev EventHandler, opts RunOptions) ([]llm.Message, Result, error) {
@@ -383,6 +409,17 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		ev = NopHandler{}
 	}
 	state := a.RuntimeSnapshot()
+	releaseRun, err := a.acquireProjectRunLockForWorkspace(state.CFG.Workspace)
+	if err != nil {
+		wrapped := fmt.Errorf("project run is unavailable: %w", err)
+		ev.OnError(wrapped)
+		return history, Result{}, wrapped
+	}
+	defer func() {
+		if err := releaseRun(); err != nil {
+			ev.OnError(fmt.Errorf("project run lock release failed: %w", err))
+		}
+	}()
 	cfg := state.CFG
 	taskMode := state.TaskMode
 	if opts.TaskMode != nil && opts.TaskMode.Valid() {
@@ -748,7 +785,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		msgs = compactMsgs
 		res.Context = stats
 	}
-	err := fmt.Errorf("stopped after %d tool rounds (limit)", cfg.MaxToolRounds)
+	err = fmt.Errorf("stopped after %d tool rounds (limit)", cfg.MaxToolRounds)
 	res.FilesChanged = sortedChanged(changed)
 	a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 	a.blockDurableTask("task budget exhausted", ev)
