@@ -3,6 +3,7 @@ package trace
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -76,7 +77,7 @@ func Open(workspace string) (*Log, error) {
 				seq = ev.Seq
 			}
 		}
-	} else if !os.IsNotExist(err) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("read trace log: %w", err)
 	}
 	return &Log{
@@ -130,7 +131,7 @@ func (l *Log) Append(kind, tool, detail string, ok *bool, ms int64) error {
 				l.seq = existing.Seq
 			}
 		}
-	} else if !os.IsNotExist(readErr) {
+	} else if !errors.Is(readErr, os.ErrNotExist) {
 		return readErr
 	}
 	l.seq++
