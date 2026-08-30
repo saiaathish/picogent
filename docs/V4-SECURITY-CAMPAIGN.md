@@ -116,6 +116,11 @@ and cleanup never unlinks a replacement inode.
 - A cross-platform checkpoint test also rejects a post-seal replacement hard
   link at a turn-created path before deletion; both the outside sentinel and
   the replacement path remain unchanged.
+- A Windows-only stress test races checkpoint restore against repeated
+  replacement hard links and verifies that an outside sentinel remains
+  unchanged. Hosted PR #132 CI run `33310394597` and post-merge `main` run
+  `33310553558` passed the Windows, Ubuntu, macOS, and release matrix. This is
+  direct hosted Windows stress evidence, not a general same-UID race guarantee.
 
 ## Hosted evidence ledger
 
@@ -130,16 +135,18 @@ close the open or unrecorded risks below.
 | #128 | Atomic checkpoint restore publication and rollback reporting | `59787da` | `1e6188e` | `33308507232` | `33308634597` |
 | #129 | Unix ancestor-swap deletion stress coverage | `ec22494` | `d77a4f8` | `33308942589` | `33309050782` |
 | #130 | Cross-platform hardlink protection for created-path deletion | `aba55a5` | `b2fd72f` | `33309325110` | `33309483503` |
+| #131 | Security evidence ledger | `96ac210` | `703016d1` | `33309894324` | `33310008305` |
+| #132 | Windows hostile-runtime restore stress coverage | `b7f612b` | `d1572a2` | `33310394597` | `33310553558` |
 
 ## Open or unrecorded risks
 
 - Checkpoint restore now publishes each restored file's complete bytes and mode
   atomically and only marks a mutation applied after that publication or
   deletion succeeds. Rollback still uses in-memory post-turn states and is
-  best-effort. The operation is intentionally not a multi-file atomic
-  transaction; Windows hostile-runtime restore stress and cross-process
-  deletion races remain required before this is a broad checkpoint safety
-  claim.
+  best-effort. Hosted Windows hostile-runtime restore stress now covers
+  replacement-hardlink pressure, but the operation is intentionally not a
+  multi-file atomic transaction and cross-process deletion races remain
+  required before this is a broad checkpoint safety claim.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
 - The npm provider packages and their platform-specific optional packages are
