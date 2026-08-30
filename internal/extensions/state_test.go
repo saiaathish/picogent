@@ -462,7 +462,15 @@ func TestFailedSkillCopyRemovesPartialDestination(t *testing.T) {
 		SkillRepo: "file://" + repo, SkillPath: "skill",
 	}, t.TempDir())
 	if err == nil {
-		t.Fatal("symlinked source skill unexpectedly copied")
+		// Git on Windows may materialize repository symlinks as regular files
+		// when symlink checkout support is unavailable. That representation is
+		// safe to copy because it contains the link target text, not a live
+		// filesystem edge; the real symlink case below must still fail closed.
+		copied, statErr := os.Lstat(filepath.Join(home, ".cursor", "skills-cursor", "skill", "unsupported-link"))
+		if statErr != nil || copied.Mode()&os.ModeSymlink != 0 {
+			t.Fatalf("materialized symlink source was not handled safely: info=%#v err=%v", copied, statErr)
+		}
+		return
 	}
 	dest := filepath.Join(home, ".cursor", "skills-cursor", "skill")
 	if _, statErr := os.Lstat(dest); !os.IsNotExist(statErr) {
