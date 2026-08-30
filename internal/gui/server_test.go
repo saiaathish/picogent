@@ -1354,6 +1354,68 @@ func TestChatRejectsUndoWhileAgentTurnIsActive(t *testing.T) {
 	}
 }
 
+func TestChatUndoEmitsCurrentTaskSnapshot(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "session-undo-gui"
+	cfg := config.Default()
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := perm.New(config.ModeFast, workspace, nil)
+	gate.AddAlwaysAllowed("verify")
+	ag := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: note updated"}},
+	}}, tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		Verify:    func(context.Context) (string, error) { return "verify PASS\n1 passed", nil },
+	}), gate)
+	ag.SetTaskStore(store)
+	if err := ag.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := ag.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, agent.NopHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone {
+		t.Fatalf("pre-undo task = %#v, want done", result.Task)
+	}
+
+	events := make(chan event, 3)
+	s := &server{cfg: cfg, ag: ag, sessionID: sessionID, subs: []chan event{events}}
+	res := httptest.NewRecorder()
+	s.chat(res, httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":"/undo"}`)))
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
+	}
+	if len(events) != 3 {
+		t.Fatalf("emitted %d events, want task snapshot, system, and undo", len(events))
+	}
+	var snapshot *event
+	for len(events) > 0 {
+		got := <-events
+		if got.Type == "task_progress" {
+			copy := got
+			snapshot = &copy
+		}
+	}
+	if snapshot == nil || snapshot.SessionID != sessionID || snapshot.Task == nil {
+		t.Fatalf("undo task snapshot = %#v, want current session task", snapshot)
+	}
+	if snapshot.Task.Status != taskstate.StatusVerifying {
+		t.Fatalf("undo task status = %q, want %q", snapshot.Task.Status, taskstate.StatusVerifying)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "note.txt")); !os.IsNotExist(err) {
+		t.Fatalf("undo did not remove note.txt: %v", err)
+	}
+}
+
 func TestGUIHandlerEmitsCanonicalFinalTextReplacement(t *testing.T) {
 	events := make(chan event, 1)
 	s := &server{subs: []chan event{events}}
