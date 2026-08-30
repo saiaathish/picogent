@@ -76,11 +76,13 @@ func TestRunCommandZeroEvidenceIsInconclusive(t *testing.T) {
 func TestRunCommandSanitizesEnvironment(t *testing.T) {
 	t.Setenv("VERIFY_TEST_SECRET_TOKEN", "must-not-cross")
 	t.Setenv("VERIFY_HELPER", "1")
+	// Race-instrumented test binaries can take longer than one second to
+	// start. This test checks environment isolation, not timeout handling.
 	result := runCommand(t.Context(), t.TempDir(), Command{
 		Runner:  os.Args[0],
 		Display: "verify helper",
 		Args:    []string{"-test.run=^TestVerifyHelperProcess$"},
-	}, 1, time.Second)
+	}, 1, 5*time.Second)
 	if result.Status != StatusPass || result.Failed != 0 || !strings.Contains(result.Output, "ok verify/helper") {
 		t.Fatalf("sanitized verifier result = %+v", result)
 	}
