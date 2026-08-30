@@ -89,6 +89,26 @@ func TestUndoReportsCASFailureAfterRestoration(t *testing.T) {
 	}
 }
 
+func TestUndoRebasesStoreNormalizationBeforeInvalidation(t *testing.T) {
+	a, store, task := newDurableUndoFixture(t, taskstate.StatusDone)
+	loaded, err := store.Load(task.SessionID)
+	if err != nil || loaded.Status != taskstate.StatusWorking {
+		t.Fatalf("legacy completion normalization = %#v, err=%v", loaded, err)
+	}
+
+	if _, err := a.UndoLastTurn(); err != nil {
+		t.Fatal(err)
+	}
+	assertUndoFileContent(t, filepath.Join(a.ConfigSnapshot().Workspace, "fixed.txt"), "before\n")
+	got := a.TaskSnapshot()
+	if got == nil || got.Status != taskstate.StatusWorking || got.VerifiedChangeSeq != -1 || !got.NeedsVerification() {
+		t.Fatalf("rebased undo task = %#v", got)
+	}
+	if got.Revision != loaded.Revision+1 || got.ChangeSeq != task.ChangeSeq || !reflect.DeepEqual(got.ChangedFiles, task.ChangedFiles) {
+		t.Fatalf("rebased undo history = revision %d seq %d files %#v", got.Revision, got.ChangeSeq, got.ChangedFiles)
+	}
+}
+
 func TestUndoConflictDoesNotInvalidateDurableEvidence(t *testing.T) {
 	a, store, task := newDurableUndoFixture(t, taskstate.StatusWorking)
 	path := filepath.Join(a.ConfigSnapshot().Workspace, "fixed.txt")

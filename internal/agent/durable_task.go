@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -558,6 +560,54 @@ func (a *Agent) mutateTaskResult(mutate func(*taskstate.Task) error) (*taskstate
 	}
 	a.taskMu.Unlock()
 	return snapshot, nil
+}
+
+// rebaseLegacyCompletionNormalization refreshes the in-memory task only when
+// the store's read-time repair of an unproven terminal marker is the complete
+// reason its revision moved. Store.Load must persist that repair, but a caller
+// that already holds the pre-repair task can otherwise lose the next valid
+// mutation to its own normalization CAS. Arbitrary concurrent changes still
+// fail closed at the normal CAS boundary.
+func (a *Agent) rebaseLegacyCompletionNormalization() bool {
+	a.taskMu.Lock()
+	defer a.taskMu.Unlock()
+	if a.task == nil || a.TaskStore == nil {
+		return false
+	}
+	sessionID := strings.TrimSpace(a.TaskSession)
+	if sessionID == "" {
+		sessionID = a.task.SessionID
+	}
+	current, err := a.TaskStore.Load(sessionID)
+	if err != nil || !onlyLegacyCompletionNormalization(a.task, current) {
+		return false
+	}
+	a.task = current
+	return true
+}
+
+func onlyLegacyCompletionNormalization(stale, current *taskstate.Task) bool {
+	if stale == nil || current == nil || stale.Status != taskstate.StatusDone || current.Status != taskstate.StatusWorking || stale.Revision == ^uint64(0) || current.Revision != stale.Revision+1 {
+		return false
+	}
+	// Marshal/unmarshal clears runtime-only trust bits so this comparison models
+	// the exact state Store.Load saw on disk before it normalized the marker.
+	data, err := json.Marshal(stale)
+	if err != nil {
+		return false
+	}
+	var normalized taskstate.Task
+	if err := json.Unmarshal(data, &normalized); err != nil || !normalized.NormalizeLegacyCompletion() {
+		return false
+	}
+	normalized.Revision = current.Revision
+	normalized.UpdatedAt = current.UpdatedAt
+	normalizedData, err := json.Marshal(&normalized)
+	if err != nil {
+		return false
+	}
+	currentData, err := json.Marshal(current)
+	return err == nil && bytes.Equal(normalizedData, currentData)
 }
 
 // persistTaskCandidateLocked is the single commit point for durable task
