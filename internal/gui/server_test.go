@@ -154,11 +154,6 @@ func TestSetModePersistsDeliberateChoiceWithEnvironmentOverride(t *testing.T) {
 
 func TestSetModeDoesNotReportOrApplyUnsavedChange(t *testing.T) {
 	const secret = "gui-mode-secret"
-	home := filepath.Join(t.TempDir(), "access_token="+secret+"\n\x1b[31mnot-a-directory")
-	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PICOGENT_HOME", home)
 
 	workspace := t.TempDir()
 	cfg := config.Default()
@@ -167,7 +162,14 @@ func TestSetModeDoesNotReportOrApplyUnsavedChange(t *testing.T) {
 	cfg.SetRuntimeMode(config.ModeFast)
 	gate := perm.New(cfg.Mode, workspace, nil)
 	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
-	s := &server{cfg: cfg, ag: ag, permCh: make(chan perm.Decision, 1)}
+	s := &server{
+		cfg:    cfg,
+		ag:     ag,
+		permCh: make(chan perm.Decision, 1),
+		saveConfig: func(config.Config) error {
+			return errors.New("persist failed\n\x1b[31maccess_token=" + secret)
+		},
+	}
 
 	res := httptest.NewRecorder()
 	s.setMode(res, httptest.NewRequest(http.MethodPost, "/api/mode", strings.NewReader(`{"mode":"fast"}`)))
