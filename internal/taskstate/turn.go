@@ -208,6 +208,7 @@ func (t *Task) LastTurn() *TurnRecord {
 		return nil
 	}
 	copy := t.Turns[len(t.Turns)-1]
+	copy.ChangedFiles = append([]string(nil), copy.ChangedFiles...)
 	if copy.FinishedAt != nil {
 		finished := *copy.FinishedAt
 		copy.FinishedAt = &finished

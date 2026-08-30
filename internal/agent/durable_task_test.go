@@ -798,7 +798,11 @@ func TestTaskSnapshotDoesNotAliasTurnLedger(t *testing.T) {
 		t.Fatal(err)
 	}
 	sequence, ok := task.BeginTurn(taskstate.TurnRouteImplement)
-	if !ok || !task.FinishTurn(sequence, taskstate.TurnRouteImplement, "implement the requested change", "UNVERIFIED", taskstate.StopNone, 1, 0) {
+	if !ok {
+		t.Fatal("turn did not start")
+	}
+	task.RecordChanged("internal/turn.go")
+	if !task.FinishTurn(sequence, taskstate.TurnRouteImplement, "implement the requested change", "UNVERIFIED", taskstate.StopNone, 1, 1) {
 		t.Fatal("turn did not finish")
 	}
 	if err := store.Save(task); err != nil {
@@ -819,10 +823,11 @@ func TestTaskSnapshotDoesNotAliasTurnLedger(t *testing.T) {
 		t.Fatalf("snapshot = %#v", snapshot)
 	}
 	snapshot.Turns[0].Route = string(taskstate.TurnRouteRecover)
+	snapshot.Turns[0].ChangedFiles[0] = "tampered-turn.go"
 	*snapshot.Turns[0].FinishedAt = snapshot.Turns[0].FinishedAt.Add(24 * time.Hour)
 
 	current := a.TaskSnapshot()
-	if current == nil || current.Turns[0].Route != string(taskstate.TurnRouteImplement) {
+	if current == nil || current.Turns[0].Route != string(taskstate.TurnRouteImplement) || current.Turns[0].ChangedFiles[0] != "internal/turn.go" {
 		t.Fatalf("agent turn ledger was aliased: %#v", current)
 	}
 	if current.Turns[0].FinishedAt.Equal(*snapshot.Turns[0].FinishedAt) {

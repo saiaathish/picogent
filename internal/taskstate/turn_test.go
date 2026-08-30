@@ -59,7 +59,6 @@ func TestTurnLedgerIsBoundedPersistentAndIdentityBound(t *testing.T) {
 	if len(last.Hypothesis) != maxTurnHypothesis {
 		t.Fatalf("hypothesis length=%d want %d", len(last.Hypothesis), maxTurnHypothesis)
 	}
-
 	active, ok := task.BeginTurn(TurnRouteInspect)
 	if !ok {
 		t.Fatal("second turn did not start")
@@ -158,6 +157,11 @@ func TestTurnLedgerAttributesBoundedChangedFiles(t *testing.T) {
 	}
 	if last.ChangedFiles[0] != "src/file-00.go" || last.ChangedFiles[len(last.ChangedFiles)-1] != "src/file-15.go" {
 		t.Fatalf("active turn paths = %#v", last.ChangedFiles)
+	}
+	isolated := task.LastTurn()
+	isolated.ChangedFiles[0] = "caller-owned.go"
+	if task.Turns[0].ChangedFiles[0] != "src/file-00.go" {
+		t.Fatalf("last turn changed files were aliased: %#v", task.Turns[0].ChangedFiles)
 	}
 	if !task.FinishTurn(last.Sequence, TurnRouteRecover, "recover changed files", "UNVERIFIED", StopNone, 2, maxTurnChangedFiles+2) {
 		t.Fatal("turn did not finish")
