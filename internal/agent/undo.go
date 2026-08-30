@@ -48,18 +48,21 @@ func (u *turnUndo) seal() ([]string, error) {
 	return u.checkpoint.ChangedPaths()
 }
 
-func (u *turnUndo) restore() (string, error) {
+func (u *turnUndo) restore() (string, bool, error) {
 	result, err := u.checkpoint.Restore()
-	if err != nil {
+	// Restore can return a cleanup warning after all workspace mutations have
+	// been published. Complete is authoritative for whether the checkpoint is
+	// consumed and durable evidence must be invalidated.
+	if err != nil && !result.Complete {
 		if len(result.Conflicts) > 0 {
 			paths := make([]string, 0, len(result.Conflicts))
 			for _, conflict := range result.Conflicts {
 				paths = append(paths, conflict.Path)
 			}
 			sort.Strings(paths)
-			return "", fmt.Errorf("undo blocked because newer changes exist in %s", strings.Join(paths, ", "))
+			return "", false, fmt.Errorf("undo blocked because newer changes exist in %s", strings.Join(paths, ", "))
 		}
-		return "", fmt.Errorf("undo failed: %w", err)
+		return "", false, fmt.Errorf("undo failed: %w", err)
 	}
 
 	restored, removed, unchanged := result.Restored, result.Removed, result.Unchanged
@@ -77,9 +80,17 @@ func (u *turnUndo) restore() (string, error) {
 		parts = append(parts, "already unchanged "+strings.Join(unchanged, ", "))
 	}
 	if len(parts) == 0 {
-		return "last turn had nothing left to undo", nil
+		msg := "last turn had nothing left to undo"
+		if err != nil {
+			return msg, result.Complete, fmt.Errorf("%s; undo completed with warning: %w", msg, err)
+		}
+		return msg, result.Complete, nil
 	}
-	return "Undid last turn: " + strings.Join(parts, "; "), nil
+	msg := "Undid last turn: " + strings.Join(parts, "; ")
+	if err != nil {
+		return msg, result.Complete, fmt.Errorf("%s; undo completed with warning: %w", msg, err)
+	}
+	return msg, result.Complete, nil
 }
 
 // UndoLastTurn restores the latest completed turn that changed native workspace
@@ -90,9 +101,12 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	if a.latestUndo == nil {
 		return "nothing to undo", nil
 	}
-	msg, err := a.latestUndo.restore()
-	if err != nil {
-		return "", err
+	msg, complete, restoreErr := a.latestUndo.restore()
+	if !complete {
+		if restoreErr == nil {
+			restoreErr = errors.New("undo failed: workspace restoration was incomplete")
+		}
+		return "", restoreErr
 	}
 	a.latestUndo = nil
 	undoMutation := func(task *taskstate.Task) error {
@@ -109,12 +123,19 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		}
 		return nil
 	}
-	_, err = a.mutateTaskResult(undoMutation)
+	_, err := a.mutateTaskResult(undoMutation)
 	if errors.Is(err, taskstate.ErrRevisionConflict) && a.rebaseLegacyCompletionNormalization() {
 		_, err = a.mutateTaskResult(undoMutation)
 	}
 	if err != nil && !errors.Is(err, errTaskMutationSkipped) {
-		return "", fmt.Errorf("files restored but durable task state was not saved: %w", err)
+		stateErr := fmt.Errorf("files restored but durable task state was not saved: %w", err)
+		if restoreErr != nil {
+			return "", errors.Join(stateErr, restoreErr)
+		}
+		return "", stateErr
+	}
+	if restoreErr != nil {
+		return "", restoreErr
 	}
 	return msg, nil
 }
