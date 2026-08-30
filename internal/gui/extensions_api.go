@@ -17,7 +17,7 @@ func (s *server) extensionsAPI(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		s.extensionsAction(w, r)
 	default:
-		http.Error(w, "method not allowed", 405)
+		writeGUIError(w, "method not allowed", 405)
 	}
 }
 
@@ -48,7 +48,7 @@ func (s *server) extensionsAction(w http.ResponseWriter, r *http.Request) {
 		Approve bool   `json:"approve"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 
@@ -76,7 +76,7 @@ func (s *server) extensionsAction(w http.ResponseWriter, r *http.Request) {
 	case "cleanup":
 		s.extensionsCleanup(w)
 	default:
-		http.Error(w, "unknown action", 400)
+		writeGUIError(w, "unknown action", 400)
 	}
 }
 
@@ -93,7 +93,7 @@ func (s *server) extensionsBrowse(w http.ResponseWriter, _ *http.Request, query,
 	installed, _ := extensions.InstalledSet(ws, cfg.Extensions.InstalledSkills)
 	items, stats, err := extensions.Browse(extensions.Kind(kind), query, page, installed)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeGUIError(w, err.Error(), 500)
 		return
 	}
 	items = extensions.ActiveStatus(items, cfg.Extensions.EssentialPlugins, cfg.Extensions.ActiveTransient)
@@ -143,7 +143,7 @@ func (s *server) extensionsInstall(w http.ResponseWriter, id string, approved bo
 		it = extensions.ByID(id)
 	}
 	if it == nil {
-		http.Error(w, "extension not found", 404)
+		writeGUIError(w, "extension not found", 404)
 		return
 	}
 
@@ -167,7 +167,7 @@ func (s *server) extensionsInstall(w http.ResponseWriter, id string, approved bo
 		// Claude plugins: activate on-demand from local cache.
 		if strings.HasPrefix(id, "claude:") {
 			if actErr := extensions.ActivateClaudePlugin(strings.TrimPrefix(id, "claude:")); actErr != nil {
-				http.Error(w, actErr.Error(), 500)
+				writeGUIError(w, actErr.Error(), 500)
 				return
 			}
 			s.mu.Lock()
@@ -183,7 +183,7 @@ func (s *server) extensionsInstall(w http.ResponseWriter, id string, approved bo
 			})
 			return
 		}
-		http.Error(w, err.Error(), 500)
+		writeGUIError(w, err.Error(), 500)
 		return
 	}
 
@@ -200,7 +200,7 @@ func (s *server) extensionsInstall(w http.ResponseWriter, id string, approved bo
 	s.mu.Unlock()
 
 	if err := s.rebuildAgent(); err != nil {
-		http.Error(w, err.Error(), 500)
+		writeGUIError(w, err.Error(), 500)
 		return
 	}
 
@@ -249,11 +249,11 @@ func (s *server) extensionsUndo(w http.ResponseWriter, undoID string) {
 	s.mu.Unlock()
 
 	if entry == nil {
-		http.Error(w, "undo entry not found", 404)
+		writeGUIError(w, "undo entry not found", 404)
 		return
 	}
 	if err := extensions.Undo(*entry); err != nil {
-		http.Error(w, err.Error(), 500)
+		writeGUIError(w, err.Error(), 500)
 		return
 	}
 
@@ -276,7 +276,7 @@ func (s *server) extensionsUndo(w http.ResponseWriter, undoID string) {
 
 func (s *server) extensionsDismiss(w http.ResponseWriter, id string) {
 	if id == "" {
-		http.Error(w, "id required", 400)
+		writeGUIError(w, "id required", 400)
 		return
 	}
 	s.mu.Lock()
@@ -400,17 +400,17 @@ func (s *server) cleanupExtensionPool() {
 
 func (s *server) extensionsActivate(w http.ResponseWriter, id string) {
 	if id == "" {
-		http.Error(w, "id required", 400)
+		writeGUIError(w, "id required", 400)
 		return
 	}
 	if strings.HasPrefix(id, "claude:") {
 		if err := extensions.ActivateClaudePlugin(strings.TrimPrefix(id, "claude:")); err != nil {
-			http.Error(w, err.Error(), 500)
+			writeGUIError(w, err.Error(), 500)
 			return
 		}
 	} else if it := extensions.ByID(id); it != nil && it.MCP != nil {
 		if err := extensions.ActivateMCPCatalog(*it); err != nil {
-			http.Error(w, err.Error(), 500)
+			writeGUIError(w, err.Error(), 500)
 			return
 		}
 	}
@@ -427,7 +427,7 @@ func (s *server) extensionsActivate(w http.ResponseWriter, id string) {
 
 func (s *server) extensionsEssential(w http.ResponseWriter, id string) {
 	if id == "" {
-		http.Error(w, "id required", 400)
+		writeGUIError(w, "id required", 400)
 		return
 	}
 	s.mu.Lock()
