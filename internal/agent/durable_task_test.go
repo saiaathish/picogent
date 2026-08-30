@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
@@ -783,5 +784,55 @@ func TestDurableTaskResumesActiveCompletionIntentAfterMissingEvidence(t *testing
 	}
 	if len(result.Task.Verification) == 0 || result.Task.Verification[len(result.Task.Verification)-1].Passed || !strings.HasPrefix(result.Task.Verification[len(result.Task.Verification)-1].Summary, "verify INCONCLUSIVE") {
 		t.Fatalf("resumed evidence = %#v", result.Task.Verification)
+	}
+}
+
+func TestTaskSnapshotDoesNotAliasTurnLedger(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	task, err := taskstate.New("turn-snapshot", "finish the requested change", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := task.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok || !task.FinishTurn(sequence, taskstate.TurnRouteImplement, "implement the requested change", "UNVERIFIED", taskstate.StopNone, 1, 0) {
+		t.Fatal("turn did not finish")
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = store
+	if err := a.SetTaskSession(task.SessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := a.TaskSnapshot()
+	if snapshot == nil || len(snapshot.Turns) != 1 || snapshot.Turns[0].FinishedAt == nil {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	snapshot.Turns[0].Route = string(taskstate.TurnRouteRecover)
+	*snapshot.Turns[0].FinishedAt = snapshot.Turns[0].FinishedAt.Add(24 * time.Hour)
+
+	current := a.TaskSnapshot()
+	if current == nil || current.Turns[0].Route != string(taskstate.TurnRouteImplement) {
+		t.Fatalf("agent turn ledger was aliased: %#v", current)
+	}
+	if current.Turns[0].FinishedAt.Equal(*snapshot.Turns[0].FinishedAt) {
+		t.Fatal("agent turn finish time was aliased")
+	}
+	reloaded, err := store.Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Turns[0].Route != string(taskstate.TurnRouteImplement) || reloaded.Turns[0].FinishedAt.Equal(*snapshot.Turns[0].FinishedAt) {
+		t.Fatalf("persisted turn ledger was aliased: %#v", reloaded.Turns[0])
 	}
 }
