@@ -79,6 +79,16 @@ compare-and-rename-by-inode primitive. Deterministic `securefile` tests cover
 the supported boundary: a replacement observed before publication is rejected,
 and cleanup never unlinks a replacement inode.
 
+### Durable session history
+
+Session titles, message content, text parts, and tool-call arguments now pass
+through the shared credential redactor before bounded persistence. This keeps
+credential-shaped values out of resumable chat history while preserving
+instruction-like text as data and leaving structural message identities intact.
+`internal/session/redaction_test.go` exercises model text, tool results,
+multimodal text, and tool arguments. Binary attachment bytes and complete crash
+diagnostic coverage remain outside this slice.
+
 ## Existing boundaries rechecked
 
 - Workspace MCP configuration is not autoloaded; only user-owned MCP config is
@@ -150,6 +160,7 @@ close the open or unrecorded risks below.
 | #152 | Extension API HTTP error sanitization | `9e4ec2a` | `c356362` | `33319233960` | `33319367795` |
 | #154 | Companion API HTTP error sanitization | `437619d` | `84c78df` | `33319948149` | `33320088188` |
 | #156 | Core GUI API HTTP error sanitization | `1df554a` | `377aee1` | `33321115688` | `33321261954` |
+| #158 | Durable session history redaction | `4ff29bc` | `37570b4` | `33322930998` | `33323068108` |
 
 ## Open or unrecorded risks
 
