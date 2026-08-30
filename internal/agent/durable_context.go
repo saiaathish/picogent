@@ -46,6 +46,7 @@ func renderDurableTaskContext(task *taskstate.Task) string {
 
 	if task.Intent != nil {
 		b.section(700, func(s *durableContextSection) {
+			s.field("task.intent.revision", strconv.FormatUint(task.IntentRevision, 10), 24)
 			s.field("task.intent.outcome", task.Intent.Outcome, 520)
 			s.field("task.intent.class", task.Intent.Class, 64)
 			s.field("task.intent.action", task.Intent.Action, 96)
