@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/checkpoint"
+	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
 // turnUndo aggregates the per-path snapshots captured before native file tools
@@ -94,6 +95,23 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		return "", err
 	}
 	a.latestUndo = nil
+	_, err = a.mutateTaskResult(func(task *taskstate.Task) error {
+		wasDone := task.Status == taskstate.StatusDone
+		changed := task.InvalidateWorkspaceEvidence("undo restored workspace files")
+		if wasDone {
+			if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
+				return err
+			}
+			changed = true
+		}
+		if !changed {
+			return errTaskMutationSkipped
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errTaskMutationSkipped) {
+		return "", fmt.Errorf("files restored but durable task state was not saved: %w", err)
+	}
 	return msg, nil
 }
 

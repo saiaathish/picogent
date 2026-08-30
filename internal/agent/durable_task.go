@@ -21,6 +21,24 @@ const durableRepairMarker = "Internal verification-repair instruction:"
 // persistence failure to the user.
 var errTaskMutationSkipped = errors.New("durable task mutation skipped")
 
+type taskPersistenceError struct {
+	err error
+}
+
+func (e *taskPersistenceError) Error() string {
+	if e == nil || e.err == nil {
+		return "durable task state was not saved"
+	}
+	return e.err.Error()
+}
+
+func (e *taskPersistenceError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
 func durableRepairPrompt(evidence string, repeated bool) string {
 	evidence = strings.TrimSpace(evidence)
 	if len(evidence) > 4000 {
@@ -495,31 +513,51 @@ func (a *Agent) setTaskStatus(status taskstate.Status, ev EventHandler) {
 // failed Save therefore cannot produce a task snapshot that looks persisted;
 // the last successfully persisted state remains available for resume.
 func (a *Agent) mutateTask(ev EventHandler, mutate func(*taskstate.Task) error) bool {
-	if mutate == nil {
-		return false
-	}
-	a.taskMu.Lock()
-	if a.task == nil || a.TaskStore == nil {
-		a.taskMu.Unlock()
-		return false
-	}
-	candidate := cloneTask(a.task)
-	if err := mutate(candidate); err != nil {
-		a.taskMu.Unlock()
-		if !errors.Is(err, errTaskMutationSkipped) {
+	snapshot, err := a.mutateTaskResult(mutate)
+	if err != nil {
+		if errors.Is(err, errTaskMutationSkipped) {
+			return false
+		}
+		var persistenceErr *taskPersistenceError
+		if errors.As(err, &persistenceErr) {
+			a.reportTaskPersistenceError(ev, err)
+		} else {
 			a.reportTaskUpdateError(ev, err)
 		}
 		return false
 	}
+	if snapshot == nil {
+		return false
+	}
+	emitTaskState(ev, snapshot)
+	return true
+}
+
+// mutateTaskResult applies a durable task update through the same isolated
+// save-before-publish/CAS commit point as ordinary turn mutations. A nil
+// snapshot means that no durable task is attached to this agent; callers that
+// need to surface persistence failures can inspect the returned error.
+func (a *Agent) mutateTaskResult(mutate func(*taskstate.Task) error) (*taskstate.Task, error) {
+	if mutate == nil {
+		return nil, nil
+	}
+	a.taskMu.Lock()
+	if a.task == nil || a.TaskStore == nil {
+		a.taskMu.Unlock()
+		return nil, nil
+	}
+	candidate := cloneTask(a.task)
+	if err := mutate(candidate); err != nil {
+		a.taskMu.Unlock()
+		return nil, err
+	}
 	snapshot, err := a.persistTaskCandidateLocked(candidate)
 	if err != nil {
 		a.taskMu.Unlock()
-		a.reportTaskPersistenceError(ev, err)
-		return false
+		return nil, &taskPersistenceError{err: err}
 	}
 	a.taskMu.Unlock()
-	emitTaskState(ev, snapshot)
-	return true
+	return snapshot, nil
 }
 
 // persistTaskCandidateLocked is the single commit point for durable task
