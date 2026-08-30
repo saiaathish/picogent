@@ -1816,11 +1816,13 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 				s.emit(event{Type: "error", Text: "agent not ready"})
 				break
 			}
+			id := s.sessionID
 			text, err := s.ag.UndoLastTurn()
 			s.mu.Unlock()
 			if err != nil {
 				s.emit(event{Type: "error", Text: err.Error()})
 			} else {
+				s.emitTaskSnapshot(id)
 				s.emit(event{Type: "system", Text: text})
 				s.emit(event{Type: "undo", Status: "cleared", Text: text})
 			}
