@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -125,10 +126,15 @@ func TestWriteAtomicReadersNeverObservePartialData(t *testing.T) {
 					return
 				default:
 				}
-				// Use an ordinary path reader deliberately. ReadFile coordinates
-				// through securefile's lock and would not detect a live-destination
-				// truncate/copy publication bug.
-				data, err := os.ReadFile(path)
+				// Unix uses an ordinary path reader deliberately. Windows path
+				// readers commonly deny delete sharing, which makes a concurrent
+				// atomic rename legitimately fail while their handle is open; use
+				// securefile's delete-sharing reader there.
+				read := os.ReadFile
+				if runtime.GOOS == "windows" {
+					read = ReadFile
+				}
+				data, err := read(path)
 				if err != nil {
 					errs <- err
 					return
