@@ -81,6 +81,7 @@ func NewRegistry(c Context) *Registry {
 		grepTool{},
 		repoMapTool{},
 		projectHealthTool{},
+		measureTool{},
 		bashTool{},
 		gitTool{},
 		webFetch{},
