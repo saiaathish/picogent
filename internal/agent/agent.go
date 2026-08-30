@@ -444,7 +444,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	turnUndo := newTurnUndo(regCtx.Workspace)
 	nativeWriteRan := false
 	lastToolKind := ""
-	calledVerify := false
+	verificationCurrent := false
 	lastVerification := ""
 	lastVerificationEvidence := verificationEvidence{}
 	taskBlocker := ""
@@ -506,7 +506,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				a.requireTaskVerification(ev)
 			}
 			res.FilesChanged = sortedChanged(changed)
-			autoEvidence := a.maybeVerify(ctx, ev, userText, res.FilesChanged, calledVerify, completionEvidenceRequired, state, gate)
+			autoEvidence := a.maybeVerify(ctx, ev, userText, res.FilesChanged, verificationCurrent, completionEvidenceRequired, state, gate)
 			if autoEvidence.output != "" {
 				if a.TaskSnapshot() != nil || completionEvidenceRequired {
 					autoEvidence = normalizeVerificationEvidence(autoEvidence)
@@ -580,7 +580,6 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 
 		for _, call := range msg.ToolCalls {
 			if call.Name == "verify" {
-				calledVerify = true
 				if task := a.TaskSnapshot(); task != nil {
 					call.Arguments = includeChangedVerificationTargets(call.Arguments, task.ChangedFiles)
 					if task.ChangedFilesCapped {
@@ -704,6 +703,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				}
 				lastVerification = lastVerificationEvidence.output
 				a.noteTaskVerification(lastVerificationEvidence, ev)
+				verificationCurrent = verificationStatus(lastVerification) == "PASS"
 			}
 		}
 
@@ -726,6 +726,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		}
 		for _, path := range successfulWrites {
 			a.noteTaskChanged(path, ev)
+		}
+		if len(successfulWrites) > 0 {
+			verificationCurrent = false
 		}
 		// A project-health observation is useful for choosing the next safe
 		// action, but only a sole read-only call is fresh enough to guide the
