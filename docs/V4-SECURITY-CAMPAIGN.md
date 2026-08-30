@@ -113,6 +113,9 @@ and cleanup never unlinks a replacement inode.
   hard links on Unix and Windows. Checkpoint restore also rejects a post-seal
   replacement hard link before mutating any path; this prevents a workspace
   name from being used to read or write an outside inode through a hard link.
+- A cross-platform checkpoint test also rejects a post-seal replacement hard
+  link at a turn-created path before deletion; both the outside sentinel and
+  the replacement path remain unchanged.
 
 ## Open or unrecorded risks
 
@@ -120,9 +123,9 @@ and cleanup never unlinks a replacement inode.
   atomically and only marks a mutation applied after that publication or
   deletion succeeds. Rollback still uses in-memory post-turn states and is
   best-effort. The operation is intentionally not a multi-file atomic
-  transaction; hostile-runtime restore stress beyond this Unix case and
-  cross-platform deletion evidence remain required before this is a broad
-  checkpoint safety claim.
+  transaction; Windows hostile-runtime restore stress and cross-process
+  deletion races remain required before this is a broad checkpoint safety
+  claim.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
 - The npm provider packages and their platform-specific optional packages are
