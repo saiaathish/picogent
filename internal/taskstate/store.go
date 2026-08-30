@@ -46,38 +46,6 @@ func (s *Store) Path(sessionID string) (string, error) {
 	return filepath.Join(s.dir, sessionID+".json"), nil
 }
 
-// AcquireSessionLock reserves one durable task session for the lifetime of a
-// turn. Per-operation CAS protects individual checkpoint writes, but it cannot
-// stop two processes from making the same workspace changes concurrently. The
-// lock is a kernel-backed file lock, so it is released automatically if the
-// owning process exits.
-func (s *Store) AcquireSessionLock(sessionID string) (func() error, error) {
-	path, err := s.Path(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	if err := securefile.EnsureDir(s.dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create task store: %w", err)
-	}
-	file, err := securefile.OpenLockFile(path + ".run.lock")
-	if err != nil {
-		return nil, fmt.Errorf("open task session lock: %w", err)
-	}
-	unlock, err := securefile.TryLockFile(file, true)
-	if err != nil {
-		_ = file.Close()
-		return nil, fmt.Errorf("task session %q is already running: %w", sessionID, err)
-	}
-	var once sync.Once
-	var releaseErr error
-	return func() error {
-		once.Do(func() {
-			releaseErr = errors.Join(unlock(), file.Close())
-		})
-		return releaseErr
-	}, nil
-}
-
 // AcquireRunLock serializes one complete agent run for this project. The lock
 // is blocking so a second process waits for the active run to finish instead
 // of interleaving workspace mutations. The kernel-backed file lock also
