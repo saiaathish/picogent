@@ -89,6 +89,18 @@ instruction-like text as data and leaving structural message identities intact.
 multimodal text, and tool arguments. Binary attachment bytes and complete crash
 diagnostic coverage remain outside this slice.
 
+### Workspace-scoped slash diff observation
+
+The TUI and GUI `/diff` actions now run through `internal/gitobs.Combined`
+against the configured workspace. The shared observer disables repository Git
+helpers and inherited Git control variables, redacts credential-shaped output,
+and bounds subprocess output while the slash surface preserves its existing
+8,000-byte display limit. `internal/slash/builtin_test.go` covers workspace
+routing, repository-configured external diff suppression, secret redaction,
+clean output, and truncation. This is direct local and hosted test evidence
+for the exercised boundary, not proof of every Git version or arbitrary hook
+configuration.
+
 ## Existing boundaries rechecked
 
 - Workspace MCP configuration is not autoloaded; only user-owned MCP config is
@@ -161,6 +173,7 @@ close the open or unrecorded risks below.
 | #154 | Companion API HTTP error sanitization | `437619d` | `84c78df` | `33319948149` | `33320088188` |
 | #156 | Core GUI API HTTP error sanitization | `1df554a` | `377aee1` | `33321115688` | `33321261954` |
 | #158 | Durable session history redaction | `4ff29bc` | `37570b4` | `33322930998` | `33323068108` |
+| #160 | Workspace-scoped slash diff observation | `6e041d2` | `c12e327` | `33323943756` | `33324107750` |
 
 ## Open or unrecorded risks
 
