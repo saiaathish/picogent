@@ -175,6 +175,7 @@ close the open or unrecorded risks below.
 | #158 | Durable session history redaction | `4ff29bc` | `37570b4` | `33322930998` | `33323068108` |
 | #160 | Workspace-scoped slash diff observation | `6e041d2` | `c12e327` | `33323943756` | `33324107750` |
 | #162 | Production health focus through durable Outcome Engine | `bb1c6a7` | `18da466` | `33325729058` | `33325880483` |
+| #164 | Durable steering intent across restart/resume | `07dbb1e` | `dbb296d` | `33326929496` | `33327092917` |
 
 ## Open or unrecorded risks
 
