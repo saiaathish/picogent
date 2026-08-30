@@ -165,6 +165,16 @@ func WriteAtomic(root, path string, data []byte) error {
 	return writeAtomic(root, path, data)
 }
 
+// WriteAtomicWithMode writes a complete file below root and publishes its
+// contents and permission mode as one filesystem replacement. Missing parent
+// directories are created like OpenWrite. Unlike WriteAtomic, the replacement
+// receives the requested mode instead of inheriting the existing target mode.
+// The same symlink, reparse-point, hard-link, and pathname-race limits as
+// WriteAtomic apply.
+func WriteAtomicWithMode(root, path string, data []byte, mode os.FileMode) error {
+	return writeAtomicWithMode(root, path, data, mode, true)
+}
+
 // WriteAtomicIfUnchanged publishes data only when the current regular file
 // content still equals expected. A mismatch leaves the current file untouched
 // and returns ErrContentConflict. The content check and publication are a

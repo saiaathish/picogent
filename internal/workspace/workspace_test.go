@@ -124,6 +124,40 @@ func TestWriteAtomicPublishesCompleteFileAndPreservesMode(t *testing.T) {
 	}
 }
 
+func TestWriteAtomicWithModePublishesRequestedMode(t *testing.T) {
+	root := t.TempDir()
+	if err := WriteAtomicWithMode(root, "state.txt", []byte("first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "state.txt")); err != nil || string(got) != "first\n" {
+		t.Fatalf("initial atomic write = %q, %v", got, err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(root, "state.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("initial mode=%o", got)
+		}
+	}
+	if err := WriteAtomicWithMode(root, "state.txt", []byte("second\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "state.txt")); err != nil || string(got) != "second\n" {
+		t.Fatalf("replacement atomic write = %q, %v", got, err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(root, "state.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o644 {
+			t.Fatalf("replacement mode=%o", got)
+		}
+	}
+}
+
 func TestWriteAtomicIfUnchangedRefusesStaleContent(t *testing.T) {
 	root := t.TempDir()
 	if err := WriteAtomic(root, "state.txt", []byte("before\n")); err != nil {
