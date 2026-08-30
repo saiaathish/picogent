@@ -15,7 +15,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unicode"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/app"
@@ -482,7 +481,7 @@ func newHeadlessCanceledError(cause error) error {
 func newHeadlessUnverifiedError(evidence string) error {
 	reason := "no passing verification evidence was recorded"
 	if evidence = strings.TrimSpace(evidence); evidence != "" {
-		reason = "the latest verification was not a passing result: " + diagnostic(evidence, 240)
+		reason = "the latest verification was not a passing result: " + redact.Diagnostic(evidence, 240)
 	}
 	return &headlessOutcomeError{
 		outcome: headlessOutcomeUnverified,
@@ -690,14 +689,14 @@ func (h *stdioHandler) OnTextFinal(text string) {
 }
 func (h *stdioHandler) OnToolStart(call llm.ToolCall) {
 	h.discardStream()
-	fmt.Fprintf(h.stderr(), "→ %s %s\n", diagnostic(call.Name, 80), diagnostic(call.Arguments, 80))
+	fmt.Fprintf(h.stderr(), "→ %s %s\n", redact.Diagnostic(call.Name, 80), redact.Diagnostic(call.Arguments, 80))
 }
 func (h *stdioHandler) OnToolEnd(_ llm.ToolCall, result string, err error) {
 	if err != nil {
-		fmt.Fprintln(h.stderr(), "  error:", diagnostic(err.Error(), 120))
+		fmt.Fprintln(h.stderr(), "  error:", redact.Diagnostic(err.Error(), 120))
 		return
 	}
-	fmt.Fprintln(h.stderr(), " ", diagnostic(result, 120))
+	fmt.Fprintln(h.stderr(), " ", redact.Diagnostic(result, 120))
 }
 func (h *stdioHandler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error) {
 	if h.yes && !req.Destructive && !req.OutsideWorkspace {
@@ -712,7 +711,7 @@ func (h *stdioHandler) OnNeedPermission(ctx context.Context, req perm.Request) (
 	if err := ctx.Err(); err != nil {
 		return perm.Deny, err
 	}
-	fmt.Fprintf(h.stderr(), "Allow %s? [y/n] ", diagnostic(req.Summary, 240))
+	fmt.Fprintf(h.stderr(), "Allow %s? [y/n] ", redact.Diagnostic(req.Summary, 240))
 	if h.in == nil {
 		return perm.Deny, errHeadlessPermissionDenied
 	}
@@ -777,21 +776,4 @@ func displayError(err error) string {
 		return ""
 	}
 	return redact.Text(err.Error())
-}
-
-func diagnostic(s string, n int) string {
-	return short(redact.Text(s), n)
-}
-
-func short(s string, n int) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, s)
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
 }

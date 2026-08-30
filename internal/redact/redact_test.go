@@ -36,3 +36,20 @@ func TestTextPreservesOrdinaryText(t *testing.T) {
 		t.Fatalf("ordinary text changed: %q", got)
 	}
 }
+
+func TestDiagnosticRedactsFlattensAndBounds(t *testing.T) {
+	const secret = "diagnostic-secret"
+	got := Diagnostic("\x1b[31maccess_token="+secret+"\nforged", 30)
+	if strings.Contains(got, secret) {
+		t.Fatalf("diagnostic retained secret: %q", got)
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "[31m") || strings.Contains(got, "\n") {
+		t.Fatalf("diagnostic retained control bytes: %q", got)
+	}
+	if len(got) != 33 { // 30 bytes plus the UTF-8 ellipsis.
+		t.Fatalf("diagnostic length = %d, want 33: %q", len(got), got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("diagnostic lost redaction marker: %q", got)
+	}
+}

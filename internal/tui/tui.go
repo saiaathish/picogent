@@ -19,6 +19,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/redact"
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/slash"
@@ -129,14 +130,14 @@ func (h *handler) OnTextFinal(text string) {
 	h.sendMsg(logMsg{Kind: "assistant_final", Text: text})
 }
 func (h *handler) OnToolStart(call llm.ToolCall) {
-	h.sendMsg(logMsg{Kind: "tool", Text: "→  " + call.Name + "  " + clip(call.Arguments, 100)})
+	h.sendMsg(logMsg{Kind: "tool", Text: "→  " + redact.Diagnostic(call.Name, 100) + "  " + redact.Diagnostic(call.Arguments, 100)})
 }
 func (h *handler) OnToolEnd(_ llm.ToolCall, result string, err error) {
 	if err != nil {
-		h.sendMsg(logMsg{Kind: "error", Text: "   " + err.Error()})
+		h.sendMsg(logMsg{Kind: "error", Text: "   " + redact.Diagnostic(err.Error(), 180)})
 		return
 	}
-	h.sendMsg(logMsg{Kind: "tool", Text: "   " + clip(result, 180)})
+	h.sendMsg(logMsg{Kind: "tool", Text: "   " + redact.Diagnostic(result, 180)})
 }
 func (h *handler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error) {
 	h.sendMsg(permAskMsg{Request: req})
@@ -147,7 +148,12 @@ func (h *handler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.
 		return d, nil
 	}
 }
-func (h *handler) OnError(err error) { h.sendMsg(logMsg{Kind: "error", Text: err.Error()}) }
+func (h *handler) OnError(err error) {
+	if err == nil {
+		return
+	}
+	h.sendMsg(logMsg{Kind: "error", Text: redact.Diagnostic(err.Error(), 180)})
+}
 func (h *handler) OnTaskState(task *taskstate.Task) {
 	h.sendMsg(taskProgressMsg{task: task})
 }
@@ -284,6 +290,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		req := msg.Request
+		req.Hint = redact.Diagnostic(req.Hint, 240)
+		req.Summary = redact.Diagnostic(req.Summary, 240)
 		m.perm = &req
 		body := req.Summary
 		if req.Hint != "" {
@@ -352,7 +360,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if msg.err != nil && !strings.Contains(strings.ToLower(msg.err.Error()), "context canceled") {
-			m.lines = append(m.lines, logLine{Kind: "error", Text: msg.err.Error()})
+			m.lines = append(m.lines, logLine{Kind: "error", Text: redact.Diagnostic(msg.err.Error(), 240)})
 		}
 		m.refresh()
 		var cmds []tea.Cmd
