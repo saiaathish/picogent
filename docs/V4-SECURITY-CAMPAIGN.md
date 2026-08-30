@@ -143,6 +143,7 @@ close the open or unrecorded risks below.
 | #138 | Headless CLI diagnostic redaction | `478bb73` | `77456a0` | `33312921387` | `33313055665` |
 | #140 | TUI diagnostic redaction | `93eabe3` | `4c52e79` | `33313929799` | `33314065875` |
 | #142 | CLI final error diagnostic sanitization | `bd64577` | `1e65301` | `33314642093` | `33314774741` |
+| #144 | GUI error event boundary sanitization | `fbc95f0` | `5355113` | `33315264433` | `33315385828` |
 
 ## Open or unrecorded risks
 
