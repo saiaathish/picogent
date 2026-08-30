@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/saiaathish/picogent/internal/procenv"
 )
 
 // Status classifies verification without confusing missing evidence with success.
@@ -110,6 +112,7 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 
 	cmd := exec.CommandContext(ctx, command.Runner, command.Args...)
 	cmd.Dir = workspace
+	cmd.Env = procenv.Sanitized()
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
