@@ -1353,6 +1353,29 @@ func TestGUIHandlerEmitsCanonicalFinalTextReplacement(t *testing.T) {
 	}
 }
 
+func TestGUIErrorAndPermissionEventsSanitizeUntrustedText(t *testing.T) {
+	const secret = "gui-event-secret"
+	s := &server{subs: []chan event{make(chan event, 2)}}
+	s.emit(event{Type: "error", Text: "provider failed\n\x1b[31maccess_token=" + secret})
+	s.emit(event{Type: "permission", Text: "mcp\nforged", Summary: "write token=" + secret, Hint: "\x1b[31mreview password=" + secret})
+
+	for i := 0; i < 2; i++ {
+		got := <-s.subs[0]
+		joined := got.Text + "\n" + got.Summary + "\n" + got.Hint
+		if strings.Contains(joined, secret) {
+			t.Fatalf("GUI event leaked secret: %#v", got)
+		}
+		for _, field := range []string{got.Text, got.Summary, got.Hint} {
+			if strings.Contains(field, "\x1b") || strings.Contains(field, "\n") {
+				t.Fatalf("GUI event retained terminal/newline injection: %#v", got)
+			}
+		}
+		if got.Type == "permission" && !strings.Contains(got.Text, "mcp forged") {
+			t.Fatalf("GUI event retained terminal/newline injection: %#v", got)
+		}
+	}
+}
+
 func TestReadFileRejectsOutsideSymlink(t *testing.T) {
 	workspace := t.TempDir()
 	outside := t.TempDir()
