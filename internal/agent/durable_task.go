@@ -150,9 +150,13 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, evidenc
 // stays outside chat history, so compaction cannot erase execution progress.
 func (a *Agent) SetTaskSession(sessionID string) error {
 	workspaceRoot := a.ConfigSnapshot().Workspace
+	a.undoMu.Lock()
+	defer a.undoMu.Unlock()
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
 	a.TaskSession = strings.TrimSpace(sessionID)
+	a.taskSessionGeneration++
+	a.latestUndo = nil
 	a.task = nil
 	a.taskLoadErr = nil
 	if a.TaskStore == nil || a.TaskSession == "" {
@@ -180,6 +184,12 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	}
 	a.taskLoadErr = err
 	return err
+}
+
+func (a *Agent) taskSessionSnapshot() (string, uint64) {
+	a.taskMu.RLock()
+	defer a.taskMu.RUnlock()
+	return a.TaskSession, a.taskSessionGeneration
 }
 
 // TaskSnapshot returns an isolated copy safe for UI and persistence callers.
