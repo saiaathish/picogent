@@ -149,6 +149,7 @@ close the open or unrecorded risks below.
 | #150 | Evolve API HTTP error sanitization | `5cf633f` | `430d945` | `33317849985` | `33317977131` |
 | #152 | Extension API HTTP error sanitization | `9e4ec2a` | `c356362` | `33319233960` | `33319367795` |
 | #154 | Companion API HTTP error sanitization | `437619d` | `84c78df` | `33319948149` | `33320088188` |
+| #156 | Core GUI API HTTP error sanitization | `1df554a` | `377aee1` | `33321115688` | `33321261954` |
 
 ## Open or unrecorded risks
 
