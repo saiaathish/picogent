@@ -298,16 +298,24 @@ func (s *server) extensionsAuthDone(w http.ResponseWriter, id string) {
 func (s *server) rebuildAgent() error {
 	s.mu.Lock()
 	cfg := s.cfg
+	var inheritedAlwaysAllowed []string
+	if s.ag != nil && s.ag.Gate != nil {
+		inheritedAlwaysAllowed = s.ag.Gate.AlwaysAllowedTools()
+	}
 	s.mu.Unlock()
 	a, err := app.Build(cfg)
 	if err != nil {
 		return err
 	}
+	allowed := append([]string(nil), cfg.Extensions.AlwaysAllowTools...)
+	for _, tool := range inheritedAlwaysAllowed {
+		allowed = appendUnique(allowed, tool)
+	}
+	if a.Gate != nil {
+		a.Gate.SetAlwaysAllowed(allowed)
+	}
 	s.mu.Lock()
 	s.ag = a
-	if s.ag != nil && s.ag.Gate != nil {
-		s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
-	}
 	s.mu.Unlock()
 	s.attachRouterHook()
 	return nil
