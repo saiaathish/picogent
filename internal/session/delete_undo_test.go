@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 func TestDeleteUndoSurvivesTheDeleteToCommitCrashBoundary(t *testing.T) {
@@ -60,6 +61,87 @@ func TestDeleteUndoSurvivesTheDeleteToCommitCrashBoundary(t *testing.T) {
 	}
 	if _, err := LoadDeleteUndo(); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("cleared delete undo = %v, want not found", err)
+	}
+}
+
+func TestDeleteUndoRejectsSecondStagedDeleteWithoutOverwritingFirst(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	first := &Session{ID: "first-staged-delete", Workspace: workspace, Messages: []llm.Message{{Role: "user", Content: "first"}}}
+	second := &Session{ID: "second-staged-delete", Workspace: workspace, Messages: []llm.Message{{Role: "user", Content: "second"}}}
+	if err := first.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Save(); err != nil {
+		t.Fatal(err)
+	}
+	firstUndo := &DeleteUndo{
+		UndoID:    "first-staged-token",
+		Session:   first,
+		Workspace: workspace,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+	if err := DeleteWithUndo(first.ID, firstUndo); err != nil {
+		t.Fatal(err)
+	}
+
+	secondUndo := &DeleteUndo{
+		UndoID:    "second-staged-token",
+		Session:   second,
+		Workspace: workspace,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+	if err := DeleteWithUndo(second.ID, secondUndo); !errors.Is(err, ErrDeleteUndoInFlight) {
+		t.Fatalf("second staged delete error = %v, want ErrDeleteUndoInFlight", err)
+	}
+	if _, err := Load(second.ID); err != nil {
+		t.Fatalf("rejected second delete removed its session: %v", err)
+	}
+	loaded, err := LoadDeleteUndo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.UndoID != firstUndo.UndoID || loaded.Session.ID != first.ID {
+		t.Fatalf("first staged undo was overwritten: %#v", loaded)
+	}
+	if _, err := RestoreDeleteUndo(firstUndo.UndoID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeleteUndoStageCleanupOnlyRemovesMatchingToken(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	staged := &DeleteUndo{
+		UndoID:    "other-staged-token",
+		Session:   &Session{ID: "other-staged-session", Workspace: workspace},
+		Workspace: workspace,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+	data, _, err := marshalDeleteUndo(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := securefile.EnsureDir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := securefile.WriteAtomic(deleteUndoStagePath(dir), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := clearDeleteUndoStageIfCurrentLocked(dir, "caller-token"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadDeleteUndo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.UndoID != staged.UndoID {
+		t.Fatalf("mismatched cleanup removed staged token: %#v", loaded)
 	}
 }
 
