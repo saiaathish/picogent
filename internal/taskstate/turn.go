@@ -6,12 +6,13 @@ import (
 )
 
 const (
-	maxTurnRecords    = 16
-	maxTurnRoute      = 32
-	maxTurnHypothesis = 320
-	maxTurnEvidence   = 20
-	maxTurnToolRounds = 128
-	maxTurnMutations  = maxChangedFiles
+	maxTurnRecords      = 16
+	maxTurnRoute        = 32
+	maxTurnHypothesis   = 320
+	maxTurnEvidence     = 20
+	maxTurnToolRounds   = 128
+	maxTurnMutations    = maxChangedFiles
+	maxTurnChangedFiles = 16
 )
 
 // TurnState describes the lifecycle of one durable execution attempt.
@@ -45,18 +46,20 @@ const (
 // deliberately stores no raw prompt, model output, tool output, or command.
 // Those remain in the separately bounded transcript/evidence surfaces.
 type TurnRecord struct {
-	Sequence       uint64     `json:"sequence"`
-	Attempt        int        `json:"attempt"`
-	IntentRevision uint64     `json:"intent_revision,omitempty"`
-	State          TurnState  `json:"state"`
-	Route          string     `json:"route,omitempty"`
-	Hypothesis     string     `json:"hypothesis,omitempty"`
-	EvidenceState  string     `json:"evidence_state,omitempty"`
-	StopReason     StopReason `json:"stop_reason,omitempty"`
-	ToolRounds     int        `json:"tool_rounds,omitempty"`
-	MutationCount  int        `json:"mutation_count,omitempty"`
-	StartedAt      time.Time  `json:"started_at"`
-	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	Sequence           uint64     `json:"sequence"`
+	Attempt            int        `json:"attempt"`
+	IntentRevision     uint64     `json:"intent_revision,omitempty"`
+	State              TurnState  `json:"state"`
+	Route              string     `json:"route,omitempty"`
+	Hypothesis         string     `json:"hypothesis,omitempty"`
+	EvidenceState      string     `json:"evidence_state,omitempty"`
+	StopReason         StopReason `json:"stop_reason,omitempty"`
+	ToolRounds         int        `json:"tool_rounds,omitempty"`
+	MutationCount      int        `json:"mutation_count,omitempty"`
+	ChangedFiles       []string   `json:"changed_files,omitempty"`
+	ChangedFilesCapped bool       `json:"changed_files_capped,omitempty"`
+	StartedAt          time.Time  `json:"started_at"`
+	FinishedAt         *time.Time `json:"finished_at,omitempty"`
 }
 
 // Valid reports whether the turn lifecycle state is supported.
