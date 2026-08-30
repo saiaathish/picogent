@@ -3,11 +3,9 @@ package taskstate
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/workspace"
@@ -58,11 +56,35 @@ func TestNewAndProgress(t *testing.T) {
 	if err := task.SetStatus(StatusWorking); err != nil || task.BlockedBy != "" {
 		t.Fatalf("resume = %v %+v", err, task)
 	}
-	if err := task.SetStatus(StatusDone); err != nil {
-		t.Fatal(err)
-	}
+	// Direct assignment represents a legacy persisted terminal record. New
+	// transitions to done are covered by TestSetStatusDoneRequiresCurrentProof.
+	task.Status = StatusDone
 	if err := task.SetStatus(StatusWorking); err == nil {
 		t.Fatal("done task must be terminal")
+	}
+}
+
+func TestSetStatusDoneRequiresCurrentProof(t *testing.T) {
+	task, err := New("done-gate", "finish the outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []Criterion{{Description: "required proof", Required: true}}
+	if err := task.SetStatus(StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(StatusDone); err == nil {
+		t.Fatal("unproven task was allowed to become done")
+	}
+	if task.Status != StatusWorking {
+		t.Fatalf("failed done transition changed status to %q", task.Status)
+	}
+	task.RecordCriterionVerification(0, "PASS", "verify PASS", "verify")
+	if !task.CompletionReady() {
+		t.Fatal("current criterion proof was not recognized")
+	}
+	if err := task.SetStatus(StatusDone); err != nil {
+		t.Fatalf("proven task was rejected: %v", err)
 	}
 }
 
@@ -168,181 +190,225 @@ func TestEvidenceTracksLatestChange(t *testing.T) {
 	}
 }
 
-func TestVerificationObservationBindsAndInvalidatesPassingEvidence(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "fixed.txt")
-	if err := os.WriteFile(path, []byte("fixed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	observation, err := workspace.Capture(context.Background(), root, []string{"fixed.txt"})
+func TestCompletionReadyRequiresCurrentPassForEveryRequiredCriterion(t *testing.T) {
+	task, err := New("criterion-proof", "finish the outcome", []string{"first", "second", "optional"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := New("observation-binding", "fix the file", nil)
-	if err != nil {
-		t.Fatal(err)
+	task.DefinitionOfDone = []Criterion{
+		{Description: "first required", Required: true},
+		{Description: "second required", Required: true},
+		{Description: "optional polish", Required: false},
 	}
-	task.RecordChanged("fixed.txt")
-	task.AddVerificationWithObservation("go test ./...", true, "verify PASS\n1 passed", &observation)
-	if task.NeedsVerification() || task.Verification[0].Observation == nil {
-		t.Fatalf("bound passing evidence = %#v", task)
+
+	if task.CompletionReady() {
+		t.Fatal("missing criterion evidence incorrectly completed the task")
 	}
-	// The task owns an isolated observation rather than the caller's slice.
-	observation.Files[0].Digest = strings.Repeat("0", 64)
-	if task.Verification[0].Observation.Files[0].Digest == observation.Files[0].Digest {
-		t.Fatal("verification observation aliases caller data")
+	task.RecordCriterionVerification(1, "PASS", "second passed", "verify")
+	if got := task.FirstMissingRequiredCriterion(); got != 0 {
+		t.Fatalf("first missing criterion = %d, want 0", got)
 	}
-	if !task.InvalidateLatestVerification("workspace content changed") {
-		t.Fatal("passing evidence was not invalidated")
+	if task.CompletionReady() {
+		t.Fatal("one required criterion incorrectly completed the task")
 	}
-	if task.Verification[0].Passed || !strings.HasPrefix(task.Verification[0].Summary, "verify INCONCLUSIVE") || !task.NeedsVerification() {
-		t.Fatalf("invalidated evidence = %#v", task.Verification[0])
+
+	task.RecordCriterionVerification(0, "FAIL", "first failed", "verify")
+	if status, current := task.CriterionEvidenceState(0); status != "FAIL" || !current {
+		t.Fatalf("failed current evidence = status=%q current=%v", status, current)
 	}
-	if len(task.Evidence) != 2 || task.Evidence[1].Status != "INCONCLUSIVE" {
-		t.Fatalf("invalidation ledger = %#v", task.Evidence)
+	if task.CompletionReady() {
+		t.Fatal("failed required criterion incorrectly completed the task")
+	}
+
+	task.RecordCriterionVerification(0, "PASS", "first passed", "verify")
+	if !task.CompletionReady() {
+		t.Fatal("all required criteria passed but task is not completion-ready")
+	}
+
+	// Optional criteria are observable but never block completion.
+	task.RecordCriterionVerification(2, "FAIL", "optional failed", "verify")
+	if !task.CompletionReady() {
+		t.Fatal("optional failed criterion blocked completion")
+	}
+
+	// Any later mutation makes every earlier criterion-bound pass stale.
+	task.RecordChanged("first")
+	if status, current := task.CriterionEvidenceState(0); status != "UNVERIFIED" || current {
+		t.Fatalf("stale criterion evidence = status=%q current=%v", status, current)
+	}
+	if task.CompletionReady() {
+		t.Fatal("stale criterion evidence incorrectly completed the task")
+	}
+
+	task.RecordCriterionVerification(0, "PASS", "first rerun passed", "verify")
+	if task.CompletionReady() {
+		t.Fatal("one stale required criterion incorrectly completed the task")
+	}
+	task.RecordCriterionVerification(1, "PASS", "second rerun passed", "verify")
+	if !task.CompletionReady() {
+		t.Fatal("all required criteria lack completion after current rerun")
 	}
 }
 
-func TestVerificationEvidenceUsesCanonicalStatuses(t *testing.T) {
-	tests := []struct {
-		name       string
-		passed     bool
-		summary    string
-		wantStatus string
-		wantPassed bool
-	}{
-		{name: "inconclusive", passed: false, summary: "verify INCONCLUSIVE timeout", wantStatus: "INCONCLUSIVE"},
-		{name: "skipped", passed: false, summary: "verify SKIPPED no runner", wantStatus: "SKIPPED"},
-		{name: "lookalike pass", passed: true, summary: "verify PASSIVE output", wantStatus: "INCONCLUSIVE"},
-		{name: "legacy bool", passed: true, summary: "pass", wantStatus: "PASS", wantPassed: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			task, err := New("verification-status-"+tt.name, "goal", nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			task.AddVerification("verify", tt.passed, tt.summary)
-			if len(task.Evidence) != 1 || task.Evidence[0].Status != tt.wantStatus {
-				t.Fatalf("evidence = %+v, want status %s", task.Evidence, tt.wantStatus)
-			}
-			if got := task.Verification[0].Passed; got != tt.wantPassed {
-				t.Fatalf("passed = %v, want %v", got, tt.wantPassed)
-			}
-		})
-	}
-}
-
-func TestValidateRejectsMalformedPersistedObservation(t *testing.T) {
-	task, err := New("malformed-observation", "goal", nil)
+func TestCompletionCheckRequiresCurrentTrustedEvidenceForEachRequirement(t *testing.T) {
+	task, err := New("quality-proof", "finish the quality outcome", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	task.RecordChanged("missing.txt")
-	task.Verification = []Verification{{
-		Passed:  true,
-		Summary: "verify PASS",
-		Observation: &workspace.Observation{
-			Root:  t.TempDir(),
-			Files: []workspace.FileObservation{{Path: "missing.txt", Known: true, Size: 1}},
-		},
-	}}
-	if err := task.Validate(); err == nil {
-		t.Fatal("malformed persisted observation should fail validation")
+	task.Intent = &IntentContract{
+		Outcome:          task.Goal,
+		NeedsResearch:    true,
+		NeedsMeasurement: true,
+		NeedsVisual:      true,
+		NeedsTests:       true,
+		NeedsApproval:    true,
+	}
+
+	wantKinds := []EvidenceKind{
+		EvidenceKindResearch,
+		EvidenceKindMeasurement,
+		EvidenceKindVisual,
+		EvidenceKindTests,
+		EvidenceKindApproval,
+	}
+	check := task.CompletionCheck()
+	if check.Ready || !reflect.DeepEqual(check.MissingRequirements, wantKinds) {
+		t.Fatalf("missing quality proof = %#v, want all %v", check, wantKinds)
+	}
+	if len(check.Requirements) != len(wantKinds) {
+		t.Fatalf("requirement states = %#v", check.Requirements)
+	}
+	for _, requirement := range check.Requirements {
+		if requirement.Status != "UNVERIFIED" || requirement.Current {
+			t.Fatalf("missing requirement state = %#v", requirement)
+		}
+	}
+
+	// A model-labelled record and a record from the wrong producer are retained
+	// for auditability but cannot satisfy a quality requirement.
+	task.AddRequirementEvidence(EvidenceKindResearch, "PASS", EvidenceOriginModel, "the model says research is complete", "model")
+	task.AddRequirementEvidence(EvidenceKindMeasurement, "PASS", EvidenceOriginResearchTool, "research output claimed a measurement", "research")
+	task.AddRequirementEvidence(EvidenceKindVisual, "PASS", EvidenceOriginVisualInspection, "generic caller labels visual proof", "caller")
+	if status, current, origin := task.RequirementEvidenceState(EvidenceKindVisual); status != "PASS" || current || origin != EvidenceOriginVisualInspection {
+		t.Fatalf("generic allow-listed visual proof was trusted = status=%q current=%v origin=%q", status, current, origin)
+	}
+	// The remaining three records use the matching kind and trusted producer.
+	task.RecordVisualEvidence("PASS", "rendered result inspected", "browser")
+	task.RecordTestsEvidence("PASS", "targeted tests passed", "test runner")
+	task.RecordApprovalEvidence("APPROVED", "user approved the bounded action", "user")
+
+	check = task.CompletionCheck()
+	if check.Ready || !reflect.DeepEqual(check.MissingRequirements, []EvidenceKind{EvidenceKindResearch, EvidenceKindMeasurement}) {
+		t.Fatalf("untrusted quality proof was accepted = %#v", check)
+	}
+	if status, current, origin := task.RequirementEvidenceState(EvidenceKindResearch); status != "PASS" || current || origin != EvidenceOriginModel {
+		t.Fatalf("model research proof = status=%q current=%v origin=%q", status, current, origin)
+	}
+	if status, current, origin := task.RequirementEvidenceState(EvidenceKindMeasurement); status != "PASS" || current || origin != EvidenceOriginResearchTool {
+		t.Fatalf("wrong measurement producer = status=%q current=%v origin=%q", status, current, origin)
+	}
+
+	// Matching proof kind and origin closes the two remaining gaps.
+	task.RecordResearchEvidence("PASS", "current API research completed", "research tool")
+	task.RecordMeasurementEvidence("PASS", "baseline and post-change measurements recorded", "benchmark")
+	check = task.CompletionCheck()
+	if !check.Ready || len(check.MissingRequirements) != 0 {
+		t.Fatalf("trusted quality proof did not complete the criterionless outcome = %#v", check)
+	}
+
+	// A later mutation makes every earlier quality record stale, even though the
+	// producer and proof kind were previously trusted.
+	task.RecordChanged("quality.go")
+	check = task.CompletionCheck()
+	if check.Ready || !reflect.DeepEqual(check.MissingRequirements, wantKinds) {
+		t.Fatalf("stale quality proof remained current = %#v", check)
 	}
 }
 
-func TestOutcomeNotesAndEvidenceStayBoundedAndDeduplicated(t *testing.T) {
-	task, err := New("outcome", "finish the project", nil)
+func TestCriterionEvidenceRequiresTrustedKindAndOrigin(t *testing.T) {
+	task, err := New("criterion-trust", "finish the bounded outcome", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < maxOutcomeNotes+2; i++ {
-		task.AddConstraint("constraint " + string(rune('a'+i)))
-		task.AddRisk("risk " + string(rune('a'+i)))
-		task.AddUncertainty("unknown " + string(rune('a'+i)))
+	task.DefinitionOfDone = []Criterion{{Description: "required proof", Required: true}}
+
+	// A typed verifier record establishes the expected proof boundary.
+	task.RecordCriterionVerification(0, "PASS", "trusted verification passed", "verify")
+	if !task.CompletionReady() {
+		t.Fatal("trusted criterion evidence did not satisfy completion")
 	}
-	if len(task.Constraints) != maxOutcomeNotes || len(task.Risks) != maxOutcomeNotes || len(task.Uncertainty) != maxOutcomeNotes {
-		t.Fatalf("bounded notes = constraints=%d risks=%d uncertainty=%d", len(task.Constraints), len(task.Risks), len(task.Uncertainty))
+
+	// A later generic caller-labelled PASS is retained, but must supersede the
+	// older trusted record as the latest untrusted state rather than reopening
+	// the completion boundary with a false positive.
+	task.AddEvidenceForCriterion(0, Evidence{
+		Kind:      EvidenceKindVerification,
+		Origin:    EvidenceOriginVerifier,
+		Status:    "PASS",
+		Summary:   "the caller says the criterion passed",
+		ChangeSeq: task.ChangeSeq,
+	})
+	if status, current := task.CriterionEvidenceState(0); status != "UNVERIFIED" || current || task.CompletionReady() {
+		t.Fatalf("model-origin criterion evidence was trusted: status=%q current=%v ready=%v", status, current, task.CompletionReady())
 	}
-	task.AddEvidence(Evidence{Kind: "inspection", Status: "CONFIRMED", Summary: "repo map found the service", Reference: "internal/repomap", ChangeSeq: 0})
-	got := len(task.Evidence)
-	task.AddEvidence(task.Evidence[0])
-	if len(task.Evidence) != got {
-		t.Fatalf("duplicate evidence appended: %+v", task.Evidence)
+
+	// A verifier origin cannot upgrade an unrelated evidence kind into
+	// criterion proof. Only the typed verification/tests proof boundary is
+	// accepted.
+	task.AddEvidenceForCriterion(0, Evidence{
+		Kind:      EvidenceKindInspection,
+		Origin:    EvidenceOriginVerifier,
+		Status:    "PASS",
+		Summary:   "inspection completed",
+		ChangeSeq: task.ChangeSeq,
+	})
+	if status, current := task.CriterionEvidenceState(0); status != "UNVERIFIED" || current || task.CompletionReady() {
+		t.Fatalf("wrong-kind criterion evidence was trusted: status=%q current=%v ready=%v", status, current, task.CompletionReady())
 	}
-	if err := task.Validate(); err != nil {
-		t.Fatalf("bounded outcome invalid: %v", err)
+
+	task.RecordCriterionTestsEvidence(0, "PASS", "criterion test passed", "test runner")
+	if !task.CompletionReady() {
+		t.Fatal("trusted test-runner criterion evidence did not satisfy completion")
 	}
 }
 
-func TestEvidenceValidationRejectsUnboundedState(t *testing.T) {
-	task, err := New("outcome-invalid", "goal", nil)
+func TestRequirementEvidenceRejectsMismatchedProofKind(t *testing.T) {
+	task, err := New("kind-proof", "run the required tests", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	task.Evidence = make([]Evidence, maxEvidence+1)
-	if err := task.Validate(); err == nil {
-		t.Fatal("oversized evidence should fail validation")
+	task.Intent = &IntentContract{Outcome: task.Goal, NeedsTests: true}
+
+	task.AddRequirementEvidence(EvidenceKindResearch, "PASS", EvidenceOriginResearchTool, "research completed", "docs")
+	if status, current, _ := task.RequirementEvidenceState(EvidenceKindTests); status != "UNVERIFIED" || current {
+		t.Fatalf("research evidence satisfied tests = status=%q current=%v", status, current)
+	}
+
+	task.AddRequirementEvidence(EvidenceKindTests, "PASS", EvidenceOriginModel, "the model says tests passed", "model")
+	if status, current, origin := task.RequirementEvidenceState(EvidenceKindTests); status != "PASS" || current || origin != EvidenceOriginModel {
+		t.Fatalf("untrusted test proof = status=%q current=%v origin=%q", status, current, origin)
+	}
+	if task.CompletionReady() {
+		t.Fatal("mismatched or model-origin proof completed the outcome")
+	}
+
+	task.RecordTestsEvidence("PASS", "go test passed", "go test ./...")
+	if !task.CompletionReady() {
+		t.Fatal("trusted test proof did not complete the requirement-only outcome")
 	}
 }
 
-func TestDurableCollectionsStayBounded(t *testing.T) {
-	task, err := New("bounds", "goal", nil)
+func TestCriterionEvidenceRejectsWrongIndexAndRoundTrips(t *testing.T) {
+	task, err := New("criterion-json", "verify the result", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < maxChangedFiles+1; i++ {
-		task.RecordChanged("file-" + string(rune('a'+i%26)) + ".go-" + fmt.Sprint(i))
+	task.DefinitionOfDone = []Criterion{{Description: "required", Required: true}}
+	task.AddEvidenceForCriterion(1, Evidence{Kind: "verification", Status: "PASS", Summary: "wrong criterion", ChangeSeq: task.ChangeSeq})
+	if task.CompletionReady() || len(task.Evidence) != 0 {
+		t.Fatalf("out-of-range criterion evidence was accepted: %#v", task.Evidence)
 	}
-	if len(task.ChangedFiles) != maxChangedFiles || !task.ChangedFilesCapped {
-		t.Fatalf("changed files = %d capped=%v", len(task.ChangedFiles), task.ChangedFilesCapped)
-	}
-	for i := 0; i < maxVerification+4; i++ {
-		task.AddVerification("verify", false, "failure "+fmt.Sprint(i))
-	}
-	if len(task.Verification) != maxVerification {
-		t.Fatalf("verification history = %d", len(task.Verification))
-	}
-	if err := task.Validate(); err != nil {
-		t.Fatalf("bounded task invalid: %v", err)
-	}
-}
-
-func TestValidateRejectsUnboundedLegacyCollections(t *testing.T) {
-	task, err := New("legacy-bounds", "goal", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	task.Steps = make([]Step, maxTaskSteps+1)
-	if err := task.Validate(); err == nil {
-		t.Fatal("oversized steps should fail validation")
-	}
-	task.Steps = nil
-	task.ChangedFiles = make([]string, maxChangedFiles+1)
-	if err := task.Validate(); err == nil {
-		t.Fatal("oversized changed files should fail validation")
-	}
-	task.ChangedFiles = nil
-	task.Intent = &IntentContract{Outcome: task.Goal, Action: strings.Repeat("a", maxIntentAction+1)}
-	if err := task.Validate(); err == nil {
-		t.Fatal("oversized intent metadata should fail validation")
-	}
-	task.Intent = nil
-	task.Evidence = []Evidence{{Kind: "inspection", Status: "CONFIRMED", Summary: "bounded", Reference: strings.Repeat("a", maxEvidenceReference+1)}}
-	if err := task.Validate(); err == nil {
-		t.Fatal("oversized evidence metadata should fail validation")
-	}
-}
-
-func TestEvidenceJSONRoundTrip(t *testing.T) {
-	task, err := New("evidence-json", "fix signup", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	task.RecordChanged("internal/signup.go")
-	task.AddVerification("go test ./internal/signup", true, "pass")
-
+	task.RecordCriterionVerification(0, "PASS", "required passed", "verify")
 	data, err := json.Marshal(task)
 	if err != nil {
 		t.Fatal(err)
@@ -351,37 +417,102 @@ func TestEvidenceJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &restored); err != nil {
 		t.Fatal(err)
 	}
-	if restored.ChangeSeq != 1 || restored.VerifiedChangeSeq != 1 || restored.NeedsVerification() {
-		t.Fatalf("restored evidence = %+v", restored)
+	if err := restored.Validate(); err != nil {
+		t.Fatalf("criterion evidence round-trip invalid: %v", err)
+	}
+	if len(restored.Evidence) != 1 || restored.Evidence[0].CriterionIndex == nil || *restored.Evidence[0].CriterionIndex != 0 || restored.CompletionReady() {
+		t.Fatalf("criterion evidence round-trip = %#v", restored)
+	}
+
+	bad := restored
+	bad.Evidence = append([]Evidence(nil), restored.Evidence...)
+	index := 1
+	bad.Evidence[0].CriterionIndex = &index
+	if err := bad.Validate(); err == nil {
+		t.Fatal("invalid criterion index survived validation")
 	}
 }
 
-func TestStatusValidExhaustive(t *testing.T) {
-	for _, status := range []Status{StatusPlanning, StatusWorking, StatusVerifying, StatusBlocked, StatusDone} {
-		if !status.Valid() {
-			t.Fatalf("%q should be valid", status)
-		}
+func TestCriterionlessCompletionRequiresWorkspaceBoundVerification(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "checked.txt")
+	if err := os.WriteFile(path, []byte("checked\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if Status("paused").Valid() {
-		t.Fatal("unknown status should be invalid")
-	}
-}
-
-func TestAdvanceAtEndAndNilHelpers(t *testing.T) {
-	task, err := New("s", "goal", nil)
+	observation, err := workspace.Capture(context.Background(), root, []string{"checked.txt"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if task.Advance() || task.Current() != nil {
-		t.Fatal("empty task should have no current step")
+	task, err := New("criterionless-proof", "check the workspace", nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var nilTask *Task
-	nilTask.NoteAttempt()
-	nilTask.AddChangedFiles("x")
-	nilTask.RecordChanged("x")
-	nilTask.AddVerification("x", false, "x")
-	nilTask.Block("x")
-	if nilTask.Advance() || nilTask.Current() != nil || nilTask.ConsecutiveVerificationFailures() != 0 || nilTask.NeedsVerification() {
-		t.Fatal("nil helpers must be safe")
+	task.RecordChanged("checked.txt")
+	task.AddVerificationWithObservation("go test ./...", true, "verify PASS", &observation)
+	if !task.CompletionReady() {
+		t.Fatal("current workspace-bound verification did not complete criterion-less task")
+	}
+	task.AddVerification("go test ./...", true, "verify PASS")
+	if task.CompletionReady() {
+		t.Fatal("unbound later verification replaced workspace-bound completion proof")
+	}
+}
+
+func TestAllOptionalCriteriaRequireWorkspaceBoundVerification(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "optional.txt")
+	if err := os.WriteFile(path, []byte("optional\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	observation, err := workspace.Capture(context.Background(), root, []string{"optional.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := New("optional-proof", "check the optional outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []Criterion{{Description: "nice to have", Required: false}}
+	if task.CompletionReady() {
+		t.Fatal("all-optional definition was vacuously completion-ready")
+	}
+	task.AddEvidenceForCriterion(0, Evidence{Kind: "verification", Origin: EvidenceOriginVerifier, Status: "PASS", Summary: "optional passed", ChangeSeq: task.ChangeSeq})
+	if task.CompletionReady() {
+		t.Fatal("optional criterion evidence replaced aggregate completion proof")
+	}
+
+	task.RecordChanged("optional.txt")
+	task.AddVerificationWithObservation("go test ./...", true, "verify PASS", &observation)
+	if !task.CompletionReady() {
+		t.Fatal("workspace-bound passing verification did not complete all-optional task")
+	}
+}
+
+func TestPartialVerificationCannotCompleteRequiredOrCriterionlessTask(t *testing.T) {
+	observation := workspace.Observation{Files: []workspace.FileObservation{{Path: "current.go", Known: true}}}
+
+	required, err := New("partial-required", "finish the required outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	required.DefinitionOfDone = []Criterion{{Description: "required proof", Required: true}}
+	required.RecordChanged("current.go")
+	required.AddVerificationForCriteriaWithCoverage([]int{0}, "verify", true, "verify PASS", &observation, VerificationCoveragePartial)
+	latest := required.Verification[len(required.Verification)-1]
+	if latest.Passed || latest.Coverage != VerificationCoveragePartial {
+		t.Fatalf("partial required verification = %#v", latest)
+	}
+	if status, current := required.CriterionEvidenceState(0); status == "PASS" || !current || required.CompletionReady() {
+		t.Fatalf("partial required evidence = status=%q current=%v ready=%v", status, current, required.CompletionReady())
+	}
+
+	criterionless, err := New("partial-criterionless", "finish the criterionless outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	criterionless.RecordChanged("current.go")
+	criterionless.AddVerificationForCriteriaWithCoverage(nil, "verify", true, "verify PASS", &observation, VerificationCoveragePartial)
+	if criterionless.CompletionReady() {
+		t.Fatal("partial criterionless verification completed the task")
 	}
 }
