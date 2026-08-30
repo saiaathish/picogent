@@ -96,7 +96,9 @@ and cleanup never unlinks a replacement inode.
   `O_NOFOLLOW`; Windows builds use `NtCreateFile` RootDirectory handles with
   `OBJ_DONT_REPARSE` and `FILE_OPEN_REPARSE_POINT`. Focused tests cover direct
   outside-symlink use, root-ancestor rejection, and Unix ancestor-swap stress.
-  Hosted Windows runtime evidence is still pending.
+  Hosted CI run `33304380869` passed the Windows workspace tests, build, and
+  GUI smoke at source commit `ff91cf3`; this is direct hosted runtime evidence
+  for that path, not proof of Windows ACL enforcement or hostile races.
 - Checkpoint capture, seal, and preflight fingerprint reads use the same
   secure opener. Restore staging, publication, deletion, and rollback remain
   path-based and are intentionally not covered by this checkpoint.
