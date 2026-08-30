@@ -196,7 +196,7 @@ func readTail(path string, limit int) ([]byte, error) {
 	// Trace events are individually bounded, so a small overshoot lets us
 	// recover the tail while still keeping untrusted log growth bounded. The
 	// secure reader anchors the file descriptor and rejects symlink targets.
-	data, err := securefile.ReadFileLimited(path, limit+4<<10)
+	data, err := securefile.ReadFileLimited(path, limit+(4<<10))
 	if err != nil {
 		return nil, err
 	}
