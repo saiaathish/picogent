@@ -132,28 +132,7 @@ func (writeFile) Run(ctx context.Context, args string, c Context) (string, error
 			return "", err
 		}
 	}
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-	f, err := workspace.OpenWrite(ws, abs)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	if ctx != nil {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-	}
-	if err := f.Truncate(0); err != nil {
-		return "", err
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return "", err
-	}
-	if err := writeAll(f, []byte(in.Content)); err != nil {
+	if err := workspace.WriteAtomic(ws, abs, []byte(in.Content)); err != nil {
 		return "", err
 	}
 	return "wrote " + relDisplay(ws, abs), nil
@@ -206,14 +185,17 @@ func (editFile) Run(ctx context.Context, args string, c Context) (string, error)
 	if err != nil {
 		return "", err
 	}
-	f, err := workspace.OpenEdit(ws, abs)
+	f, err := workspace.OpenRead(ws, abs)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
 	data, truncated, err := readBoundedReader(f, maxReadBytes)
+	closeErr := f.Close()
 	if err != nil {
 		return "", err
+	}
+	if closeErr != nil {
+		return "", closeErr
 	}
 	if truncated {
 		return "", fmt.Errorf("file is larger than 256KiB: %s", relDisplay(ws, abs))
@@ -235,13 +217,7 @@ func (editFile) Run(ctx context.Context, args string, c Context) (string, error)
 			return "", err
 		}
 	}
-	if err := f.Truncate(0); err != nil {
-		return "", err
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return "", err
-	}
-	if err := writeAll(f, []byte(updated)); err != nil {
+	if err := workspace.WriteAtomicIfUnchanged(ws, abs, data, []byte(updated)); err != nil {
 		return "", err
 	}
 	return "edited " + relDisplay(ws, abs), nil
@@ -256,20 +232,6 @@ func readBoundedReader(r io.Reader, limit int) ([]byte, bool, error) {
 		return data, false, nil
 	}
 	return data[:limit], true, nil
-}
-
-func writeAll(w io.Writer, data []byte) error {
-	for len(data) > 0 {
-		n, err := w.Write(data)
-		if err != nil {
-			return err
-		}
-		if n <= 0 {
-			return io.ErrShortWrite
-		}
-		data = data[n:]
-	}
-	return nil
 }
 
 // trimIncompleteUTF8 preserves a valid prefix when the byte cap lands in the
