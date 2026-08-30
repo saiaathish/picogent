@@ -190,6 +190,51 @@ func TestEvidenceTracksLatestChange(t *testing.T) {
 	}
 }
 
+func TestInvalidateWorkspaceEvidenceIsIdempotent(t *testing.T) {
+	task, err := New("undo-invalidation", "restore the workspace safely", []string{"edit", "verify"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := task.BeginTurn(TurnRouteImplement)
+	if !ok {
+		t.Fatal("turn did not start")
+	}
+	task.RecordChanged("note.txt")
+	if !task.FinishTurn(sequence, TurnRouteImplement, "edit the note", "PASS", StopNone, 1, 1) {
+		t.Fatal("turn did not finish")
+	}
+	task.AddVerification("go test ./...", true, "verify PASS")
+	originalFiles := append([]string(nil), task.ChangedFiles...)
+	originalTurns := append([]TurnRecord(nil), task.Turns...)
+
+	if !task.InvalidateWorkspaceEvidence("undo restored workspace files") {
+		t.Fatal("passing workspace evidence was not invalidated")
+	}
+	if task.VerifiedChangeSeq != -1 || !task.NeedsVerification() || task.Verification[len(task.Verification)-1].Passed {
+		t.Fatalf("invalidated task = %#v", task)
+	}
+	if !reflect.DeepEqual(task.ChangedFiles, originalFiles) || task.ChangeSeq != 1 || !reflect.DeepEqual(task.Turns, originalTurns) {
+		t.Fatalf("undo invalidation changed history = files %#v seq %d turns %#v", task.ChangedFiles, task.ChangeSeq, task.Turns)
+	}
+	beforeRetry, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.InvalidateWorkspaceEvidence("undo restored workspace files") {
+		t.Fatal("second invalidation reported a change")
+	}
+	afterRetry, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeRetry, afterRetry) {
+		t.Fatal("second invalidation changed durable state")
+	}
+}
+
 func TestCompletionReadyRequiresCurrentPassForEveryRequiredCriterion(t *testing.T) {
 	task, err := New("criterion-proof", "finish the outcome", []string{"first", "second", "optional"})
 	if err != nil {

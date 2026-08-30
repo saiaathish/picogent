@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -20,6 +22,24 @@ const durableRepairMarker = "Internal verification-repair instruction:"
 // task update is no longer applicable. It is deliberately not reported as a
 // persistence failure to the user.
 var errTaskMutationSkipped = errors.New("durable task mutation skipped")
+
+type taskPersistenceError struct {
+	err error
+}
+
+func (e *taskPersistenceError) Error() string {
+	if e == nil || e.err == nil {
+		return "durable task state was not saved"
+	}
+	return e.err.Error()
+}
+
+func (e *taskPersistenceError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
 
 func durableRepairPrompt(evidence string, repeated bool) string {
 	evidence = strings.TrimSpace(evidence)
@@ -495,31 +515,99 @@ func (a *Agent) setTaskStatus(status taskstate.Status, ev EventHandler) {
 // failed Save therefore cannot produce a task snapshot that looks persisted;
 // the last successfully persisted state remains available for resume.
 func (a *Agent) mutateTask(ev EventHandler, mutate func(*taskstate.Task) error) bool {
-	if mutate == nil {
-		return false
-	}
-	a.taskMu.Lock()
-	if a.task == nil || a.TaskStore == nil {
-		a.taskMu.Unlock()
-		return false
-	}
-	candidate := cloneTask(a.task)
-	if err := mutate(candidate); err != nil {
-		a.taskMu.Unlock()
-		if !errors.Is(err, errTaskMutationSkipped) {
+	snapshot, err := a.mutateTaskResult(mutate)
+	if err != nil {
+		if errors.Is(err, errTaskMutationSkipped) {
+			return false
+		}
+		var persistenceErr *taskPersistenceError
+		if errors.As(err, &persistenceErr) {
+			a.reportTaskPersistenceError(ev, err)
+		} else {
 			a.reportTaskUpdateError(ev, err)
 		}
 		return false
 	}
+	if snapshot == nil {
+		return false
+	}
+	emitTaskState(ev, snapshot)
+	return true
+}
+
+// mutateTaskResult applies a durable task update through the same isolated
+// save-before-publish/CAS commit point as ordinary turn mutations. A nil
+// snapshot means that no durable task is attached to this agent; callers that
+// need to surface persistence failures can inspect the returned error.
+func (a *Agent) mutateTaskResult(mutate func(*taskstate.Task) error) (*taskstate.Task, error) {
+	if mutate == nil {
+		return nil, nil
+	}
+	a.taskMu.Lock()
+	if a.task == nil || a.TaskStore == nil {
+		a.taskMu.Unlock()
+		return nil, nil
+	}
+	candidate := cloneTask(a.task)
+	if err := mutate(candidate); err != nil {
+		a.taskMu.Unlock()
+		return nil, err
+	}
 	snapshot, err := a.persistTaskCandidateLocked(candidate)
 	if err != nil {
 		a.taskMu.Unlock()
-		a.reportTaskPersistenceError(ev, err)
-		return false
+		return nil, &taskPersistenceError{err: err}
 	}
 	a.taskMu.Unlock()
-	emitTaskState(ev, snapshot)
+	return snapshot, nil
+}
+
+// rebaseLegacyCompletionNormalization refreshes the in-memory task only when
+// the store's read-time repair of an unproven terminal marker is the complete
+// reason its revision moved. Store.Load must persist that repair, but a caller
+// that already holds the pre-repair task can otherwise lose the next valid
+// mutation to its own normalization CAS. Arbitrary concurrent changes still
+// fail closed at the normal CAS boundary.
+func (a *Agent) rebaseLegacyCompletionNormalization() bool {
+	a.taskMu.Lock()
+	defer a.taskMu.Unlock()
+	if a.task == nil || a.TaskStore == nil {
+		return false
+	}
+	sessionID := strings.TrimSpace(a.TaskSession)
+	if sessionID == "" {
+		sessionID = a.task.SessionID
+	}
+	current, err := a.TaskStore.Load(sessionID)
+	if err != nil || !onlyLegacyCompletionNormalization(a.task, current) {
+		return false
+	}
+	a.task = current
 	return true
+}
+
+func onlyLegacyCompletionNormalization(stale, current *taskstate.Task) bool {
+	if stale == nil || current == nil || stale.Status != taskstate.StatusDone || current.Status != taskstate.StatusWorking || stale.Revision == ^uint64(0) || current.Revision != stale.Revision+1 {
+		return false
+	}
+	// Marshal/unmarshal clears runtime-only trust bits so this comparison models
+	// the exact state Store.Load saw on disk before it normalized the marker.
+	data, err := json.Marshal(stale)
+	if err != nil {
+		return false
+	}
+	var normalized taskstate.Task
+	if err := json.Unmarshal(data, &normalized); err != nil || !normalized.NormalizeLegacyCompletion() {
+		return false
+	}
+	normalized.Revision = current.Revision
+	normalized.UpdatedAt = current.UpdatedAt
+	normalizedData, err := json.Marshal(&normalized)
+	if err != nil {
+		return false
+	}
+	currentData, err := json.Marshal(current)
+	return err == nil && bytes.Equal(normalizedData, currentData)
 }
 
 // persistTaskCandidateLocked is the single commit point for durable task
