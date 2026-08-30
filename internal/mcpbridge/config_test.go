@@ -115,3 +115,71 @@ func TestLoadServersIgnoresMalformedWorkspaceConfig(t *testing.T) {
 		t.Fatalf("got %d servers, want none", len(got))
 	}
 }
+
+func TestLoadServersRejectsSymlinkedUserConfig(t *testing.T) {
+	root := t.TempDir()
+	userHome := t.TempDir()
+	t.Setenv("PICOGENT_HOME", root)
+	t.Setenv("HOME", userHome)
+	t.Setenv("USERPROFILE", userHome)
+
+	tests := []struct {
+		name string
+		path string
+	}{
+		{name: "picogent", path: filepath.Join(root, "mcp.yaml")},
+		{name: "cursor", path: filepath.Join(userHome, ".cursor", "mcp.json")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			outside := filepath.Join(t.TempDir(), "config")
+			if err := os.WriteFile(outside, []byte("servers: {}\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(test.path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(outside, test.path); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+
+			if _, err := mcpbridge.LoadServers(""); err == nil {
+				t.Fatal("LoadServers accepted a symlinked user config")
+			}
+			if _, err := os.Lstat(test.path); err != nil {
+				t.Fatalf("symlink was changed after rejection: %v", err)
+			}
+		})
+	}
+}
+
+func TestRemoveServerRejectsSymlinkedUserConfig(t *testing.T) {
+	root := t.TempDir()
+	userHome := t.TempDir()
+	t.Setenv("PICOGENT_HOME", root)
+	t.Setenv("HOME", userHome)
+	t.Setenv("USERPROFILE", userHome)
+
+	outside := filepath.Join(t.TempDir(), "mcp.yaml")
+	if err := os.WriteFile(outside, []byte("servers:\n  target:\n    command: keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "mcp.yaml")
+	if err := os.Symlink(outside, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	if err := mcpbridge.RemoveServer("target"); err == nil {
+		t.Fatal("RemoveServer accepted a symlinked user config")
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("symlink was changed after rejection: %v", err)
+	}
+	got, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "servers:\n  target:\n    command: keep\n" {
+		t.Fatalf("symlink target changed to %q", got)
+	}
+}
