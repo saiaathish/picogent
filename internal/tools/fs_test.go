@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/perm"
@@ -152,6 +153,8 @@ func TestUnixWorkspaceWriteDoesNotEscapeAncestorSwap(t *testing.T) {
 	}
 
 	stop := make(chan struct{})
+	firstSwap := make(chan struct{})
+	var firstSwapOnce sync.Once
 	var swaps sync.WaitGroup
 	var swapCount atomic.Int32
 	swaps.Add(1)
@@ -168,6 +171,7 @@ func TestUnixWorkspaceWriteDoesNotEscapeAncestorSwap(t *testing.T) {
 			}
 			if err := os.Symlink(outside, parent); err == nil {
 				swapCount.Add(1)
+				firstSwapOnce.Do(func() { close(firstSwap) })
 				_ = os.Remove(parent)
 			}
 			_ = os.Rename(realParent, parent)
@@ -175,12 +179,16 @@ func TestUnixWorkspaceWriteDoesNotEscapeAncestorSwap(t *testing.T) {
 	}()
 
 	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	select {
+	case <-firstSwap:
+	case <-time.After(2 * time.Second):
+		close(stop)
+		swaps.Wait()
+		t.Fatal("ancestor swap never completed")
+	}
 	write, _ := reg.Get("write_file")
-	successfulWrites := 0
 	for i := 0; i < 250; i++ {
-		if _, err := write.Run(context.Background(), `{"path":"parent/marker.txt","content":"workspace"}`, reg.Ctx); err == nil {
-			successfulWrites++
-		}
+		_, _ = write.Run(context.Background(), `{"path":"parent/marker.txt","content":"workspace"}`, reg.Ctx)
 	}
 	close(stop)
 	swaps.Wait()
@@ -191,8 +199,8 @@ func TestUnixWorkspaceWriteDoesNotEscapeAncestorSwap(t *testing.T) {
 	if swapCount.Load() == 0 {
 		t.Fatal("ancestor swap never completed")
 	}
-	if successfulWrites == 0 {
-		t.Fatal("all writes failed; race test did not exercise a successful secure write")
+	if _, err := write.Run(context.Background(), `{"path":"parent/marker.txt","content":"workspace"}`, reg.Ctx); err != nil {
+		t.Fatalf("secure write after race failed: %v", err)
 	}
 }
 

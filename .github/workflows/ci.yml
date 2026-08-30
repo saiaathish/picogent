@@ -59,3 +59,34 @@ jobs:
           assert "mode" in d and "workspace" in d, d
           print("gui smoke ok", d.get("mode"), d.get("workspace"))
           PY
+
+  release-evidence:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # pull_request.sha is GitHub's synthetic merge ref; use the source
+          # commit so the evidence describes the reviewed tree exactly.
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+      - name: Generate verification manifest
+        env:
+          EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p artifacts
+          go run ./cmd/verify-manifest \
+            --workspace . \
+            --expected-sha "$EXPECTED_SHA" \
+            > artifacts/verification-manifest.json
+      - name: Upload verification manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-manifest-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/verification-manifest.json
+          if-no-files-found: error
