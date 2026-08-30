@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,6 +17,7 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/redact"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 type Session struct {
@@ -222,7 +222,7 @@ func (s *Session) Save() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := securefile.EnsureDir(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	unlock, err := acquireSessionsLock(filepath.Dir(path))
@@ -244,9 +244,6 @@ func Load(id string) (*Session, error) {
 		return nil, err
 	}
 	path := filepath.Join(dir, id+".json")
-	if _, err := os.Stat(path); err != nil {
-		return nil, err
-	}
 	unlock, err := acquireSessionsLock(dir)
 	if err != nil {
 		return nil, err
@@ -374,7 +371,7 @@ func Prune(workspace string) error {
 	}
 	for _, m := range all[MaxSessions:] {
 		if validID(m.ID) {
-			if err := os.Remove(filepath.Join(dir, m.ID+".json")); err != nil && !os.IsNotExist(err) {
+			if err := securefile.RemoveFile(filepath.Join(dir, m.ID+".json")); err != nil && !os.IsNotExist(err) {
 				return err
 			}
 		}
@@ -402,7 +399,7 @@ func Delete(id string) error {
 		return err
 	}
 	defer unlock()
-	return os.Remove(filepath.Join(dir, id+".json"))
+	return securefile.RemoveFile(filepath.Join(dir, id+".json"))
 }
 
 func Latest(workspace string) (*Session, error) {
@@ -563,28 +560,15 @@ func loadMetaLocked(path, id string) (sessionMeta, error) {
 }
 
 func readLocked(path string) ([]byte, error) {
-	info, err := os.Stat(path)
+	data, err := securefile.ReadFileLimited(path, MaxSessionBytes)
 	if err != nil {
+		if errors.Is(err, securefile.ErrReadLimit) {
+			return nil, ErrSessionTooLarge
+		}
 		return nil, err
-	}
-	if info.Size() > MaxSessionBytes {
-		return nil, ErrSessionTooLarge
-	}
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, MaxSessionBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > MaxSessionBytes {
-		return nil, ErrSessionTooLarge
 	}
 	return data, nil
 }
-
 func saveLocked(path string, s *Session) error {
 	if err := boundSession(s); err != nil {
 		return err
@@ -596,7 +580,7 @@ func saveLocked(path string, s *Session) error {
 	if len(data) > MaxSessionBytes {
 		return ErrSessionTooLarge
 	}
-	return writeAtomic(path, data)
+	return securefile.WriteAtomic(path, data, 0o600)
 }
 
 func boundSession(s *Session) error {
@@ -842,16 +826,11 @@ func updateSession(id, workspace string, create bool, mutate func(*Session) erro
 		return nil, err
 	}
 	if create {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
+		if err := securefile.EnsureDir(dir, 0o700); err != nil {
 			return nil, err
 		}
 	}
 	path := filepath.Join(dir, id+".json")
-	if !create {
-		if _, err := os.Stat(path); err != nil {
-			return nil, err
-		}
-	}
 	unlock, err := acquireSessionsLock(dir)
 	if err != nil {
 		return nil, err
