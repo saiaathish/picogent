@@ -117,6 +117,20 @@ and cleanup never unlinks a replacement inode.
   link at a turn-created path before deletion; both the outside sentinel and
   the replacement path remain unchanged.
 
+## Hosted evidence ledger
+
+These merged slices have recorded source, merge, pull-request CI, and
+post-merge CI provenance. Every listed CI run passed Ubuntu, Windows, macOS,
+and release evidence. This ledger records delivery evidence; it does not
+close the open or unrecorded risks below.
+
+| PR | Slice | Source | Merge | PR CI | Post-merge CI |
+| --- | --- | --- | --- | --- | --- |
+| #127 | Mode-aware atomic workspace writes | `76b5e06` | `8746d56` | `33308318250` | `33308456626` |
+| #128 | Atomic checkpoint restore publication and rollback reporting | `59787da` | `1e6188e` | `33308507232` | `33308634597` |
+| #129 | Unix ancestor-swap deletion stress coverage | `ec22494` | `d77a4f8` | `33308942589` | `33309050782` |
+| #130 | Cross-platform hardlink protection for created-path deletion | `aba55a5` | `b2fd72f` | `33309325110` | `33309483503` |
+
 ## Open or unrecorded risks
 
 - Checkpoint restore now publishes each restored file's complete bytes and mode
