@@ -247,6 +247,11 @@ func verifyHandle(root string, f *os.File, directory bool) error {
 	} else if !stat.Mode().IsRegular() {
 		return errors.New("not a regular file")
 	}
+	if !directory {
+		if err := rejectHardLinkFile(f); err != nil {
+			return err
+		}
+	}
 	actual, err := finalPath(windows.Handle(f.Fd()))
 	if err != nil {
 		return err

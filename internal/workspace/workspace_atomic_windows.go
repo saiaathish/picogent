@@ -164,6 +164,9 @@ func workspaceRegularEntry(parent windows.Handle, name string) (Identity, error)
 	if !stat.Mode().IsRegular() {
 		return Identity{}, fmt.Errorf("workspace path %q is not a regular file", name)
 	}
+	if err := rejectHardLinkFile(f); err != nil {
+		return Identity{}, fmt.Errorf("workspace path %q has an unsafe link count: %w", name, err)
+	}
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_READONLY != 0 {
 		return Identity{}, fmt.Errorf("workspace path %q is read-only", name)
 	}
