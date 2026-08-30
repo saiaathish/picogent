@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -549,6 +550,72 @@ func TestHandlerTagsEventsWithTurnAndSession(t *testing.T) {
 	task, ok := got[1].(taskProgressMsg)
 	if !ok || task.turnID != 9 || task.sessionID != "session-9" {
 		t.Fatalf("task event metadata = %#v", got[1])
+	}
+}
+
+func TestHandlerRedactsDiagnosticEvents(t *testing.T) {
+	const (
+		argumentSecret = "tui-argument-secret"
+		resultSecret   = "tui-result-secret"
+		errorSecret    = "tui-error-secret"
+	)
+	var got []tea.Msg
+	h := &handler{
+		send: func(msg tea.Msg) { got = append(got, msg) },
+	}
+	h.OnToolStart(llm.ToolCall{
+		Name:      "mcp\nforged",
+		Arguments: "\x1b[31m{\"access_token\":\"" + argumentSecret + "\"}",
+	})
+	h.OnToolEnd(llm.ToolCall{Name: "mcp"}, `{"api_key":"`+resultSecret+`"}`, nil)
+	h.OnToolEnd(llm.ToolCall{Name: "mcp"}, "", errors.New("tool failed\npassword="+errorSecret))
+	h.OnError(errors.New("token=" + errorSecret))
+
+	if len(got) != 4 {
+		t.Fatalf("events = %d, want 4", len(got))
+	}
+	var text strings.Builder
+	for _, msg := range got {
+		line, ok := msg.(logMsg)
+		if !ok {
+			t.Fatalf("event = %#v, want logMsg", msg)
+		}
+		text.WriteString(line.Text)
+		text.WriteByte('\n')
+	}
+	joined := text.String()
+	for _, secret := range []string{argumentSecret, resultSecret, errorSecret} {
+		if strings.Contains(joined, secret) {
+			t.Fatalf("TUI diagnostic leaked secret %q: %q", secret, joined)
+		}
+	}
+	if strings.Contains(joined, "\x1b") || strings.Contains(joined, "mcp\nforged") || !strings.Contains(joined, "mcp forged") {
+		t.Fatalf("TUI diagnostic retained control/newline injection: %q", joined)
+	}
+	if !strings.Contains(joined, "[REDACTED]") {
+		t.Fatalf("TUI diagnostic lost redaction marker: %q", joined)
+	}
+}
+
+func TestPermissionDisplayRedactsDiagnosticFields(t *testing.T) {
+	const secret = "tui-permission-secret"
+	m := &model{
+		lines:     []logLine{{Kind: "system", Text: "ready"}},
+		sessionID: "session-1",
+		vp:        viewport.New(80, 20),
+	}
+	_, _ = m.Update(permAskMsg{Request: perm.Request{
+		Hint:    "token=" + secret,
+		Summary: "write access_token=" + secret,
+	}})
+	if m.perm == nil {
+		t.Fatal("permission request was not retained")
+	}
+	if strings.Contains(m.perm.Hint+m.perm.Summary, secret) || strings.Contains(m.lines[len(m.lines)-1].Text, secret) {
+		t.Fatalf("permission display leaked secret: perm=%#v lines=%#v", m.perm, m.lines)
+	}
+	if !strings.Contains(m.lines[len(m.lines)-1].Text, "[REDACTED]") {
+		t.Fatalf("permission display lost redaction marker: %#v", m.lines[len(m.lines)-1])
 	}
 }
 
