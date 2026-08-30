@@ -555,21 +555,6 @@ func (t *Task) SetStatus(next Status) error {
 	return nil
 }
 
-// EffectiveStatus returns the status that callers may safely expose or route
-// on. A legacy task can contain a terminal marker without the v4 completion
-// proof that now authorizes it; such state is resumable work, never completion.
-// This method does not mutate the task. Store.Load and Store.Save repair the
-// persisted form through NormalizeLegacyCompletion.
-func (t *Task) EffectiveStatus() Status {
-	if t == nil {
-		return ""
-	}
-	if t.Status == StatusDone && !t.CompletionReady() {
-		return StatusWorking
-	}
-	return t.Status
-}
-
 // NormalizeLegacyCompletion converts an old or externally-created done marker
 // without current durable proof into resumable work. It is intentionally
 // idempotent and only changes the terminal-status inconsistency; the evidence
@@ -584,26 +569,6 @@ func (t *Task) NormalizeLegacyCompletion() bool {
 	t.normalizedFromDone = true
 	t.touch()
 	return true
-}
-
-// ReopenForContinuation reopens a terminal task only when its durable proof
-// is incomplete. It is used when older or externally-created state marked a
-// task done before the authoritative completion predicate existed.
-func (t *Task) ReopenForContinuation() error {
-	if t == nil {
-		return errors.New("task is nil")
-	}
-	if t.Status != StatusDone {
-		return nil
-	}
-	if t.CompletionReady() {
-		return errors.New("task completion is already proven")
-	}
-	t.Status = StatusWorking
-	t.BlockedBy = ""
-	t.StopReason = StopNone
-	t.touch()
-	return nil
 }
 
 // Current returns the current incomplete step, or nil when none remains.
@@ -1136,16 +1101,6 @@ func (t *Task) RequiredEvidenceKinds() []EvidenceKind {
 		kinds = append(kinds, EvidenceKindApproval)
 	}
 	return kinds
-}
-
-// CriterionAt returns the durable criterion at index, including the legacy
-// step projection when no explicit definition of done was stored.
-func (t *Task) CriterionAt(index int) (Criterion, bool) {
-	criteria := t.criteriaDefinition()
-	if index < 0 || index >= len(criteria) {
-		return Criterion{}, false
-	}
-	return criteria[index], true
 }
 
 // RequirementEvidenceState returns the latest current status from a trusted

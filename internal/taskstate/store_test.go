@@ -228,7 +228,7 @@ func TestStoreNormalizesUnprovenLegacyDoneState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Status != StatusWorking || loaded.Revision != 1 || loaded.EffectiveStatus() != StatusWorking {
+	if loaded.Status != StatusWorking || loaded.Revision != 1 {
 		t.Fatalf("legacy done was not normalized = %#v", loaded)
 	}
 	reloaded, err := store.Load(task.SessionID)
