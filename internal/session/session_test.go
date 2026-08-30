@@ -109,6 +109,43 @@ func TestPruneRemovesOldestSessionsBeyondBound(t *testing.T) {
 	}
 }
 
+func TestListMetaDerivesTitleForLegacySessionWithoutStoredTitle(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PICOGENT_HOME", root)
+	workspace := filepath.Join(root, "project")
+	dir, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := Session{
+		ID:        "legacy-title",
+		Workspace: workspace,
+		Updated:   time.Now().UTC(),
+		Messages: []llm.Message{
+			{Role: "user", Content: "resume the legacy task"},
+			{Role: "assistant", Content: "I found the checkpoint."},
+		},
+	}
+	data, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, legacy.ID+".json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	metas, err := ListMeta(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 || metas[0].ID != legacy.ID || metas[0].Title != "resume the legacy task" {
+		t.Fatalf("legacy session metadata = %#v", metas)
+	}
+}
+
 func TestSessionSaveLeavesCompleteAtomicRecord(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()
