@@ -107,6 +107,7 @@ const (
 	// canonicalized to EvidenceKindTests when evidence is stored.
 	EvidenceKindTest EvidenceKind = "test"
 )
+
 // EvidenceOrigin identifies the mechanism that produced a proof record. Only
 // known origin/kind pairs can satisfy an inferred quality requirement; model
 // narration and arbitrary repository text are never trusted origins.
@@ -888,6 +889,23 @@ func (t *Task) InvalidateWorkspaceEvidence(reason string) bool {
 			Confidence: "high",
 			ChangeSeq:  t.ChangeSeq,
 		}, true)
+		changed = true
+	}
+	for _, kind := range t.RequiredEvidenceKinds() {
+		status, current, _ := t.RequirementEvidenceState(kind)
+		if !current || !evidenceStatusPasses(status) {
+			continue
+		}
+		t.AddEvidence(Evidence{
+			Kind:       kind,
+			Status:     "INCONCLUSIVE",
+			Source:     "workspace-observation",
+			Origin:     EvidenceOriginSystem,
+			Summary:    summary,
+			Reference:  "workspace restoration",
+			Confidence: "high",
+			ChangeSeq:  t.ChangeSeq,
+		})
 		changed = true
 	}
 	if changed {
