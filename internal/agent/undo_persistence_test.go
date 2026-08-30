@@ -58,34 +58,59 @@ func TestUndoInvalidatesDurableWorkspaceEvidenceAndReopensDoneTask(t *testing.T)
 	}
 }
 
-func TestUndoReportsCASFailureAfterRestoration(t *testing.T) {
+func TestUndoRecoversAfterCASConflict(t *testing.T) {
 	a, store, task := newDurableUndoFixture(t, taskstate.StatusWorking)
 	other, err := store.Load(task.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	other.NoteAttempt()
+	other.RecordChanged("concurrent.txt")
+	other.Turns[0].Hypothesis = "concurrent history marker"
 	if err := store.Save(other); err != nil {
 		t.Fatal(err)
 	}
 
+	if _, err = a.UndoLastTurn(); err != nil {
+		t.Fatal(err)
+	}
+	assertUndoFileContent(t, filepath.Join(a.ConfigSnapshot().Workspace, "fixed.txt"), "before\n")
+	if a.UndoAvailable() {
+		t.Fatal("checkpoint remained available after files were restored")
+	}
+	got := a.TaskSnapshot()
+	if got == nil || got.Revision != other.Revision+1 || got.Attempts != other.Attempts || got.ChangeSeq != other.ChangeSeq || !reflect.DeepEqual(got.ChangedFiles, other.ChangedFiles) || !reflect.DeepEqual(got.Turns, other.Turns) || got.VerifiedChangeSeq != -1 || got.Verification[len(got.Verification)-1].Passed {
+		t.Fatalf("recovered CAS task = %#v", got)
+	}
+	persisted, err := store.Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Revision != other.Revision+1 || persisted.Attempts != other.Attempts || persisted.ChangeSeq != other.ChangeSeq || !reflect.DeepEqual(persisted.ChangedFiles, other.ChangedFiles) || !reflect.DeepEqual(persisted.Turns, other.Turns) || persisted.VerifiedChangeSeq != -1 || persisted.Verification[len(persisted.Verification)-1].Passed {
+		t.Fatalf("recovered persisted task = %#v", persisted)
+	}
+}
+
+func TestUndoPreservesCASFailureWhenLatestTaskCannotBeLoaded(t *testing.T) {
+	a, store, task := newDurableUndoFixture(t, taskstate.StatusWorking)
+	path, err := store.Path(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+
 	_, err = a.UndoLastTurn()
-	if err == nil || !strings.Contains(err.Error(), "files restored but durable task state was not saved") || !errors.Is(err, taskstate.ErrRevisionConflict) {
-		t.Fatalf("undo CAS failure = %v", err)
+	if err == nil || !strings.Contains(err.Error(), "files restored but durable task state was not saved") || !errors.Is(err, taskstate.ErrRevisionConflict) || !errors.Is(err, taskstate.ErrNotFound) {
+		t.Fatalf("unrecoverable undo CAS failure = %v", err)
 	}
 	assertUndoFileContent(t, filepath.Join(a.ConfigSnapshot().Workspace, "fixed.txt"), "before\n")
 	if a.UndoAvailable() {
 		t.Fatal("checkpoint remained available after files were restored")
 	}
 	if got := a.TaskSnapshot(); got == nil || got.Revision != task.Revision || got.VerifiedChangeSeq != task.ChangeSeq || !got.Verification[len(got.Verification)-1].Passed {
-		t.Fatalf("failed CAS published invalidated task = %#v", got)
-	}
-	persisted, err := store.Load(task.SessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if persisted.Revision != other.Revision || persisted.Attempts != other.Attempts {
-		t.Fatalf("stale undo overwrote durable state = %#v", persisted)
+		t.Fatalf("unrecoverable CAS published invalidated task = %#v", got)
 	}
 }
 
