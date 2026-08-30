@@ -36,6 +36,7 @@ import (
 	"github.com/saiaathish/picogent/internal/opencodeauth"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/projects"
+	"github.com/saiaathish/picogent/internal/redact"
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/setup"
@@ -431,6 +432,7 @@ func (s *server) attachRouterHook() {
 }
 
 func (s *server) emit(e event) {
+	e = sanitizeEvent(e)
 	s.mu.Lock()
 	if e.turnGen != 0 && (s.sessionID != e.SessionID || s.turnGen != e.turnGen) {
 		s.mu.Unlock()
@@ -452,6 +454,24 @@ func (s *server) emit(e event) {
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+const maxGUIErrorBytes = 240
+
+func guiDiagnostic(value string) string {
+	return redact.Diagnostic(value, maxGUIErrorBytes)
+}
+
+func sanitizeEvent(e event) event {
+	switch e.Type {
+	case "error":
+		e.Text = guiDiagnostic(e.Text)
+	case "permission":
+		e.Text = guiDiagnostic(e.Text)
+		e.Summary = guiDiagnostic(e.Summary)
+		e.Hint = guiDiagnostic(e.Hint)
+	}
+	return e
 }
 
 func (s *server) emitTaskSnapshot(sessionID string) {
@@ -1316,7 +1336,7 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 		defer func() {
 			if rec := recover(); rec != nil {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("agent panic: %v", rec)})
-				fmt.Fprintf(os.Stderr, "picogent: agent panic: %v\n", rec)
+				fmt.Fprintln(os.Stderr, guiDiagnostic(fmt.Sprintf("picogent: agent panic: %v", rec)))
 			}
 			var next *turnAdmission
 			var nextPrompt string
@@ -1464,7 +1484,7 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 		}
 		s.maybeAutoTitle(context.Background(), llmClient, model, ws, sid, next)
 		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "picogent: turn error: %v\n", err)
+			fmt.Fprintln(os.Stderr, guiDiagnostic(fmt.Sprintf("picogent: turn error: %v", err)))
 			s.emit(event{Type: "error", Text: err.Error()})
 		}
 	}()
