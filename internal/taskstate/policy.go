@@ -11,7 +11,19 @@ const (
 	StopVerificationFailures StopReason = "verification_repeatedly_failed"
 	StopResourceUnavailable  StopReason = "resource_unavailable"
 	StopBudgetExhausted      StopReason = "budget_exhausted"
+	StopCanceled             StopReason = "canceled"
 )
+
+// Valid reports whether the stop reason is one of the bounded policy values.
+func (r StopReason) Valid() bool {
+	switch r {
+	case StopNone, StopGoalComplete, StopPermissionNeeded, StopUserChoiceRequired,
+		StopVerificationFailures, StopResourceUnavailable, StopBudgetExhausted, StopCanceled:
+		return true
+	default:
+		return false
+	}
+}
 
 // Policy bounds autonomous continuation. Zero values use conservative defaults.
 type Policy struct {
@@ -43,7 +55,10 @@ type Decision struct {
 // Decide applies continuation gates in explicit stop-rule order.
 func (p Policy) Decide(task *Task, signals Signals) Decision {
 	p = p.normalized()
-	if task == nil || signals.GoalResolved || task.Status == StatusDone {
+	if task == nil {
+		return stop(StopGoalComplete, "goal complete")
+	}
+	if (signals.GoalResolved || task.Status == StatusDone) && task.CompletionReady() {
 		return stop(StopGoalComplete, "goal complete")
 	}
 	if signals.PermissionNeeded {

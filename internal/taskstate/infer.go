@@ -19,7 +19,7 @@ var actionPhrases = []string{
 	"fix", "implement", "add", "build", "create", "update", "upgrade",
 	"refactor", "debug", "investigate", "diagnose", "remove", "delete",
 	"migrate", "test", "verify", "review", "audit", "optimize", "improve",
-	"clean up", "set up", "setup", "wire", "connect", "finish", "ship",
+	"clean up", "set up", "setup", "wire", "connect", "document", "finish", "ship",
 	"make ", "run ", "look into", "get this done",
 }
 
@@ -70,7 +70,7 @@ func NewFromPrompt(sessionID, prompt string) (*Task, bool, error) {
 	}
 	task, err := New(sessionID, inferred.Goal, inferred.Steps)
 	if task != nil {
-		task.Intent = cloneIntent(inferred.Intent)
+		task.SetIntent(inferred.Intent)
 		task.DefinitionOfDone = append([]Criterion(nil), inferred.DefinitionOfDone...)
 	}
 	return task, true, err
@@ -99,10 +99,10 @@ func inferIntent(goal, prompt string, action, problem bool) (*IntentContract, []
 	case containsDelimitedPhrase(prompt, []string{"ui", "gui", "frontend", "browser", "responsive", "layout", "button", "screen", "visual"}):
 		class, intent.NeedsVisual = "ui", true
 	case containsDelimitedPhrase(prompt, []string{"performance", "latency", "slow", "memory", "startup", "benchmark", "optimize"}):
-		class = "performance"
+		class, intent.NeedsMeasurement = "performance", true
 	case containsDelimitedPhrase(prompt, []string{"refactor", "cleanup", "clean up"}):
 		class = "refactor"
-	case containsDelimitedPhrase(prompt, []string{"docs", "documentation", "readme", "explain"}):
+	case containsDelimitedPhrase(prompt, []string{"document", "docs", "documentation", "readme", "explain"}):
 		class, intent.NeedsTests = "documentation", false
 	case containsDelimitedPhrase(prompt, []string{"setup", "set up", "install", "configure"}):
 		class = "setup"
@@ -117,6 +117,12 @@ func inferIntent(goal, prompt string, action, problem bool) (*IntentContract, []
 	}
 	if containsDelimitedPhrase(prompt, []string{"research", "latest", "current api", "look up", "unknown", "unfamiliar"}) {
 		intent.NeedsResearch = true
+	}
+	// Quality requirements are orthogonal to the primary class. A review or
+	// security request can still target a UI, and those tasks need the rendered
+	// surface inspected rather than relying on source-only reasoning.
+	if containsDelimitedPhrase(prompt, []string{"ui", "gui", "frontend", "browser", "responsive", "layout", "button", "screen", "visual"}) {
+		intent.NeedsVisual = true
 	}
 	if containsDelimitedPhrase(prompt, []string{"finish", "complete", "all", "every", "professional", "make it good", "make this project good", "get this done"}) {
 		intent.Completeness = "full"
