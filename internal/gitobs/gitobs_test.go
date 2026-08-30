@@ -174,6 +174,35 @@ func TestCombinedBoundsOutput(t *testing.T) {
 	}
 }
 
+func TestCombinedRedactsSecretsFromGitDiff(t *testing.T) {
+	repo := initRepo(t)
+	secrets := []string{
+		"git-diff-api-secret",
+		"git-diff-bearer-secret",
+		"git-diff-url-secret",
+		"git-diff-key-secret",
+	}
+	writeFile(t, filepath.Join(repo, "content.txt"), strings.Join([]string{
+		"api_key=" + secrets[0],
+		"Authorization: Bearer " + secrets[1],
+		"https://user:" + secrets[2] + "@example.test/path",
+		"-----BEGIN OPENSSH PRIVATE KEY-----" + secrets[3] + "-----END OPENSSH PRIVATE KEY-----",
+	}, "\n")+"\n")
+
+	result, err := Combined(context.Background(), repo, "diff", "--", "content.txt")
+	if err != nil {
+		t.Fatalf("diff: %v", err)
+	}
+	for _, secret := range secrets {
+		if strings.Contains(result.Output, secret) {
+			t.Fatalf("git diff leaked secret %q: %q", secret, result.Output)
+		}
+	}
+	if !strings.Contains(result.Output, "[REDACTED]") || !strings.Contains(result.Output, "content.txt") {
+		t.Fatalf("git diff did not preserve redacted output context: %q", result.Output)
+	}
+}
+
 func initRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
