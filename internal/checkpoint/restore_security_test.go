@@ -171,6 +171,88 @@ func TestRestoreDoesNotEscapeAncestorSwap(t *testing.T) {
 	}
 }
 
+func TestRestoreDoesNotDeleteOutsideDuringAncestorSwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix descriptor-relative deletion stress test")
+	}
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	parent := filepath.Join(workspace, "parent")
+	realParent := filepath.Join(workspace, "parent-real")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	paths := make([]string, 16)
+	for i := range paths {
+		paths[i] = filepath.Join("parent", "created-"+string(rune('a'+i))+".txt")
+	}
+	outsideFiles := make([]string, len(paths))
+	for i, rel := range paths {
+		name := filepath.Base(rel)
+		outsideFiles[i] = filepath.Join(outside, name)
+		if err := os.WriteFile(outsideFiles[i], []byte("private"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cp, err := checkpoint.Capture(workspace, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range paths {
+		writeFile(t, workspace, rel, "created")
+	}
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	firstSwap := make(chan struct{})
+	var once sync.Once
+	var swapCount atomic.Int32
+	var swaps sync.WaitGroup
+	swaps.Add(1)
+	go func() {
+		defer swaps.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := os.Rename(parent, realParent); err != nil {
+				continue
+			}
+			if err := os.Symlink(outside, parent); err == nil {
+				swapCount.Add(1)
+				once.Do(func() { close(firstSwap) })
+				_ = os.Remove(parent)
+			}
+			_ = os.Rename(realParent, parent)
+			time.Sleep(100 * time.Microsecond)
+		}
+	}()
+	select {
+	case <-firstSwap:
+	case <-time.After(time.Second):
+		close(stop)
+		swaps.Wait()
+		t.Fatal("ancestor swap never completed")
+	}
+
+	_, _ = cp.Restore()
+	close(stop)
+	swaps.Wait()
+	if swapCount.Load() == 0 {
+		t.Fatal("ancestor swap was not observed")
+	}
+	for _, path := range outsideFiles {
+		if got, readErr := os.ReadFile(path); readErr != nil || string(got) != "private" {
+			t.Fatalf("outside file changed: %q, %v", got, readErr)
+		}
+	}
+}
+
 func writeFile(t *testing.T, root, rel, contents string) {
 	t.Helper()
 	path := filepath.Join(root, rel)
