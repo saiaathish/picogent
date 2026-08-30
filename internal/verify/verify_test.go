@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,6 +71,34 @@ func TestRunCommandZeroEvidenceIsInconclusive(t *testing.T) {
 	if res.Status != StatusInconclusive || res.OK {
 		t.Fatalf("zero-evidence command = %+v", res)
 	}
+}
+
+func TestRunCommandSanitizesEnvironment(t *testing.T) {
+	t.Setenv("VERIFY_TEST_SECRET_TOKEN", "must-not-cross")
+	t.Setenv("VERIFY_HELPER", "1")
+	result := runCommand(t.Context(), t.TempDir(), Command{
+		Runner:  os.Args[0],
+		Display: "verify helper",
+		Args:    []string{"-test.run=^TestVerifyHelperProcess$"},
+	}, 1, time.Second)
+	if result.Status != StatusPass || result.Failed != 0 || !strings.Contains(result.Output, "ok verify/helper") {
+		t.Fatalf("sanitized verifier result = %+v", result)
+	}
+	if strings.Contains(result.Output, "leaked") {
+		t.Fatal("verifier child inherited a secret")
+	}
+}
+
+func TestVerifyHelperProcess(t *testing.T) {
+	if os.Getenv("VERIFY_HELPER") == "" {
+		return
+	}
+	if os.Getenv("VERIFY_TEST_SECRET_TOKEN") != "" {
+		fmt.Fprintln(os.Stdout, "leaked")
+	} else {
+		fmt.Fprintln(os.Stdout, "ok verify/helper")
+	}
+	os.Exit(0)
 }
 
 func TestBoundedOutputMarksTruncation(t *testing.T) {
