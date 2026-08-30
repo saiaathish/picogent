@@ -234,6 +234,10 @@ func remove(root, path string) error {
 }
 
 func writeAtomic(root, path string, data []byte) error {
+	return writeAtomicWithMode(root, path, data, 0, false)
+}
+
+func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMode, setMode bool) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -244,12 +248,16 @@ func writeAtomic(root, path string, data []byte) error {
 	}
 	defer unix.Close(parent)
 
-	mode, targetExists, err := workspaceTargetMode(parent, leaf)
+	targetMode, targetExists, err := workspaceTargetMode(parent, leaf)
 	if err != nil {
 		return fmt.Errorf("stat workspace file %q: %w", rel, err)
 	}
-	if targetExists && mode&0o222 == 0 {
+	if targetExists && targetMode&0o222 == 0 {
 		return fmt.Errorf("workspace file %q is not writable", rel)
+	}
+	createMode := targetMode
+	if setMode {
+		createMode = uint32(requestedMode.Perm())
 	}
 
 	tmpName := ""
@@ -257,7 +265,7 @@ func writeAtomic(root, path string, data []byte) error {
 	for attempt := uint64(0); attempt < 32; attempt++ {
 		seq := workspaceTempSequence.Add(1)
 		tmpName = fmt.Sprintf(".picogent-workspace-%d-%d-%d.tmp", os.Getpid(), time.Now().UnixNano(), seq)
-		fd, openErr := unix.Openat(parent, tmpName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, mode)
+		fd, openErr := unix.Openat(parent, tmpName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, createMode)
 		if openErr == nil {
 			file, err = unixFile(fd, path)
 			if err != nil {
@@ -280,8 +288,12 @@ func writeAtomic(root, path string, data []byte) error {
 		}
 	}()
 
-	if targetExists {
-		if err := unix.Fchmod(int(file.Fd()), mode); err != nil {
+	if setMode {
+		if err := file.Chmod(requestedMode); err != nil {
+			return fmt.Errorf("set workspace file mode %q: %w", rel, err)
+		}
+	} else if targetExists {
+		if err := unix.Fchmod(int(file.Fd()), targetMode); err != nil {
 			return fmt.Errorf("preserve workspace file mode %q: %w", rel, err)
 		}
 	}

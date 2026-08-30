@@ -16,6 +16,10 @@ import (
 var workspaceTempSequence atomic.Uint64
 
 func writeAtomic(root, path string, data []byte) error {
+	return writeAtomicWithMode(root, path, data, 0, false)
+}
+
+func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMode, setMode bool) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -70,6 +74,11 @@ func writeAtomic(root, path string, data []byte) error {
 		}
 	}()
 
+	if setMode {
+		if err := file.Chmod(requestedMode); err != nil {
+			return fmt.Errorf("set workspace file mode %q: %w", rel, err)
+		}
+	}
 	if err := writeWorkspaceAll(file, data); err != nil {
 		return fmt.Errorf("write workspace file %q: %w", rel, err)
 	}
