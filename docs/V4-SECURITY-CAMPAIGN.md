@@ -146,6 +146,7 @@ close the open or unrecorded risks below.
 | #144 | GUI error event boundary sanitization | `fbc95f0` | `5355113` | `33315264433` | `33315385828` |
 | #146 | Selected GUI HTTP error sanitization | `ccd4d61` | `d65c36f` | `33315831874` | `33315951810` |
 | #148 | Project API HTTP error sanitization | `411a001` | `f7c7fe7` | `33317001455` | `33317144181` |
+| #150 | Evolve API HTTP error sanitization | `5cf633f` | `430d945` | `33317849985` | `33317977131` |
 
 ## Open or unrecorded risks
 
