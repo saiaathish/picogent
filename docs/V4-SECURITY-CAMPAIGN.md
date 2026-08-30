@@ -177,6 +177,7 @@ close the open or unrecorded risks below.
 | #162 | Production health focus through durable Outcome Engine | `bb1c6a7` | `18da466` | `33325729058` | `33325880483` |
 | #164 | Durable steering intent across restart/resume | `07dbb1e` | `dbb296d` | `33326929496` | `33327092917` |
 | #166 | Bounded intent revision in durable task context | `7993b1a` | `c05f104` | `33327634124` | `33327783068` |
+| #168 | Interrupted-turn side-effect attribution and recovery projection | `5dda7f2` | `800a7be` | `33330236340` | `33330423949` |
 
 ## Open or unrecorded risks
 
