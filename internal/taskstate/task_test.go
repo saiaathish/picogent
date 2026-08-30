@@ -235,6 +235,52 @@ func TestInvalidateWorkspaceEvidenceIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestInvalidateWorkspaceEvidenceInvalidatesCurrentRequiredQualityEvidence(t *testing.T) {
+	task, err := New("undo-quality-invalidation", "restore the quality boundary", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Intent = &IntentContract{
+		Outcome:          task.Goal,
+		NeedsResearch:    true,
+		NeedsMeasurement: true,
+		NeedsVisual:      true,
+		NeedsTests:       true,
+		NeedsApproval:    true,
+	}
+
+	task.RecordResearchEvidence("PASS", "current research completed", "research tool")
+	task.RecordMeasurementEvidence("PASS", "current measurement completed", "benchmark")
+	task.RecordVisualEvidence("PASS", "current visual inspection completed", "visual inspection")
+	task.RecordTestsEvidence("PASS", "current tests completed", "go test ./...")
+	task.RecordApprovalEvidence("APPROVED", "current approval recorded", "user")
+
+	if check := task.CompletionCheck(); !check.Ready {
+		t.Fatalf("trusted quality evidence was not ready before undo = %#v", check)
+	}
+	if !task.InvalidateWorkspaceEvidence("undo restored workspace files") {
+		t.Fatal("current quality evidence was not invalidated")
+	}
+
+	wantKinds := []EvidenceKind{
+		EvidenceKindResearch,
+		EvidenceKindMeasurement,
+		EvidenceKindVisual,
+		EvidenceKindTests,
+		EvidenceKindApproval,
+	}
+	check := task.CompletionCheck()
+	if check.Ready || !reflect.DeepEqual(check.MissingRequirements, wantKinds) {
+		t.Fatalf("invalidated quality evidence remained completion-ready = %#v", check)
+	}
+	for _, kind := range wantKinds {
+		status, current, origin := task.RequirementEvidenceState(kind)
+		if status != "INCONCLUSIVE" || current || origin != EvidenceOriginSystem {
+			t.Fatalf("invalidated %s evidence = status=%q current=%v origin=%q", kind, status, current, origin)
+		}
+	}
+}
+
 func TestCompletionReadyRequiresCurrentPassForEveryRequiredCriterion(t *testing.T) {
 	task, err := New("criterion-proof", "finish the outcome", []string{"first", "second", "optional"})
 	if err != nil {
