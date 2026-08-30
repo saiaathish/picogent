@@ -666,62 +666,57 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			pending = append(pending, executed{call: call, req: req})
 		}
 
-		var wg sync.WaitGroup
 		for i := range pending {
 			if pending[i].text != "" {
 				continue
 			}
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				call := pending[i].call
-				tool, _ := reg.Get(call.Name)
-				pending[i].ran = true
-				var outText string
-				var err error
-				var verification verificationEvidence
-				run := func() {
-					if ctxErr := ctx.Err(); ctxErr != nil {
-						err = ctxErr
-						return
-					}
-					if call.Name == "verify" {
-						verification = executeVerification(ctx, tool, call, regCtx, a.runTool)
-						outText, err = verification.output, verification.err
-						return
-					}
-					if a.runTool != nil {
-						outText, err = a.runTool(ctx, call, tool, regCtx)
-					} else {
-						outText, err = tool.Run(ctx, call.Arguments, regCtx)
-					}
-				}
-				if call.Name == "mcp_manage" {
-					reg.WithExclusive(run)
-				} else {
-					run()
-				}
-				pending[i].text = outText
-				pending[i].err = err
-				if err != nil {
-					pending[i].text = "error: " + err.Error()
+			call := pending[i].call
+			tool, _ := reg.Get(call.Name)
+			pending[i].ran = true
+			var outText string
+			var runErr error
+			var verification verificationEvidence
+			run := func() {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					runErr = ctxErr
+					return
 				}
 				if call.Name == "verify" {
-					pending[i].verificationTargets = append([]string(nil), verification.targets...)
-					pending[i].observation = cloneWorkspaceObservation(verification.observation)
-					pending[i].observationUsable = verification.observationUsable
-					pending[i].observationReason = verification.observationReason
+					verification = executeVerification(ctx, tool, call, regCtx, a.runTool)
+					outText, runErr = verification.output, verification.err
+					return
 				}
-				ev.OnToolEnd(call, outText, err)
-				ok := err == nil
-				_ = traceLog.Append("tool_end", call.Name, outText, &ok, 0)
-			}(i)
+				if a.runTool != nil {
+					outText, runErr = a.runTool(ctx, call, tool, regCtx)
+				} else {
+					outText, runErr = tool.Run(ctx, call.Arguments, regCtx)
+				}
+			}
+			if call.Name == "mcp_manage" {
+				reg.WithExclusive(run)
+			} else {
+				run()
+			}
+			pending[i].text = outText
+			pending[i].err = runErr
+			if runErr != nil {
+				pending[i].text = "error: " + runErr.Error()
+			}
+			if call.Name == "verify" {
+				pending[i].verificationTargets = append([]string(nil), verification.targets...)
+				pending[i].observation = cloneWorkspaceObservation(verification.observation)
+				pending[i].observationUsable = verification.observationUsable
+				pending[i].observationReason = verification.observationReason
+			}
+			ev.OnToolEnd(call, outText, runErr)
+			ok := runErr == nil
+			_ = traceLog.Append("tool_end", call.Name, outText, &ok, 0)
 		}
-		wg.Wait()
 
-		// Consume all explicit verification evidence before recording writes from
-		// this batch. A verification co-batched with a write may have observed
-		// the old workspace; RecordChanged below deliberately invalidates it.
+		// Apply tool results and durable evidence in model order. A verify after a
+		// write then records the current change sequence, while a later write still
+		// invalidates evidence that was collected before it.
+		var successfulWrites []string
 		for _, ex := range pending {
 			if ex.ran && (ex.call.Name == "write_file" || ex.call.Name == "edit_file") {
 				nativeWriteRan = true
@@ -742,10 +737,6 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				a.noteTaskVerification(lastVerificationEvidence, ev)
 				verificationCurrent = verificationStatus(lastVerification) == "PASS"
 			}
-		}
-
-		var successfulWrites []string
-		for _, ex := range pending {
 			if ex.call.Name != "verify" && ex.ran {
 				a.setTaskStatus(taskstate.StatusWorking, ev)
 			}
@@ -753,19 +744,15 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
 					changed[p] = struct{}{}
 					successfulWrites = append(successfulWrites, p)
+					a.noteTaskChanged(p, ev)
 				}
+				verificationCurrent = false
 			}
 			content := ex.text
 			if content == "" && ex.err != nil {
 				content = ex.err.Error()
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
-		}
-		for _, path := range successfulWrites {
-			a.noteTaskChanged(path, ev)
-		}
-		if len(successfulWrites) > 0 {
-			verificationCurrent = false
 		}
 		// A project-health observation is useful for choosing the next safe
 		// action, but only a sole read-only call is fresh enough to guide the
