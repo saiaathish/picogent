@@ -52,6 +52,42 @@ func TestRestoreRejectsReplacementSymlinkBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsReplacementHardlinkBeforeMutation(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	writeFile(t, workspace, "note.txt", "before")
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cp, err := checkpoint.Capture(workspace, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, workspace, "note.txt", "after")
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(workspace, "note.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(secret, filepath.Join(workspace, "note.txt")); err != nil {
+		t.Skipf("hard links unavailable in test environment: %v", err)
+	}
+
+	result, err := cp.Restore()
+	if err == nil || result.Complete || len(result.Failures) != 1 {
+		t.Fatalf("restore through replacement hardlink = result:%+v err:%v", result, err)
+	}
+	if result.Failures[0].Operation != "inspect" {
+		t.Fatalf("unexpected replacement-hardlink error: result:%+v err:%v", result, err)
+	}
+	if got, readErr := os.ReadFile(secret); readErr != nil || string(got) != "private" {
+		t.Fatalf("outside file changed: %q, %v", got, readErr)
+	}
+}
+
 func TestRestoreDoesNotEscapeAncestorSwap(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix descriptor-relative stress test")
