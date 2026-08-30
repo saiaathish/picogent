@@ -95,7 +95,7 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		return "", err
 	}
 	a.latestUndo = nil
-	_, err = a.mutateTaskResult(func(task *taskstate.Task) error {
+	undoMutation := func(task *taskstate.Task) error {
 		wasDone := task.Status == taskstate.StatusDone
 		changed := task.InvalidateWorkspaceEvidence("undo restored workspace files")
 		if wasDone {
@@ -108,7 +108,11 @@ func (a *Agent) UndoLastTurn() (string, error) {
 			return errTaskMutationSkipped
 		}
 		return nil
-	})
+	}
+	_, err = a.mutateTaskResult(undoMutation)
+	if errors.Is(err, taskstate.ErrRevisionConflict) && a.rebaseLegacyCompletionNormalization() {
+		_, err = a.mutateTaskResult(undoMutation)
+	}
 	if err != nil && !errors.Is(err, errTaskMutationSkipped) {
 		return "", fmt.Errorf("files restored but durable task state was not saved: %w", err)
 	}
