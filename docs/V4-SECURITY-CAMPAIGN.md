@@ -139,6 +139,7 @@ close the open or unrecorded risks below.
 | #132 | Windows hostile-runtime restore stress coverage | `b7f612b` | `d1572a2` | `33310394597` | `33310553558` |
 | #133 | Recorded Windows restore stress evidence | `5d4d695` | `2d57d76` | `33310730875` | `33310844052` |
 | #135 | Transient Windows session replacement retry | `be5b6db` | `556da3e` | `33311631871` | `33311763251` |
+| #136 | Security campaign evidence ledger update | `9f0bdeb` | `5ebfd8c` | `33312084576` | `33312234714` |
 
 ## Open or unrecorded risks
 
