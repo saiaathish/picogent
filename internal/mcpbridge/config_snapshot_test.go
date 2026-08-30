@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -167,6 +168,9 @@ func TestConcurrentServerUpdatesPreserveDistinctEntries(t *testing.T) {
 }
 
 func TestServerUpdatePreservesExistingFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX permission bits for this mode-preservation assertion")
+	}
 	root := t.TempDir()
 	t.Setenv("PICOGENT_HOME", root)
 	t.Setenv("HOME", t.TempDir())
