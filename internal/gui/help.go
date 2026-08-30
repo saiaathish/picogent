@@ -55,7 +55,7 @@ func loadHelpDocs() (helpDocs, error) {
 func (s *server) helpAPI(w http.ResponseWriter, r *http.Request) {
 	docs, err := loadHelpDocs()
 	if err != nil {
-		http.Error(w, "help docs unavailable", 500)
+		writeGUIError(w, "help docs unavailable", 500)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -72,12 +72,12 @@ func (s *server) helpAPI(w http.ResponseWriter, r *http.Request) {
 			Question string `json:"question"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", 400)
+			writeGUIError(w, "bad json", 400)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(answerHelp(docs, req.Question))
 	default:
-		http.Error(w, "GET or POST", 405)
+		writeGUIError(w, "GET or POST", 405)
 	}
 }
 

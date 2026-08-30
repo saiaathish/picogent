@@ -60,18 +60,18 @@ func (s *server) sidechatAPI(w http.ResponseWriter, r *http.Request) {
 			Prompt string `json:"prompt"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", 400)
+			writeGUIError(w, "bad json", 400)
 			return
 		}
 		prompt := strings.TrimSpace(req.Prompt)
 		if prompt == "" {
-			http.Error(w, "empty prompt", 400)
+			writeGUIError(w, "empty prompt", 400)
 			return
 		}
 		s.mu.Lock()
 		if s.sideBusy {
 			s.mu.Unlock()
-			http.Error(w, "side chat busy", 409)
+			writeGUIError(w, "side chat busy", 409)
 			return
 		}
 		s.sideBusy = true
@@ -82,7 +82,7 @@ func (s *server) sidechatAPI(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 		go s.runSideChat(prompt)
 	default:
-		http.Error(w, "GET or POST", 405)
+		writeGUIError(w, "GET or POST", 405)
 	}
 }
 
