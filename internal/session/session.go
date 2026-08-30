@@ -74,6 +74,16 @@ type Meta struct {
 	Updated time.Time `json:"updated"`
 }
 
+// sessionMeta is the subset needed by list and prune operations. Keeping the
+// message history out of this decode avoids running the full retention and
+// redaction pipeline when a caller only needs a session summary.
+type sessionMeta struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Workspace string    `json:"workspace"`
+	Updated   time.Time `json:"updated"`
+}
+
 func New(workspace string) *Session {
 	now := time.Now().UTC()
 	id := now.Format("20060102-150405")
@@ -226,19 +236,15 @@ func listMetaLocked(dir, workspace string, limit int) ([]Meta, error) {
 			continue
 		}
 		id := strings.TrimSuffix(e.Name(), ".json")
-		s, err := loadLocked(filepath.Join(dir, e.Name()), id)
+		meta, err := loadMetaLocked(filepath.Join(dir, e.Name()), id)
 		if err != nil {
 			continue
 		}
-		sw, _ := filepath.Abs(s.Workspace)
+		sw, _ := filepath.Abs(meta.Workspace)
 		if ws != "" && sw != ws {
 			continue
 		}
-		title := s.Title
-		if title == "" {
-			title = deriveTitle(s.Messages)
-		}
-		out = append(out, Meta{ID: s.ID, Title: title, Updated: s.Updated})
+		out = append(out, Meta{ID: meta.ID, Title: meta.Title, Updated: meta.Updated})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Updated.After(out[j].Updated)
@@ -329,6 +335,55 @@ func SaveMessages(workspace string, id string, msgs []llm.Message) error {
 }
 
 func loadLocked(path, id string) (*Session, error) {
+	data, err := readLocked(path)
+	if err != nil {
+		return nil, err
+	}
+	var s Session
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, err
+	}
+	if s.ID != id {
+		return nil, errors.New("session id mismatch")
+	}
+	if err := boundSession(&s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+func loadMetaLocked(path, id string) (sessionMeta, error) {
+	data, err := readLocked(path)
+	if err != nil {
+		return sessionMeta{}, err
+	}
+	var meta sessionMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return sessionMeta{}, err
+	}
+	if meta.ID != id {
+		return sessionMeta{}, errors.New("session id mismatch")
+	}
+	if len(meta.Workspace) > maxSessionWorkspaceBytes {
+		return sessionMeta{}, ErrSessionTooLarge
+	}
+	meta.Title = sessionText(meta.Title, maxSessionTitleBytes)
+	if meta.Title == "" {
+		// Preserve the legacy title fallback without paying the full history
+		// decode cost for normal sessions that already have a title.
+		var s Session
+		if err := json.Unmarshal(data, &s); err != nil {
+			return sessionMeta{}, err
+		}
+		if err := boundSession(&s); err != nil {
+			return sessionMeta{}, err
+		}
+		meta.Title = deriveTitle(s.Messages)
+	}
+	return meta, nil
+}
+
+func readLocked(path string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -348,17 +403,7 @@ func loadLocked(path, id string) (*Session, error) {
 	if len(data) > MaxSessionBytes {
 		return nil, ErrSessionTooLarge
 	}
-	var s Session
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
-	if s.ID != id {
-		return nil, errors.New("session id mismatch")
-	}
-	if err := boundSession(&s); err != nil {
-		return nil, err
-	}
-	return &s, nil
+	return data, nil
 }
 
 func saveLocked(path string, s *Session) error {
