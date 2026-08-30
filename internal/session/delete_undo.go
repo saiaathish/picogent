@@ -129,7 +129,7 @@ func AbortDeleteUndo(undoID string) error {
 	defer unlock()
 
 	staged, _, err := loadDeleteUndoFileLocked(deleteUndoStagePath(dir))
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
@@ -229,7 +229,7 @@ func ClearDeleteUndoIfCurrent(undoID string) (bool, error) {
 	defer unlock()
 
 	pending, err := loadCurrentDeleteUndoLocked(dir, time.Now().UTC())
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
 	if err != nil {
@@ -248,7 +248,7 @@ func loadCurrentDeleteUndoLocked(dir string, now time.Time) (*DeleteUndo, error)
 
 	stagePath := deleteUndoStagePath(dir)
 	staged, _, stageErr := loadDeleteUndoFileLocked(stagePath)
-	if stageErr != nil && !os.IsNotExist(stageErr) {
+	if stageErr != nil && !errors.Is(stageErr, os.ErrNotExist) {
 		return nil, stageErr
 	}
 	if staged != nil {
@@ -323,7 +323,7 @@ func clearDeleteUndoLocked(dir string) error {
 
 func removeDeleteUndoFileLocked(path string) error {
 	err := securefile.RemoveFile(path)
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	return err
@@ -393,7 +393,7 @@ func undoSessionMissingLocked(dir, id string) (bool, error) {
 	if err == nil {
 		return false, nil
 	}
-	if os.IsNotExist(err) {
+	if errors.Is(err, os.ErrNotExist) {
 		return true, nil
 	}
 	return false, err

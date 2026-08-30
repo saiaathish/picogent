@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -299,10 +300,25 @@ func (p *windowsParent) replace(oldName, newName string, source *os.File) error 
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat atomic replacement target %q: %w", newName, err)
 	}
-	if err := renameWindowsHandle(windows.Handle(source.Fd()), p.handle, newName); err != nil {
-		return fmt.Errorf("publish atomic replacement %q: %w", newName, err)
+	for attempt := 0; ; attempt++ {
+		if err := renameWindowsHandle(windows.Handle(source.Fd()), p.handle, newName); err == nil {
+			return nil
+		} else if !retryWindowsRename(err) || attempt >= 99 {
+			return fmt.Errorf("publish atomic replacement %q: %w", newName, err)
+		}
+		// Standard Windows path readers may keep the destination open without
+		// delete sharing. Wait briefly for those short-lived handles to close;
+		// replacing the destination remains atomic once the rename is accepted.
+		time.Sleep(time.Millisecond)
 	}
-	return nil
+}
+
+func retryWindowsRename(err error) bool {
+	var status windows.NTStatus
+	if errors.As(err, &status) {
+		return status == windows.STATUS_ACCESS_DENIED || status == windows.STATUS_SHARING_VIOLATION
+	}
+	return errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_SHARING_VIOLATION)
 }
 
 type windowsFileRenameInformation struct {
