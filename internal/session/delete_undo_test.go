@@ -109,6 +109,124 @@ func TestDeleteUndoRejectsSecondStagedDeleteWithoutOverwritingFirst(t *testing.T
 	}
 }
 
+func TestDeleteUndoReclaimsStageLeftBeforeSessionRemoval(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	original := &Session{ID: "crashed-before-delete", Workspace: workspace, Messages: []llm.Message{{Role: "user", Content: "still present"}}}
+	if err := original.Save(); err != nil {
+		t.Fatal(err)
+	}
+	stale := &DeleteUndo{
+		UndoID:    "stale-before-delete-token",
+		Session:   original,
+		Workspace: workspace,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+	data, _, err := marshalDeleteUndo(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := securefile.WriteAtomic(deleteUndoStagePath(dir), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	current := &DeleteUndo{
+		UndoID:    "replacement-delete-token",
+		Session:   original,
+		Workspace: workspace,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+	if err := DeleteWithUndo(original.ID, current); err != nil {
+		t.Fatalf("delete after pre-removal crash = %v", err)
+	}
+	loaded, err := LoadDeleteUndo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.UndoID != current.UndoID || loaded.Session.ID != original.ID {
+		t.Fatalf("replacement undo = %#v", loaded)
+	}
+	if _, err := RestoreDeleteUndo(current.UndoID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeleteUndoConcurrentDeletesHaveOneStagedOwner(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	first := &Session{ID: "concurrent-delete-first", Workspace: workspace, Messages: []llm.Message{{Role: "user", Content: "first"}}}
+	second := &Session{ID: "concurrent-delete-second", Workspace: workspace, Messages: []llm.Message{{Role: "user", Content: "second"}}}
+	if err := first.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Save(); err != nil {
+		t.Fatal(err)
+	}
+	firstUndo := &DeleteUndo{
+		UndoID:    "concurrent-first-token",
+		Session:   first,
+		Workspace: workspace,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+	secondUndo := &DeleteUndo{
+		UndoID:    "concurrent-second-token",
+		Session:   second,
+		Workspace: workspace,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+	results := make(chan struct {
+		undo *DeleteUndo
+		err  error
+	}, 2)
+	start := make(chan struct{})
+	for _, undo := range []*DeleteUndo{firstUndo, secondUndo} {
+		go func(undo *DeleteUndo) {
+			<-start
+			results <- struct {
+				undo *DeleteUndo
+				err  error
+			}{undo: undo, err: DeleteWithUndo(undo.Session.ID, undo)}
+		}(undo)
+	}
+	close(start)
+	var winner *DeleteUndo
+	for range 2 {
+		result := <-results
+		if result.err == nil {
+			if winner != nil {
+				t.Fatal("both concurrent deletes acquired the staging slot")
+			}
+			winner = result.undo
+		} else if !errors.Is(result.err, ErrDeleteUndoInFlight) {
+			t.Fatalf("concurrent delete error = %v, want ErrDeleteUndoInFlight", result.err)
+		}
+	}
+	if winner == nil {
+		t.Fatal("neither concurrent delete acquired the staging slot")
+	}
+	loaded, err := LoadDeleteUndo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.UndoID != winner.UndoID {
+		t.Fatalf("staged owner = %q, want %q", loaded.UndoID, winner.UndoID)
+	}
+	if _, err := RestoreDeleteUndo(winner.UndoID); err != nil {
+		t.Fatal(err)
+	}
+	loserID := first.ID
+	if winner == firstUndo {
+		loserID = second.ID
+	}
+	if _, err := Load(loserID); err != nil {
+		t.Fatalf("loser session was removed: %v", err)
+	}
+}
+
 func TestDeleteUndoStageCleanupOnlyRemovesMatchingToken(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()

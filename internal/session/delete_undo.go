@@ -75,8 +75,21 @@ func DeleteWithUndo(id string, undo *DeleteUndo) error {
 	defer unlock()
 
 	stage := deleteUndoStagePath(dir)
-	if _, _, stageErr := loadDeleteUndoFileLocked(stage); stageErr == nil {
-		return ErrDeleteUndoInFlight
+	if staged, _, stageErr := loadDeleteUndoFileLocked(stage); stageErr == nil {
+		// A stage with its session file still present can only be left by a
+		// crash before the delete reached the filesystem. Retire that stale
+		// stage so the next delete can make progress without sacrificing a
+		// recoverable deletion whose session has already been removed.
+		missing, missingErr := undoSessionMissingLocked(dir, staged.Session.ID)
+		if missingErr != nil {
+			return fmt.Errorf("inspect staged delete session: %w", missingErr)
+		}
+		if missing {
+			return ErrDeleteUndoInFlight
+		}
+		if err := removeDeleteUndoFileLocked(stage); err != nil {
+			return fmt.Errorf("retire stale delete undo staging: %w", err)
+		}
 	} else if !errors.Is(stageErr, os.ErrNotExist) {
 		return fmt.Errorf("inspect delete undo staging: %w", stageErr)
 	}
