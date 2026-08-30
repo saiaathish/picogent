@@ -288,10 +288,11 @@ func (p *windowsParent) replace(oldName, newName string, source *os.File) error 
 	}
 
 	// A secure reader takes a shared byte-range lock on the destination. Take
-	// the matching exclusive lock before replacement so cooperative readers
-	// finish before Windows evaluates the destination handle sharing rules.
-	// The source handle is then renamed directly, making publication atomic for
-	// ordinary readers instead of truncating and copying into the destination.
+	// the matching exclusive lock, then release it before replacement so
+	// cooperative readers are quiescent without holding a byte-range lock across
+	// Windows' metadata operation. The source handle is then renamed directly,
+	// making publication atomic for ordinary readers instead of truncating and
+	// copying into the destination.
 	for attempt := 0; ; attempt++ {
 		destination, unlock, lockErr := p.lockDestination(newName)
 		if lockErr != nil {
@@ -301,32 +302,17 @@ func (p *windowsParent) replace(oldName, newName string, source *os.File) error 
 			time.Sleep(time.Millisecond)
 			continue
 		}
+		if err := releaseDestinationLock(destination, unlock); err != nil {
+			if !retryWindowsRename(err) || attempt >= 99 {
+				return fmt.Errorf("release atomic replacement target %q: %w", newName, err)
+			}
+			time.Sleep(time.Millisecond)
+			continue
+		}
 		if err := renameWindowsHandle(windows.Handle(source.Fd()), p.handle, newName); err == nil {
-			var unlockErr, closeErr error
-			if unlock != nil {
-				unlockErr = unlock()
-			}
-			if destination != nil {
-				closeErr = destination.Close()
-			}
-			if err := errors.Join(unlockErr, closeErr); err != nil {
-				return fmt.Errorf("close atomic replacement target %q: %w", newName, err)
-			}
 			return nil
 		} else if !retryWindowsRename(err) || attempt >= 99 {
-			if unlock != nil {
-				_ = unlock()
-			}
-			if destination != nil {
-				_ = destination.Close()
-			}
 			return fmt.Errorf("publish atomic replacement %q: %w", newName, err)
-		}
-		if unlock != nil {
-			_ = unlock()
-		}
-		if destination != nil {
-			_ = destination.Close()
 		}
 		// Standard Windows path readers may keep the destination open without
 		// delete sharing. Wait briefly for those short-lived handles to close;
@@ -349,6 +335,17 @@ func (p *windowsParent) lockDestination(name string) (*os.File, func() error, er
 		return nil, nil, err
 	}
 	return destination, unlock, nil
+}
+
+func releaseDestinationLock(destination *os.File, unlock func() error) error {
+	var unlockErr, closeErr error
+	if unlock != nil {
+		unlockErr = unlock()
+	}
+	if destination != nil {
+		closeErr = destination.Close()
+	}
+	return errors.Join(unlockErr, closeErr)
 }
 
 func retryWindowsRename(err error) bool {
