@@ -77,14 +77,14 @@ func TestUndoRecoversAfterCASConflict(t *testing.T) {
 		t.Fatal("checkpoint remained available after files were restored")
 	}
 	got := a.TaskSnapshot()
-	if got == nil || got.Revision != other.Revision+1 || got.Attempts != other.Attempts || got.VerifiedChangeSeq != -1 || got.Verification[len(got.Verification)-1].Passed {
+	if got == nil || got.Revision != other.Revision+1 || got.Attempts != other.Attempts || got.ChangeSeq != other.ChangeSeq || !reflect.DeepEqual(got.ChangedFiles, other.ChangedFiles) || !reflect.DeepEqual(got.Turns, other.Turns) || got.VerifiedChangeSeq != -1 || got.Verification[len(got.Verification)-1].Passed {
 		t.Fatalf("recovered CAS task = %#v", got)
 	}
 	persisted, err := store.Load(task.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Revision != other.Revision+1 || persisted.Attempts != other.Attempts || persisted.VerifiedChangeSeq != -1 || persisted.Verification[len(persisted.Verification)-1].Passed {
+	if persisted.Revision != other.Revision+1 || persisted.Attempts != other.Attempts || persisted.ChangeSeq != other.ChangeSeq || !reflect.DeepEqual(persisted.ChangedFiles, other.ChangedFiles) || !reflect.DeepEqual(persisted.Turns, other.Turns) || persisted.VerifiedChangeSeq != -1 || persisted.Verification[len(persisted.Verification)-1].Passed {
 		t.Fatalf("recovered persisted task = %#v", persisted)
 	}
 }
