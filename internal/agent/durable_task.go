@@ -197,6 +197,15 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
 	} else {
 		candidate = cloneTask(a.task)
 	}
+	// Keep the original durable outcome and definition of done stable while
+	// recording a changed interpretation of a later user request. This makes
+	// steering visible to routing and recovery without letting one short
+	// follow-up silently erase the larger outcome.
+	if inferred := taskstate.Infer(prompt); inferred.TaskLike && inferred.Intent != nil && !strings.EqualFold(strings.TrimSpace(inferred.Goal), strings.TrimSpace(candidate.Goal)) {
+		intent := *inferred.Intent
+		intent.Outcome = candidate.Goal
+		candidate.SetIntent(&intent)
+	}
 	candidate.InitializeChangeSequence()
 	if candidate.Status == taskstate.StatusDone && candidate.NeedsVerification() {
 		if err := candidate.SetStatus(taskstate.StatusVerifying); err != nil {
