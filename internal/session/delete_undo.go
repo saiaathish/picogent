@@ -26,6 +26,12 @@ const (
 // that has been superseded by another deletion or was already retired.
 var ErrDeleteUndoNotCurrent = errors.New("delete undo is no longer current")
 
+// ErrDeleteUndoInFlight means another deletion has already staged a recovery
+// record and has not finished publishing its lifecycle transition. The single
+// staging slot is intentionally exclusive so a second delete cannot erase the
+// first delete's crash-recovery record.
+var ErrDeleteUndoInFlight = errors.New("delete undo staging is already in progress")
+
 // DeleteUndo is the short-lived, durable recovery record for one deleted
 // session. It is deliberately separate from listable session JSON files, so
 // a deleted chat cannot reappear in a history list before the user chooses
@@ -69,11 +75,16 @@ func DeleteWithUndo(id string, undo *DeleteUndo) error {
 	defer unlock()
 
 	stage := deleteUndoStagePath(dir)
+	if _, _, stageErr := loadDeleteUndoFileLocked(stage); stageErr == nil {
+		return ErrDeleteUndoInFlight
+	} else if !errors.Is(stageErr, os.ErrNotExist) {
+		return fmt.Errorf("inspect delete undo staging: %w", stageErr)
+	}
 	if err := securefile.WriteAtomic(stage, data, 0o600); err != nil {
 		return fmt.Errorf("stage delete undo: %w", err)
 	}
 	if err := securefile.RemoveFile(filepath.Join(dir, id+".json")); err != nil {
-		cleanupErr := removeDeleteUndoFileLocked(stage)
+		cleanupErr := clearDeleteUndoStageIfCurrentLocked(dir, prepared.UndoID)
 		if cleanupErr != nil {
 			return fmt.Errorf("delete session: %w; clear undo staging: %v", err, cleanupErr)
 		}
@@ -319,6 +330,25 @@ func clearDeleteUndoLocked(dir string) error {
 		return err
 	}
 	return removeDeleteUndoFileLocked(deleteUndoPath(dir))
+}
+
+// clearDeleteUndoStageIfCurrentLocked retires only the stage created by the
+// caller. The sessions lock makes the read/check/remove sequence atomic with
+// other journal operations, and the token check prevents cleanup after a
+// failed delete from erasing another caller's staged recovery record.
+func clearDeleteUndoStageIfCurrentLocked(dir, undoID string) error {
+	path := deleteUndoStagePath(dir)
+	staged, _, err := loadDeleteUndoFileLocked(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !deleteUndoIDMatches(staged.UndoID, undoID) {
+		return nil
+	}
+	return removeDeleteUndoFileLocked(path)
 }
 
 func removeDeleteUndoFileLocked(path string) error {
