@@ -100,6 +100,42 @@ Context-heavy work remains approximately flat with overlapping ranges. Other
 v4 additions have measurable cost, especially provenance capture; that cost is
 recorded rather than hidden. No broad claim that v4 is faster is justified.
 
+## Current-head long-horizon composition probe
+
+The current `origin/main` head (`9104061f59837845fb186e9032b9ea40c60aef67`)
+now has a deterministic composition probe in
+`internal/agent/long_horizon_test.go`. It drives 96 logical turns, saves and
+reloads the session and task state on every turn, runs context management, and
+changes the intent once midway through the run. The fixture intentionally
+exceeds the session, turn, and evidence retention rings; it is a durability
+and cost envelope, not a live-provider or GUI benchmark.
+
+Host: Apple M3 arm64 macOS. Command:
+
+```sh
+go test ./internal/agent -run '^$' \
+  -bench '^BenchmarkLongHorizonResumeEnvelope$' \
+  -benchtime=1x -benchmem -count=3
+```
+
+| Signal | Three observed runs |
+| --- | ---: |
+| 96-turn save/reload envelope | 2.574–2.835 s/op |
+| Allocated bytes | 795.2–795.8 MB/op |
+| Allocations | 459,479–459,696/op |
+| Retained session messages | 128/op |
+| Retained task turns / evidence | 16 / 16 per op |
+| Durable context peak | 1,263 chars/op |
+| Managed context peak | 632 tokens/op |
+| Session / task JSON peak | 26,579–26,580 / 8,511–8,512 bytes/op |
+
+The measured allocation cost is a useful regression signal and motivates a
+separate optimization experiment; it is not a release budget. The test also
+covers a cooperative fresh-process restart: an active durable turn is loaded,
+marked interrupted, and persisted by a new process. Hostile process death,
+sustained RSS, live-provider quality, rendered surfaces, and v3-v4 comparative
+quality remain unverified.
+
 ## Not measured here
 
 - binary size, cold/warm startup, RSS, and long-session RSS growth;
