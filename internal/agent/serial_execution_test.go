@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -79,5 +80,96 @@ func TestCoBatchedWriteCompletesBeforeVerification(t *testing.T) {
 	}
 	if result.Task.ChangeSeq != 1 || result.Task.VerifiedChangeSeq != 1 {
 		t.Fatalf("task evidence=%#v", result.Task)
+	}
+}
+
+func TestUndoWaitsForActiveRunToReleaseProjectLock(t *testing.T) {
+	workspace := t.TempDir()
+	client := newBlockingChatClient()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := New(cfg, client, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+
+	runDone := make(chan error, 1)
+	go func() {
+		_, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "hold the run"}, serialAllowAll{})
+		runDone <- err
+	}()
+	<-client.started
+
+	undoDone := make(chan error, 1)
+	go func() {
+		_, err := a.UndoLastTurn()
+		undoDone <- err
+	}()
+	select {
+	case err := <-undoDone:
+		t.Fatalf("undo completed before active run released: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(client.release)
+	if err := <-runDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-undoDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTaskSessionChangeWaitsForActiveRunToReleaseProjectLock(t *testing.T) {
+	workspace := t.TempDir()
+	client := newBlockingChatClient()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := New(cfg, client, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskSession = "old-session"
+
+	runDone := make(chan error, 1)
+	go func() {
+		_, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "hold the run"}, serialAllowAll{})
+		runDone <- err
+	}()
+	<-client.started
+
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- a.SetTaskSession("new-session") }()
+	select {
+	case err := <-sessionDone:
+		t.Fatalf("session change completed before active run released: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(client.release)
+	if err := <-runDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-sessionDone; err != nil {
+		t.Fatal(err)
+	}
+	if session, _ := a.taskSessionSnapshot(); session != "new-session" {
+		t.Fatalf("task session = %q, want new-session", session)
+	}
+}
+
+type blockingChatClient struct {
+	started   chan struct{}
+	release   chan struct{}
+	startOnce sync.Once
+}
+
+func newBlockingChatClient() *blockingChatClient {
+	return &blockingChatClient{started: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (c *blockingChatClient) Chat(ctx context.Context, _ llm.ChatRequest) (llm.ChatResponse, error) {
+	c.startOnce.Do(func() { close(c.started) })
+	select {
+	case <-c.release:
+		return llm.ChatResponse{Message: llm.Message{Role: "assistant", Content: "done"}}, nil
+	case <-ctx.Done():
+		return llm.ChatResponse{}, ctx.Err()
 	}
 }
