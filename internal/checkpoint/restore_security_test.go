@@ -88,6 +88,50 @@ func TestRestoreRejectsReplacementHardlinkBeforeMutation(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsReplacementHardlinkBeforeDeletingCreatedPath(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	parent := filepath.Join(workspace, "parent")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join("parent", "created.txt")
+	created := filepath.Join(workspace, path)
+
+	cp, err := checkpoint.Capture(workspace, []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, workspace, path, "created")
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(created); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(secret, created); err != nil {
+		t.Skipf("hard links unavailable in test environment: %v", err)
+	}
+
+	result, err := cp.Restore()
+	if err == nil || result.Complete || len(result.Failures) != 1 {
+		t.Fatalf("restore through created-path hardlink = result:%+v err:%v", result, err)
+	}
+	if result.Failures[0].Operation != "inspect" {
+		t.Fatalf("unexpected created-path hardlink error: result:%+v err:%v", result, err)
+	}
+	if got, readErr := os.ReadFile(secret); readErr != nil || string(got) != "private" {
+		t.Fatalf("outside file changed: %q, %v", got, readErr)
+	}
+	if got, readErr := os.ReadFile(created); readErr != nil || string(got) != "private" {
+		t.Fatalf("replacement hardlink was removed or changed: %q, %v", got, readErr)
+	}
+}
+
 func TestRestoreDoesNotEscapeAncestorSwap(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix descriptor-relative stress test")
