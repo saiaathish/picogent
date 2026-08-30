@@ -251,10 +251,23 @@ func verifyHandle(root string, f *os.File, directory bool) error {
 	if err != nil {
 		return err
 	}
-	if !within(root, actual) {
+	canonicalRoot, err := workspaceRootFinalPath(root)
+	if err != nil {
+		return fmt.Errorf("resolve workspace root for containment: %w", err)
+	}
+	if !within(canonicalRoot, actual) {
 		return fmt.Errorf("resolved path %q is outside workspace", actual)
 	}
 	return nil
+}
+
+func workspaceRootFinalPath(root string) (string, error) {
+	h, err := openWindowsRoot(root)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(h)
+	return finalPath(h)
 }
 
 func finalPath(handle windows.Handle) (string, error) {
