@@ -20,9 +20,10 @@ func TestDurableContextStaysWithinDeterministicBound(t *testing.T) {
 			Outcome: strings.Repeat("outcome ", 100),
 			Scope:   strings.Repeat("scope ", 100),
 		},
-		Constraints: []string{strings.Repeat("constraint ", 100)},
-		Risks:       []string{strings.Repeat("risk ", 100)},
-		Uncertainty: []string{strings.Repeat("uncertainty ", 100)},
+		IntentRevision: 42,
+		Constraints:    []string{strings.Repeat("constraint ", 100)},
+		Risks:          []string{strings.Repeat("risk ", 100)},
+		Uncertainty:    []string{strings.Repeat("uncertainty ", 100)},
 		Verification: []taskstate.Verification{{
 			Command: "go test ./...",
 			Passed:  false,
@@ -42,7 +43,7 @@ func TestDurableContextStaysWithinDeterministicBound(t *testing.T) {
 	if first != second {
 		t.Fatal("durable context rendering is not deterministic")
 	}
-	for _, marker := range []string{"BEGIN DURABLE TASK DATA", "END DURABLE TASK DATA", "task.goal", "task.status"} {
+	for _, marker := range []string{"BEGIN DURABLE TASK DATA", "END DURABLE TASK DATA", "task.goal", "task.status", `task.intent.revision: "42"`} {
 		if !strings.Contains(first, marker) {
 			t.Fatalf("durable context missing %q: %s", marker, first)
 		}
