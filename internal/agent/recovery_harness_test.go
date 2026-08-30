@@ -42,10 +42,10 @@ func (c *cancelAfterDurableWriteClient) Chat(ctx context.Context, _ llm.ChatRequ
 // callback boundary, not only after the whole run has finished.
 type persistedTaskObserver struct {
 	allowAll
-	store       *taskstate.Store
-	mu          sync.Mutex
-	unsaved     []string
-	statusSeen  []taskstate.Status
+	store      *taskstate.Store
+	mu         sync.Mutex
+	unsaved    []string
+	statusSeen []taskstate.Status
 }
 
 func (h *persistedTaskObserver) OnTaskState(task *taskstate.Task) {
@@ -136,6 +136,10 @@ func TestDurableTaskCancellationRetainsLastPersistedState(t *testing.T) {
 	}
 	if persisted.Status != taskstate.StatusWorking || !slices.Contains(persisted.ChangedFiles, "note.txt") {
 		t.Fatalf("persisted cancellation state = %#v, want working with note.txt", persisted)
+	}
+	last := persisted.LastTurn()
+	if last == nil || last.State != taskstate.TurnInterrupted || !slices.Equal(last.ChangedFiles, []string{"note.txt"}) || last.ChangedFilesCapped || last.MutationCount != 1 {
+		t.Fatalf("persisted interrupted turn side effects = %#v", last)
 	}
 	current := a.TaskSnapshot()
 	if current == nil || current.Status != persisted.Status || !slices.Equal(current.ChangedFiles, persisted.ChangedFiles) {

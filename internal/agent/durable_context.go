@@ -44,6 +44,24 @@ func renderDurableTaskContext(task *taskstate.Task) string {
 		}
 	})
 
+	if last := task.LastTurn(); last != nil {
+		b.section(900, func(s *durableContextSection) {
+			s.field("task.last_turn.state", string(last.State), 32)
+			s.field("task.last_turn.route", last.Route, 32)
+			s.line("task.last_turn.sequence: " + strconv.FormatUint(last.Sequence, 10))
+			s.integer("task.last_turn.attempt", last.Attempt)
+			s.field("task.last_turn.evidence", last.EvidenceState, 32)
+			s.field("task.last_turn.stop_reason", string(last.StopReason), 48)
+			s.field("task.last_turn.hypothesis", last.Hypothesis, 300)
+			if last.ChangedFilesCapped {
+				s.boolean("task.last_turn.changed_files.capped", true)
+			}
+			if len(last.ChangedFiles) > 0 {
+				s.list("task.last_turn.changed_files", firstDurableItems(last.ChangedFiles, 8), 150)
+			}
+		})
+	}
+
 	if task.Intent != nil {
 		b.section(700, func(s *durableContextSection) {
 			s.field("task.intent.revision", strconv.FormatUint(task.IntentRevision, 10), 24)

@@ -431,6 +431,14 @@ func (t *Task) Validate() error {
 		if turn.ToolRounds < 0 || turn.ToolRounds > maxTurnToolRounds || turn.MutationCount < 0 || turn.MutationCount > maxTurnMutations {
 			return fmt.Errorf("task turn %d counts are out of range", i)
 		}
+		if len(turn.ChangedFiles) > maxTurnChangedFiles {
+			return fmt.Errorf("task turn %d changed-file list is too long", i)
+		}
+		for pathIndex, path := range turn.ChangedFiles {
+			if strings.TrimSpace(path) == "" || len(path) > maxChangedFilePath {
+				return fmt.Errorf("task turn %d changed file %d is empty or too long", i, pathIndex)
+			}
+		}
 		if turn.StartedAt.IsZero() {
 			return fmt.Errorf("task turn %d has no start time", i)
 		}
@@ -675,11 +683,11 @@ func (t *Task) RecordChanged(path string) {
 	if t == nil {
 		return
 	}
-	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
-	path = strings.TrimPrefix(path, "./")
+	path = normalizeChangedPath(path)
 	if path == "" {
 		return
 	}
+	t.recordActiveTurnChanged(path)
 	for _, changed := range t.ChangedFiles {
 		if changed == path {
 			t.ChangeSeq++
@@ -696,6 +704,35 @@ func (t *Task) RecordChanged(path string) {
 	t.ChangedFiles = append(t.ChangedFiles, path)
 	t.ChangeSeq++
 	t.touch()
+}
+
+func normalizeChangedPath(path string) string {
+	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+	return strings.TrimPrefix(path, "./")
+}
+
+// recordActiveTurnChanged attributes a successful mutation to the active
+// durable turn. The task-level list is cumulative; this bounded per-turn list
+// lets recovery distinguish an interrupted file-changing turn from a read-only
+// interruption without persisting tool output or checkpoint contents.
+func (t *Task) recordActiveTurnChanged(path string) {
+	if t == nil || len(t.Turns) == 0 {
+		return
+	}
+	latest := &t.Turns[len(t.Turns)-1]
+	if latest.State != TurnActive {
+		return
+	}
+	for _, changed := range latest.ChangedFiles {
+		if changed == path {
+			return
+		}
+	}
+	if len(latest.ChangedFiles) >= maxTurnChangedFiles {
+		latest.ChangedFilesCapped = true
+		return
+	}
+	latest.ChangedFiles = append(latest.ChangedFiles, path)
 }
 
 // InitializeChangeSequence represents a legacy changed-file list as one

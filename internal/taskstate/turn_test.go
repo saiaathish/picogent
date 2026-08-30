@@ -2,6 +2,7 @@ package taskstate
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -58,7 +59,6 @@ func TestTurnLedgerIsBoundedPersistentAndIdentityBound(t *testing.T) {
 	if len(last.Hypothesis) != maxTurnHypothesis {
 		t.Fatalf("hypothesis length=%d want %d", len(last.Hypothesis), maxTurnHypothesis)
 	}
-
 	active, ok := task.BeginTurn(TurnRouteInspect)
 	if !ok {
 		t.Fatal("second turn did not start")
@@ -122,6 +122,9 @@ func TestTurnValidationRejectsMalformedLifecycle(t *testing.T) {
 	}{
 		{"state", func(task *Task) { task.Turns[0].State = "unknown" }},
 		{"evidence", func(task *Task) { task.Turns[0].EvidenceState = "model says pass" }},
+		{"changed files", func(task *Task) {
+			task.Turns[0].ChangedFiles = make([]string, maxTurnChangedFiles+1)
+		}},
 		{"missing finish", func(task *Task) { task.Turns[0].FinishedAt = nil }},
 		{"revision", func(task *Task) { task.TurnRevision = 0 }},
 	}
@@ -134,6 +137,49 @@ func TestTurnValidationRejectsMalformedLifecycle(t *testing.T) {
 				t.Fatal("malformed turn state passed validation")
 			}
 		})
+	}
+}
+
+func TestTurnLedgerAttributesBoundedChangedFiles(t *testing.T) {
+	task, err := New("turn-side-effects", "finish the requested change", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := task.BeginTurn(TurnRouteImplement); !ok {
+		t.Fatal("turn did not start")
+	}
+	for i := 0; i < maxTurnChangedFiles+2; i++ {
+		task.RecordChanged(fmt.Sprintf("./src/file-%02d.go", i))
+	}
+	last := task.LastTurn()
+	if last == nil || len(last.ChangedFiles) != maxTurnChangedFiles || !last.ChangedFilesCapped {
+		t.Fatalf("active turn side effects = %#v", last)
+	}
+	if last.ChangedFiles[0] != "src/file-00.go" || last.ChangedFiles[len(last.ChangedFiles)-1] != "src/file-15.go" {
+		t.Fatalf("active turn paths = %#v", last.ChangedFiles)
+	}
+	isolated := task.LastTurn()
+	isolated.ChangedFiles[0] = "caller-owned.go"
+	if task.Turns[0].ChangedFiles[0] != "src/file-00.go" {
+		t.Fatalf("last turn changed files were aliased: %#v", task.Turns[0].ChangedFiles)
+	}
+	if !task.FinishTurn(last.Sequence, TurnRouteRecover, "recover changed files", "UNVERIFIED", StopNone, 2, maxTurnChangedFiles+2) {
+		t.Fatal("turn did not finish")
+	}
+	encoded, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Task
+	if err := json.Unmarshal(encoded, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if err := restored.Validate(); err != nil {
+		t.Fatalf("round-tripped turn state is invalid: %v", err)
+	}
+	last = restored.LastTurn()
+	if last == nil || len(last.ChangedFiles) != maxTurnChangedFiles || !last.ChangedFilesCapped {
+		t.Fatalf("restored turn side effects = %#v", last)
 	}
 }
 
