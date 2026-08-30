@@ -1376,6 +1376,22 @@ func TestGUIErrorAndPermissionEventsSanitizeUntrustedText(t *testing.T) {
 	}
 }
 
+func TestGUIHTTPErrorSanitizesUntrustedText(t *testing.T) {
+	const secret = "gui-http-secret"
+	rec := httptest.NewRecorder()
+	writeGUIError(rec, "provider failed\n\x1b[31maccess_token="+secret, http.StatusInternalServerError)
+	got := rec.Body.String()
+	if strings.Contains(got, secret) {
+		t.Fatalf("HTTP error leaked secret: %q", got)
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\naccess_token") {
+		t.Fatalf("HTTP error retained terminal/newline injection: %q", got)
+	}
+	if !strings.Contains(got, "provider failed") || !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("HTTP error lost source or redaction marker: %q", got)
+	}
+}
+
 func TestReadFileRejectsOutsideSymlink(t *testing.T) {
 	workspace := t.TempDir()
 	outside := t.TempDir()

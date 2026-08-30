@@ -462,6 +462,10 @@ func guiDiagnostic(value string) string {
 	return redact.Diagnostic(value, maxGUIErrorBytes)
 }
 
+func writeGUIError(w http.ResponseWriter, message string, status int) {
+	http.Error(w, guiDiagnostic(message), status)
+}
+
 func sanitizeEvent(e event) event {
 	switch e.Type {
 	case "error":

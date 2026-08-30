@@ -31,7 +31,7 @@ func itoaStr(n int) string {
 
 func (s *server) diffAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "GET only", 405)
+		writeGUIError(w, "GET only", 405)
 		return
 	}
 	rel := strings.TrimSpace(r.URL.Query().Get("path"))
@@ -52,7 +52,7 @@ func (s *server) diffAPI(w http.ResponseWriter, r *http.Request) {
 		out += "\n… git output truncated …"
 	}
 	if err != nil && len(out) == 0 {
-		http.Error(w, err.Error(), 500)
+		writeGUIError(w, err.Error(), 500)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
