@@ -77,7 +77,7 @@ jobs:
         with:
           go-version: "1.25.x"
       - name: Vulnerability scan
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -show verbose ./...
 
   release-evidence:
     needs: [test, security]
