@@ -30,6 +30,7 @@ const (
 	KindVerify        Kind = "VERIFY"
 	KindHealthFinding Kind = "HEALTH_FINDING"
 	KindCriterion     Kind = "CRITERION"
+	KindRequirement   Kind = "REQUIREMENT"
 	KindInspect       Kind = "INSPECT"
 )
 
@@ -37,15 +38,16 @@ const (
 // Priority is intentionally omitted from JSON and prompts: the existing
 // project-health priority is an ordering aid, not a user-facing score.
 type Decision struct {
-	Schema         string `json:"schema"`
-	Kind           Kind   `json:"kind"`
-	CriterionIndex int    `json:"criterion_index,omitempty"`
-	FindingID      string `json:"finding_id,omitempty"`
-	EvidenceState  string `json:"evidence_state"`
-	Confidence     string `json:"confidence"`
-	Action         string `json:"action"`
-	Reason         string `json:"reason"`
-	Priority       int    `json:"-"`
+	Schema          string                 `json:"schema"`
+	Kind            Kind                   `json:"kind"`
+	CriterionIndex  int                    `json:"criterion_index,omitempty"`
+	FindingID       string                 `json:"finding_id,omitempty"`
+	RequirementKind taskstate.EvidenceKind `json:"requirement_kind,omitempty"`
+	EvidenceState   string                 `json:"evidence_state"`
+	Confidence      string                 `json:"confidence"`
+	Action          string                 `json:"action"`
+	Reason          string                 `json:"reason"`
+	Priority        int                    `json:"-"`
 }
 
 // Select chooses the next safe focus from the current task and one bounded
@@ -107,15 +109,35 @@ func Select(task *taskstate.Task, report projecthealth.Report) Decision {
 
 	if task != nil {
 		if index := currentCriterion(task); index >= 0 {
+			evidenceState := "UNVERIFIED"
+			if status, current := task.CriterionEvidenceState(index); current || status != "UNVERIFIED" {
+				evidenceState = status
+			}
 			return Decision{
 				Schema:         Schema,
 				Kind:           KindCriterion,
 				CriterionIndex: index,
-				EvidenceState:  "UNVERIFIED",
+				EvidenceState:  evidenceState,
 				Confidence:     "medium",
 				Action:         "continue with the current safe outcome criterion",
 				Reason:         "the durable outcome still has an incomplete criterion",
 				Priority:       50,
+			}
+		}
+		if kind, status, current, ok := firstMissingRequirement(task); ok {
+			evidenceState := "NEEDS_EVIDENCE"
+			if current {
+				evidenceState = normalizeEvidenceState(status)
+			}
+			return Decision{
+				Schema:          Schema,
+				Kind:            KindRequirement,
+				RequirementKind: kind,
+				EvidenceState:   evidenceState,
+				Confidence:      "medium",
+				Action:          actionForRequirement(kind),
+				Reason:          "a required quality evidence boundary remains incomplete",
+				Priority:        60,
 			}
 		}
 		if task.Status == taskstate.StatusDone {
@@ -168,6 +190,11 @@ func Instruction(decision Decision) string {
 	if decision.CriterionIndex >= 0 {
 		fmt.Fprintf(&b, "Criterion index: %d\n", decision.CriterionIndex)
 	}
+	if decision.RequirementKind != "" {
+		b.WriteString("Requirement kind: ")
+		b.WriteString(string(decision.RequirementKind))
+		b.WriteByte('\n')
+	}
 	if decision.FindingID != "" {
 		b.WriteString("Health finding ID: ")
 		b.WriteString(decision.FindingID)
@@ -213,24 +240,12 @@ func betterFinding(left, right projecthealth.Finding, task *taskstate.Task) bool
 	return safeFindingID(left.ID) < safeFindingID(right.ID)
 }
 
-// findingScore consumes the established project-health priority and adds only
-// a small outcome-fit tie breaker. It never pretends to estimate probability.
+// findingScore delegates to the Outcome Engine's bounded priority model. The
+// explicit project-health priority remains the strongest signal, while the
+// additional dimensions make broad-task intent visible without pretending to
+// estimate probability.
 func findingScore(finding projecthealth.Finding, task *taskstate.Task) int {
-	score := clampPriority(finding.Priority)
-	if task == nil || task.Intent == nil {
-		return score
-	}
-	switch {
-	case task.Intent.Risk == "high" && finding.Dimension == "security":
-		score += 12
-	case task.Intent.NeedsTests && finding.Dimension == "tests":
-		score += 8
-	case task.Intent.NeedsVisual && finding.Dimension == "runtime":
-		score += 6
-	case task.Intent.Class == "performance" && finding.Dimension == "performance":
-		score += 8
-	}
-	return score
+	return priorityScore(finding.Priority, factorsForFinding(finding, task))
 }
 
 func currentCriterion(task *taskstate.Task) int {
@@ -244,6 +259,15 @@ func currentCriterion(task *taskstate.Task) int {
 		for index, criterion := range task.DefinitionOfDone {
 			if strings.TrimSpace(criterion.Description) == "" {
 				continue
+			}
+			if !criterion.Required {
+				continue
+			}
+			if status, current := task.CriterionEvidenceState(index); current || status != "UNVERIFIED" {
+				if status == "PASS" {
+					continue
+				}
+				return index
 			}
 			if index >= len(task.Steps) || !task.Steps[index].Done {
 				return index
@@ -334,6 +358,10 @@ func boundedDecision(decision Decision) Decision {
 	if decision.Kind != KindCriterion {
 		decision.CriterionIndex = -1
 	}
+	decision.RequirementKind = normalizeRequirementKind(decision.RequirementKind)
+	if decision.Kind != KindRequirement {
+		decision.RequirementKind = ""
+	}
 	decision.EvidenceState = normalizeEvidenceState(decision.EvidenceState)
 	decision.Confidence = normalizeConfidence(decision.Confidence)
 	switch decision.Kind {
@@ -365,10 +393,28 @@ func boundedDecision(decision Decision) Decision {
 		}
 	case KindCriterion:
 		decision.FindingID = ""
-		decision.EvidenceState = "UNVERIFIED"
+		decision.RequirementKind = ""
+		decision.EvidenceState = normalizeCriterionEvidence(decision.EvidenceState)
 		decision.Confidence = "medium"
 		decision.Action = "continue with the current safe outcome criterion"
 		decision.Reason = "the durable outcome still has an incomplete criterion"
+	case KindRequirement:
+		decision.FindingID = ""
+		decision.CriterionIndex = -1
+		decision.RequirementKind = normalizeRequirementKind(decision.RequirementKind)
+		decision.Action = actionForRequirement(decision.RequirementKind)
+		if decision.Action == "" {
+			decision.Kind = KindInspect
+			decision.RequirementKind = ""
+			decision.EvidenceState = "UNVERIFIED"
+			decision.Confidence = "low"
+			decision.Action = "inspect the affected surface and choose the next safe action"
+			decision.Reason = "no valid quality evidence boundary was available"
+			break
+		}
+		decision.EvidenceState = "NEEDS_EVIDENCE"
+		decision.Confidence = "medium"
+		decision.Reason = "a required quality evidence boundary remains incomplete"
 	case KindInspect:
 		decision.FindingID = ""
 		decision.EvidenceState = "UNVERIFIED"
@@ -384,16 +430,56 @@ func boundedDecision(decision Decision) Decision {
 
 func normalizeKind(kind Kind) Kind {
 	switch kind {
-	case KindBlocked, KindVerify, KindHealthFinding, KindCriterion, KindInspect:
+	case KindBlocked, KindVerify, KindHealthFinding, KindCriterion, KindRequirement, KindInspect:
 		return kind
 	default:
 		return ""
 	}
 }
 
+func firstMissingRequirement(task *taskstate.Task) (taskstate.EvidenceKind, string, bool, bool) {
+	if task == nil {
+		return "", "", false, false
+	}
+	for _, kind := range task.RequiredEvidenceKinds() {
+		status, current, _ := task.RequirementEvidenceState(kind)
+		if !current || !requirementEvidencePasses(status) {
+			return kind, status, current, true
+		}
+	}
+	return "", "", false, false
+}
+
+func requirementEvidencePasses(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "PASS", "APPROVED", "CONFIRMED":
+		return true
+	default:
+		return false
+	}
+}
+
+func actionForRequirement(kind taskstate.EvidenceKind) string {
+	switch normalizeRequirementKind(kind) {
+	case taskstate.EvidenceKindResearch:
+		return "gather the minimum authoritative research needed for the outcome"
+	case taskstate.EvidenceKindMeasurement:
+		return "measure the current behavior and compare it before changing the outcome"
+	case taskstate.EvidenceKindVisual:
+		return "inspect the rendered behavior and interaction states"
+	case taskstate.EvidenceKindTests:
+		return "run targeted and broader verification appropriate to the outcome"
+	case taskstate.EvidenceKindApproval:
+		return "obtain explicit approval before high-risk actions"
+	default:
+		return ""
+	}
+}
+
 func normalizeEvidenceState(state string) string {
+	state = strings.ToUpper(strings.TrimSpace(state))
 	switch state {
-	case "BLOCKED", "NEEDS_VERIFICATION", "ATTENTION", "UNKNOWN", "UNVERIFIED":
+	case "PASS", "FAIL", "INCONCLUSIVE", "SKIPPED", "PROGRESS_ONLY", "BLOCKED", "NEEDS_VERIFICATION", "NEEDS_EVIDENCE", "ATTENTION", "UNKNOWN", "UNVERIFIED":
 		return state
 	default:
 		return "UNVERIFIED"
