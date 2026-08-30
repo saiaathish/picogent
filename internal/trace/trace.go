@@ -52,7 +52,7 @@ func dir() (string, error) {
 func Open(workspace string) (*Log, error) {
 	d, err := dir()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("prepare trace directory: %w", err)
 	}
 	id := projects.IDForPath(workspace)
 	if id == "" {
@@ -65,7 +65,7 @@ func Open(workspace string) (*Log, error) {
 	// coordinate the writers.
 	unlock, err := acquireTraceLock(path)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lock trace log: %w", err)
 	}
 	defer func() { _ = unlock() }()
 	seq := 0
@@ -77,7 +77,7 @@ func Open(workspace string) (*Log, error) {
 			}
 		}
 	} else if !os.IsNotExist(err) {
-		return nil, err
+		return nil, fmt.Errorf("read trace log: %w", err)
 	}
 	return &Log{
 		path: path,
