@@ -266,6 +266,20 @@ func TestDisplayErrorRedactsCredentialShapedCause(t *testing.T) {
 	}
 }
 
+func TestDisplayErrorFlattensTerminalControl(t *testing.T) {
+	const secret = "headless-terminal-secret"
+	got := displayError(errors.New("provider failed\n\x1b[31mapi_key=" + secret))
+	if strings.Contains(got, secret) {
+		t.Fatalf("display error leaked secret: %q", got)
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\n") || strings.Contains(got, "[31m") {
+		t.Fatalf("display error retained terminal control: %q", got)
+	}
+	if !strings.Contains(got, "provider failed") || !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("display error lost source or redaction marker: %q", got)
+	}
+}
+
 func TestHeadlessUnverifiedErrorRedactsEvidence(t *testing.T) {
 	const secret = "headless-verification-secret"
 	err := newHeadlessUnverifiedError("verify output\napi_key=" + secret)

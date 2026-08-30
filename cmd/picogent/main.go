@@ -775,5 +775,5 @@ func displayError(err error) string {
 	if err == nil {
 		return ""
 	}
-	return redact.Text(err.Error())
+	return redact.Diagnostic(err.Error(), 240)
 }
