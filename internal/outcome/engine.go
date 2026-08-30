@@ -306,6 +306,10 @@ func EngineInstruction(contract Contract) string {
 			encoded, _ := json.Marshal(contract.Turn.LastHypothesis)
 			line("Turn hypothesis data: " + string(encoded))
 		}
+		if len(contract.Turn.LastTurnChangedFiles) > 0 || contract.Turn.LastTurnChangedFilesCapped {
+			encoded, _ := json.Marshal(contract.Turn.LastTurnChangedFiles)
+			line("Turn side effects data: changed_files=" + string(encoded) + " capped=" + boolWord(contract.Turn.LastTurnChangedFilesCapped))
+		}
 	}
 	line("Outcome state: " + string(contract.State))
 	line("Completion proof ready: " + boolWord(contract.CompletionReady))

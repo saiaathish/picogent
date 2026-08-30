@@ -68,6 +68,35 @@ func TestDurableContextTreatsInstructionLikeStateAsQuotedData(t *testing.T) {
 	}
 }
 
+func TestDurableContextIncludesLastTurnRecoveryMetadata(t *testing.T) {
+	task := &taskstate.Task{
+		Goal:   "recover the requested change",
+		Status: taskstate.StatusWorking,
+	}
+	sequence, ok := task.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok {
+		t.Fatal("turn did not start")
+	}
+	task.RecordChanged("./internal/recovery.go")
+	if !task.InterruptTurn(sequence, taskstate.TurnRouteRecover, "turn canceled after a file mutation", "UNVERIFIED", taskstate.StopCanceled, 2, 1) {
+		t.Fatal("turn did not close as interrupted")
+	}
+
+	got := renderDurableTaskContext(task)
+	for _, marker := range []string{
+		`task.last_turn.state: "interrupted"`,
+		`task.last_turn.route: "recover"`,
+		`task.last_turn.sequence: 1`,
+		`task.last_turn.stop_reason: "canceled"`,
+		`task.last_turn.changed_files:`,
+		`"internal/recovery.go"`,
+	} {
+		if !strings.Contains(got, marker) {
+			t.Fatalf("durable context missing %q: %s", marker, got)
+		}
+	}
+}
+
 func TestDurableContextPrioritizesStateAndCapSignalBeforeRetainedFiles(t *testing.T) {
 	task := &taskstate.Task{
 		Goal:               "primary outcome",
