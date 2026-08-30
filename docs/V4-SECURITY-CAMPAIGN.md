@@ -105,6 +105,10 @@ and cleanup never unlinks a replacement inode.
   file's complete bytes and mode are published atomically; the sequence across
   multiple files is intentionally not a multi-file transaction, and hostile
   same-UID pathname races remain outside the helper's guarantee.
+- A Unix checkpoint stress test now exercises both restore writes and deletion
+  while an ancestor directory is repeatedly replaced; outside sentinel files
+  remain unchanged. This is local hosted-Linux evidence, not Windows hostile
+  runtime evidence or a general same-UID race guarantee.
 - Secure opens, atomic writes, and removals reject regular files with multiple
   hard links on Unix and Windows. Checkpoint restore also rejects a post-seal
   replacement hard link before mutating any path; this prevents a workspace
@@ -116,8 +120,9 @@ and cleanup never unlinks a replacement inode.
   atomically and only marks a mutation applied after that publication or
   deletion succeeds. Rollback still uses in-memory post-turn states and is
   best-effort. The operation is intentionally not a multi-file atomic
-  transaction; hostile-runtime restore stress and cross-platform deletion
-  evidence remain required before this is a broad checkpoint safety claim.
+  transaction; hostile-runtime restore stress beyond this Unix case and
+  cross-platform deletion evidence remain required before this is a broad
+  checkpoint safety claim.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
 - The npm provider packages and their platform-specific optional packages are
