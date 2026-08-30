@@ -137,6 +137,8 @@ close the open or unrecorded risks below.
 | #130 | Cross-platform hardlink protection for created-path deletion | `aba55a5` | `b2fd72f` | `33309325110` | `33309483503` |
 | #131 | Security evidence ledger | `96ac210` | `703016d1` | `33309894324` | `33310008305` |
 | #132 | Windows hostile-runtime restore stress coverage | `b7f612b` | `d1572a2` | `33310394597` | `33310553558` |
+| #133 | Recorded Windows restore stress evidence | `5d4d695` | `2d57d76` | `33310730875` | `33310844052` |
+| #135 | Transient Windows session replacement retry | `be5b6db` | `556da3e` | `33311631871` | `33311763251` |
 
 ## Open or unrecorded risks
 
