@@ -25,6 +25,19 @@ still produces `UNVERIFIED` when exact SHA, clean provenance, complete output,
 or required coverage is not proven. `UNVERIFIED` exists only in this evidence
 projection and is not an existing verifier status.
 
+## Hosted CI evidence
+
+The `release-evidence` job in `.github/workflows/ci.yml` runs after the
+cross-platform test matrix. For pull requests it checks out
+`github.event.pull_request.head.sha`, rather than GitHub's synthetic merge ref,
+and passes that same full commit ID to `cmd/verify-manifest`. Pushes to `main`
+use the pushed commit SHA.
+
+The job uploads `verification-manifest.json` as a bounded Actions artifact.
+The artifact is review evidence for the exact tested tree; it is not, by
+itself, a release approval. In particular, the manifest can remain
+`UNVERIFIED` when coverage or another provenance requirement is not collected.
+
 ## Local benchmark evidence
 
 Command:
