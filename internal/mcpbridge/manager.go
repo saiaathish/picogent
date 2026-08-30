@@ -651,8 +651,17 @@ func (m *Manager) ownsToolLocked(t Tool) bool {
 }
 
 func (m *Manager) Call(ctx context.Context, t Tool, args string) (string, error) {
+	result, err := m.CallDetailed(ctx, t, args)
+	return result.Text, err
+}
+
+// CallDetailed invokes one attached MCP tool and retains bounded metadata about
+// multimodal results. Text remains redacted and clipped by formatResult; image
+// bytes are kept only in memory so a typed browser producer can pass a live
+// screenshot to the next model request without putting it in durable history.
+func (m *Manager) CallDetailed(ctx context.Context, t Tool, args string) (CallResult, error) {
 	if m == nil {
-		return "", errors.New("no MCP manager")
+		return CallResult{}, errors.New("no MCP manager")
 	}
 	root := m.rootManager()
 	root.callMu.RLock()
@@ -663,10 +672,10 @@ func (m *Manager) Call(ctx context.Context, t Tool, args string) (string, error)
 	owned := usable && root.ownsToolLocked(t)
 	root.mu.Unlock()
 	if !usable {
-		return "", ErrManagerClosed
+		return CallResult{}, ErrManagerClosed
 	}
 	if !owned {
-		return "", errors.New("MCP tool is not attached to manager")
+		return CallResult{}, errors.New("MCP tool is not attached to manager")
 	}
 	args = strings.TrimSpace(args)
 	if args == "" {
@@ -674,19 +683,19 @@ func (m *Manager) Call(ctx context.Context, t Tool, args string) (string, error)
 	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(args), &payload); err != nil {
-		return "", fmt.Errorf("invalid arguments: %w", err)
+		return CallResult{}, fmt.Errorf("invalid arguments: %w", err)
 	}
 	if t.session == nil {
-		return "", errors.New("MCP tool session is unavailable")
+		return CallResult{}, errors.New("MCP tool session is unavailable")
 	}
 	res, err := t.session.CallTool(ctx, &mcp.CallToolParams{
 		Name:      t.Original,
 		Arguments: payload,
 	})
 	if err != nil {
-		return "", err
+		return CallResult{}, err
 	}
-	return formatResult(res), nil
+	return inspectCallResult(res), nil
 }
 
 func formatResult(res *mcp.CallToolResult) string {
