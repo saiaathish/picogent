@@ -107,21 +107,6 @@ const (
 	// canonicalized to EvidenceKindTests when evidence is stored.
 	EvidenceKindTest EvidenceKind = "test"
 )
-
-// ProofKind is an explicit name for the same bounded evidence vocabulary. It
-// keeps callers that think in terms of proof readable without creating a
-// second set of serialized values.
-type ProofKind = EvidenceKind
-
-const (
-	ProofVerification = EvidenceKindVerification
-	ProofResearch     = EvidenceKindResearch
-	ProofMeasurement  = EvidenceKindMeasurement
-	ProofVisual       = EvidenceKindVisual
-	ProofTests        = EvidenceKindTests
-	ProofApproval     = EvidenceKindApproval
-)
-
 // EvidenceOrigin identifies the mechanism that produced a proof record. Only
 // known origin/kind pairs can satisfy an inferred quality requirement; model
 // narration and arbitrary repository text are never trusted origins.
@@ -141,21 +126,6 @@ const (
 	EvidenceOriginUser             EvidenceOrigin = "user"
 	EvidenceOriginSystem           EvidenceOrigin = "system"
 	EvidenceOriginModel            EvidenceOrigin = "model"
-)
-
-// Short aliases make the trusted vocabulary convenient at recording sites.
-const (
-	OriginVerifier         = EvidenceOriginVerifier
-	OriginWorkspaceTool    = EvidenceOriginWorkspaceTool
-	OriginResearchTool     = EvidenceOriginResearchTool
-	OriginExternalDocs     = EvidenceOriginExternalDocs
-	OriginMeasurementTool  = EvidenceOriginMeasurementTool
-	OriginBenchmark        = EvidenceOriginBenchmark
-	OriginBrowser          = EvidenceOriginBrowser
-	OriginVisualInspection = EvidenceOriginVisualInspection
-	OriginTestRunner       = EvidenceOriginTestRunner
-	OriginUserApproval     = EvidenceOriginUserApproval
-	OriginUser             = EvidenceOriginUser
 )
 
 // Valid reports whether the evidence kind is part of the bounded vocabulary.
@@ -264,10 +234,6 @@ type RequirementEvidenceState struct {
 	Origin  EvidenceOrigin `json:"origin,omitempty"`
 	Current bool           `json:"current"`
 }
-
-// RequirementState is a short compatibility alias for callers that use the
-// term requirement rather than evidence in their diagnostics.
-type RequirementState = RequirementEvidenceState
 
 // CompletionCheck is the durable explanation of the completion predicate. It
 // exposes the exact missing criteria and inferred proof requirements instead
@@ -1131,18 +1097,6 @@ func (t *Task) RecordCriterionTestsEvidence(index int, status, summary, referenc
 	}, true)
 }
 
-// RecordRequirementEvidence is the origin-first spelling used by integrations
-// that treat the producer as the primary trust boundary.
-func (t *Task) RecordRequirementEvidence(kind EvidenceKind, origin EvidenceOrigin, status, summary, reference string) {
-	t.AddRequirementEvidence(kind, status, origin, summary, reference)
-}
-
-// AddProofEvidence is a concise alias for recording non-criterion proof with a
-// typed kind and origin.
-func (t *Task) AddProofEvidence(kind EvidenceKind, origin EvidenceOrigin, status, summary, reference string) {
-	t.AddRequirementEvidence(kind, status, origin, summary, reference)
-}
-
 func sameEvidence(left, right Evidence) bool {
 	leftCriterion, rightCriterion := -1, -1
 	if left.CriterionIndex != nil {
@@ -1182,12 +1136,6 @@ func (t *Task) RequiredEvidenceKinds() []EvidenceKind {
 		kinds = append(kinds, EvidenceKindApproval)
 	}
 	return kinds
-}
-
-// RequiredProofKinds is an explicit proof-oriented alias for callers that do
-// not need to distinguish intent requirements from their evidence kinds.
-func (t *Task) RequiredProofKinds() []ProofKind {
-	return t.RequiredEvidenceKinds()
 }
 
 // CriterionAt returns the durable criterion at index, including the legacy
