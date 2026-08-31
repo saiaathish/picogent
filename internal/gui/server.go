@@ -2168,7 +2168,7 @@ func (h *guiHandler) endTurn(result agent.Result) {
 	if !h.live() {
 		return
 	}
-	_ = learn.Save(h.learn)
+	_ = learn.Save(&h.learn)
 	h.emit(event{Type: "overview", Text: "refresh"})
 	h.s.cleanupExtensionPool()
 	h.s.reflectAfterTurn(h.prompt, result)
