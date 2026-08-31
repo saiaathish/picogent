@@ -1116,12 +1116,14 @@ async function deleteThread(id) {
   else await loadThreads();
 }
 
-async function refresh() {
+async function refresh(reconcileHistory = false) {
   const epoch = viewEpoch;
   const s = await (await fetch("/api/state")).json();
   if (epoch !== viewEpoch) return;
   renderTopContext(s);
-  sessionId = s.session_id || sessionId;
+  const nextSessionID = s.session_id || sessionId;
+  const sessionChanged = nextSessionID !== sessionId;
+  sessionId = nextSessionID;
   currentMode = s.mode || "safe";
   currentTaskMode = s.task_mode || "agent";
   taskModeTemporary = !!s.task_mode_temporary;
@@ -1150,7 +1152,9 @@ async function refresh() {
   } else if (!s.busy) {
     permEl.classList.remove("is-on");
   }
-  if (logEl.children.length === 0 && s.messages?.length) {
+  if (reconcileHistory || sessionChanged) {
+    replayMessages(Array.isArray(s.messages) ? s.messages : []);
+  } else if (logEl.children.length === 0 && s.messages?.length) {
     replayMessages(s.messages);
   }
   busy = !!s.busy;
@@ -2052,7 +2056,7 @@ function connectEvents() {
   if (ev) ev.close();
   ev = new EventSource("/api/events");
   ev.onopen = () => {
-    refresh().catch(() => {});
+    refresh(true).catch(() => {});
   };
   ev.onmessage = (m) => {
     const e = JSON.parse(m.data);

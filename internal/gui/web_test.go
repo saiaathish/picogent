@@ -40,6 +40,12 @@ func TestEmbeddedIndex(t *testing.T) {
 	if !strings.Contains(string(js), "statusAnnouncerEl.textContent = text") {
 		t.Fatal("gui does not announce accepted-turn status without moving focus")
 	}
+	if !strings.Contains(string(js), "async function refresh(reconcileHistory = false)") ||
+		!strings.Contains(string(js), "const sessionChanged = nextSessionID !== sessionId;") ||
+		!strings.Contains(string(js), "if (reconcileHistory || sessionChanged)") ||
+		!strings.Contains(string(js), "refresh(true).catch(() => {});") {
+		t.Fatal("gui reconnect refresh does not reconcile durable session history")
+	}
 	if !strings.Contains(string(js), "function verificationPresentation(status)") ||
 		!strings.Contains(string(js), `case "pass":`) ||
 		!strings.Contains(string(js), `case "done": return { className: "is-pass", label: "PASS" }`) ||
