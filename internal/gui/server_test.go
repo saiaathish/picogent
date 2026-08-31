@@ -1719,9 +1719,14 @@ func TestSnapshotIncludesDurableTaskForCurrentSession(t *testing.T) {
 	ag.SetTaskSession("session-current")
 	s := &server{ag: ag, sessionID: "session-current"}
 
-	got, ok := s.snapshot()["task"].(*taskstate.Task)
+	state := s.snapshot()
+	got, ok := state["task"].(*taskstate.Task)
 	if !ok || got == nil || got.ID != task.ID {
-		t.Fatalf("snapshot task = %#v", s.snapshot()["task"])
+		t.Fatalf("snapshot task = %#v", state["task"])
+	}
+	proof, ok := state["completion"].(*taskstate.CompletionCheck)
+	if !ok || proof == nil || !reflect.DeepEqual(*proof, agent.CompletionProof(task)) {
+		t.Fatalf("snapshot completion = %#v, want shared proof", state["completion"])
 	}
 }
 

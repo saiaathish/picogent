@@ -650,6 +650,28 @@ func TestTaskProgressMessageCarriesSharedCompletionProof(t *testing.T) {
 	}
 }
 
+func TestAcceptedTaskProgressStoresCompletionProof(t *testing.T) {
+	task := &taskstate.Task{SessionID: "session-current", Status: taskstate.StatusWorking, Goal: "finish the loop"}
+	proof := agent.CompletionProof(task)
+	m := &model{
+		sessionID: "session-current",
+		turnID:    4,
+		task:      &taskstate.Task{SessionID: "session-current", Goal: "old task"},
+		vp:        viewport.New(80, 20),
+		lines:     []logLine{{Kind: "system", Text: "current"}},
+	}
+
+	_, _ = m.Update(taskProgressMsg{
+		task:       task,
+		completion: proof,
+		turnID:     4,
+		sessionID:  "session-current",
+	})
+	if m.task != task || !reflect.DeepEqual(m.completion, proof) {
+		t.Fatalf("accepted progress = task %#v proof %#v, want task %#v proof %#v", m.task, m.completion, task, proof)
+	}
+}
+
 func TestTemporaryScopeModeVisibleInHeader(t *testing.T) {
 	mode := agent.TaskPlan
 	m, err := newModel(config.Default(), nil)

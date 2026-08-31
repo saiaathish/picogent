@@ -73,3 +73,16 @@ test("summarizes durable completion proof without exposing evidence text", () =>
   }), "Completion proof pending: required criterion evidence is incomplete (2 required criteria missing, 1 quality requirement missing, workspace verification is not current)");
   assert.equal(completionProofSummary(null), "");
 });
+
+test("handles incomplete proof fallback and singular details", () => {
+  assert.equal(completionProofSummary({
+    ready: false,
+    reason: "  ",
+    missing_criteria: [1],
+    missing_requirements: ["tests"],
+    verification_required: true,
+    verification_current: true,
+  }), "Completion proof pending: completion proof is incomplete (1 required criterion missing, 1 quality requirement missing)");
+  assert.equal(completionProofSummary({ ready: false }), "Completion proof pending: completion proof is incomplete");
+  assert.equal(completionProofSummary("untrusted"), "");
+});
