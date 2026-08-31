@@ -12,11 +12,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -153,10 +155,22 @@ type server struct {
 }
 
 func Run() error {
-	cfg, a, err := app.Load(".")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return RunContext(ctx)
+}
+
+// RunContext owns the GUI process lifetime. A canceled context closes the
+// listener, stops admitting work, and lets the agent release MCP resources.
+func RunContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cfg, a, err := app.LoadContext(ctx, ".")
 	if err != nil {
 		return err
 	}
+	defer a.Close()
 	cfg.Extensions.InstalledSkills = extensions.LoadDeveloperExtensions(cfg.Extensions.InstalledSkills)
 	_ = config.Save(cfg)
 	if a != nil {
@@ -194,7 +208,60 @@ func Run() error {
 	if os.Getenv("PICOGENT_NO_BROWSER") == "" {
 		go openBrowser(url)
 	}
-	return http.Serve(ln, s.Handler())
+	return serveContext(ctx, ln, s.Handler(), func() {
+		s.mu.Lock()
+		s.abortTurnLocked()
+		s.mu.Unlock()
+	})
+}
+
+// serveContext adapts net/http's blocking Serve loop to an owning context.
+// The callback runs exactly once before shutdown so callers can cancel
+// background work that is not itself an HTTP handler.
+func serveContext(ctx context.Context, ln net.Listener, handler http.Handler, onShutdown func()) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ln == nil {
+		return errors.New("GUI listener is nil")
+	}
+	if handler == nil {
+		handler = http.NotFoundHandler()
+	}
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			if onShutdown != nil {
+				onShutdown()
+			}
+		})
+	}
+	httpServer := &http.Server{Handler: handler}
+	defer httpServer.Close()
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- httpServer.Serve(ln) }()
+
+	select {
+	case err := <-serveErr:
+		shutdown()
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdown()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownErr := httpServer.Shutdown(shutdownCtx)
+		cancel()
+		serveErr := <-serveErr
+		if shutdownErr != nil {
+			return shutdownErr
+		}
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			return serveErr
+		}
+		return nil
+	}
 }
 
 func loopbackListenAddress(addr string) bool {

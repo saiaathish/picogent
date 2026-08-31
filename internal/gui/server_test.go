@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,6 +99,35 @@ func TestGUIOnlyAcceptsLoopbackListenAddresses(t *testing.T) {
 		if got := loopbackListenAddress(tc.addr); got != tc.want {
 			t.Errorf("loopbackListenAddress(%q) = %v, want %v", tc.addr, got, tc.want)
 		}
+	}
+}
+
+func TestServeContextShutsDownListenerAndRunsCleanupOnce(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var cleanupCalls atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		done <- serveContext(ctx, ln, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), func() {
+			cleanupCalls.Add(1)
+		})
+	}()
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveContext cancellation error = %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("serveContext did not return after cancellation")
+	}
+	if got := cleanupCalls.Load(); got != 1 {
+		t.Fatalf("shutdown callback calls = %d, want 1", got)
 	}
 }
 
