@@ -171,7 +171,7 @@ func TestGUIAPIRejectsMethodMismatches(t *testing.T) {
 		"/api/chat", "/api/permission", "/api/mode", "/api/task-mode", "/api/cancel",
 		"/api/reset", "/api/sessions", "/api/file", "/api/settings", "/api/router", "/api/projects",
 		"/api/folder/pick", "/api/files/pick", "/api/overview", "/api/evolve",
-		"/api/diff", "/api/extensions", "/api/trace", "/api/help", "/api/sidechat",
+		"/api/diff", "/api/extensions", "/api/trace", "/api/help",
 		"/api/prompts", "/api/events",
 	}
 	for _, path := range paths {
@@ -205,6 +205,53 @@ func TestGUIAPIRejectsMethodMismatches(t *testing.T) {
 	}
 }
 
+func TestGUIAPIRemovesSideChatRoute(t *testing.T) {
+	s := newLoopbackAPITestServer(t)
+	h := s.Handler()
+	for _, tc := range []struct {
+		method string
+		want   int
+		body   string
+	}{
+		{method: http.MethodGet, want: http.StatusNotFound},
+		{method: http.MethodPost, want: http.StatusNotFound, body: `{"prompt":"status"}`},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			req := loopbackAPIRequest(tc.method, "/api/sidechat", tc.body)
+			res := httptest.NewRecorder()
+			h.ServeHTTP(res, req)
+			if res.Code != tc.want {
+				t.Fatalf("status = %d, want %d", res.Code, tc.want)
+			}
+		})
+	}
+}
+
+func TestGUIAPIPromptsRejectSideKind(t *testing.T) {
+	s := newLoopbackAPITestServer(t)
+	h := s.Handler()
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: "/api/prompts?kind=side"},
+		{method: http.MethodPost, path: "/api/prompts", body: `{"kind":"side"}`},
+	} {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			req := loopbackAPIRequest(tc.method, tc.path, tc.body)
+			if tc.method == http.MethodPost {
+				req.Header.Set("Origin", "http://"+loopbackTestHost)
+			}
+			res := httptest.NewRecorder()
+			h.ServeHTTP(res, req)
+			if res.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d", res.Code, http.StatusBadRequest)
+			}
+		})
+	}
+}
+
 func TestGUIAPIRejectsSimpleCrossSiteMutations(t *testing.T) {
 	s := newLoopbackAPITestServer(t)
 	h := s.Handler()
@@ -233,15 +280,15 @@ func TestGUIAPIRejectsSimpleCrossSiteMutations(t *testing.T) {
 func TestGUIAPIReadEndpointsDoNotPopulatePromptCaches(t *testing.T) {
 	s := newLoopbackAPITestServer(t)
 	h := s.Handler()
-	for _, path := range []string{"/api/prompts?kind=main", "/api/prompts?kind=main&refresh=1", "/api/sidechat", "/api/projects"} {
+	for _, path := range []string{"/api/prompts?kind=main", "/api/prompts?kind=main&refresh=1", "/api/projects"} {
 		t.Run(path, func(t *testing.T) {
 			res := httptest.NewRecorder()
 			h.ServeHTTP(res, loopbackAPIRequest(http.MethodGet, path, ""))
 			if res.Code != http.StatusOK {
 				t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
 			}
-			if len(s.mainRecs) != 0 || len(s.sideRecs) != 0 {
-				t.Fatalf("GET %s populated prompt caches: main=%d side=%d", path, len(s.mainRecs), len(s.sideRecs))
+			if len(s.mainRecs) != 0 {
+				t.Fatalf("GET %s populated prompt cache: main=%d", path, len(s.mainRecs))
 			}
 		})
 	}

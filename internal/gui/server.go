@@ -148,21 +148,15 @@ type server struct {
 	// between path resolution and the descriptor-safe open.
 	openPreview func(string, string) (*os.File, error)
 
-	// Side chat companion (Codex-style)
-	sideHist     []llm.Message
-	sideBusy     bool
 	turnStarted  time.Time
 	turnPrompt   string
 	turnReads    int
 	turnSearches int
 	turnEdits    int
 
-	// AI prompt recommendations (main hero + side chips)
+	// AI prompt recommendations for the primary chat hero.
 	mainRecs   []promptRec
-	sideRecs   []promptRec
 	mainRecsAt time.Time
-	sideRecsAt time.Time
-	recsKey    string
 }
 
 func Run() error {
@@ -446,7 +440,6 @@ func (s *server) Handler() http.Handler {
 	api("/api/extensions", []string{http.MethodGet, http.MethodPost}, s.extensionsAPI)
 	api("/api/trace", []string{http.MethodGet}, s.traceAPI)
 	api("/api/help", []string{http.MethodGet, http.MethodPost}, s.helpAPI)
-	api("/api/sidechat", []string{http.MethodGet, http.MethodPost}, s.sidechatAPI)
 	api("/api/prompts", []string{http.MethodGet, http.MethodPost}, s.promptsAPI)
 	api("/api/events", []string{http.MethodGet}, s.events)
 	mux.Handle("/", noCacheStatic(http.FileServer(http.FS(static))))
@@ -651,7 +644,6 @@ func (s *server) newSession() (string, error, error) {
 	s.mu.Lock()
 	s.sessionID = nextID
 	s.hist = nil
-	s.sideHist = nil
 	s.liveTask = agent.TaskAgent
 	if next != nil {
 		s.ag = next

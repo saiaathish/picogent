@@ -27,11 +27,15 @@ func (s *server) promptsAPI(w http.ResponseWriter, r *http.Request) {
 	if kind == "" {
 		kind = "main"
 	}
+	if kind != "main" {
+		writeGUIError(w, "main prompts only", http.StatusBadRequest)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		// GET is deliberately cache-only: a browser navigation or speculative
 		// preload must never start a model call or mutate recommendation state.
-		recs := s.cachedPromptRecs(kind)
+		recs := s.cachedPromptRecs()
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"kind":    kind,
@@ -46,7 +50,11 @@ func (s *server) promptsAPI(w http.ResponseWriter, r *http.Request) {
 		if req.Kind == "" {
 			req.Kind = kind
 		}
-		recs := s.getPromptRecs(req.Kind, req.Refresh)
+		if req.Kind != "main" {
+			writeGUIError(w, "main prompts only", http.StatusBadRequest)
+			return
+		}
+		recs := s.getPromptRecs(req.Refresh)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"kind":    req.Kind,
@@ -57,44 +65,26 @@ func (s *server) promptsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *server) cachedPromptRecs(kind string) []promptRec {
+func (s *server) cachedPromptRecs() []promptRec {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if kind == "side" {
-		return append([]promptRec(nil), s.sideRecs...)
-	}
 	return append([]promptRec(nil), s.mainRecs...)
 }
 
-func (s *server) getPromptRecs(kind string, force bool) []promptRec {
+func (s *server) getPromptRecs(force bool) []promptRec {
 	s.mu.Lock()
-	ws := s.cfg.Workspace
-	sid := s.sessionID
-	var cached []promptRec
-	var cachedAt time.Time
-	if kind == "side" {
-		cached = append([]promptRec(nil), s.sideRecs...)
-		cachedAt = s.sideRecsAt
-	} else {
-		cached = append([]promptRec(nil), s.mainRecs...)
-		cachedAt = s.mainRecsAt
-	}
+	cached := append([]promptRec(nil), s.mainRecs...)
+	cachedAt := s.mainRecsAt
 	s.mu.Unlock()
 
 	if !force && len(cached) > 0 && time.Since(cachedAt) < 12*time.Minute {
 		return cached
 	}
 
-	recs := s.generatePromptRecs(kind)
+	recs := s.generatePromptRecs()
 	s.mu.Lock()
-	if kind == "side" {
-		s.sideRecs = recs
-		s.sideRecsAt = time.Now()
-	} else {
-		s.mainRecs = recs
-		s.mainRecsAt = time.Now()
-	}
-	s.recsKey = ws + "|" + sid
+	s.mainRecs = recs
+	s.mainRecsAt = time.Now()
 	s.mu.Unlock()
 	return recs
 }
@@ -102,37 +92,30 @@ func (s *server) getPromptRecs(kind string, force bool) []promptRec {
 func (s *server) invalidatePromptRecs() {
 	s.mu.Lock()
 	s.mainRecs = nil
-	s.sideRecs = nil
 	s.mainRecsAt = time.Time{}
-	s.sideRecsAt = time.Time{}
-	s.recsKey = ""
 	s.mu.Unlock()
 }
 
-func (s *server) generatePromptRecs(kind string) []promptRec {
+func (s *server) generatePromptRecs() []promptRec {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 
-	ctxBlock := s.promptRecContext(kind)
+	ctxBlock := s.promptRecContext()
 	raw, err := s.lightChat(ctx, []llm.Message{
-		{Role: "system", Content: promptRecSystem(kind)},
+		{Role: "system", Content: promptRecSystem()},
 		{Role: "user", Content: "Repo context:\n" + ctxBlock + "\n\nReturn JSON only."},
-	}, false)
+	})
 	if err == nil {
 		if recs := parsePromptRecs(raw); len(recs) > 0 {
 			return recs
 		}
 	}
-	return heuristicPromptRecs(kind, ctxBlock, s.buildAgentStatus())
+	return heuristicPromptRecs(ctxBlock, s.buildAgentStatus())
 }
 
-func promptRecSystem(kind string) string {
-	n := 4
-	focus := "actionable coding tasks the user might want next in the main chat"
-	if kind == "side" {
-		n = 4
-		focus = "short companion questions about status, the current goal/chat, or how to use Picogent for this repo"
-	}
+func promptRecSystem() string {
+	const n = 4
+	const focus = "actionable coding tasks the user might want next in the main chat"
 	return fmt.Sprintf(`You recommend the next prompts a developer should try — like “recommended for you” on a streaming app, but for coding tasks.
 
 Return ONLY a JSON array of %d objects:
@@ -147,7 +130,7 @@ Rules:
 - Keep each prompt under 160 characters.`, n, focus)
 }
 
-func (s *server) promptRecContext(kind string) string {
+func (s *server) promptRecContext() string {
 	st := s.buildAgentStatus()
 	store, _ := learn.Load(st.Workspace)
 	var b strings.Builder
@@ -175,10 +158,8 @@ func (s *server) promptRecContext(kind string) string {
 	for _, f := range peekRepoFiles(st.Workspace, 14) {
 		b.WriteString("- " + f + "\n")
 	}
-	if kind == "side" || kind == "main" {
-		b.WriteString("\nrecent_chat:\n")
-		b.WriteString(st.ChatSummary)
-	}
+	b.WriteString("\nrecent_chat:\n")
+	b.WriteString(st.ChatSummary)
 	return b.String()
 }
 
@@ -267,22 +248,9 @@ func parsePromptRecs(raw string) []promptRec {
 	return out
 }
 
-func heuristicPromptRecs(kind string, ctx string, st agentStatus) []promptRec {
+func heuristicPromptRecs(ctx string, st agentStatus) []promptRec {
 	lower := strings.ToLower(ctx + " " + st.Goal + " " + st.ChatSummary)
 	var out []promptRec
-	if kind == "side" {
-		if st.Busy {
-			out = append(out, promptRec{Title: "Current turn", Subtitle: "What is running right now", Prompt: "What's the agent doing right now?"})
-			out = append(out, promptRec{Title: "Time left", Subtitle: "Rough ETA for this turn", Prompt: "How long will this take?"})
-		} else if st.Goal != "" {
-			out = append(out, promptRec{Title: "Goal status", Subtitle: "Where we are vs the goal", Prompt: "What's left to finish my goal?"})
-		} else {
-			out = append(out, promptRec{Title: "Chat summary", Subtitle: "Catch me up", Prompt: "Summarize this chat in a few bullets."})
-		}
-		out = append(out, promptRec{Title: "Safe vs Fast", Subtitle: "Permission modes", Prompt: "How do Safe and Fast differ in Picogent?"})
-		out = append(out, promptRec{Title: "Next move", Subtitle: "What should I ask next", Prompt: "Based on this project, what should I ask the main agent to do next?"})
-		return out[:min(4, len(out))]
-	}
 
 	if strings.Contains(lower, "go.mod") || strings.Contains(lower, ".go") {
 		out = append(out, promptRec{Title: "Go tests", Subtitle: "Find and fix failures", Prompt: "Run the Go tests and fix anything that fails."})
@@ -313,12 +281,6 @@ func heuristicPromptRecs(kind string, ctx string, st agentStatus) []promptRec {
 	return out
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 func (s *server) lightModelID() string {
 	s.mu.Lock()
@@ -350,13 +312,12 @@ func (s *server) lightClient() llm.Client {
 }
 
 // lightChat calls the most token-efficient model directly (no router escalation).
-func (s *server) lightChat(ctx context.Context, msgs []llm.Message, stream bool) (string, error) {
+func (s *server) lightChat(ctx context.Context, msgs []llm.Message) (string, error) {
 	client := s.lightClient()
 	if client == nil {
 		return "", fmt.Errorf("no llm")
 	}
 	model := s.lightModelID()
-	var buf strings.Builder
 	req := llm.ChatRequest{
 		Model:     model,
 		Messages:  msgs,
@@ -364,23 +325,11 @@ func (s *server) lightChat(ctx context.Context, msgs []llm.Message, stream bool)
 		ReadOnly:  true,
 		Reasoning: llm.ReasonNone,
 	}
-	if stream {
-		req.OnDelta = func(delta string) {
-			if delta == "" {
-				return
-			}
-			buf.WriteString(delta)
-			s.emit(event{Type: "side_delta", Text: delta})
-		}
-	}
 	resp, err := client.Chat(ctx, req)
 	if err != nil {
 		return "", err
 	}
 	text := strings.TrimSpace(resp.Message.Content)
-	if text == "" {
-		text = strings.TrimSpace(buf.String())
-	}
 	if text == "" {
 		return "", fmt.Errorf("empty reply")
 	}
