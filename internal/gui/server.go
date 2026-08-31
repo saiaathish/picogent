@@ -2464,20 +2464,24 @@ func messagesToTranscript(msgs []llm.Message) []transcriptLine {
 	for _, m := range msgs {
 		switch m.Role {
 		case "user":
-			if t := strings.TrimSpace(m.Content); t != "" {
+			if t := transcriptText(m.Content, 0); t != "" {
 				out = append(out, transcriptLine{Role: "user", Text: t})
 			}
 		case "assistant":
-			if t := strings.TrimSpace(m.Content); t != "" {
+			if t := transcriptText(m.Content, 0); t != "" {
 				out = append(out, transcriptLine{Role: "assistant", Text: t})
 			}
 		case "tool":
-			if t := strings.TrimSpace(redact.Diagnostic(m.Content, 400)); t != "" {
+			if t := transcriptText(m.Content, 400); t != "" {
 				out = append(out, transcriptLine{Role: "tool", Text: t})
 			}
 		}
 	}
 	return out
+}
+
+func transcriptText(value string, limit int) string {
+	return strings.TrimSpace(redact.Diagnostic(value, limit))
 }
 
 func (s *server) sessions(w http.ResponseWriter, r *http.Request) {

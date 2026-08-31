@@ -1653,15 +1653,20 @@ func TestGUIHTTPErrorSanitizesUntrustedText(t *testing.T) {
 func TestGUITranscriptProjectionRedactsLiveToolOutput(t *testing.T) {
 	const secret = "gui-transcript-secret"
 	lines := messagesToTranscript([]llm.Message{
-		{Role: "user", Content: "ordinary user text"},
-		{Role: "assistant", Content: "ordinary assistant text"},
+		{Role: "user", Content: "ordinary user text; token=" + secret},
+		{Role: "assistant", Content: "ordinary assistant text; password=" + secret},
 		{Role: "tool", Content: "tool output\n\x1b[31maccess_token=" + secret},
 	})
 	if len(lines) != 3 {
 		t.Fatalf("transcript lines = %#v, want user, assistant, and tool", lines)
 	}
-	if lines[0].Text != "ordinary user text" || lines[1].Text != "ordinary assistant text" {
+	if strings.Contains(lines[0].Text, secret) || strings.Contains(lines[1].Text, secret) {
 		t.Fatalf("ordinary transcript text changed = %#v", lines[:2])
+	}
+	for _, text := range []string{lines[0].Text, lines[1].Text} {
+		if strings.ContainsAny(text, "\x1b\n\r") || !strings.Contains(text, "[REDACTED]") {
+			t.Fatalf("live transcript role was not sanitized: %q", text)
+		}
 	}
 	toolText := lines[2].Text
 	if strings.Contains(toolText, secret) {
