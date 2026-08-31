@@ -145,6 +145,39 @@ func TestCaptureGitProvenance(t *testing.T) {
 	assertContains(t, formatted.Provenance.Dirty, "nested/new.txt")
 }
 
+func TestCaptureSummaryPreservesInspectGitSemantics(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "--quiet")
+	gitRun(t, dir, "config", "user.name", "Picogent Test")
+	gitRun(t, dir, "config", "user.email", "picogent@example.test")
+	write(t, dir, "tracked.txt", "tracked\n")
+	gitRun(t, dir, "add", "tracked.txt")
+	gitRun(t, dir, "commit", "--quiet", "-m", "initial")
+	write(t, dir, filepath.Join("nested", "one.txt"), "one\n")
+	write(t, dir, filepath.Join("nested", "two.txt"), "two\n")
+
+	legacy, err := Inspect(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, err := Capture(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.Summary.Git != legacy.Git {
+		t.Fatalf("capture git summary = %#v, inspect git summary = %#v", captured.Summary.Git, legacy.Git)
+	}
+	if captured.Summary.Git.Untracked != 1 {
+		t.Fatalf("untracked count = %d, want one normal-mode directory entry", captured.Summary.Git.Untracked)
+	}
+	if len(captured.DirtyPaths) != 2 || !contains(captured.DirtyPaths, "nested/one.txt") || !contains(captured.DirtyPaths, "nested/two.txt") {
+		t.Fatalf("capture dirty paths = %v, want both expanded files", captured.DirtyPaths)
+	}
+}
+
 func TestParseGitStatusV2PreservesStateAndRenamePaths(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	status := strings.Join([]string{
