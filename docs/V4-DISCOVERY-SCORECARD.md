@@ -126,6 +126,12 @@ are normalized before resume. The current main also runs cross-platform vet,
 bounded security-boundary fuzzing, and a pinned hosted vulnerability scan;
 `golang.org/x/sys` is at the fixed `v0.44.0` release.
 
+The hosted `release-evidence` job now validates a bounded `test`/`security`
+gate ledger against the exact candidate SHA before uploading evidence. This
+closes the missing-job/failed-job artifact path; it does not turn the advisory
+verification manifest into a release approval or cover live-provider,
+hostile-runtime, or signed-attestation claims.
+
 The restart-recovery slice adds an explicit `process_restart` stop reason and
 uses the project-locked `Agent.SetTaskSession` boundary to close a stale active
 turn as `recover` with `UNVERIFIED` evidence. The fresh-process long-horizon
