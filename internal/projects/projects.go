@@ -287,25 +287,26 @@ func Add(name, path string) (Project, error) {
 }
 
 // PrepareAdd validates and applies an add/select operation to an in-memory
-// registry. The returned registry is not persisted; callers that need to
-// coordinate another state transition can save it after that transition has
-// succeeded.
-func PrepareAdd(name, path string) (Registry, Project, error) {
+// registry. The returned before and after registries are not persisted; callers
+// can save the after value with SaveIfCurrent after another state transition
+// has succeeded.
+func PrepareAdd(name, path string) (Registry, Registry, Project, error) {
 	abs, err := normalizePath(path)
 	if err != nil {
-		return Registry{}, Project{}, err
+		return Registry{}, Registry{}, Project{}, err
 	}
 	if st, err := os.Stat(abs); err != nil || !st.IsDir() {
 		if err != nil {
-			return Registry{}, Project{}, err
+			return Registry{}, Registry{}, Project{}, err
 		}
-		return Registry{}, Project{}, os.ErrNotExist
+		return Registry{}, Registry{}, Project{}, os.ErrNotExist
 	}
-	reg, err := Load()
+	expected, err := Load()
 	if err != nil {
-		return Registry{}, Project{}, err
+		return Registry{}, Registry{}, Project{}, err
 	}
-	return addToRegistry(reg, name, abs)
+	next, project, err := addToRegistry(expected, name, abs)
+	return expected, next, project, err
 }
 
 func addToRegistry(reg Registry, name, abs string) (Registry, Project, error) {
@@ -343,12 +344,13 @@ func Switch(id string) (Project, error) {
 // PrepareSwitch applies a select operation to an in-memory registry without
 // persisting it. This is used by runtime owners that must commit the registry
 // selection only after the replacement runtime is ready.
-func PrepareSwitch(id string) (Registry, Project, error) {
-	reg, err := Load()
+func PrepareSwitch(id string) (Registry, Registry, Project, error) {
+	expected, err := Load()
 	if err != nil {
-		return Registry{}, Project{}, err
+		return Registry{}, Registry{}, Project{}, err
 	}
-	return switchInRegistry(reg, id)
+	next, project, err := switchInRegistry(expected, id)
+	return expected, next, project, err
 }
 
 func switchInRegistry(reg Registry, id string) (Registry, Project, error) {
