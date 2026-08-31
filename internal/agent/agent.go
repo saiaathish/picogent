@@ -490,8 +490,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	taskBlocker := ""
 	nextOutcomeFocus := ""
 	turnClosed := turnSequence == 0
+	var turnCloseErr error
 	closeTurn := func(interrupted bool, route taskstate.TurnRoute, hypothesis, evidence string, stop taskstate.StopReason, toolRounds int) {
-		if turnSequence == 0 || turnClosed {
+		if turnSequence == 0 || turnClosed || turnCloseErr != nil {
 			return
 		}
 		if ctx.Err() != nil {
@@ -500,7 +501,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			hypothesis = "turn canceled before completion"
 			stop = taskstate.StopCanceled
 		}
-		if a.closeDurableTurn(turnSequence, interrupted, route, hypothesis, evidence, stop, toolRounds, mutationCount, ev) {
+		closed, err := a.closeDurableTurn(turnSequence, interrupted, route, hypothesis, evidence, stop, toolRounds, mutationCount, ev)
+		if err != nil {
+			turnCloseErr = err
+			return
+		}
+		if closed {
 			turnClosed = true
 		}
 	}
@@ -657,6 +663,11 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				stop = res.Task.StopReason
 			}
 			closeTurnFor(false, res.GoalDone, stop)
+			if turnCloseErr != nil {
+				res.GoalDone = false
+				res.Task = a.TaskSnapshot()
+				return msgs, res, turnCloseErr
+			}
 			res.Task = a.TaskSnapshot()
 			_ = traceLog.Append("turn_end", "", text, trace.Bool(true), 0)
 			msgs = stripDurableInternal(msgs)
