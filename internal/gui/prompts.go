@@ -123,7 +123,7 @@ func (s *server) generatePromptRecs(kind string) []promptRec {
 			return recs
 		}
 	}
-	return heuristicPromptRecs(kind, ctxBlock, s.buildSideStatus())
+	return heuristicPromptRecs(kind, ctxBlock, s.buildAgentStatus())
 }
 
 func promptRecSystem(kind string) string {
@@ -148,7 +148,7 @@ Rules:
 }
 
 func (s *server) promptRecContext(kind string) string {
-	st := s.buildSideStatus()
+	st := s.buildAgentStatus()
 	store, _ := learn.Load(st.Workspace)
 	var b strings.Builder
 	fmt.Fprintf(&b, "project: %s\nworkspace: %s\n", st.Project, st.Workspace)
@@ -267,7 +267,7 @@ func parsePromptRecs(raw string) []promptRec {
 	return out
 }
 
-func heuristicPromptRecs(kind string, ctx string, st sideStatus) []promptRec {
+func heuristicPromptRecs(kind string, ctx string, st agentStatus) []promptRec {
 	lower := strings.ToLower(ctx + " " + st.Goal + " " + st.ChatSummary)
 	var out []promptRec
 	if kind == "side" {
