@@ -188,8 +188,23 @@ func Run() error {
 	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	m.h.send = func(msg tea.Msg) { p.Send(msg) }
-	_, err = p.Run()
+	return runProgram(m, p.Run)
+}
+
+// runProgram owns the final TUI cleanup boundary. Bubble Tea can return from
+// an input quit, terminal error, or another program-level exit after the model
+// has started work; cleanup must not depend on one particular key path.
+func runProgram(m *model, run func() (tea.Model, error)) (err error) {
+	defer stopModelIfActive(m)
+	_, err = run()
 	return err
+}
+
+func stopModelIfActive(m *model) {
+	if m == nil || (!m.busy && m.cancel == nil && m.perm == nil) {
+		return
+	}
+	m.stop()
 }
 
 func newModel(cfg config.Config, a *agent.Agent) (*model, error) {
