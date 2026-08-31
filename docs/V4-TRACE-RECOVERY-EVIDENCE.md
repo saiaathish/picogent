@@ -32,6 +32,21 @@ The hosted matrix is cross-platform test evidence for the committed code. The
 repeated crash-handoff measurements above were local deterministic stress
 runs; they are not a cross-platform runtime budget.
 
+## Sustained retention
+
+PR #228 adds `TestTraceSustainedCrossProcessRetention`. Four fresh child
+processes each append 256 bounded events after a readiness barrier, for 1,024
+events total. The workload exceeds the 256 KiB trace limit, so the test
+exercises the bounded tail rewrite while processes contend on the real lock.
+It then requires the final 64 events to have contiguous sequence numbers and
+the file to remain within the configured bound.
+
+Three normal repetitions and two race-detector repetitions passed locally.
+The full uncached Go suite, `go vet ./...`, and the hosted macOS, Ubuntu,
+Windows, security, and `release-evidence` gates passed for the committed
+change. These are deterministic retention checks, not a cross-platform
+latency or memory budget.
+
 ## Boundary of the claim
 
 The proof is intentionally narrow. It does not establish session restart or
