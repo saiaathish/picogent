@@ -142,6 +142,12 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 			res.Reason = "verification reported failed tests"
 			return res
 		}
+		if outputTruncated {
+			res.OK = false
+			res.Status = StatusInconclusive
+			res.Reason = "verification output was truncated"
+			return res
+		}
 		if passed == 0 && failed == 0 {
 			res.OK = false
 			res.Status = StatusInconclusive

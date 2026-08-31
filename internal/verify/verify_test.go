@@ -99,8 +99,11 @@ func TestRunCommandBoundsOutputDuringExecution(t *testing.T) {
 		Display: "verify noisy helper",
 		Args:    []string{"-test.run=^TestVerifyHelperProcess$"},
 	}, 1, 5*time.Second)
-	if result.Status != StatusPass || result.Failed != 0 || !strings.Contains(result.Output, "ok verify/noisy") {
+	if result.Status != StatusInconclusive || result.OK || result.Failed != 0 || !strings.Contains(result.Output, "ok verify/noisy") {
 		t.Fatalf("bounded verifier result = %+v", result)
+	}
+	if result.Reason != "verification output was truncated" {
+		t.Fatalf("bounded verifier reason = %q", result.Reason)
 	}
 	if !result.OutputTruncated || len(result.Output) > MaxOutputBytes || !strings.Contains(result.Output, "truncated") {
 		t.Fatalf("noisy verifier output = len %d truncated=%v", len(result.Output), result.OutputTruncated)
