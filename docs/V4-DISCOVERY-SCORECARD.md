@@ -1,14 +1,13 @@
 # Picogent v4 discovery scorecard
 
-Status: refreshed on 2026-08-30 against exact `main` head
-`f0f254696f986c172ea192343b133a4e424a3b58` after PR #197 merged.
+Status: refreshed on 2026-08-31 against exact `main` head
+`83f4d3105bf10c94619eb9544a1b4feb7752040d` after PRs #211–#216 merged.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
-2026-08-25; the findings below are carried forward and reconciled with the
-landed slices since that audit.
-Every specialist verified the same head and left the pre-existing worktree
-changes untouched: modified `.gitignore`, untracked `graphify-out/`, and
-untracked `picogent-go-tmp-umask`.
+2026-08-25. The findings below are carried forward and reconciled with the
+landed slices since that audit; they are not a new release-readiness claim.
+The post-audit lifecycle slices were reviewed against the exact current head
+without modifying the protected checkout or its user-owned changes.
 
 Ratings describe the current code, not an unverified live-provider or release
 claim. `UNVERIFIED` means that source inspection or a deterministic test was
@@ -92,7 +91,10 @@ green unit tests or bounded hosted quality gates:
   goals; bounded fresh-process session attachment now records stale active-turn
   recovery with explicit route, evidence, and stop-reason metadata;
 - cancellation/save/publish ordering, goroutine leaks, cross-process writers,
-  and Windows runtime persistence;
+  and Windows runtime persistence. The MCP lease, TUI/CLI cleanup, GUI
+  shutdown admission, and turn-wait slices are unit- and hosted-CI-covered;
+  they do not establish hostile process-death, cross-process, or rendered
+  runtime proof;
 - provider-token accuracy, RSS/startup/first-turn envelopes, long-session
   growth beyond the bounded session record, and large-output CPU/allocation
   behavior;
@@ -118,11 +120,9 @@ These are candidates, not approved deletions:
 
 ## Completed and selected slices
 
-The focused GUI verification-truthfulness change and workspace-bound evidence
-slice are merged. The durable session boundary is also merged: records are
-capped, transient prompts and orphaned tool results are removed, newest history
-is retained, oversized loads are rejected before parsing, and legacy records
-are normalized before resume. The current main also runs cross-platform vet,
+The focused GUI verification-truthfulness change, workspace-bound evidence
+slice, durable session boundary, restart-recovery slice, and GUI reconnect
+evidence slice are merged. The current main also runs cross-platform vet,
 bounded security-boundary fuzzing, and a pinned hosted vulnerability scan;
 `golang.org/x/sys` is at the fixed `v0.44.0` release.
 
@@ -139,13 +139,18 @@ harness and taskstate unit contract cover this bounded transition; hostile
 process death, live-provider behavior, and cross-platform rendered recovery
 remain outside the claim.
 
-PR #197 is now merged as `f0f254696f986c172ea192343b133a4e424a3b58`. It adds
-GUI history reconciliation after SSE reconnect, protects active-turn local
+PR #197 is merged as `f0f254696f986c172ea192343b133a4e424a3b58`. It adds GUI
+history reconciliation after SSE reconnect, protects active-turn local
 transcript and activity state while durable history lags, orders asynchronous
-session/project refreshes, and records the bounded rendered evidence in
+session/project refreshes, and records bounded rendered evidence in
 `docs/V4-GUI-RECOVERY-EVIDENCE.md`. That evidence is local macOS/arm64 with a
 deterministic provider stub; it is not live-provider, permission, undo, full
 recovery, hostile-process, or cross-platform rendered proof.
 
-The next proposals should compete on measured evidence: retention/provenance
-optimization, deterministic cancellation and recovery harnesses, and owned-
+PRs #211–#216 then harden MCP runtime replacement and registry leases, agent
+and TUI cleanup, context-driven GUI HTTP shutdown, one-shot CLI cleanup, and
+GUI shutdown admission plus admitted-turn waiting. Hosted macOS, Ubuntu,
+Windows, security, and release-evidence checks passed for each slice. The
+remaining proof work is still open: deterministic cancellation/save/publish
+stress, cross-process writers, v3-versus-v4 outcome/retry measurements, and
+owned-browser permission/undo/full-recovery evidence.
