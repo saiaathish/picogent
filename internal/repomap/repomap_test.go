@@ -145,6 +145,36 @@ func TestCaptureGitProvenance(t *testing.T) {
 	assertContains(t, formatted.Provenance.Dirty, "nested/new.txt")
 }
 
+func TestParseGitStatusV2PreservesStateAndRenamePaths(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	status := strings.Join([]string{
+		"# branch.oid " + head,
+		"# branch.head feature/capture",
+		"1 .M N... 100644 100644 100644 " + head + " " + head + " modified.go",
+		"? untracked/file.go",
+		"2 R. N... 100644 100644 100644 " + head + " " + head + " R100 docs/new.md",
+		"docs/old.md",
+		"u UU N... 100644 100644 100644 100644 " + head + " " + head + " conflict.go",
+	}, "\x00")
+
+	parsed := parseGitStatusV2(status, "/workspace", "/workspace")
+	if !parsed.headKnown || parsed.head != head || parsed.state.Head != head[:12] {
+		t.Fatalf("head provenance = %#v; want %s", parsed, head)
+	}
+	if parsed.state.Branch != "feature/capture" || parsed.state.Clean {
+		t.Fatalf("git state = %#v", parsed.state)
+	}
+	if parsed.state.Staged != 2 || parsed.state.Modified != 2 || parsed.state.Untracked != 1 {
+		t.Fatalf("git counters = %#v", parsed.state)
+	}
+	for _, path := range []string{"modified.go", "untracked/file.go", "docs/new.md", "docs/old.md", "conflict.go"} {
+		assertContains(t, parsed.dirtyPaths, path)
+	}
+	if parsed.dirtyPathsTruncated {
+		t.Fatalf("unexpected dirty-path truncation: %#v", parsed)
+	}
+}
+
 func TestCaptureSubdirectoryScopesDirtyPaths(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -167,6 +197,9 @@ func TestCaptureSubdirectoryScopesDirtyPaths(t *testing.T) {
 	}
 	if snapshot.GitRoot != resolvedPath(t, dir) || !snapshot.HeadKnown {
 		t.Fatalf("git provenance = %#v", snapshot)
+	}
+	if snapshot.Summary.Git.Clean {
+		t.Fatalf("repository-wide dirty state was reported clean: %#v", snapshot.Summary.Git)
 	}
 	assertContains(t, snapshot.DirtyPaths, "go.mod")
 	if contains(snapshot.DirtyPaths, "../README.md") || contains(snapshot.DirtyPaths, "README.md") {
