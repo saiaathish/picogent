@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,11 +33,148 @@ func TestInitialSessionResumesLatestSavedSession(t *testing.T) {
 	}
 }
 
+func TestNewModelSurfacesDurableTaskFailure(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	const sessionID = "corrupt-session"
+	if err := session.SaveMessages(workspace, sessionID, []llm.Message{{Role: "user", Content: "resume me"}}); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(t.TempDir())
+	path, err := store.Path(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = store
+
+	m, err := newModel(cfg, a)
+	if err == nil || !strings.Contains(err.Error(), "load durable task state") {
+		t.Fatalf("newModel error = %v, want durable-load failure", err)
+	}
+	if m != nil {
+		t.Fatalf("newModel returned a model after durable-load failure: %#v", m)
+	}
+}
+
+func TestResumeDoesNotClaimSuccessWhenDurableTaskLoadFails(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	const targetSession = "target-session"
+	if err := session.SaveMessages(workspace, targetSession, []llm.Message{{Role: "user", Content: "target"}}); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(t.TempDir())
+	path, err := store.Path(targetSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = store
+	const currentSession = "current-session"
+	if err := a.SetTaskSession(currentSession); err != nil {
+		t.Fatal(err)
+	}
+	m := &model{
+		cfg:       cfg,
+		ag:        a,
+		sessionID: currentSession,
+		history:   []llm.Message{{Role: "user", Content: "current"}},
+		lines:     []logLine{{Kind: "system", Text: "ready"}},
+		vp:        viewport.New(80, 20),
+	}
+
+	m.slashLocal("resume")
+	last := m.lines[len(m.lines)-1]
+	if last.Kind != "error" || !strings.Contains(last.Text, "couldn't resume session") {
+		t.Fatalf("resume result = %#v, want visible durable-load error", last)
+	}
+	for _, line := range m.lines {
+		if strings.Contains(line.Text, "resumed ") {
+			t.Fatalf("resume success message was published: %#v", m.lines)
+		}
+	}
+	if m.sessionID != currentSession || len(m.history) != 1 || m.history[0].Content != "current" || a.TaskSession != currentSession {
+		t.Fatalf("failed resume changed current session: model=%q history=%#v agent=%q", m.sessionID, m.history, a.TaskSession)
+	}
+}
+
 func TestAssistantFinalReplacesStreamedText(t *testing.T) {
 	m := &model{lines: []logLine{{Kind: "assistant", Text: "Undo: git checkout -- note.txt"}}}
 	_, _ = m.Update(logMsg{Kind: "assistant_final", Text: "Undo: /undo"})
 	if len(m.lines) != 1 || m.lines[0].Text != "Undo: /undo" {
 		t.Fatalf("lines = %#v", m.lines)
+	}
+}
+
+func TestUndoRefreshesCurrentTaskSnapshot(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "session-undo-tui"
+	cfg := config.Default()
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := perm.New(config.ModeFast, workspace, nil)
+	gate.AddAlwaysAllowed("verify")
+	ag := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: note updated"}},
+	}}, tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		Verify:    func(context.Context) (string, error) { return "verify PASS\n1 passed", nil },
+	}), gate)
+	ag.SetTaskStore(store)
+	if err := ag.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := ag.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, agent.NopHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone {
+		t.Fatalf("pre-undo task = %#v, want done", result.Task)
+	}
+
+	m := &model{
+		cfg:       cfg,
+		ag:        ag,
+		sessionID: sessionID,
+		task:      result.Task,
+		lines:     []logLine{{Kind: "system", Text: "ready"}},
+		vp:        viewport.New(80, 20),
+	}
+	m.slashLocal("undo")
+	if m.task == nil || m.task.SessionID != sessionID {
+		t.Fatalf("undo task = %#v, want current session task", m.task)
+	}
+	if m.task.Status != taskstate.StatusVerifying {
+		t.Fatalf("undo task status = %q, want %q", m.task.Status, taskstate.StatusVerifying)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "note.txt")); !os.IsNotExist(err) {
+		t.Fatalf("undo did not remove note.txt: %v", err)
 	}
 }
 
@@ -447,7 +587,10 @@ func TestFormatTaskProgress(t *testing.T) {
 
 func TestTemporaryScopeModeVisibleInHeader(t *testing.T) {
 	mode := agent.TaskPlan
-	m := newModel(config.Default(), nil)
+	m, err := newModel(config.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.turnMode = &mode
 	m.width, m.height = 100, 30
 	view := m.View()
@@ -549,6 +692,72 @@ func TestHandlerTagsEventsWithTurnAndSession(t *testing.T) {
 	task, ok := got[1].(taskProgressMsg)
 	if !ok || task.turnID != 9 || task.sessionID != "session-9" {
 		t.Fatalf("task event metadata = %#v", got[1])
+	}
+}
+
+func TestHandlerRedactsDiagnosticEvents(t *testing.T) {
+	const (
+		argumentSecret = "tui-argument-secret"
+		resultSecret   = "tui-result-secret"
+		errorSecret    = "tui-error-secret"
+	)
+	var got []tea.Msg
+	h := &handler{
+		send: func(msg tea.Msg) { got = append(got, msg) },
+	}
+	h.OnToolStart(llm.ToolCall{
+		Name:      "mcp\nforged",
+		Arguments: "\x1b[31m{\"access_token\":\"" + argumentSecret + "\"}",
+	})
+	h.OnToolEnd(llm.ToolCall{Name: "mcp"}, `{"api_key":"`+resultSecret+`"}`, nil)
+	h.OnToolEnd(llm.ToolCall{Name: "mcp"}, "", errors.New("tool failed\npassword="+errorSecret))
+	h.OnError(errors.New("token=" + errorSecret))
+
+	if len(got) != 4 {
+		t.Fatalf("events = %d, want 4", len(got))
+	}
+	var text strings.Builder
+	for _, msg := range got {
+		line, ok := msg.(logMsg)
+		if !ok {
+			t.Fatalf("event = %#v, want logMsg", msg)
+		}
+		text.WriteString(line.Text)
+		text.WriteByte('\n')
+	}
+	joined := text.String()
+	for _, secret := range []string{argumentSecret, resultSecret, errorSecret} {
+		if strings.Contains(joined, secret) {
+			t.Fatalf("TUI diagnostic leaked secret %q: %q", secret, joined)
+		}
+	}
+	if strings.Contains(joined, "\x1b") || strings.Contains(joined, "mcp\nforged") || !strings.Contains(joined, "mcp forged") {
+		t.Fatalf("TUI diagnostic retained control/newline injection: %q", joined)
+	}
+	if !strings.Contains(joined, "[REDACTED]") {
+		t.Fatalf("TUI diagnostic lost redaction marker: %q", joined)
+	}
+}
+
+func TestPermissionDisplayRedactsDiagnosticFields(t *testing.T) {
+	const secret = "tui-permission-secret"
+	m := &model{
+		lines:     []logLine{{Kind: "system", Text: "ready"}},
+		sessionID: "session-1",
+		vp:        viewport.New(80, 20),
+	}
+	_, _ = m.Update(permAskMsg{Request: perm.Request{
+		Hint:    "token=" + secret,
+		Summary: "write access_token=" + secret,
+	}})
+	if m.perm == nil {
+		t.Fatal("permission request was not retained")
+	}
+	if strings.Contains(m.perm.Hint+m.perm.Summary, secret) || strings.Contains(m.lines[len(m.lines)-1].Text, secret) {
+		t.Fatalf("permission display leaked secret: perm=%#v lines=%#v", m.perm, m.lines)
+	}
+	if !strings.Contains(m.lines[len(m.lines)-1].Text, "[REDACTED]") {
+		t.Fatalf("permission display lost redaction marker: %#v", m.lines[len(m.lines)-1])
 	}
 }
 

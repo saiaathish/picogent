@@ -15,7 +15,7 @@ import (
 
 func (s *server) filesPickAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+		writeGUIError(w, "POST only", 405)
 		return
 	}
 	paths, err := folderpick.ChooseFiles("Select files to attach")
@@ -24,12 +24,12 @@ func (s *server) filesPickAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeGUIError(w, err.Error(), 500)
 		return
 	}
 	out, err := readAttachmentPaths(paths)
 	if err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")

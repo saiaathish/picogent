@@ -108,20 +108,6 @@ const (
 	EvidenceKindTest EvidenceKind = "test"
 )
 
-// ProofKind is an explicit name for the same bounded evidence vocabulary. It
-// keeps callers that think in terms of proof readable without creating a
-// second set of serialized values.
-type ProofKind = EvidenceKind
-
-const (
-	ProofVerification = EvidenceKindVerification
-	ProofResearch     = EvidenceKindResearch
-	ProofMeasurement  = EvidenceKindMeasurement
-	ProofVisual       = EvidenceKindVisual
-	ProofTests        = EvidenceKindTests
-	ProofApproval     = EvidenceKindApproval
-)
-
 // EvidenceOrigin identifies the mechanism that produced a proof record. Only
 // known origin/kind pairs can satisfy an inferred quality requirement; model
 // narration and arbitrary repository text are never trusted origins.
@@ -141,21 +127,6 @@ const (
 	EvidenceOriginUser             EvidenceOrigin = "user"
 	EvidenceOriginSystem           EvidenceOrigin = "system"
 	EvidenceOriginModel            EvidenceOrigin = "model"
-)
-
-// Short aliases make the trusted vocabulary convenient at recording sites.
-const (
-	OriginVerifier         = EvidenceOriginVerifier
-	OriginWorkspaceTool    = EvidenceOriginWorkspaceTool
-	OriginResearchTool     = EvidenceOriginResearchTool
-	OriginExternalDocs     = EvidenceOriginExternalDocs
-	OriginMeasurementTool  = EvidenceOriginMeasurementTool
-	OriginBenchmark        = EvidenceOriginBenchmark
-	OriginBrowser          = EvidenceOriginBrowser
-	OriginVisualInspection = EvidenceOriginVisualInspection
-	OriginTestRunner       = EvidenceOriginTestRunner
-	OriginUserApproval     = EvidenceOriginUserApproval
-	OriginUser             = EvidenceOriginUser
 )
 
 // Valid reports whether the evidence kind is part of the bounded vocabulary.
@@ -264,10 +235,6 @@ type RequirementEvidenceState struct {
 	Origin  EvidenceOrigin `json:"origin,omitempty"`
 	Current bool           `json:"current"`
 }
-
-// RequirementState is a short compatibility alias for callers that use the
-// term requirement rather than evidence in their diagnostics.
-type RequirementState = RequirementEvidenceState
 
 // CompletionCheck is the durable explanation of the completion predicate. It
 // exposes the exact missing criteria and inferred proof requirements instead
@@ -431,6 +398,14 @@ func (t *Task) Validate() error {
 		if turn.ToolRounds < 0 || turn.ToolRounds > maxTurnToolRounds || turn.MutationCount < 0 || turn.MutationCount > maxTurnMutations {
 			return fmt.Errorf("task turn %d counts are out of range", i)
 		}
+		if len(turn.ChangedFiles) > maxTurnChangedFiles {
+			return fmt.Errorf("task turn %d changed-file list is too long", i)
+		}
+		for pathIndex, path := range turn.ChangedFiles {
+			if strings.TrimSpace(path) == "" || len(path) > maxChangedFilePath {
+				return fmt.Errorf("task turn %d changed file %d is empty or too long", i, pathIndex)
+			}
+		}
 		if turn.StartedAt.IsZero() {
 			return fmt.Errorf("task turn %d has no start time", i)
 		}
@@ -581,21 +556,6 @@ func (t *Task) SetStatus(next Status) error {
 	return nil
 }
 
-// EffectiveStatus returns the status that callers may safely expose or route
-// on. A legacy task can contain a terminal marker without the v4 completion
-// proof that now authorizes it; such state is resumable work, never completion.
-// This method does not mutate the task. Store.Load and Store.Save repair the
-// persisted form through NormalizeLegacyCompletion.
-func (t *Task) EffectiveStatus() Status {
-	if t == nil {
-		return ""
-	}
-	if t.Status == StatusDone && !t.CompletionReady() {
-		return StatusWorking
-	}
-	return t.Status
-}
-
 // NormalizeLegacyCompletion converts an old or externally-created done marker
 // without current durable proof into resumable work. It is intentionally
 // idempotent and only changes the terminal-status inconsistency; the evidence
@@ -610,26 +570,6 @@ func (t *Task) NormalizeLegacyCompletion() bool {
 	t.normalizedFromDone = true
 	t.touch()
 	return true
-}
-
-// ReopenForContinuation reopens a terminal task only when its durable proof
-// is incomplete. It is used when older or externally-created state marked a
-// task done before the authoritative completion predicate existed.
-func (t *Task) ReopenForContinuation() error {
-	if t == nil {
-		return errors.New("task is nil")
-	}
-	if t.Status != StatusDone {
-		return nil
-	}
-	if t.CompletionReady() {
-		return errors.New("task completion is already proven")
-	}
-	t.Status = StatusWorking
-	t.BlockedBy = ""
-	t.StopReason = StopNone
-	t.touch()
-	return nil
 }
 
 // Current returns the current incomplete step, or nil when none remains.
@@ -675,11 +615,11 @@ func (t *Task) RecordChanged(path string) {
 	if t == nil {
 		return
 	}
-	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
-	path = strings.TrimPrefix(path, "./")
+	path = normalizeChangedPath(path)
 	if path == "" {
 		return
 	}
+	t.recordActiveTurnChanged(path)
 	for _, changed := range t.ChangedFiles {
 		if changed == path {
 			t.ChangeSeq++
@@ -696,6 +636,35 @@ func (t *Task) RecordChanged(path string) {
 	t.ChangedFiles = append(t.ChangedFiles, path)
 	t.ChangeSeq++
 	t.touch()
+}
+
+func normalizeChangedPath(path string) string {
+	path = strings.TrimSpace(strings.ReplaceAll(path, "\\", "/"))
+	return strings.TrimPrefix(path, "./")
+}
+
+// recordActiveTurnChanged attributes a successful mutation to the active
+// durable turn. The task-level list is cumulative; this bounded per-turn list
+// lets recovery distinguish an interrupted file-changing turn from a read-only
+// interruption without persisting tool output or checkpoint contents.
+func (t *Task) recordActiveTurnChanged(path string) {
+	if t == nil || len(t.Turns) == 0 {
+		return
+	}
+	latest := &t.Turns[len(t.Turns)-1]
+	if latest.State != TurnActive {
+		return
+	}
+	for _, changed := range latest.ChangedFiles {
+		if changed == path {
+			return
+		}
+	}
+	if len(latest.ChangedFiles) >= maxTurnChangedFiles {
+		latest.ChangedFilesCapped = true
+		return
+	}
+	latest.ChangedFiles = append(latest.ChangedFiles, path)
 }
 
 // InitializeChangeSequence represents a legacy changed-file list as one
@@ -922,6 +891,23 @@ func (t *Task) InvalidateWorkspaceEvidence(reason string) bool {
 		}, true)
 		changed = true
 	}
+	for _, kind := range t.RequiredEvidenceKinds() {
+		status, current, _ := t.RequirementEvidenceState(kind)
+		if !current || !evidenceStatusPasses(status) {
+			continue
+		}
+		t.AddEvidence(Evidence{
+			Kind:       kind,
+			Status:     "INCONCLUSIVE",
+			Source:     "workspace-observation",
+			Origin:     EvidenceOriginSystem,
+			Summary:    summary,
+			Reference:  "workspace restoration",
+			Confidence: "high",
+			ChangeSeq:  t.ChangeSeq,
+		})
+		changed = true
+	}
 	if changed {
 		t.touch()
 	}
@@ -1094,18 +1080,6 @@ func (t *Task) RecordCriterionTestsEvidence(index int, status, summary, referenc
 	}, true)
 }
 
-// RecordRequirementEvidence is the origin-first spelling used by integrations
-// that treat the producer as the primary trust boundary.
-func (t *Task) RecordRequirementEvidence(kind EvidenceKind, origin EvidenceOrigin, status, summary, reference string) {
-	t.AddRequirementEvidence(kind, status, origin, summary, reference)
-}
-
-// AddProofEvidence is a concise alias for recording non-criterion proof with a
-// typed kind and origin.
-func (t *Task) AddProofEvidence(kind EvidenceKind, origin EvidenceOrigin, status, summary, reference string) {
-	t.AddRequirementEvidence(kind, status, origin, summary, reference)
-}
-
 func sameEvidence(left, right Evidence) bool {
 	leftCriterion, rightCriterion := -1, -1
 	if left.CriterionIndex != nil {
@@ -1145,22 +1119,6 @@ func (t *Task) RequiredEvidenceKinds() []EvidenceKind {
 		kinds = append(kinds, EvidenceKindApproval)
 	}
 	return kinds
-}
-
-// RequiredProofKinds is an explicit proof-oriented alias for callers that do
-// not need to distinguish intent requirements from their evidence kinds.
-func (t *Task) RequiredProofKinds() []ProofKind {
-	return t.RequiredEvidenceKinds()
-}
-
-// CriterionAt returns the durable criterion at index, including the legacy
-// step projection when no explicit definition of done was stored.
-func (t *Task) CriterionAt(index int) (Criterion, bool) {
-	criteria := t.criteriaDefinition()
-	if index < 0 || index >= len(criteria) {
-		return Criterion{}, false
-	}
-	return criteria[index], true
 }
 
 // RequirementEvidenceState returns the latest current status from a trusted

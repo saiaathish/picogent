@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -70,6 +72,73 @@ func TestRunCommandZeroEvidenceIsInconclusive(t *testing.T) {
 	if res.Status != StatusInconclusive || res.OK {
 		t.Fatalf("zero-evidence command = %+v", res)
 	}
+}
+
+func TestRunCommandSanitizesEnvironment(t *testing.T) {
+	t.Setenv("VERIFY_TEST_SECRET_TOKEN", "must-not-cross")
+	t.Setenv("VERIFY_HELPER", "1")
+	// Race-instrumented test binaries can take longer than one second to
+	// start. This test checks environment isolation, not timeout handling.
+	result := runCommand(t.Context(), t.TempDir(), Command{
+		Runner:  os.Args[0],
+		Display: "verify helper",
+		Args:    []string{"-test.run=^TestVerifyHelperProcess$"},
+	}, 1, 5*time.Second)
+	if result.Status != StatusPass || result.Failed != 0 || !strings.Contains(result.Output, "ok verify/helper") {
+		t.Fatalf("sanitized verifier result = %+v", result)
+	}
+	if strings.Contains(result.Output, "leaked") {
+		t.Fatal("verifier child inherited a secret")
+	}
+}
+
+func TestRunCommandBoundsOutputDuringExecution(t *testing.T) {
+	t.Setenv("VERIFY_HELPER", "noisy")
+	result := runCommand(t.Context(), t.TempDir(), Command{
+		Runner:  os.Args[0],
+		Display: "verify noisy helper",
+		Args:    []string{"-test.run=^TestVerifyHelperProcess$"},
+	}, 1, 5*time.Second)
+	if result.Status != StatusPass || result.Failed != 0 || !strings.Contains(result.Output, "ok verify/noisy") {
+		t.Fatalf("bounded verifier result = %+v", result)
+	}
+	if !result.OutputTruncated || len(result.Output) > MaxOutputBytes || !strings.Contains(result.Output, "truncated") {
+		t.Fatalf("noisy verifier output = len %d truncated=%v", len(result.Output), result.OutputTruncated)
+	}
+}
+
+func TestBoundedCaptureConcurrentWrites(t *testing.T) {
+	var capture boundedCapture
+	var writers sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		writers.Add(1)
+		go func() {
+			defer writers.Done()
+			_, _ = capture.Write([]byte(strings.Repeat("x", 4<<10)))
+		}()
+	}
+	writers.Wait()
+	out, truncated := capture.result()
+	if !truncated || len(out) > MaxOutputBytes || !strings.Contains(out, "truncated") {
+		t.Fatalf("concurrent capture = len %d truncated=%v", len(out), truncated)
+	}
+}
+
+func TestVerifyHelperProcess(t *testing.T) {
+	if os.Getenv("VERIFY_HELPER") == "" {
+		return
+	}
+	if os.Getenv("VERIFY_HELPER") == "noisy" {
+		fmt.Fprintln(os.Stdout, "ok verify/noisy")
+		_, _ = os.Stdout.Write([]byte(strings.Repeat("x", MaxOutputBytes*4)))
+		os.Exit(0)
+	}
+	if os.Getenv("VERIFY_TEST_SECRET_TOKEN") != "" {
+		fmt.Fprintln(os.Stdout, "leaked")
+	} else {
+		fmt.Fprintln(os.Stdout, "ok verify/helper")
+	}
+	os.Exit(0)
 }
 
 func TestBoundedOutputMarksTruncation(t *testing.T) {

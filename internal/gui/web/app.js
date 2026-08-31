@@ -74,11 +74,14 @@ let activityPanel = null;
 let activityComplete = false;
 let undoAvailable = false;
 let undoInFlight = false;
+let historyReplayPending = false;
 
 let ready = false;
 let busy = false;
 let sessionId = "";
 let viewEpoch = 0;
+let refreshGeneration = 0;
+let chatRequestsPending = 0;
 let pendingAttachments = [];
 let modelOptions = [];
 let userModelChoice = "auto";
@@ -117,10 +120,11 @@ function syncEmpty() {
 }
 
 function setThinking(on) {
+  const wasThinking = thinkingEl.classList.contains("is-on");
   thinkingEl.classList.toggle("is-on", !!on);
   $("composer")?.classList.toggle("is-busy", !!on);
   if (on) {
-    resetReasoning();
+    if (!wasThinking) resetReasoning();
     reasoningEl.hidden = false;
   } else {
     reasoningEl.hidden = reasoningEl.children.length === 0;
@@ -588,8 +592,9 @@ document.querySelectorAll(".review-tab").forEach((b) => {
   };
 });
 
-async function loadProjects() {
+async function loadProjects(epoch = viewEpoch, generation = refreshGeneration) {
   const data = await (await fetch("/api/projects")).json();
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
   projectList.innerHTML = "";
   const active = (data.projects || []).find((p) => p.id === data.current_id);
   const sub = $("active-project");
@@ -613,6 +618,9 @@ async function loadProjects() {
 }
 
 async function applyProjectSwitch(data) {
+  viewEpoch++;
+  const epoch = viewEpoch;
+  historyReplayPending = false;
   clearTaskProgress();
   setUndoAvailable(false);
   sessionId = data.session_id || sessionId;
@@ -620,10 +628,13 @@ async function applyProjectSwitch(data) {
   else clearLog();
   setChatsOpen(true);
   await refresh();
+  if (epoch !== viewEpoch) return;
 }
 
 async function pickProjectFolder() {
   if (busy) return;
+  viewEpoch++;
+  const epoch = viewEpoch;
   try {
     const res = await fetch("/api/projects", {
       method: "POST",
@@ -637,7 +648,9 @@ async function pickProjectFolder() {
       add("error", await res.text());
       return;
     }
-    await applyProjectSwitch(await res.json());
+    const data = await res.json();
+    if (epoch !== viewEpoch) return;
+    await applyProjectSwitch(data);
   } catch (err) {
     add("error", err.message || "Couldn't open folder picker");
   }
@@ -645,13 +658,17 @@ async function pickProjectFolder() {
 
 async function switchProject(id) {
   if (busy) return;
+  viewEpoch++;
+  const epoch = viewEpoch;
   const res = await fetch("/api/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action: "switch", id }),
   });
   if (!res.ok) return;
-  await applyProjectSwitch(await res.json());
+  const data = await res.json();
+  if (epoch !== viewEpoch) return;
+  await applyProjectSwitch(data);
 }
 
 $("add-project").onclick = pickProjectFolder;
@@ -971,9 +988,9 @@ function replayMessages(msgs) {
   }
 }
 
-async function loadThreads() {
+async function loadThreads(epoch = viewEpoch, generation = refreshGeneration) {
   const data = await (await fetch("/api/sessions")).json();
-  sessionId = data.current_id || sessionId;
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
   threadsCache = data.sessions || [];
   renderThreads();
   renderRecentSessions();
@@ -1055,6 +1072,7 @@ async function loadThread(id) {
   if (busy) return;
   viewEpoch++;
   const epoch = viewEpoch;
+  historyReplayPending = false;
   const data = await (
     await fetch("/api/sessions", {
       method: "POST",
@@ -1074,6 +1092,7 @@ async function loadThread(id) {
 async function newChat() {
   viewEpoch++;
   const epoch = viewEpoch;
+  historyReplayPending = false;
   setChatsOpen(false);
   if (busy) {
     try { await fetch("/api/cancel", { method: "POST" }); } catch (_) {}
@@ -1093,6 +1112,7 @@ async function newChat() {
   // Starter hero is inside #empty — force it visible before prompts paint.
   emptyEl.hidden = false;
   await loadThreads();
+  if (epoch !== viewEpoch) return;
   loadHeroPrompts(true);
   // Re-pull overview / auth so repo knowledge shows on a fresh chat.
   try {
@@ -1116,12 +1136,17 @@ async function deleteThread(id) {
   else await loadThreads();
 }
 
-async function refresh() {
+async function refresh(reconcileHistory = false) {
   const epoch = viewEpoch;
+  const generation = ++refreshGeneration;
   const s = await (await fetch("/api/state")).json();
-  if (epoch !== viewEpoch) return;
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
   renderTopContext(s);
-  sessionId = s.session_id || sessionId;
+  const nextSessionID = s.session_id || sessionId;
+  const sessionChanged = nextSessionID !== sessionId;
+  sessionId = nextSessionID;
+  const serverBusy = !!s.busy;
+  const clientBusy = busy;
   currentMode = s.mode || "safe";
   currentTaskMode = s.task_mode || "agent";
   taskModeTemporary = !!s.task_mode_temporary;
@@ -1150,10 +1175,21 @@ async function refresh() {
   } else if (!s.busy) {
     permEl.classList.remove("is-on");
   }
-  if (logEl.children.length === 0 && s.messages?.length) {
+  const preserveLocalTurn = clientBusy && !sessionChanged &&
+    (serverBusy || chatRequestsPending > 0);
+  if (reconcileHistory || sessionChanged || historyReplayPending) {
+    // A reconnect during an active turn must not erase the local prompt or
+    // partial assistant stream: the durable snapshot intentionally lags until
+    // the turn completes. If the session changed, however, the old transcript
+    // is already stale and must be replaced immediately.
+    if (!preserveLocalTurn) {
+      replayMessages(Array.isArray(s.messages) ? s.messages : []);
+    }
+    historyReplayPending = serverBusy || chatRequestsPending > 0;
+  } else if (!clientBusy && logEl.children.length === 0 && s.messages?.length) {
     replayMessages(s.messages);
   }
-  busy = !!s.busy;
+  busy = sessionChanged ? serverBusy : serverBusy || chatRequestsPending > 0;
   if (Object.prototype.hasOwnProperty.call(s, "undo_available")) {
     setUndoAvailable(!!s.undo_available);
   } else {
@@ -1162,8 +1198,10 @@ async function refresh() {
   sendBtn.disabled = !ready || !!s.auth?.needed;
   setThinking(busy);
   syncEmpty();
-  await loadThreads();
-  await loadProjects();
+  await loadThreads(epoch, generation);
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
+  await loadProjects(epoch, generation);
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
   return s;
 }
 
@@ -1660,43 +1698,49 @@ async function submitChat(prompt, attachments, sentAttachments) {
   if (!wasBusy) setThinking(true);
   sendBtn.disabled = !ready;
   const body = { prompt, attachments };
-  let res;
+  chatRequestsPending++;
   try {
-    res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    add("error", err?.message || "Could not reach Picogent.");
+    let res;
+    try {
+      res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      add("error", err?.message || "Could not reach Picogent.");
+      if (!wasBusy) {
+        busy = false;
+        sendBtn.disabled = !ready;
+        setThinking(false);
+      }
+      return;
+    }
+
+    if (res.status === 204) {
+      if (!wasBusy) {
+        busy = false;
+        sendBtn.disabled = !ready;
+        setThinking(false);
+      }
+      return;
+    }
+    let data = null;
+    if (res.headers.get("content-type")?.includes("application/json")) {
+      try { data = await res.json(); } catch (_) {}
+    }
+    if (res.ok) {
+      if (data?.queued) return;
+      return;
+    }
+    add("error", data?.error || "Could not start that task.");
     if (!wasBusy) {
       busy = false;
       sendBtn.disabled = !ready;
       setThinking(false);
     }
-    return;
-  }
-  if (res.status === 204) {
-    if (!wasBusy) {
-      busy = false;
-      sendBtn.disabled = !ready;
-      setThinking(false);
-    }
-    return;
-  }
-  let data = null;
-  if (res.headers.get("content-type")?.includes("application/json")) {
-    try { data = await res.json(); } catch (_) {}
-  }
-  if (res.ok) {
-    if (data?.queued) return;
-    return;
-  }
-  add("error", data?.error || "Could not start that task.");
-  if (!wasBusy) {
-    busy = false;
-    sendBtn.disabled = !ready;
-    setThinking(false);
+  } finally {
+    chatRequestsPending--;
   }
 }
 
@@ -2052,7 +2096,7 @@ function connectEvents() {
   if (ev) ev.close();
   ev = new EventSource("/api/events");
   ev.onopen = () => {
-    refresh().catch(() => {});
+    refresh(true).catch(() => {});
   };
   ev.onmessage = (m) => {
     const e = JSON.parse(m.data);

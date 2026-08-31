@@ -11,29 +11,140 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/saiaathish/picogent/internal/securefile"
 )
 
-func TestStoreSessionLockRejectsConcurrentOwner(t *testing.T) {
-	store := NewStore(t.TempDir())
-	release, err := store.AcquireSessionLock("same-session")
+func TestStoreRunLockSerializesSameProcessStores(t *testing.T) {
+	dir := t.TempDir()
+	first := NewStore(dir)
+	second := NewStore(dir)
+	releaseFirst, err := first.AcquireRunLock()
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := store.AcquireSessionLock("same-session")
-	if err == nil || second != nil || !errors.Is(err, securefile.ErrLocked) {
-		t.Fatalf("second session owner = release-nil=%v err=%v, want ErrLocked", second == nil, err)
+
+	started := make(chan struct{})
+	acquired := make(chan func() error, 1)
+	failed := make(chan error, 1)
+	go func() {
+		close(started)
+		release, err := second.AcquireRunLock()
+		if err != nil {
+			failed <- err
+			return
+		}
+		acquired <- release
+	}()
+	<-started
+	select {
+	case err := <-failed:
+		t.Fatalf("second run lock failed before first release: %v", err)
+	case release := <-acquired:
+		_ = release()
+		t.Fatal("second run lock acquired before first release")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if err := releaseFirst(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-failed:
+		t.Fatalf("second run lock failed after first release: %v", err)
+	case release := <-acquired:
+		if err := release(); err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second run lock did not acquire after first release")
+	}
+}
+
+func TestStoreRunLockSerializesFreshProcess(t *testing.T) {
+	if runtime.GOOS == "plan9" || runtime.GOOS == "wasip1" {
+		t.Skip("securefile has no cross-process locking primitive on this platform")
+	}
+	dir := t.TempDir()
+	store := NewStore(dir)
+	release, err := store.AcquireRunLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := filepath.Join(dir, "child-started")
+	acquired := filepath.Join(dir, "child-acquired")
+	released := filepath.Join(dir, "child-released")
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestStoreRunLockHelper$", "-test.count=1")
+	cmd.Env = append(os.Environ(),
+		"PICOGENT_TASKSTATE_RUN_LOCK_HELPER=1",
+		"PICOGENT_TASKSTATE_RUN_LOCK_DIR="+dir,
+		"PICOGENT_TASKSTATE_RUN_LOCK_STARTED="+started,
+		"PICOGENT_TASKSTATE_RUN_LOCK_ACQUIRED="+acquired,
+		"PICOGENT_TASKSTATE_RUN_LOCK_RELEASED="+released,
+	)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		_ = release()
+		t.Fatal(err)
+	}
+	defer func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+
+	waitForTaskstateFile(t, started)
+	if _, err := os.Stat(acquired); err == nil {
+		_ = release()
+		t.Fatal("child acquired project run lock while parent held it")
 	}
 	if err := release(); err != nil {
 		t.Fatal(err)
 	}
-	third, err := store.AcquireSessionLock("same-session")
+	waitForTaskstateFile(t, acquired)
+	if err := os.WriteFile(released, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("run-lock helper failed: %v\n%s", err, output.String())
+	}
+	if _, err := os.Stat(released); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreRunLockHelper(t *testing.T) {
+	if os.Getenv("PICOGENT_TASKSTATE_RUN_LOCK_HELPER") != "1" {
+		return
+	}
+	dir := os.Getenv("PICOGENT_TASKSTATE_RUN_LOCK_DIR")
+	started := os.Getenv("PICOGENT_TASKSTATE_RUN_LOCK_STARTED")
+	acquired := os.Getenv("PICOGENT_TASKSTATE_RUN_LOCK_ACQUIRED")
+	released := os.Getenv("PICOGENT_TASKSTATE_RUN_LOCK_RELEASED")
+	if err := os.WriteFile(started, []byte("started\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(dir)
+	release, err := store.AcquireRunLock()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := third(); err != nil {
+	if err := os.WriteFile(acquired, []byte("acquired\n"), 0o600); err != nil {
+		_ = release()
 		t.Fatal(err)
+	}
+	defer release()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if _, err := os.Stat(released); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("timed out waiting for parent release signal")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -117,7 +228,7 @@ func TestStoreNormalizesUnprovenLegacyDoneState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Status != StatusWorking || loaded.Revision != 1 || loaded.EffectiveStatus() != StatusWorking {
+	if loaded.Status != StatusWorking || loaded.Revision != 1 {
 		t.Fatalf("legacy done was not normalized = %#v", loaded)
 	}
 	reloaded, err := store.Load(task.SessionID)

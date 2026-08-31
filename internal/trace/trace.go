@@ -17,8 +17,11 @@ import (
 )
 
 const (
-	maxTraceBytes      = 256 << 10
-	retainedTraceBytes = maxTraceBytes * 3 / 4
+	maxTraceBytes       = 256 << 10
+	retainedTraceBytes  = maxTraceBytes * 3 / 4
+	maxTraceKindBytes   = 80
+	maxTraceToolBytes   = 128
+	maxTraceDetailBytes = 240
 )
 
 // Event is one durable, ordered log line. Seq is monotonic per file.
@@ -142,12 +145,13 @@ func (l *Log) Append(kind, tool, detail string, ok *bool, ms int64) error {
 	ev := Event{
 		Seq:    l.seq,
 		TS:     now.Format(time.RFC3339),
-		Kind:   clip(kind, 80),
-		Tool:   clip(tool, 128),
+		Kind:   kind,
+		Tool:   tool,
 		OK:     ok,
-		Detail: clip(redact.Text(detail), 240),
+		Detail: detail,
 		MS:     ms,
 	}
+	ev = sanitizeEvent(ev)
 	b, err := json.Marshal(ev)
 	if err != nil {
 		return err
@@ -181,9 +185,9 @@ func (l *Log) Tail(n int) []Event {
 	for _, line := range lines {
 		var ev Event
 		if json.Unmarshal([]byte(line), &ev) == nil {
-			// Re-redact on read as well as append: older logs and externally
+			// Re-sanitize on read as well as append: older logs and externally
 			// supplied log files must not bypass the current boundary.
-			ev.Detail = redact.Text(ev.Detail)
+			ev = sanitizeEvent(ev)
 			out = append(out, ev)
 		}
 	}
@@ -220,6 +224,13 @@ func clip(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func sanitizeEvent(ev Event) Event {
+	ev.Kind = clip(redact.Text(ev.Kind), maxTraceKindBytes)
+	ev.Tool = clip(redact.Text(ev.Tool), maxTraceToolBytes)
+	ev.Detail = clip(redact.Text(ev.Detail), maxTraceDetailBytes)
+	return ev
 }
 
 func Bool(v bool) *bool { return &v }

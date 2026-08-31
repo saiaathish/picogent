@@ -11,7 +11,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/saiaathish/picogent/internal/procenv"
 )
 
 // Status classifies verification without confusing missing evidence with success.
@@ -110,14 +113,14 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 
 	cmd := exec.CommandContext(ctx, command.Runner, command.Args...)
 	cmd.Dir = workspace
-	var buf bytes.Buffer
+	cmd.Env = procenv.Sanitized()
+	var buf boundedCapture
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
 	started := time.Now()
 	err := cmd.Run()
 	duration := time.Since(started)
-	out := buf.String()
-	out, outputTruncated := boundedOutput(out)
+	out, outputTruncated := buf.result()
 	passed, failed := count(out)
 	res := Result{
 		OK:              err == nil,
@@ -159,12 +162,53 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 	return res
 }
 
+type boundedCapture struct {
+	mu        sync.Mutex
+	data      bytes.Buffer
+	truncated bool
+}
+
+func (b *boundedCapture) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	remaining := MaxOutputBytes - b.data.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = b.data.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+	_, _ = b.data.Write(p)
+	return len(p), nil
+}
+
+func (b *boundedCapture) result() (string, bool) {
+	b.mu.Lock()
+	out := b.data.String()
+	truncated := b.truncated
+	b.mu.Unlock()
+	if truncated {
+		return formatTruncatedOutput(out), true
+	}
+	return out, false
+}
+
 func boundedOutput(output string) (string, bool) {
 	if len(output) <= MaxOutputBytes {
 		return output, false
 	}
+	return formatTruncatedOutput(output), true
+}
+
+func formatTruncatedOutput(output string) string {
 	const marker = "\n… truncated …"
-	return output[:MaxOutputBytes-len(marker)] + marker, true
+	if len(output) > MaxOutputBytes-len(marker) {
+		output = output[:MaxOutputBytes-len(marker)]
+	}
+	return output + marker
 }
 
 var summaryCount = regexp.MustCompile(`(?i)(\d+)\s+(passed|failed)\b`)

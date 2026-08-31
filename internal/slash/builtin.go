@@ -1,11 +1,12 @@
 package slash
 
 import (
-	"os/exec"
+	"context"
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/commands"
 	"github.com/saiaathish/picogent/internal/evolve"
+	"github.com/saiaathish/picogent/internal/gitobs"
 	"github.com/saiaathish/picogent/internal/projectctx"
 )
 
@@ -144,16 +145,17 @@ func reviewPrompt() string {
 Be concise. Use tools to inspect — do not guess.`
 }
 
-func GitDiff() string {
-	out, err := exec.Command("git", "diff", "HEAD").CombinedOutput()
+func GitDiff(workspace string) string {
+	result, err := gitobs.Combined(context.Background(), workspace, "diff", "HEAD")
+	out := result.Output
 	if err != nil {
-		return string(out)
+		return out
 	}
 	if len(out) == 0 {
 		return "(no diff)"
 	}
 	if len(out) > 8000 {
-		return string(out[:8000]) + "\n… truncated …"
+		return out[:8000] + "\n… truncated …"
 	}
-	return string(out)
+	return out
 }

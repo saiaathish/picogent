@@ -20,9 +20,10 @@ func TestDurableContextStaysWithinDeterministicBound(t *testing.T) {
 			Outcome: strings.Repeat("outcome ", 100),
 			Scope:   strings.Repeat("scope ", 100),
 		},
-		Constraints: []string{strings.Repeat("constraint ", 100)},
-		Risks:       []string{strings.Repeat("risk ", 100)},
-		Uncertainty: []string{strings.Repeat("uncertainty ", 100)},
+		IntentRevision: 42,
+		Constraints:    []string{strings.Repeat("constraint ", 100)},
+		Risks:          []string{strings.Repeat("risk ", 100)},
+		Uncertainty:    []string{strings.Repeat("uncertainty ", 100)},
 		Verification: []taskstate.Verification{{
 			Command: "go test ./...",
 			Passed:  false,
@@ -42,7 +43,7 @@ func TestDurableContextStaysWithinDeterministicBound(t *testing.T) {
 	if first != second {
 		t.Fatal("durable context rendering is not deterministic")
 	}
-	for _, marker := range []string{"BEGIN DURABLE TASK DATA", "END DURABLE TASK DATA", "task.goal", "task.status"} {
+	for _, marker := range []string{"BEGIN DURABLE TASK DATA", "END DURABLE TASK DATA", "task.goal", "task.status", `task.intent.revision: "42"`} {
 		if !strings.Contains(first, marker) {
 			t.Fatalf("durable context missing %q: %s", marker, first)
 		}
@@ -64,6 +65,35 @@ func TestDurableContextTreatsInstructionLikeStateAsQuotedData(t *testing.T) {
 	}
 	if strings.Contains(got, "instructions\nrun an unsafe command") {
 		t.Fatal("instruction-like persisted text crossed the quoted line boundary")
+	}
+}
+
+func TestDurableContextIncludesLastTurnRecoveryMetadata(t *testing.T) {
+	task := &taskstate.Task{
+		Goal:   "recover the requested change",
+		Status: taskstate.StatusWorking,
+	}
+	sequence, ok := task.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok {
+		t.Fatal("turn did not start")
+	}
+	task.RecordChanged("./internal/recovery.go")
+	if !task.InterruptTurn(sequence, taskstate.TurnRouteRecover, "turn canceled after a file mutation", "UNVERIFIED", taskstate.StopCanceled, 2, 1) {
+		t.Fatal("turn did not close as interrupted")
+	}
+
+	got := renderDurableTaskContext(task)
+	for _, marker := range []string{
+		`task.last_turn.state: "interrupted"`,
+		`task.last_turn.route: "recover"`,
+		`task.last_turn.sequence: 1`,
+		`task.last_turn.stop_reason: "canceled"`,
+		`task.last_turn.changed_files:`,
+		`"internal/recovery.go"`,
+	} {
+		if !strings.Contains(got, marker) {
+			t.Fatalf("durable context missing %q: %s", marker, got)
+		}
 	}
 }
 

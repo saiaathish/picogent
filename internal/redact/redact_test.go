@@ -36,3 +36,37 @@ func TestTextPreservesOrdinaryText(t *testing.T) {
 		t.Fatalf("ordinary text changed: %q", got)
 	}
 }
+
+func TestNeedsRedactionMatchesCredentialShapes(t *testing.T) {
+	for _, value := range []string{
+		`api_key="api-secret"`,
+		`https://user:password@example.test/path`,
+		"Bearer bearer-secret",
+		"sk-live-secret-value",
+		"-----BEGIN OPENSSH PRIVATE KEY-----secret-----END OPENSSH PRIVATE KEY-----",
+	} {
+		if !NeedsRedaction(value) {
+			t.Fatalf("NeedsRedaction(%q) = false", value)
+		}
+	}
+	if NeedsRedaction("password documentation and tokenization notes") {
+		t.Fatal("NeedsRedaction flagged ordinary text")
+	}
+}
+
+func TestDiagnosticRedactsFlattensAndBounds(t *testing.T) {
+	const secret = "diagnostic-secret"
+	got := Diagnostic("\x1b[31maccess_token="+secret+"\nforged", 30)
+	if strings.Contains(got, secret) {
+		t.Fatalf("diagnostic retained secret: %q", got)
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "[31m") || strings.Contains(got, "\n") {
+		t.Fatalf("diagnostic retained control bytes: %q", got)
+	}
+	if len(got) != 33 { // 30 bytes plus the UTF-8 ellipsis.
+		t.Fatalf("diagnostic length = %d, want 33: %q", len(got), got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("diagnostic lost redaction marker: %q", got)
+	}
+}

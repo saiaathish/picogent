@@ -46,36 +46,55 @@ func (s *Store) Path(sessionID string) (string, error) {
 	return filepath.Join(s.dir, sessionID+".json"), nil
 }
 
-// AcquireSessionLock reserves one durable task session for the lifetime of a
-// turn. Per-operation CAS protects individual checkpoint writes, but it cannot
-// stop two processes from making the same workspace changes concurrently. The
-// lock is a kernel-backed file lock, so it is released automatically if the
-// owning process exits.
-func (s *Store) AcquireSessionLock(sessionID string) (func() error, error) {
-	path, err := s.Path(sessionID)
+// AcquireRunLock serializes one complete agent run for this project. The lock
+// is blocking so a second process waits for the active run to finish instead
+// of interleaving workspace mutations. The kernel-backed file lock also
+// releases automatically if the owning process exits.
+func (s *Store) AcquireRunLock() (func() error, error) {
+	dir, err := s.runLockDir()
 	if err != nil {
 		return nil, err
 	}
-	if err := securefile.EnsureDir(s.dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create task store: %w", err)
-	}
-	file, err := securefile.OpenLockFile(path + ".run.lock")
+	key, err := filepath.Abs(dir)
 	if err != nil {
-		return nil, fmt.Errorf("open task session lock: %w", err)
+		return nil, fmt.Errorf("resolve task run lock directory: %w", err)
 	}
-	unlock, err := securefile.TryLockFile(file, true)
+	entry := acquireRunProcessLock(key)
+	releaseProcess := true
+	defer func() {
+		if releaseProcess {
+			releaseRunProcessLock(key, entry)
+		}
+	}()
+	if err := securefile.EnsureDir(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create task run lock directory: %w", err)
+	}
+	file, err := securefile.OpenLockFile(filepath.Join(dir, ".run.lock"))
+	if err != nil {
+		return nil, fmt.Errorf("open task run lock: %w", err)
+	}
+	unlock, err := securefile.LockFile(file, true)
 	if err != nil {
 		_ = file.Close()
-		return nil, fmt.Errorf("task session %q is already running: %w", sessionID, err)
+		return nil, fmt.Errorf("lock task run: %w", err)
 	}
+	releaseProcess = false
 	var once sync.Once
 	var releaseErr error
 	return func() error {
 		once.Do(func() {
 			releaseErr = errors.Join(unlock(), file.Close())
+			releaseRunProcessLock(key, entry)
 		})
 		return releaseErr
 	}, nil
+}
+
+func (s *Store) runLockDir() (string, error) {
+	if s == nil || strings.TrimSpace(s.dir) == "" {
+		return "", errors.New("task store directory is required")
+	}
+	return filepath.Clean(s.dir), nil
 }
 
 // Save atomically persists task state with private file permissions. The

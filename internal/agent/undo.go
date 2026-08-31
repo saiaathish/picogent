@@ -7,18 +7,26 @@ import (
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/checkpoint"
+	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
 // turnUndo aggregates the per-path snapshots captured before native file tools
 // run. A path is captured once, even when the model edits it in several tool
 // rounds during the same turn.
 type turnUndo struct {
-	workspace  string
-	checkpoint *checkpoint.Checkpoint
+	workspace         string
+	checkpoint        *checkpoint.Checkpoint
+	sessionID         string
+	sessionGeneration uint64
+	restored          bool
+	restoreMessage    string
+	restoreErr        error
 }
 
-func newTurnUndo(workspace string) *turnUndo {
-	return &turnUndo{workspace: workspace}
+const maxUndoTaskPersistenceAttempts = 3
+
+func newTurnUndo(workspace, sessionID string, sessionGeneration uint64) *turnUndo {
+	return &turnUndo{workspace: workspace, sessionID: sessionID, sessionGeneration: sessionGeneration}
 }
 
 func (u *turnUndo) capture(path string) error {
@@ -47,18 +55,36 @@ func (u *turnUndo) seal() ([]string, error) {
 	return u.checkpoint.ChangedPaths()
 }
 
-func (u *turnUndo) restore() (string, error) {
+func (u *turnUndo) restore() (string, bool, error) {
+	// A complete restore consumes the checkpoint. Cache its result so a later
+	// retry of durable task persistence does not attempt to restore it again.
+	if u.restored {
+		return u.restoreMessage, true, u.restoreErr
+	}
 	result, err := u.checkpoint.Restore()
-	if err != nil {
+	msg, complete, restoreErr := formatUndoRestore(result, err)
+	if complete {
+		u.restored = true
+		u.restoreMessage = msg
+		u.restoreErr = restoreErr
+	}
+	return msg, complete, restoreErr
+}
+
+func formatUndoRestore(result checkpoint.RestoreResult, err error) (string, bool, error) {
+	// Restore can return a cleanup warning after all workspace mutations have
+	// been published. Complete is authoritative for whether the checkpoint is
+	// consumed and durable evidence must be invalidated.
+	if err != nil && !result.Complete {
 		if len(result.Conflicts) > 0 {
 			paths := make([]string, 0, len(result.Conflicts))
 			for _, conflict := range result.Conflicts {
 				paths = append(paths, conflict.Path)
 			}
 			sort.Strings(paths)
-			return "", fmt.Errorf("undo blocked because newer changes exist in %s", strings.Join(paths, ", "))
+			return "", false, fmt.Errorf("undo blocked because newer changes exist in %s", strings.Join(paths, ", "))
 		}
-		return "", fmt.Errorf("undo failed: %w", err)
+		return "", false, fmt.Errorf("undo failed: %w", err)
 	}
 
 	restored, removed, unchanged := result.Restored, result.Removed, result.Unchanged
@@ -76,25 +102,92 @@ func (u *turnUndo) restore() (string, error) {
 		parts = append(parts, "already unchanged "+strings.Join(unchanged, ", "))
 	}
 	if len(parts) == 0 {
-		return "last turn had nothing left to undo", nil
+		msg := "last turn had nothing left to undo"
+		if err != nil {
+			return msg, result.Complete, fmt.Errorf("%s; undo completed with warning: %w", msg, err)
+		}
+		return msg, result.Complete, nil
 	}
-	return "Undid last turn: " + strings.Join(parts, "; "), nil
+	msg := "Undid last turn: " + strings.Join(parts, "; ")
+	if err != nil {
+		return msg, result.Complete, fmt.Errorf("%s; undo completed with warning: %w", msg, err)
+	}
+	return msg, result.Complete, nil
 }
 
 // UndoLastTurn restores the latest completed turn that changed native workspace
 // files. Read-only turns do not discard the most recent undo checkpoint.
 func (a *Agent) UndoLastTurn() (string, error) {
+	releaseRun, err := a.acquireProjectRunLockForWorkspace(a.ConfigSnapshot().Workspace)
+	if err != nil {
+		return "", fmt.Errorf("project run is unavailable: %w", err)
+	}
+	defer releaseRun()
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
 	if a.latestUndo == nil {
 		return "nothing to undo", nil
 	}
-	msg, err := a.latestUndo.restore()
-	if err != nil {
-		return "", err
+	if !a.undoBelongsToCurrentSession(a.latestUndo) {
+		a.latestUndo = nil
+		return "nothing to undo", nil
+	}
+	msg, complete, restoreErr := a.latestUndo.restore()
+	if !complete {
+		if restoreErr == nil {
+			restoreErr = errors.New("undo failed: workspace restoration was incomplete")
+		}
+		return "", restoreErr
+	}
+	undoMutation := func(task *taskstate.Task) error {
+		wasDone := task.Status == taskstate.StatusDone
+		changed := task.InvalidateWorkspaceEvidence("undo restored workspace files")
+		if wasDone {
+			if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
+				return err
+			}
+			changed = true
+		}
+		if !changed {
+			return errTaskMutationSkipped
+		}
+		return nil
+	}
+	err = a.persistUndoTaskMutation(undoMutation)
+	if err != nil && !errors.Is(err, errTaskMutationSkipped) {
+		stateErr := fmt.Errorf("files restored but durable task state was not saved; retry /undo to finish recovery: %w", err)
+		if restoreErr != nil {
+			return "", errors.Join(stateErr, restoreErr)
+		}
+		return "", stateErr
 	}
 	a.latestUndo = nil
+	if restoreErr != nil {
+		return "", restoreErr
+	}
 	return msg, nil
+}
+
+// persistUndoTaskMutation retries an undo invalidation against the newest
+// durable task after a compare-and-swap conflict. Undo has already changed
+// workspace files by this point, so it must preserve concurrent task progress
+// instead of retrying a stale in-memory snapshot.
+func (a *Agent) persistUndoTaskMutation(mutate func(*taskstate.Task) error) error {
+	var lastErr error
+	for attempt := 0; attempt < maxUndoTaskPersistenceAttempts; attempt++ {
+		_, err := a.mutateTaskResult(mutate)
+		if err == nil || errors.Is(err, errTaskMutationSkipped) {
+			return err
+		}
+		lastErr = err
+		if !errors.Is(err, taskstate.ErrRevisionConflict) || attempt == maxUndoTaskPersistenceAttempts-1 {
+			return err
+		}
+		if err := a.rebaseTaskFromStore(); err != nil {
+			return errors.Join(lastErr, err)
+		}
+	}
+	return lastErr
 }
 
 // UndoAvailable reports whether the latest completed native-file turn still
@@ -123,6 +216,20 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 	}
 	res.UndoAvailable = true
 	a.undoMu.Lock()
+	if !a.undoBelongsToCurrentSession(u) {
+		a.undoMu.Unlock()
+		res.UndoAvailable = false
+		return
+	}
 	a.latestUndo = u
 	a.undoMu.Unlock()
+}
+
+func (a *Agent) undoBelongsToCurrentSession(u *turnUndo) bool {
+	if a == nil || u == nil {
+		return false
+	}
+	a.taskMu.RLock()
+	defer a.taskMu.RUnlock()
+	return u.sessionID == a.TaskSession && u.sessionGeneration == a.taskSessionGeneration
 }

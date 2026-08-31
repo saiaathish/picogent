@@ -39,7 +39,7 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		list, current, err := projects.List()
 		if err != nil {
-			http.Error(w, err.Error(), 500)
+			writeGUIError(w, err.Error(), 500)
 			return
 		}
 		s.mu.Lock()
@@ -59,7 +59,7 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 			ID     string `json:"id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			http.Error(w, err.Error(), 400)
+			writeGUIError(w, err.Error(), 400)
 			return
 		}
 		switch in.Action {
@@ -70,55 +70,55 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if err != nil {
-				http.Error(w, err.Error(), 500)
+				writeGUIError(w, err.Error(), 500)
 				return
 			}
 			p, err := projects.Add("", path)
 			if err != nil {
-				http.Error(w, err.Error(), 400)
+				writeGUIError(w, err.Error(), 400)
 				return
 			}
 			res, err := s.switchWorkspace(p.Path)
 			if err != nil {
-				http.Error(w, err.Error(), 500)
+				writeGUIError(w, err.Error(), 500)
 				return
 			}
 			s.writeProjectSwitch(w, p, res)
 		case "add":
 			p, err := projects.Add(in.Name, in.Path)
 			if err != nil {
-				http.Error(w, err.Error(), 400)
+				writeGUIError(w, err.Error(), 400)
 				return
 			}
 			res, err := s.switchWorkspace(p.Path)
 			if err != nil {
-				http.Error(w, err.Error(), 500)
+				writeGUIError(w, err.Error(), 500)
 				return
 			}
 			s.writeProjectSwitch(w, p, res)
 		case "switch":
 			p, err := projects.Switch(in.ID)
 			if err != nil {
-				http.Error(w, err.Error(), 404)
+				writeGUIError(w, err.Error(), 404)
 				return
 			}
 			res, err := s.switchWorkspace(p.Path)
 			if err != nil {
-				http.Error(w, err.Error(), 500)
+				writeGUIError(w, err.Error(), 500)
 				return
 			}
 			s.writeProjectSwitch(w, p, res)
 		case "remove":
 			if err := projects.Remove(in.ID); err != nil {
-				http.Error(w, err.Error(), 404)
+				writeGUIError(w, err.Error(), 404)
 				return
 			}
 			w.WriteHeader(204)
 		default:
-			http.Error(w, "action must be add, switch, or remove", 400)
+			writeGUIError(w, "action must be add, switch, or remove", 400)
 		}
 	default:
-		http.Error(w, "GET or POST only", 405)
+		writeGUIError(w, "GET or POST only", 405)
 	}
 }
 
@@ -147,7 +147,10 @@ func (s *server) replaceWorkspace(cfg config.Config) (projectSwitchResult, error
 
 	path := cfg.Workspace
 	sessID, hist := initialSession(path)
-	a.SetTaskSession(sessID)
+	if err := a.SetTaskSession(sessID); err != nil {
+		closeCandidateAgent(a)
+		return projectSwitchResult{}, fmt.Errorf("load durable task state: %w", err)
+	}
 
 	s.mu.Lock()
 	oldWorkspace := s.cfg.Workspace

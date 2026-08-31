@@ -20,3 +20,14 @@ func identityForFile(f *os.File) (Identity, error) {
 	fileIndex := uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow)
 	return Identity{Volume: uint64(info.VolumeSerialNumber), File: fileIndex, Known: true}, nil
 }
+
+func rejectHardLinkFile(f *os.File) error {
+	if f == nil {
+		return errors.New("file is nil")
+	}
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(windows.Handle(f.Fd()), &info); err != nil {
+		return err
+	}
+	return rejectHardLinkCount(uint64(info.NumberOfLinks))
+}

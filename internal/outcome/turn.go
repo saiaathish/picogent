@@ -8,9 +8,10 @@ import (
 )
 
 const (
-	maxTurnContractText       = 320
-	maxTurnContractToolRounds = 128
-	maxTurnContractMutations  = 128
+	maxTurnContractText         = 320
+	maxTurnContractToolRounds   = 128
+	maxTurnContractMutations    = 128
+	maxTurnContractChangedFiles = 16
 )
 
 // TurnContract is the bounded outcome/recovery projection shared by the
@@ -41,6 +42,8 @@ type TurnContract struct {
 	LastTurnAttempt              int                 `json:"last_turn_attempt,omitempty"`
 	LastTurnToolRounds           int                 `json:"last_turn_tool_rounds,omitempty"`
 	LastTurnMutations            int                 `json:"last_turn_mutations,omitempty"`
+	LastTurnChangedFiles         []string            `json:"last_turn_changed_files,omitempty"`
+	LastTurnChangedFilesCapped   bool                `json:"last_turn_changed_files_capped,omitempty"`
 	Failure                      FailureIntelligence `json:"failure,omitempty"`
 }
 
@@ -92,6 +95,8 @@ func turnContractForTask(task *taskstate.Task, completion CompletionCheck) TurnC
 		result.LastTurnAttempt = turn.Attempt
 		result.LastTurnToolRounds = turn.ToolRounds
 		result.LastTurnMutations = turn.MutationCount
+		result.LastTurnChangedFiles = append([]string(nil), turn.ChangedFiles...)
+		result.LastTurnChangedFilesCapped = turn.ChangedFilesCapped
 	}
 
 	result.CriterionIndex = task.FirstMissingRequiredCriterion()
@@ -148,8 +153,39 @@ func boundTurnContract(contract TurnContract) TurnContract {
 	}
 	contract.LastTurnToolRounds = clampTurnContractCount(contract.LastTurnToolRounds, maxTurnContractToolRounds)
 	contract.LastTurnMutations = clampTurnContractCount(contract.LastTurnMutations, maxTurnContractMutations)
+	contract.LastTurnChangedFiles, contract.LastTurnChangedFilesCapped = boundTurnChangedFiles(contract.LastTurnChangedFiles, contract.LastTurnChangedFilesCapped)
 	contract.Failure = boundFailureIntelligence(contract.Failure)
 	return contract
+}
+
+func boundTurnChangedFiles(paths []string, capped bool) ([]string, bool) {
+	if len(paths) == 0 {
+		return nil, capped
+	}
+	out := make([]string, 0, minInt(len(paths), maxTurnContractChangedFiles))
+	seen := make(map[string]struct{}, len(paths))
+	for _, raw := range paths {
+		path := compactContractString(redact.Text(raw), maxTurnContractText)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		if len(out) >= maxTurnContractChangedFiles {
+			return out, true
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	return out, capped
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
 }
 
 func normalizeTurnEvidence(value string) string {

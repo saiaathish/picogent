@@ -196,7 +196,18 @@ func BenchmarkSessionListMeta(b *testing.B) {
 }
 
 func BenchmarkSessionLoad(b *testing.B) {
-	_, target := benchmarkSessions(b, 60)
+	b.Run("canonical", func(b *testing.B) {
+		_, target := benchmarkSessions(b, 60)
+		benchmarkSessionLoad(b, target, 4)
+	})
+	b.Run("legacy-history", func(b *testing.B) {
+		_, target := benchmarkLegacySession(b)
+		benchmarkSessionLoad(b, target, -1)
+	})
+}
+
+func benchmarkSessionLoad(b *testing.B, target string, wantMessages int) {
+	b.Helper()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -204,7 +215,7 @@ func BenchmarkSessionLoad(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if s.ID != target || len(s.Messages) != 4 {
+		if s.ID != target || (wantMessages >= 0 && len(s.Messages) != wantMessages) || (wantMessages < 0 && len(s.Messages) > session.MaxSessionMessages) {
 			b.Fatalf("loaded session = %#v", s)
 		}
 	}
@@ -362,6 +373,37 @@ func benchmarkSessions(b *testing.B, count int) (workspace, target string) {
 		}
 	}
 	return workspace, "benchmark-059"
+}
+
+func benchmarkLegacySession(b *testing.B) (workspace, target string) {
+	b.Helper()
+	workspace = b.TempDir()
+	b.Setenv("PICOGENT_HOME", b.TempDir())
+	s := session.New(workspace)
+	s.ID = "benchmark-legacy"
+	s.Title = "Benchmark legacy session"
+	s.Messages = make([]llm.Message, 0, session.MaxSessionMessages+20)
+	for i := 0; i < session.MaxSessionMessages+20; i++ {
+		s.Messages = append(s.Messages,
+			llm.Message{Role: "user", Content: fmt.Sprintf("legacy request %03d", i)},
+			llm.Message{Role: "assistant", Content: fmt.Sprintf("legacy response %03d", i)},
+		)
+	}
+	path, err := s.Path()
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		b.Fatal(err)
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		b.Fatal(err)
+	}
+	return workspace, s.ID
 }
 
 func toolResponse(id, name, args string) llm.ChatResponse {

@@ -260,8 +260,8 @@ func TestStaleAgentTaskRevisionCannotPublishCandidate(t *testing.T) {
 
 	h := &taskRecordingHandler{ag: a}
 	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the file"}, h)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("run should fail closed on a stale durable task revision")
 	}
 	if result.Task == nil || result.Task.Revision != stale.Revision || result.Task.Attempts != stale.Attempts || result.Task.Status != stale.Status {
 		t.Fatalf("stale candidate was published: got=%#v stale=%#v", result.Task, stale)

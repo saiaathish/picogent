@@ -23,6 +23,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/projects"
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
@@ -139,6 +140,49 @@ func TestHeadlessTaskSessionIDIsStableAndSafe(t *testing.T) {
 	}
 }
 
+func TestHeadlessDurableLoadFailureStopsBeforeRun(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+	t.Setenv("PICOGENT_PROVIDER", "")
+	t.Setenv("PICOGENT_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("PICOGENT_BASE_URL", "")
+	t.Setenv("PICOGENT_ROUTER", "0")
+	t.Setenv("PICOGENT_MODE", "")
+	cfg := config.Default()
+	cfg.SetupComplete = true
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	root, err := config.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(filepath.Join(root, "tasks", projects.IDForPath(workspace)))
+	path, err := store.Path(headlessTaskSessionID("say hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = run([]string{"run", "--dir", workspace, "say hello"})
+	if err == nil || !strings.Contains(err.Error(), "load durable task state") {
+		t.Fatalf("headless run error = %v, want durable-load failure", err)
+	}
+	if exitCode(err) != 1 {
+		t.Fatalf("headless durable-load exit code = %d, want 1", exitCode(err))
+	}
+}
+
 func TestHeadlessPermissionDenialUsesExitCodeTwo(t *testing.T) {
 	if got := exitCode(errHeadlessPermissionDenied); got != 2 {
 		t.Fatalf("permission exit code = %d, want 2", got)
@@ -218,6 +262,76 @@ func TestStdioSeparatesAnswerPromptsAndDiagnostics(t *testing.T) {
 	streamHandler.OnError(errors.New("stream failed"))
 	if strings.Contains(streamed.String(), "failed answer") {
 		t.Fatalf("failed streamed answer leaked to stdout: %q", streamed.String())
+	}
+}
+
+func TestStdioDiagnosticsRedactSecretsAndControlBytes(t *testing.T) {
+	const (
+		argumentSecret   = "headless-argument-secret"
+		resultSecret     = "headless-result-secret"
+		errorSecret      = "headless-error-secret"
+		permissionSecret = "headless-permission-secret"
+	)
+	var stderr bytes.Buffer
+	h := &stdioHandler{
+		in:     bufio.NewReader(strings.NewReader("n\n")),
+		errOut: &stderr,
+	}
+	h.OnToolStart(llm.ToolCall{
+		Name:      "mcp\nforged",
+		Arguments: "\x1b[31m{\"access_token\":\"" + argumentSecret + "\"}",
+	})
+	h.OnToolEnd(llm.ToolCall{Name: "mcp"}, `{"api_key":"`+resultSecret+`"}`, nil)
+	h.OnToolEnd(llm.ToolCall{Name: "mcp"}, "", errors.New("tool failed\npassword="+errorSecret))
+	_, _ = h.OnNeedPermission(context.Background(), perm.Request{Summary: "write token=" + permissionSecret})
+
+	got := stderr.String()
+	for _, secret := range []string{argumentSecret, resultSecret, errorSecret, permissionSecret} {
+		if strings.Contains(got, secret) {
+			t.Fatalf("diagnostic leaked secret %q: %q", secret, got)
+		}
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "mcp\nforged") {
+		t.Fatalf("diagnostic retained terminal control or a forged line: %q", got)
+	}
+	if !strings.Contains(got, "mcp forged") || !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("diagnostic lost flattened source or redaction marker: %q", got)
+	}
+}
+
+func TestDisplayErrorRedactsCredentialShapedCause(t *testing.T) {
+	const secret = "headless-cause-secret"
+	got := displayError(errors.New("provider failed: access_token=" + secret))
+	if strings.Contains(got, secret) {
+		t.Fatalf("display error leaked secret: %q", got)
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("display error lost redaction marker: %q", got)
+	}
+}
+
+func TestDisplayErrorFlattensTerminalControl(t *testing.T) {
+	const secret = "headless-terminal-secret"
+	got := displayError(errors.New("provider failed\n\x1b[31mapi_key=" + secret))
+	if strings.Contains(got, secret) {
+		t.Fatalf("display error leaked secret: %q", got)
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\n") || strings.Contains(got, "[31m") {
+		t.Fatalf("display error retained terminal control: %q", got)
+	}
+	if !strings.Contains(got, "provider failed") || !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("display error lost source or redaction marker: %q", got)
+	}
+}
+
+func TestHeadlessUnverifiedErrorRedactsEvidence(t *testing.T) {
+	const secret = "headless-verification-secret"
+	err := newHeadlessUnverifiedError("verify output\napi_key=" + secret)
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("unverified diagnostic leaked secret: %q", err)
+	}
+	if !strings.Contains(err.Error(), "[REDACTED]") {
+		t.Fatalf("unverified diagnostic lost redaction marker: %q", err)
 	}
 }
 

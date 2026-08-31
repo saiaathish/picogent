@@ -153,11 +153,7 @@ func TestSetModePersistsDeliberateChoiceWithEnvironmentOverride(t *testing.T) {
 }
 
 func TestSetModeDoesNotReportOrApplyUnsavedChange(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "not-a-directory")
-	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PICOGENT_HOME", home)
+	const secret = "gui-mode-secret"
 
 	workspace := t.TempDir()
 	cfg := config.Default()
@@ -166,7 +162,14 @@ func TestSetModeDoesNotReportOrApplyUnsavedChange(t *testing.T) {
 	cfg.SetRuntimeMode(config.ModeFast)
 	gate := perm.New(cfg.Mode, workspace, nil)
 	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), gate)
-	s := &server{cfg: cfg, ag: ag, permCh: make(chan perm.Decision, 1)}
+	s := &server{
+		cfg:    cfg,
+		ag:     ag,
+		permCh: make(chan perm.Decision, 1),
+		saveConfig: func(config.Config) error {
+			return errors.New("persist failed\n\x1b[31maccess_token=" + secret)
+		},
+	}
 
 	res := httptest.NewRecorder()
 	s.setMode(res, httptest.NewRequest(http.MethodPost, "/api/mode", strings.NewReader(`{"mode":"fast"}`)))
@@ -175,6 +178,16 @@ func TestSetModeDoesNotReportOrApplyUnsavedChange(t *testing.T) {
 	}
 	if !strings.Contains(res.Body.String(), "couldn't save mode") {
 		t.Fatalf("set mode error = %q", res.Body.String())
+	}
+	body := res.Body.String()
+	if strings.Contains(body, secret) {
+		t.Fatalf("set mode error leaked secret: %q", body)
+	}
+	if strings.Contains(body, "\x1b") || strings.Contains(body, "\naccess_token=") {
+		t.Fatalf("set mode error retained terminal/newline injection: %q", body)
+	}
+	if !strings.Contains(body, "[REDACTED]") {
+		t.Fatalf("set mode error did not record a redaction marker: %q", body)
 	}
 	if s.cfg.Mode != config.ModeFast || s.cfg.PersistentMode() != config.ModeSafe {
 		t.Fatalf("server config changed after failed save: %#v", s.cfg)
@@ -859,6 +872,54 @@ func TestSessionLoadRequiresCurrentWorkspace(t *testing.T) {
 	}
 }
 
+func TestSessionLoadSurfacesDurableTaskFailure(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	const targetSession = "target-session"
+	path, err := store.Path(targetSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SaveMessages(workspace, targetSession, []llm.Message{{Role: "user", Content: "resume me"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	ag.TaskStore = store
+	const currentSession = "current-session"
+	if err := ag.SetTaskSession(currentSession); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: cfg, ag: ag, sessionID: currentSession}
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"action":"load","id":"`+targetSession+`"}`))
+	s.sessions(res, req)
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body=%s; want durable-load failure", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "durable task state") {
+		t.Fatalf("body = %q, missing durable task diagnostic", res.Body.String())
+	}
+	s.mu.Lock()
+	gotSession := s.sessionID
+	gotAgent := s.ag
+	s.mu.Unlock()
+	if gotSession != currentSession || gotAgent != ag || ag.TaskSession != currentSession {
+		t.Fatalf("failed load changed live session: server=%q agent=%q replaced=%t", gotSession, ag.TaskSession, gotAgent != ag)
+	}
+}
+
 func TestChatRejectsInvalidExplicitScopeChoice(t *testing.T) {
 	s := &server{cfg: config.Config{Workspace: t.TempDir()}}
 	res := httptest.NewRecorder()
@@ -1341,6 +1402,68 @@ func TestChatRejectsUndoWhileAgentTurnIsActive(t *testing.T) {
 	}
 }
 
+func TestChatUndoEmitsCurrentTaskSnapshot(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "session-undo-gui"
+	cfg := config.Default()
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gate := perm.New(config.ModeFast, workspace, nil)
+	gate.AddAlwaysAllowed("verify")
+	ag := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: note updated"}},
+	}}, tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		Verify:    func(context.Context) (string, error) { return "verify PASS\n1 passed", nil },
+	}), gate)
+	ag.SetTaskStore(store)
+	if err := ag.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := ag.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, agent.NopHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusDone {
+		t.Fatalf("pre-undo task = %#v, want done", result.Task)
+	}
+
+	events := make(chan event, 3)
+	s := &server{cfg: cfg, ag: ag, sessionID: sessionID, subs: []chan event{events}}
+	res := httptest.NewRecorder()
+	s.chat(res, httptest.NewRequest(http.MethodPost, "/api/chat", strings.NewReader(`{"prompt":"/undo"}`)))
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNoContent)
+	}
+	if len(events) != 3 {
+		t.Fatalf("emitted %d events, want task snapshot, system, and undo", len(events))
+	}
+	var snapshot *event
+	for len(events) > 0 {
+		got := <-events
+		if got.Type == "task_progress" {
+			copy := got
+			snapshot = &copy
+		}
+	}
+	if snapshot == nil || snapshot.SessionID != sessionID || snapshot.Task == nil {
+		t.Fatalf("undo task snapshot = %#v, want current session task", snapshot)
+	}
+	if snapshot.Task.Status != taskstate.StatusVerifying {
+		t.Fatalf("undo task status = %q, want %q", snapshot.Task.Status, taskstate.StatusVerifying)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "note.txt")); !os.IsNotExist(err) {
+		t.Fatalf("undo did not remove note.txt: %v", err)
+	}
+}
+
 func TestGUIHandlerEmitsCanonicalFinalTextReplacement(t *testing.T) {
 	events := make(chan event, 1)
 	s := &server{subs: []chan event{events}}
@@ -1350,6 +1473,45 @@ func TestGUIHandlerEmitsCanonicalFinalTextReplacement(t *testing.T) {
 	got := <-events
 	if got.Type != "assistant_final" || got.Text != "Undo: /undo" {
 		t.Fatalf("event = %+v", got)
+	}
+}
+
+func TestGUIErrorAndPermissionEventsSanitizeUntrustedText(t *testing.T) {
+	const secret = "gui-event-secret"
+	s := &server{subs: []chan event{make(chan event, 2)}}
+	s.emit(event{Type: "error", Text: "provider failed\n\x1b[31maccess_token=" + secret})
+	s.emit(event{Type: "permission", Text: "mcp\nforged", Summary: "write token=" + secret, Hint: "\x1b[31mreview password=" + secret})
+
+	for i := 0; i < 2; i++ {
+		got := <-s.subs[0]
+		joined := got.Text + "\n" + got.Summary + "\n" + got.Hint
+		if strings.Contains(joined, secret) {
+			t.Fatalf("GUI event leaked secret: %#v", got)
+		}
+		for _, field := range []string{got.Text, got.Summary, got.Hint} {
+			if strings.Contains(field, "\x1b") || strings.Contains(field, "\n") {
+				t.Fatalf("GUI event retained terminal/newline injection: %#v", got)
+			}
+		}
+		if got.Type == "permission" && !strings.Contains(got.Text, "mcp forged") {
+			t.Fatalf("GUI event retained terminal/newline injection: %#v", got)
+		}
+	}
+}
+
+func TestGUIHTTPErrorSanitizesUntrustedText(t *testing.T) {
+	const secret = "gui-http-secret"
+	rec := httptest.NewRecorder()
+	writeGUIError(rec, "provider failed\n\x1b[31maccess_token="+secret, http.StatusInternalServerError)
+	got := rec.Body.String()
+	if strings.Contains(got, secret) {
+		t.Fatalf("HTTP error leaked secret: %q", got)
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\naccess_token") {
+		t.Fatalf("HTTP error retained terminal/newline injection: %q", got)
+	}
+	if !strings.Contains(got, "provider failed") || !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("HTTP error lost source or redaction marker: %q", got)
 	}
 }
 

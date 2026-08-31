@@ -36,6 +36,7 @@ import (
 	"github.com/saiaathish/picogent/internal/opencodeauth"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/projects"
+	"github.com/saiaathish/picogent/internal/redact"
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/setup"
@@ -163,7 +164,9 @@ func Run() error {
 	}
 	sessID, hist := initialSession(cfg.Workspace)
 	if a != nil {
-		a.SetTaskSession(sessID)
+		if err := a.SetTaskSession(sessID); err != nil {
+			return fmt.Errorf("load durable task state: %w", err)
+		}
 	}
 	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
@@ -431,6 +434,7 @@ func (s *server) attachRouterHook() {
 }
 
 func (s *server) emit(e event) {
+	e = sanitizeEvent(e)
 	s.mu.Lock()
 	if e.turnGen != 0 && (s.sessionID != e.SessionID || s.turnGen != e.turnGen) {
 		s.mu.Unlock()
@@ -452,6 +456,28 @@ func (s *server) emit(e event) {
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+const maxGUIErrorBytes = 240
+
+func guiDiagnostic(value string) string {
+	return redact.Diagnostic(value, maxGUIErrorBytes)
+}
+
+func writeGUIError(w http.ResponseWriter, message string, status int) {
+	http.Error(w, guiDiagnostic(message), status)
+}
+
+func sanitizeEvent(e event) event {
+	switch e.Type {
+	case "error":
+		e.Text = guiDiagnostic(e.Text)
+	case "permission":
+		e.Text = guiDiagnostic(e.Text)
+		e.Summary = guiDiagnostic(e.Summary)
+		e.Hint = guiDiagnostic(e.Hint)
+	}
+	return e
 }
 
 func (s *server) emitTaskSnapshot(sessionID string) {
@@ -481,9 +507,9 @@ func initialSession(workspace string) (id string, hist []llm.Message) {
 // tool registry, and trace log are safe to share; the permission gate is
 // per-agent because a canceled turn may still be finishing while the next
 // session starts.
-func cloneAgentForSession(src *agent.Agent, sessionID string) *agent.Agent {
+func cloneAgentForSession(src *agent.Agent, sessionID string) (*agent.Agent, error) {
 	if src == nil {
-		return nil
+		return nil, nil
 	}
 	state := src.RuntimeSnapshot()
 	var gate *perm.Gate
@@ -501,28 +527,39 @@ func cloneAgentForSession(src *agent.Agent, sessionID string) *agent.Agent {
 	clone.SetTrace(state.Trace)
 	clone.SetTaskStore(src.TaskStoreSnapshot())
 	clone.SetTaskMode(state.TaskMode)
-	clone.SetTaskSession(sessionID)
-	return clone
+	if err := clone.SetTaskSession(sessionID); err != nil {
+		return nil, fmt.Errorf("load durable task state for session %q: %w", sessionID, err)
+	}
+	return clone, nil
 }
 
 // newSessionLocked rotates the chat and agent together. Callers must hold
 // s.mu. A stale turn retains the old agent pointer and therefore can never
 // create or update durable task state for the new session.
-func (s *server) newSessionLocked() (string, error) {
+func (s *server) newSessionLocked() (string, error, error) {
 	var saveErr error
 	if len(s.hist) > 0 {
 		saveErr = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
 	}
 	s.abortTurnLocked()
-	s.sessionID = session.New(s.cfg.Workspace).ID
+	nextID := session.New(s.cfg.Workspace).ID
+	var next *agent.Agent
+	if s.ag != nil {
+		var err error
+		next, err = cloneAgentForSession(s.ag, nextID)
+		if err != nil {
+			return s.sessionID, saveErr, err
+		}
+		next.SetTaskMode(agent.TaskAgent)
+	}
+	s.sessionID = nextID
 	s.hist = nil
 	s.sideHist = nil
 	s.liveTask = agent.TaskAgent
-	if next := cloneAgentForSession(s.ag, s.sessionID); next != nil {
-		next.SetTaskMode(agent.TaskAgent)
+	if next != nil {
 		s.ag = next
 	}
-	return s.sessionID, saveErr
+	return s.sessionID, saveErr, nil
 }
 
 func (s *server) snapshot() map[string]any {
@@ -720,7 +757,7 @@ func (s *server) routerAPI(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(s.routerSnapshot())
 	default:
-		http.Error(w, "GET or POST only", 405)
+		writeGUIError(w, "GET or POST only", 405)
 	}
 }
 
@@ -745,7 +782,7 @@ func (s *server) setupStatus(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+		writeGUIError(w, "POST only", 405)
 		return
 	}
 	log, err := setup.InstallCores()
@@ -755,7 +792,7 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	out := map[string]any{"log": log, "ok": err == nil}
 	if err != nil {
-		out["error"] = err.Error()
+		out["error"] = guiDiagnostic(err.Error())
 		w.WriteHeader(500)
 	}
 	s.mu.Lock()
@@ -767,7 +804,7 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+		writeGUIError(w, "POST only", 405)
 		return
 	}
 	var in struct {
@@ -775,14 +812,14 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		ReturnTo string `json:"return_to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	switch strings.ToLower(in.Target) {
 	case "claude":
 		if err := setup.StartClaudeLogin(); err != nil {
-			http.Error(w, err.Error(), 400)
+			writeGUIError(w, err.Error(), 400)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -791,7 +828,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		})
 	case "opencode":
 		if err := setup.StartOpenCodeLogin(); err != nil {
-			http.Error(w, err.Error(), 400)
+			writeGUIError(w, err.Error(), 400)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -800,7 +837,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		})
 	case "antigravity", "agy":
 		if err := setup.StartAntigravityLogin(); err != nil {
-			http.Error(w, err.Error(), 400)
+			writeGUIError(w, err.Error(), 400)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -809,7 +846,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		})
 	case "codex-cli":
 		if err := setup.StartCodexCLILogin(); err != nil {
-			http.Error(w, err.Error(), 400)
+			writeGUIError(w, err.Error(), 400)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -824,7 +861,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			// Fall back to CLI login in a Terminal window.
 			if e2 := setup.StartCodexCLILogin(); e2 != nil {
-				http.Error(w, err.Error(), 500)
+				writeGUIError(w, err.Error(), 500)
 				return
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -839,7 +876,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "POST only", 405)
+		writeGUIError(w, "POST only", 405)
 		return
 	}
 	var in struct {
@@ -848,7 +885,7 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 		Model     string `json:"model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	s.mu.Lock()
@@ -856,19 +893,23 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	next, err := setup.Apply(cfg, in.Workspace, in.Mode, in.Model)
 	if err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	a, err := app.Build(next)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeGUIError(w, err.Error(), 500)
 		return
 	}
 	s.mu.Lock()
+	if err := a.SetTaskSession(s.sessionID); err != nil {
+		s.mu.Unlock()
+		writeGUIError(w, "couldn't load durable task state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.abortTurnLocked()
 	s.cfg = next
 	s.ag = a
-	a.SetTaskSession(s.sessionID)
 	s.hist = nil
 	s.mu.Unlock()
 	s.attachRouterHook()
@@ -885,12 +926,12 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 		Mode string `json:"mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	m := config.Mode(in.Mode)
 	if !m.Valid() {
-		http.Error(w, "invalid mode", 400)
+		writeGUIError(w, "invalid mode", 400)
 		return
 	}
 	s.configTxMu.Lock()
@@ -903,7 +944,7 @@ func (s *server) setMode(w http.ResponseWriter, r *http.Request) {
 	next.SetUserMode(m)
 	if err := s.persistConfig(next); err != nil {
 		s.mu.Unlock()
-		http.Error(w, "couldn't save mode: "+err.Error(), http.StatusInternalServerError)
+		writeGUIError(w, "couldn't save mode: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.cfg = next
@@ -935,12 +976,12 @@ func (s *server) setTaskMode(w http.ResponseWriter, r *http.Request) {
 		TaskMode string `json:"task_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, err.Error(), 400)
+		writeGUIError(w, err.Error(), 400)
 		return
 	}
 	m := agent.ParseTaskMode(in.TaskMode)
 	if !m.Valid() {
-		http.Error(w, "invalid task mode", 400)
+		writeGUIError(w, "invalid task mode", 400)
 		return
 	}
 	s.mu.Lock()
@@ -1316,7 +1357,7 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 		defer func() {
 			if rec := recover(); rec != nil {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("agent panic: %v", rec)})
-				fmt.Fprintf(os.Stderr, "picogent: agent panic: %v\n", rec)
+				fmt.Fprintln(os.Stderr, guiDiagnostic(fmt.Sprintf("picogent: agent panic: %v", rec)))
 			}
 			var next *turnAdmission
 			var nextPrompt string
@@ -1396,7 +1437,11 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 		s.mu.Lock()
 		if s.sessionID == runSession && s.turnGen == myGen && s.ag != nil {
 			runAgent = s.ag
-			runAgent.SetTaskSession(runSession)
+			if err := runAgent.SetTaskSession(runSession); err != nil {
+				s.mu.Unlock()
+				h.OnError(fmt.Errorf("load durable task state: %w", err))
+				return
+			}
 		}
 		s.mu.Unlock()
 		userMsg := llm.Message{Role: "user", Content: prompt, Parts: parts}
@@ -1464,7 +1509,7 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 		}
 		s.maybeAutoTitle(context.Background(), llmClient, model, ws, sid, next)
 		if err != nil && ctx.Err() == nil {
-			fmt.Fprintf(os.Stderr, "picogent: turn error: %v\n", err)
+			fmt.Fprintln(os.Stderr, guiDiagnostic(fmt.Sprintf("picogent: turn error: %v", err)))
 			s.emit(event{Type: "error", Text: err.Error()})
 		}
 	}()
@@ -1541,8 +1586,12 @@ func (s *server) clearGoalIf(expected string, expectedRevision, expectedEpoch, e
 
 func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
-	id, saveErr := s.newSessionLocked()
+	id, saveErr, taskErr := s.newSessionLocked()
 	s.mu.Unlock()
+	if taskErr != nil {
+		writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
+		return
+	}
 	if saveErr != nil {
 		s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
 	}
@@ -1750,8 +1799,12 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		switch payload {
 		case "clear":
 			s.mu.Lock()
-			id, saveErr := s.newSessionLocked()
+			id, saveErr, taskErr := s.newSessionLocked()
 			s.mu.Unlock()
+			if taskErr != nil {
+				writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
+				return
+			}
 			if saveErr != nil {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
 			}
@@ -1792,11 +1845,13 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 				s.emit(event{Type: "error", Text: "agent not ready"})
 				break
 			}
+			id := s.sessionID
 			text, err := s.ag.UndoLastTurn()
 			s.mu.Unlock()
 			if err != nil {
 				s.emit(event{Type: "error", Text: err.Error()})
 			} else {
+				s.emitTaskSnapshot(id)
 				s.emit(event{Type: "system", Text: text})
 				s.emit(event{Type: "undo", Status: "cleared", Text: text})
 			}
@@ -1822,7 +1877,10 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 			}
 			s.emit(event{Type: "system", Text: st})
 		case "diff":
-			s.emit(event{Type: "system", Text: slash.GitDiff()})
+			s.mu.Lock()
+			workspace := s.cfg.Workspace
+			s.mu.Unlock()
+			s.emit(event{Type: "system", Text: slash.GitDiff(workspace)})
 		case "goal:show":
 			s.mu.Lock()
 			workspace := s.cfg.Workspace
@@ -2327,8 +2385,12 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 		switch in.Action {
 		case "new":
 			s.mu.Lock()
-			id, saveErr := s.newSessionLocked()
+			id, saveErr, taskErr := s.newSessionLocked()
 			s.mu.Unlock()
+			if taskErr != nil {
+				writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
+				return
+			}
 			if saveErr != nil {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
 			}
@@ -2357,10 +2419,18 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.mu.Lock()
+			src := s.ag
+			s.mu.Unlock()
+			next, err := cloneAgentForSession(src, sess.ID)
+			if err != nil {
+				writeGUIError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			s.mu.Lock()
 			s.abortTurnLocked()
 			s.sessionID = sess.ID
 			s.hist = sess.Messages
-			if next := cloneAgentForSession(s.ag, sess.ID); next != nil {
+			if next != nil {
 				s.ag = next
 			}
 			ag := s.ag
@@ -2385,13 +2455,18 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			}
 			rotated := false
 			var saveErr error
+			var taskErr error
 			s.mu.Lock()
 			if s.sessionID == in.ID {
-				_, saveErr = s.newSessionLocked()
-				rotated = true
+				_, saveErr, taskErr = s.newSessionLocked()
+				rotated = taskErr == nil
 			}
 			currentID := s.sessionID
 			s.mu.Unlock()
+			if taskErr != nil {
+				writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
+				return
+			}
 			if saveErr != nil {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
 			}
@@ -2647,7 +2722,20 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			nextAgent = built
 			if workspaceChanged {
 				nextSession, nextHistory = initialSession(cfg.Workspace)
-				nextAgent.SetTaskSession(nextSession)
+				if err := nextAgent.SetTaskSession(nextSession); err != nil {
+					closeCandidateAgent(nextAgent)
+					writeGUIError(w, "couldn't load durable task state: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			} else {
+				s.mu.Lock()
+				currentSession := s.sessionID
+				s.mu.Unlock()
+				if err := nextAgent.SetTaskSession(currentSession); err != nil {
+					closeCandidateAgent(nextAgent)
+					writeGUIError(w, "couldn't load durable task state: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 		// Persist before publishing. The configuration transaction mutex is also
@@ -2676,7 +2764,6 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.cfg = cfg
 			if nextAgent != nil {
-				nextAgent.SetTaskSession(s.sessionID)
 				s.ag = nextAgent
 			} else if s.ag != nil {
 				s.ag.UpdateConfig(func(current *config.Config) { *current = cfg })

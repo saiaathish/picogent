@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -14,20 +15,29 @@ import (
 )
 
 func main() {
-	workspaceFlag := flag.String("workspace", ".", "workspace to verify")
-	expectedSHA := flag.String("expected-sha", "", "expected full Git commit ID")
-	flag.Parse()
+	os.Exit(run(context.Background(), os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("verify-manifest", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	workspaceFlag := flags.String("workspace", ".", "workspace to verify")
+	expectedSHA := flags.String("expected-sha", "", "expected full Git commit ID")
+	if err := flags.Parse(args); err != nil {
+		return 2
+	}
 
 	workspace, err := filepath.Abs(*workspaceFlag)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "resolve workspace:", err)
-		os.Exit(1)
+		fmt.Fprintln(stderr, "resolve workspace:", err)
+		return 1
 	}
-	provenance := verify.CollectProvenance(context.Background(), workspace, *expectedSHA)
-	pipeline := verify.RunPipeline(context.Background(), workspace, verify.Options{})
+	provenance := verify.CollectProvenance(ctx, workspace, *expectedSHA)
+	pipeline := verify.RunPipeline(ctx, workspace, verify.Options{})
 	manifest := verify.ManifestFromPipeline(pipeline, provenance)
-	if err := verify.WriteJSON(os.Stdout, manifest); err != nil {
-		fmt.Fprintln(os.Stderr, "write manifest:", err)
-		os.Exit(1)
+	if err := verify.WriteJSON(stdout, manifest); err != nil {
+		fmt.Fprintln(stderr, "write manifest:", err)
+		return 1
 	}
+	return 0
 }

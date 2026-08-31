@@ -145,6 +145,69 @@ func TestCaptureGitProvenance(t *testing.T) {
 	assertContains(t, formatted.Provenance.Dirty, "nested/new.txt")
 }
 
+func TestCaptureSummaryPreservesInspectGitSemantics(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "--quiet")
+	gitRun(t, dir, "config", "user.name", "Picogent Test")
+	gitRun(t, dir, "config", "user.email", "picogent@example.test")
+	write(t, dir, "tracked.txt", "tracked\n")
+	gitRun(t, dir, "add", "tracked.txt")
+	gitRun(t, dir, "commit", "--quiet", "-m", "initial")
+	write(t, dir, filepath.Join("nested", "one.txt"), "one\n")
+	write(t, dir, filepath.Join("nested", "two.txt"), "two\n")
+
+	legacy, err := Inspect(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, err := Capture(context.Background(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if captured.Summary.Git != legacy.Git {
+		t.Fatalf("capture git summary = %#v, inspect git summary = %#v", captured.Summary.Git, legacy.Git)
+	}
+	if captured.Summary.Git.Untracked != 1 {
+		t.Fatalf("untracked count = %d, want one normal-mode directory entry", captured.Summary.Git.Untracked)
+	}
+	if len(captured.DirtyPaths) != 2 || !contains(captured.DirtyPaths, "nested/one.txt") || !contains(captured.DirtyPaths, "nested/two.txt") {
+		t.Fatalf("capture dirty paths = %v, want both expanded files", captured.DirtyPaths)
+	}
+}
+
+func TestParseGitStatusV2PreservesStateAndRenamePaths(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	status := strings.Join([]string{
+		"# branch.oid " + head,
+		"# branch.head feature/capture",
+		"1 .M N... 100644 100644 100644 " + head + " " + head + " modified.go",
+		"? untracked/file.go",
+		"2 R. N... 100644 100644 100644 " + head + " " + head + " R100 docs/new.md",
+		"docs/old.md",
+		"u UU N... 100644 100644 100644 100644 " + head + " " + head + " conflict.go",
+	}, "\x00")
+
+	parsed := parseGitStatusV2(status, "/workspace", "/workspace")
+	if !parsed.headKnown || parsed.head != head || parsed.state.Head != head[:12] {
+		t.Fatalf("head provenance = %#v; want %s", parsed, head)
+	}
+	if parsed.state.Branch != "feature/capture" || parsed.state.Clean {
+		t.Fatalf("git state = %#v", parsed.state)
+	}
+	if parsed.state.Staged != 2 || parsed.state.Modified != 2 || parsed.state.Untracked != 1 {
+		t.Fatalf("git counters = %#v", parsed.state)
+	}
+	for _, path := range []string{"modified.go", "untracked/file.go", "docs/new.md", "docs/old.md", "conflict.go"} {
+		assertContains(t, parsed.dirtyPaths, path)
+	}
+	if parsed.dirtyPathsTruncated {
+		t.Fatalf("unexpected dirty-path truncation: %#v", parsed)
+	}
+}
+
 func TestCaptureSubdirectoryScopesDirtyPaths(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -167,6 +230,9 @@ func TestCaptureSubdirectoryScopesDirtyPaths(t *testing.T) {
 	}
 	if snapshot.GitRoot != resolvedPath(t, dir) || !snapshot.HeadKnown {
 		t.Fatalf("git provenance = %#v", snapshot)
+	}
+	if snapshot.Summary.Git.Clean {
+		t.Fatalf("repository-wide dirty state was reported clean: %#v", snapshot.Summary.Git)
 	}
 	assertContains(t, snapshot.DirtyPaths, "go.mod")
 	if contains(snapshot.DirtyPaths, "../README.md") || contains(snapshot.DirtyPaths, "README.md") {

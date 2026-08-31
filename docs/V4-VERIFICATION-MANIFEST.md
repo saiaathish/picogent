@@ -46,8 +46,9 @@ Command:
 go test ./internal/benchmark -run '^$' -bench '^BenchmarkVerificationManifest$' -benchmem -count=3
 ```
 
-On 2026-08-25, Apple M3 arm64 macOS, the manifest projection measured
-4.48–4.56 µs/op, 3,668 B/op, 7 allocations/op, and 1,001 output bytes/op.
+On 2026-08-30 at `main` head `59be9bef64f77ffd44a234479fe2a6c7bfd308c4`,
+Apple M3 arm64 macOS, the manifest projection measured 4.757–4.778 µs/op,
+3,668 B/op, 7 allocations/op, and 1,001 output bytes/op across three runs.
 
 These are local serialization measurements, not release-readiness or live
 provider-quality claims.

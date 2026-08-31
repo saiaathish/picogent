@@ -53,7 +53,7 @@ func (s *server) promptsAPI(w http.ResponseWriter, r *http.Request) {
 			"prompts": recs,
 		})
 	default:
-		http.Error(w, "GET or POST", 405)
+		writeGUIError(w, "GET or POST", 405)
 	}
 }
 

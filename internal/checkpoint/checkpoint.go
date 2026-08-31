@@ -308,26 +308,29 @@ func applyMutation(root string, m *mutation) *operationError {
 		return &operationError{m.entry.path, "conflict", ErrConflict}
 	}
 	m.after = current
-	m.applied = true
 	if m.entry.before.exists {
 		if err := writeWorkspaceState(root, m.entry.path, m.entry.before); err != nil {
 			return &operationError{m.entry.path, "write", err}
 		}
+		m.applied = true
 		return nil
 	}
 	if err := workspace.Remove(root, m.entry.path); err != nil {
 		return &operationError{m.entry.path, "remove", err}
 	}
+	m.applied = true
 	return nil
 }
 
 func rollback(root string, mutations []mutation, result *RestoreResult) bool {
 	ok := true
+	attempted := false
 	for i := len(mutations) - 1; i >= 0; i-- {
 		m := &mutations[i]
 		if !m.applied {
 			continue
 		}
+		attempted = true
 		current, err := readWorkspaceFile(root, m.entry.path)
 		if err != nil {
 			result.Failures = append(result.Failures, failure(m.entry.path, "rollback inspect", err))
@@ -344,7 +347,7 @@ func rollback(root string, mutations []mutation, result *RestoreResult) bool {
 			ok = false
 		}
 	}
-	return ok
+	return attempted && ok
 }
 
 func resolveWorkspace(workspace string) (string, string, error) {
@@ -449,38 +452,7 @@ func writeWorkspaceState(root, rel string, state fileState) error {
 		}
 		return err
 	}
-	f, err := workspace.OpenWrite(root, rel)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	if err := f.Truncate(0); err != nil {
-		return err
-	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	if err := writeAll(f, state.data); err != nil {
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		return err
-	}
-	return f.Chmod(state.mode)
-}
-
-func writeAll(w io.Writer, data []byte) error {
-	for len(data) > 0 {
-		n, err := w.Write(data)
-		if err != nil {
-			return err
-		}
-		if n <= 0 {
-			return io.ErrShortWrite
-		}
-		data = data[n:]
-	}
-	return nil
+	return workspace.WriteAtomicWithMode(root, rel, state.data, state.mode)
 }
 
 func readRegularFileHandle(f *os.File) (fileState, error) {

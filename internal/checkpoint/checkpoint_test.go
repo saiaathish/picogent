@@ -252,6 +252,35 @@ func TestModeOnlyChangesAreRestored(t *testing.T) {
 	}
 }
 
+func TestRestoreDoesNotRollbackAnUnappliedWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows read-only attributes have different semantics")
+	}
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "state.txt")
+	write(t, workspace, "state.txt", "before", 0o644)
+	cp, err := checkpoint.Capture(workspace, []string{"state.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, workspace, "state.txt", "after", 0o644)
+	if err := os.Chmod(path, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := cp.Restore()
+	if err == nil || result.Complete || result.RolledBack {
+		t.Fatalf("read-only restore = result:%+v err:%v", result, err)
+	}
+	if len(result.Failures) != 1 || result.Failures[0].Operation != "write" {
+		t.Fatalf("read-only restore failures = %+v", result.Failures)
+	}
+	assertContents(t, workspace, "state.txt", "after")
+}
+
 func TestCaptureRejectsWorkspaceEscapesAndNonFiles(t *testing.T) {
 	workspace := t.TempDir()
 	outside := t.TempDir()

@@ -190,6 +190,97 @@ func TestEvidenceTracksLatestChange(t *testing.T) {
 	}
 }
 
+func TestInvalidateWorkspaceEvidenceIsIdempotent(t *testing.T) {
+	task, err := New("undo-invalidation", "restore the workspace safely", []string{"edit", "verify"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := task.BeginTurn(TurnRouteImplement)
+	if !ok {
+		t.Fatal("turn did not start")
+	}
+	task.RecordChanged("note.txt")
+	if !task.FinishTurn(sequence, TurnRouteImplement, "edit the note", "PASS", StopNone, 1, 1) {
+		t.Fatal("turn did not finish")
+	}
+	task.AddVerification("go test ./...", true, "verify PASS")
+	originalFiles := append([]string(nil), task.ChangedFiles...)
+	originalTurns := append([]TurnRecord(nil), task.Turns...)
+
+	if !task.InvalidateWorkspaceEvidence("undo restored workspace files") {
+		t.Fatal("passing workspace evidence was not invalidated")
+	}
+	if task.VerifiedChangeSeq != -1 || !task.NeedsVerification() || task.Verification[len(task.Verification)-1].Passed {
+		t.Fatalf("invalidated task = %#v", task)
+	}
+	if !reflect.DeepEqual(task.ChangedFiles, originalFiles) || task.ChangeSeq != 1 || !reflect.DeepEqual(task.Turns, originalTurns) {
+		t.Fatalf("undo invalidation changed history = files %#v seq %d turns %#v", task.ChangedFiles, task.ChangeSeq, task.Turns)
+	}
+	beforeRetry, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.InvalidateWorkspaceEvidence("undo restored workspace files") {
+		t.Fatal("second invalidation reported a change")
+	}
+	afterRetry, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeRetry, afterRetry) {
+		t.Fatal("second invalidation changed durable state")
+	}
+}
+
+func TestInvalidateWorkspaceEvidenceInvalidatesCurrentRequiredQualityEvidence(t *testing.T) {
+	task, err := New("undo-quality-invalidation", "restore the quality boundary", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Intent = &IntentContract{
+		Outcome:          task.Goal,
+		NeedsResearch:    true,
+		NeedsMeasurement: true,
+		NeedsVisual:      true,
+		NeedsTests:       true,
+		NeedsApproval:    true,
+	}
+
+	task.RecordResearchEvidence("PASS", "current research completed", "research tool")
+	task.RecordMeasurementEvidence("PASS", "current measurement completed", "benchmark")
+	task.RecordVisualEvidence("PASS", "current visual inspection completed", "visual inspection")
+	task.RecordTestsEvidence("PASS", "current tests completed", "go test ./...")
+	task.RecordApprovalEvidence("APPROVED", "current approval recorded", "user")
+
+	if check := task.CompletionCheck(); !check.Ready {
+		t.Fatalf("trusted quality evidence was not ready before undo = %#v", check)
+	}
+	if !task.InvalidateWorkspaceEvidence("undo restored workspace files") {
+		t.Fatal("current quality evidence was not invalidated")
+	}
+
+	wantKinds := []EvidenceKind{
+		EvidenceKindResearch,
+		EvidenceKindMeasurement,
+		EvidenceKindVisual,
+		EvidenceKindTests,
+		EvidenceKindApproval,
+	}
+	check := task.CompletionCheck()
+	if check.Ready || !reflect.DeepEqual(check.MissingRequirements, wantKinds) {
+		t.Fatalf("invalidated quality evidence remained completion-ready = %#v", check)
+	}
+	for _, kind := range wantKinds {
+		status, current, origin := task.RequirementEvidenceState(kind)
+		if status != "INCONCLUSIVE" || current || origin != EvidenceOriginSystem {
+			t.Fatalf("invalidated %s evidence = status=%q current=%v origin=%q", kind, status, current, origin)
+		}
+	}
+}
+
 func TestCompletionReadyRequiresCurrentPassForEveryRequiredCriterion(t *testing.T) {
 	task, err := New("criterion-proof", "finish the outcome", []string{"first", "second", "optional"})
 	if err != nil {

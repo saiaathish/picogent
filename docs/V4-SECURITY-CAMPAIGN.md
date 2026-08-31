@@ -63,6 +63,44 @@ fallback remains. Deterministic hostile tests cover the npm argument boundary,
 private prefix, environment filtering, output redaction/capping, and the
 absence of remote provider shell installation.
 
+### Verification subprocess boundary
+
+Workspace verification commands now receive the shared sanitized subprocess
+environment. Credential-shaped variables, shell startup files, dynamic-loader
+hooks, pager settings, and package-manager overrides are removed before the
+verifier starts a workspace command. A fresh-process regression test confirms
+that a token is not inherited while valid passing-test evidence remains
+observable. This is a local boundary test, not proof that every external
+provider or hostile runtime path is safe.
+
+The atomic writer's same-UID replacement race after its final identity check
+remains deliberately unclaimed because POSIX has no portable
+compare-and-rename-by-inode primitive. Deterministic `securefile` tests cover
+the supported boundary: a replacement observed before publication is rejected,
+and cleanup never unlinks a replacement inode.
+
+### Durable session history
+
+Session titles, message content, text parts, and tool-call arguments now pass
+through the shared credential redactor before bounded persistence. This keeps
+credential-shaped values out of resumable chat history while preserving
+instruction-like text as data and leaving structural message identities intact.
+`internal/session/redaction_test.go` exercises model text, tool results,
+multimodal text, and tool arguments. Binary attachment bytes and complete crash
+diagnostic coverage remain outside this slice.
+
+### Workspace-scoped slash diff observation
+
+The TUI and GUI `/diff` actions now run through `internal/gitobs.Combined`
+against the configured workspace. The shared observer disables repository Git
+helpers and inherited Git control variables, redacts credential-shaped output,
+and bounds subprocess output while the slash surface preserves its existing
+8,000-byte display limit. `internal/slash/builtin_test.go` covers workspace
+routing, repository-configured external diff suppression, secret redaction,
+clean output, and truncation. This is direct local and hosted test evidence
+for the exercised boundary, not proof of every Git version or arbitrary hook
+configuration.
+
 ## Existing boundaries rechecked
 
 - Workspace MCP configuration is not autoloaded; only user-owned MCP config is
@@ -79,19 +117,77 @@ absence of remote provider shell installation.
   component through directory descriptors with `openat`/`mkdirat` and
   `O_NOFOLLOW`; Windows builds use `NtCreateFile` RootDirectory handles with
   `OBJ_DONT_REPARSE` and `FILE_OPEN_REPARSE_POINT`. Focused tests cover direct
-  outside-symlink use, root-ancestor rejection, and Unix ancestor-swap stress.
-  Hosted Windows runtime evidence is still pending.
-- Checkpoint capture, seal, and preflight fingerprint reads use the same
-  secure opener. Restore staging, publication, deletion, and rollback remain
-  path-based and are intentionally not covered by this checkpoint.
+  outside-symlink use, hard-linked files, root-ancestor rejection, and Unix
+  ancestor-swap stress.
+  Hosted CI run `33304380869` passed the Windows workspace tests, build, and
+  GUI smoke at source commit `ff91cf3`; this is direct hosted runtime evidence
+  for that path, not proof of Windows ACL enforcement or hostile races.
+- Checkpoint capture, seal, preflight fingerprint reads, restore publication,
+  deletion, and rollback use the secure workspace primitives. Each restored
+  file's complete bytes and mode are published atomically; the sequence across
+  multiple files is intentionally not a multi-file transaction, and hostile
+  same-UID pathname races remain outside the helper's guarantee.
+- A Unix checkpoint stress test now exercises both restore writes and deletion
+  while an ancestor directory is repeatedly replaced; outside sentinel files
+  remain unchanged. This is local hosted-Linux evidence, not Windows hostile
+  runtime evidence or a general same-UID race guarantee.
+- Secure opens, atomic writes, and removals reject regular files with multiple
+  hard links on Unix and Windows. Checkpoint restore also rejects a post-seal
+  replacement hard link before mutating any path; this prevents a workspace
+  name from being used to read or write an outside inode through a hard link.
+- A cross-platform checkpoint test also rejects a post-seal replacement hard
+  link at a turn-created path before deletion; both the outside sentinel and
+  the replacement path remain unchanged.
+- A Windows-only stress test races checkpoint restore against repeated
+  replacement hard links and verifies that an outside sentinel remains
+  unchanged. Hosted PR #132 CI run `33310394597` and post-merge `main` run
+  `33310553558` passed the Windows, Ubuntu, macOS, and release matrix. This is
+  direct hosted Windows stress evidence, not a general same-UID race guarantee.
+
+## Hosted evidence ledger
+
+These merged slices have recorded source, merge, pull-request CI, and
+post-merge CI provenance. Every listed CI run passed Ubuntu, Windows, macOS,
+and release evidence. This ledger records delivery evidence; it does not
+close the open or unrecorded risks below.
+
+| PR | Slice | Source | Merge | PR CI | Post-merge CI |
+| --- | --- | --- | --- | --- | --- |
+| #127 | Mode-aware atomic workspace writes | `76b5e06` | `8746d56` | `33308318250` | `33308456626` |
+| #128 | Atomic checkpoint restore publication and rollback reporting | `59787da` | `1e6188e` | `33308507232` | `33308634597` |
+| #129 | Unix ancestor-swap deletion stress coverage | `ec22494` | `d77a4f8` | `33308942589` | `33309050782` |
+| #130 | Cross-platform hardlink protection for created-path deletion | `aba55a5` | `b2fd72f` | `33309325110` | `33309483503` |
+| #131 | Security evidence ledger | `96ac210` | `703016d1` | `33309894324` | `33310008305` |
+| #132 | Windows hostile-runtime restore stress coverage | `b7f612b` | `d1572a2` | `33310394597` | `33310553558` |
+| #133 | Recorded Windows restore stress evidence | `5d4d695` | `2d57d76` | `33310730875` | `33310844052` |
+| #135 | Transient Windows session replacement retry | `be5b6db` | `556da3e` | `33311631871` | `33311763251` |
+| #136 | Security campaign evidence ledger update | `9f0bdeb` | `5ebfd8c` | `33312084576` | `33312234714` |
+| #138 | Headless CLI diagnostic redaction | `478bb73` | `77456a0` | `33312921387` | `33313055665` |
+| #140 | TUI diagnostic redaction | `93eabe3` | `4c52e79` | `33313929799` | `33314065875` |
+| #142 | CLI final error diagnostic sanitization | `bd64577` | `1e65301` | `33314642093` | `33314774741` |
+| #144 | GUI error event boundary sanitization | `fbc95f0` | `5355113` | `33315264433` | `33315385828` |
+| #146 | Selected GUI HTTP error sanitization | `ccd4d61` | `d65c36f` | `33315831874` | `33315951810` |
+| #148 | Project API HTTP error sanitization | `411a001` | `f7c7fe7` | `33317001455` | `33317144181` |
+| #150 | Evolve API HTTP error sanitization | `5cf633f` | `430d945` | `33317849985` | `33317977131` |
+| #152 | Extension API HTTP error sanitization | `9e4ec2a` | `c356362` | `33319233960` | `33319367795` |
+| #154 | Companion API HTTP error sanitization | `437619d` | `84c78df` | `33319948149` | `33320088188` |
+| #156 | Core GUI API HTTP error sanitization | `1df554a` | `377aee1` | `33321115688` | `33321261954` |
+| #158 | Durable session history redaction | `4ff29bc` | `37570b4` | `33322930998` | `33323068108` |
+| #160 | Workspace-scoped slash diff observation | `6e041d2` | `c12e327` | `33323943756` | `33324107750` |
+| #162 | Production health focus through durable Outcome Engine | `bb1c6a7` | `18da466` | `33325729058` | `33325880483` |
+| #164 | Durable steering intent across restart/resume | `07dbb1e` | `dbb296d` | `33326929496` | `33327092917` |
+| #166 | Bounded intent revision in durable task context | `7993b1a` | `c05f104` | `33327634124` | `33327783068` |
+| #168 | Interrupted-turn side-effect attribution and recovery projection | `5dda7f2` | `800a7be` | `33330236340` | `33330423949` |
 
 ## Open or unrecorded risks
 
-- Checkpoint restore now uses descriptor-relative secure writes and deletion,
-  with in-memory post-turn states for best-effort rollback. The operation is
-  intentionally not a multi-file atomic transaction; hostile-runtime restore
-  stress and cross-platform deletion evidence remain required before this is a
-  broad checkpoint safety claim.
+- Checkpoint restore now publishes each restored file's complete bytes and mode
+  atomically and only marks a mutation applied after that publication or
+  deletion succeeds. Rollback still uses in-memory post-turn states and is
+  best-effort. Hosted Windows hostile-runtime restore stress now covers
+  replacement-hardlink pressure, but the operation is intentionally not a
+  multi-file atomic transaction and cross-process deletion races remain
+  required before this is a broad checkpoint safety claim.
 - Trace events clip values but do not provide a complete secret-redaction
   policy for prompts, tool arguments, MCP output, or crash diagnostics.
 - The npm provider packages and their platform-specific optional packages are

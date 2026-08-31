@@ -1,7 +1,8 @@
 # V4 performance campaign
 
-Status: measured locally on 2026-08-25. This document records deterministic
-local controls; it does not claim live-provider quality or end-to-end product
+Status: historical comparison captured on 2026-08-25, with current-head
+refreshes captured on 2026-08-30. This document records deterministic local
+controls; it does not claim live-provider quality or end-to-end product
 performance.
 
 ## Comparison
@@ -41,7 +42,7 @@ regression signals, not product SLAs.
 | Verification evidence status | 3.315–3.557 µs | 3.475–3.613 µs | 1,792 B / 1 | 1,792 B / 1 |
 | Scripted edit turn | 1.068–2.016 ms | 0.759–0.990 ms | 113,328–116,176 B / 1,114–1,150 | 113,328–116,336 B / 1,114–1,151 |
 
-V4-only additions:
+Earlier v4-only additions, before the current-head refresh:
 
 - Repository provenance capture: `39.449–128.307 ms`, `71,637–84,348 B`,
   `430–433 allocs`.
@@ -99,6 +100,74 @@ fixture. Verification planning returns to v3-scale time and allocation cost.
 Context-heavy work remains approximately flat with overlapping ranges. Other
 v4 additions have measurable cost, especially provenance capture; that cost is
 recorded rather than hidden. No broad claim that v4 is faster is justified.
+
+## Current-head microbenchmark refresh
+
+The focused benchmark subset was rerun on the exact merged v4 head
+`eb824f293255d913dca894228bbd23609f37fe96` on an Apple M3 arm64 Mac with Go
+`go1.26.6`. It used the same `-benchtime=100ms -benchmem -count=3` settings as
+the comparison above. The v3 values remain the clean-baseline measurements
+recorded on `a07943b31044049afb0142f39198244cd3c75218`.
+
+| Operation | v3 time | v4 time | v3 memory / allocs | v4 memory / allocs |
+| --- | ---: | ---: | ---: | ---: |
+| Context manage, working set | 41.933–44.446 µs | 34.226–34.356 µs | 105,065–105,072 B / 243 | 67,461–67,463 B / 185 |
+| Context manage, context-heavy | 2.288–2.333 ms | 2.194–2.331 ms | 485,922–486,491 B / 658–659 | 486,270–487,552 B / 659–661 |
+| Repo-map inspect | 22.602–23.494 ms | 34.236–104.401 ms | 48,702–54,760 B / 249–250 | 125,830–149,224 B / 346–370 |
+| Repo-map capture | — | 25.268–25.480 ms | — | 125,562–134,690 B / 351–353 |
+| Repo-map format | 2.786–2.802 µs | 28.515–29.395 µs | 2,370 B / 12 | 2,551–2,552 B / 20 |
+| Session metadata list, 60 records | 7.051–8.619 ms | 8.490–11.155 ms | 183,168–183,200 B / 1,962 | 181,786–185,151 B / 1,482 |
+| Session load, canonical | 198.876–526.745 µs | 295.781–449.590 µs | 3,368 B / 37 | 4,352–4,445 B / 41 |
+| Session load, legacy history | — | 2.799–3.344 ms | — | 2,454,667–2,464,960 B / 1,549–1,552 |
+| Verification plan | 1.895–2.027 µs | 1.980–2.056 µs | 864 B / 15 | 864 B / 15 |
+| Verification evidence status | 3.434–3.450 µs | 3.186–3.292 µs | 1,792 B / 1 | 1,792 B / 1 |
+| Verification manifest | — | 4.551–4.664 µs | — | 3,669 B / 7; 1,001 bytes/op |
+
+The current head retains the working-set and verification improvements. The
+canonical session load now has a separate 41-allocation measurement, while
+legacy histories intentionally remain on the full retention path. Repository
+capture now reuses one porcelain-v2 status projection for the full head,
+branch, dirty counters, and workspace-scoped dirty paths; the current sample
+is about 351–353 allocations and 126–135 KB per operation. Filesystem timing
+still varies substantially across runs, so the allocation reduction is the
+reliable signal and no broad latency claim is justified.
+
+## Current-head long-horizon composition probe
+
+The earlier measurement used `origin/main` head
+`cb69c4bb820f49d10f49d702e3ee061ca4a22ec2` and recorded a deterministic
+composition probe in
+`internal/agent/long_horizon_test.go`. It drives 96 logical turns, saves and
+reloads the session and task state on every turn, runs context management, and
+changes the intent once midway through the run. The fixture intentionally
+exceeds the session, turn, and evidence retention rings; it is a durability
+and cost envelope, not a live-provider or GUI benchmark.
+
+Host: Apple M3 arm64 macOS. Command:
+
+```sh
+go test ./internal/agent -run '^$' \
+  -bench '^BenchmarkLongHorizonResumeEnvelope$' \
+  -benchtime=1x -benchmem -count=3
+```
+
+| Signal | Three observed runs |
+| --- | ---: |
+| 96-turn save/reload envelope | 3.369–3.615 s/op |
+| Allocated bytes | 918.9–920.4 MB/op |
+| Allocations | 1,768,233–1,768,554/op |
+| Retained session messages | 128/op |
+| Retained task turns / evidence | 16 / 16 per op |
+| Durable context peak | 1,493 chars/op |
+| Managed context peak | 632 tokens/op |
+| Session / task JSON peak | 26,563 / 8,506–8,512 bytes/op |
+
+The higher current-head allocation cost is a useful regression signal and
+motivates a separate optimization experiment; it is not a release budget. The test also
+covers a cooperative fresh-process restart: an active durable turn is loaded,
+marked interrupted, and persisted by a new process. Hostile process death,
+sustained RSS, live-provider quality, rendered surfaces, and v3-v4 comparative
+quality remain unverified.
 
 ## Not measured here
 

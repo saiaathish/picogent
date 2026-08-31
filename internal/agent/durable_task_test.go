@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
@@ -121,6 +122,45 @@ func TestDurableTaskLoadFailureIsSurfaced(t *testing.T) {
 	}
 	if got := a.TaskSnapshot(); got != nil {
 		t.Fatalf("corrupt task state was accepted: %#v", got)
+	}
+}
+
+func TestDurableTaskLoadFailureStopsBeforeProvider(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	path, err := store.Path("corrupt-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(workspace, "must-not-change.txt")
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: `{"path":"must-not-change.txt","content":"unsafe"}`}}}}}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession("corrupt-session"); err == nil {
+		t.Fatal("corrupt task state should be reported")
+	}
+
+	_, result, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "write the file"}, allowAll{}, agent.RunOptions{})
+	if err == nil {
+		t.Fatal("run should fail closed when durable task loading failed")
+	}
+	if len(fake.Calls) != 0 {
+		t.Fatalf("provider calls = %d, want 0", len(fake.Calls))
+	}
+	if result.Text != "" || result.ToolRounds != 0 {
+		t.Fatalf("failed run produced work: %#v", result)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target file changed despite failed durable load: %v", err)
 	}
 }
 
@@ -710,8 +750,8 @@ func TestDurableTaskDoesNotPublishUnsavedState(t *testing.T) {
 	h := &taskRecordingHandler{ag: a}
 
 	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, h)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("run should fail closed when durable task state cannot be saved")
 	}
 	if result.Task == nil || result.Task.Status != lastPersisted.Status || result.Task.Attempts != lastPersisted.Attempts {
 		t.Fatalf("result task changed despite failed saves: got=%#v last=%#v", result.Task, lastPersisted)
@@ -721,6 +761,9 @@ func TestDurableTaskDoesNotPublishUnsavedState(t *testing.T) {
 	}
 	if len(h.snapshots) != 0 {
 		t.Fatalf("published unsaved snapshots: %#v", h.snapshots)
+	}
+	if len(fake.Calls) != 0 {
+		t.Fatalf("provider calls = %d, want 0", len(fake.Calls))
 	}
 	if len(h.errors) == 0 || !strings.Contains(h.errors[0].Error(), "durable task state was not saved") {
 		t.Fatalf("persistence failure was not surfaced: %v", h.errors)
@@ -783,5 +826,60 @@ func TestDurableTaskResumesActiveCompletionIntentAfterMissingEvidence(t *testing
 	}
 	if len(result.Task.Verification) == 0 || result.Task.Verification[len(result.Task.Verification)-1].Passed || !strings.HasPrefix(result.Task.Verification[len(result.Task.Verification)-1].Summary, "verify INCONCLUSIVE") {
 		t.Fatalf("resumed evidence = %#v", result.Task.Verification)
+	}
+}
+
+func TestTaskSnapshotDoesNotAliasTurnLedger(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	task, err := taskstate.New("turn-snapshot", "finish the requested change", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := task.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok {
+		t.Fatal("turn did not start")
+	}
+	task.RecordChanged("internal/turn.go")
+	if !task.FinishTurn(sequence, taskstate.TurnRouteImplement, "implement the requested change", "UNVERIFIED", taskstate.StopNone, 1, 1) {
+		t.Fatal("turn did not finish")
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = store
+	if err := a.SetTaskSession(task.SessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := a.TaskSnapshot()
+	if snapshot == nil || len(snapshot.Turns) != 1 || snapshot.Turns[0].FinishedAt == nil {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	snapshot.Turns[0].Route = string(taskstate.TurnRouteRecover)
+	snapshot.Turns[0].ChangedFiles[0] = "tampered-turn.go"
+	*snapshot.Turns[0].FinishedAt = snapshot.Turns[0].FinishedAt.Add(24 * time.Hour)
+
+	current := a.TaskSnapshot()
+	if current == nil || current.Turns[0].Route != string(taskstate.TurnRouteImplement) || current.Turns[0].ChangedFiles[0] != "internal/turn.go" {
+		t.Fatalf("agent turn ledger was aliased: %#v", current)
+	}
+	if current.Turns[0].FinishedAt.Equal(*snapshot.Turns[0].FinishedAt) {
+		t.Fatal("agent turn finish time was aliased")
+	}
+	reloaded, err := store.Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.Turns[0].Route != string(taskstate.TurnRouteImplement) || reloaded.Turns[0].FinishedAt.Equal(*snapshot.Turns[0].FinishedAt) {
+		t.Fatalf("persisted turn ledger was aliased: %#v", reloaded.Turns[0])
 	}
 }

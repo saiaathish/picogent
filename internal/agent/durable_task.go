@@ -21,6 +21,24 @@ const durableRepairMarker = "Internal verification-repair instruction:"
 // persistence failure to the user.
 var errTaskMutationSkipped = errors.New("durable task mutation skipped")
 
+type taskPersistenceError struct {
+	err error
+}
+
+func (e *taskPersistenceError) Error() string {
+	if e == nil || e.err == nil {
+		return "durable task state was not saved"
+	}
+	return e.err.Error()
+}
+
+func (e *taskPersistenceError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
 func durableRepairPrompt(evidence string, repeated bool) string {
 	evidence = strings.TrimSpace(evidence)
 	if len(evidence) > 4000 {
@@ -130,9 +148,18 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, evidenc
 // stays outside chat history, so compaction cannot erase execution progress.
 func (a *Agent) SetTaskSession(sessionID string) error {
 	workspaceRoot := a.ConfigSnapshot().Workspace
+	releaseRun, err := a.acquireProjectRunLockForWorkspace(workspaceRoot)
+	if err != nil {
+		return fmt.Errorf("project run is unavailable: %w", err)
+	}
+	defer releaseRun()
+	a.undoMu.Lock()
+	defer a.undoMu.Unlock()
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
 	a.TaskSession = strings.TrimSpace(sessionID)
+	a.taskSessionGeneration++
+	a.latestUndo = nil
 	a.task = nil
 	a.taskLoadErr = nil
 	if a.TaskStore == nil || a.TaskSession == "" {
@@ -162,6 +189,12 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	return err
 }
 
+func (a *Agent) taskSessionSnapshot() (string, uint64) {
+	a.taskMu.RLock()
+	defer a.taskMu.RUnlock()
+	return a.TaskSession, a.taskSessionGeneration
+}
+
 // TaskSnapshot returns an isolated copy safe for UI and persistence callers.
 func (a *Agent) TaskSnapshot() *taskstate.Task {
 	a.taskMu.RLock()
@@ -169,17 +202,18 @@ func (a *Agent) TaskSnapshot() *taskstate.Task {
 	return cloneTask(a.task)
 }
 
-func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
+func (a *Agent) beginDurableTask(prompt string, ev EventHandler) (bool, error) {
 	a.taskMu.Lock()
 	if a.TaskStore == nil || a.TaskSession == "" {
 		a.taskMu.Unlock()
-		return false
+		return false, nil
 	}
 	if a.taskLoadErr != nil {
 		err := a.taskLoadErr
 		a.taskMu.Unlock()
-		a.reportTaskPersistenceError(ev, fmt.Errorf("load durable task state: %w", err))
-		return true
+		err = fmt.Errorf("load durable task state: %w", err)
+		a.reportTaskPersistenceError(ev, err)
+		return true, err
 	}
 	var candidate *taskstate.Task
 	if a.task == nil || (a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification()) {
@@ -187,36 +221,45 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
 		if err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
-			return true
+			return true, err
 		}
 		if !ok {
 			a.taskMu.Unlock()
-			return false
+			return false, nil
 		}
 		candidate = task
 	} else {
 		candidate = cloneTask(a.task)
+	}
+	// Keep the original durable outcome and definition of done stable while
+	// recording a changed interpretation of a later user request. This makes
+	// steering visible to routing and recovery without letting one short
+	// follow-up silently erase the larger outcome.
+	if inferred := taskstate.Infer(prompt); inferred.TaskLike && inferred.Intent != nil && !strings.EqualFold(strings.TrimSpace(inferred.Goal), strings.TrimSpace(candidate.Goal)) {
+		intent := *inferred.Intent
+		intent.Outcome = candidate.Goal
+		candidate.SetIntent(&intent)
 	}
 	candidate.InitializeChangeSequence()
 	if candidate.Status == taskstate.StatusDone && candidate.NeedsVerification() {
 		if err := candidate.SetStatus(taskstate.StatusVerifying); err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
-			return true
+			return true, err
 		}
 	}
 	if candidate.Status == taskstate.StatusBlocked {
 		if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
-			return true
+			return true, err
 		}
 	}
 	if candidate.Status == taskstate.StatusPlanning {
 		if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
-			return true
+			return true, err
 		}
 	}
 	candidate.NoteAttempt()
@@ -224,11 +267,11 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
 	if err != nil {
 		a.taskMu.Unlock()
 		a.reportTaskPersistenceError(ev, err)
-		return true
+		return true, err
 	}
 	a.taskMu.Unlock()
 	emitTaskState(ev, snapshot)
-	return false
+	return false, nil
 }
 
 func (a *Agent) taskPromptSuffix() string {
@@ -486,31 +529,76 @@ func (a *Agent) setTaskStatus(status taskstate.Status, ev EventHandler) {
 // failed Save therefore cannot produce a task snapshot that looks persisted;
 // the last successfully persisted state remains available for resume.
 func (a *Agent) mutateTask(ev EventHandler, mutate func(*taskstate.Task) error) bool {
-	if mutate == nil {
-		return false
-	}
-	a.taskMu.Lock()
-	if a.task == nil || a.TaskStore == nil {
-		a.taskMu.Unlock()
-		return false
-	}
-	candidate := cloneTask(a.task)
-	if err := mutate(candidate); err != nil {
-		a.taskMu.Unlock()
-		if !errors.Is(err, errTaskMutationSkipped) {
+	snapshot, err := a.mutateTaskResult(mutate)
+	if err != nil {
+		if errors.Is(err, errTaskMutationSkipped) {
+			return false
+		}
+		var persistenceErr *taskPersistenceError
+		if errors.As(err, &persistenceErr) {
+			a.reportTaskPersistenceError(ev, err)
+		} else {
 			a.reportTaskUpdateError(ev, err)
 		}
 		return false
 	}
+	if snapshot == nil {
+		return false
+	}
+	emitTaskState(ev, snapshot)
+	return true
+}
+
+// mutateTaskResult applies a durable task update through the same isolated
+// save-before-publish/CAS commit point as ordinary turn mutations. A nil
+// snapshot means that no durable task is attached to this agent; callers that
+// need to surface persistence failures can inspect the returned error.
+func (a *Agent) mutateTaskResult(mutate func(*taskstate.Task) error) (*taskstate.Task, error) {
+	if mutate == nil {
+		return nil, nil
+	}
+	a.taskMu.Lock()
+	if a.task == nil || a.TaskStore == nil {
+		a.taskMu.Unlock()
+		return nil, nil
+	}
+	candidate := cloneTask(a.task)
+	if err := mutate(candidate); err != nil {
+		a.taskMu.Unlock()
+		return nil, err
+	}
 	snapshot, err := a.persistTaskCandidateLocked(candidate)
 	if err != nil {
 		a.taskMu.Unlock()
-		a.reportTaskPersistenceError(ev, err)
-		return false
+		return nil, &taskPersistenceError{err: err}
 	}
 	a.taskMu.Unlock()
-	emitTaskState(ev, snapshot)
-	return true
+	return snapshot, nil
+}
+
+// rebaseTaskFromStore refreshes the in-memory task from the latest durable
+// generation after a CAS conflict. The next mutation can then preserve fields
+// written by another process, including attempts, history, and evidence.
+func (a *Agent) rebaseTaskFromStore() error {
+	a.taskMu.Lock()
+	defer a.taskMu.Unlock()
+	if a.TaskStore == nil {
+		return nil
+	}
+	sessionID := strings.TrimSpace(a.TaskSession)
+	if sessionID == "" && a.task != nil {
+		sessionID = a.task.SessionID
+	}
+	if sessionID == "" {
+		return nil
+	}
+	current, err := a.TaskStore.Load(sessionID)
+	if err != nil {
+		return err
+	}
+	a.task = current
+	a.taskLoadErr = nil
+	return nil
 }
 
 // persistTaskCandidateLocked is the single commit point for durable task
@@ -561,6 +649,14 @@ func cloneTask(task *taskstate.Task) *taskstate.Task {
 	cp.Risks = append([]string(nil), task.Risks...)
 	cp.Uncertainty = append([]string(nil), task.Uncertainty...)
 	cp.Evidence = append([]taskstate.Evidence(nil), task.Evidence...)
+	cp.Turns = append([]taskstate.TurnRecord(nil), task.Turns...)
+	for i := range cp.Turns {
+		cp.Turns[i].ChangedFiles = append([]string(nil), task.Turns[i].ChangedFiles...)
+		if task.Turns[i].FinishedAt != nil {
+			finished := *task.Turns[i].FinishedAt
+			cp.Turns[i].FinishedAt = &finished
+		}
+	}
 	return &cp
 }
 

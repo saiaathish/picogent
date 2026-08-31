@@ -10,7 +10,7 @@ import (
 
 func (s *server) overviewAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "GET only", 405)
+		writeGUIError(w, "GET only", 405)
 		return
 	}
 	s.mu.Lock()
@@ -18,7 +18,7 @@ func (s *server) overviewAPI(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	store, err := learn.Load(ws)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		writeGUIError(w, err.Error(), 500)
 		return
 	}
 	ev, _ := evolve.Load(ws)

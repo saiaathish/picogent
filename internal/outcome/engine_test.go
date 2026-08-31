@@ -2,6 +2,7 @@ package outcome
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -334,16 +335,17 @@ func TestBuildUsesOneSharedTurnContractForEngineAndRouter(t *testing.T) {
 	if !ok {
 		t.Fatal("turn did not start")
 	}
+	task.RecordChanged("internal/recovery.go")
 	if !task.FinishTurn(sequence, taskstate.TurnRouteRecover, "use a different safe route", "FAIL", taskstate.StopResourceUnavailable, 3, 2) {
 		t.Fatal("turn did not finish")
 	}
 
 	contract := Build(task, projecthealth.Report{Schema: projecthealth.Schema})
 	shared := TurnContractForTask(task)
-	if contract.Turn != shared {
+	if !reflect.DeepEqual(contract.Turn, shared) {
 		t.Fatalf("engine and shared turn projections diverged: engine=%#v shared=%#v", contract.Turn, shared)
 	}
-	if contract.Turn.IntentClass != "debug" || contract.Turn.IntentRevision != 1 || contract.Turn.TurnSequence != sequence || contract.Turn.LastTurnState != string(taskstate.TurnCompleted) || contract.Turn.LastRoute != string(taskstate.TurnRouteRecover) || contract.Turn.LastHypothesis != "use a different safe route" || contract.Turn.LastEvidenceState != "FAIL" || contract.Turn.LastTurnStopReason != string(taskstate.StopResourceUnavailable) || contract.Turn.LastTurnToolRounds != 3 || contract.Turn.LastTurnMutations != 2 {
+	if contract.Turn.IntentClass != "debug" || contract.Turn.IntentRevision != 1 || contract.Turn.TurnSequence != sequence || contract.Turn.LastTurnState != string(taskstate.TurnCompleted) || contract.Turn.LastRoute != string(taskstate.TurnRouteRecover) || contract.Turn.LastHypothesis != "use a different safe route" || contract.Turn.LastEvidenceState != "FAIL" || contract.Turn.LastTurnStopReason != string(taskstate.StopResourceUnavailable) || contract.Turn.LastTurnToolRounds != 3 || contract.Turn.LastTurnMutations != 2 || len(contract.Turn.LastTurnChangedFiles) != 1 || contract.Turn.LastTurnChangedFiles[0] != "internal/recovery.go" {
 		t.Fatalf("shared turn contract lost durable lifecycle data: %#v", contract.Turn)
 	}
 	if !contract.Turn.NeedsRecovery() {
@@ -354,6 +356,7 @@ func TestBuildUsesOneSharedTurnContractForEngineAndRouter(t *testing.T) {
 		"Intent revision: 1",
 		"Turn state: sequence=1 state=completed route=recover evidence=FAIL stop=resource_unavailable",
 		`Turn hypothesis data: "use a different safe route"`,
+		`Turn side effects data: changed_files=["internal/recovery.go"] capped=false`,
 	} {
 		if !strings.Contains(instruction, marker) {
 			t.Fatalf("engine instruction omitted shared turn marker %q: %s", marker, instruction)
@@ -377,9 +380,16 @@ func TestTurnContractCanonicalizesUntrustedLifecycleValues(t *testing.T) {
 			LastTurnMutations:  -4,
 		},
 	}
+	contract.Turn.LastTurnChangedFiles = make([]string, maxTurnContractChangedFiles+1)
+	for i := range contract.Turn.LastTurnChangedFiles {
+		contract.Turn.LastTurnChangedFiles[i] = "path-" + string(rune('a'+i))
+	}
 	bounded := boundContract(contract)
 	if bounded.Turn.CriterionIndex != -1 || bounded.Turn.CriterionEvidence != "UNVERIFIED" || bounded.Turn.LastTurnState != "" || bounded.Turn.LastRoute != "" || bounded.Turn.LastEvidenceState != "UNVERIFIED" || bounded.Turn.LastTurnStopReason != "" || bounded.Turn.LastTurnToolRounds != maxTurnContractToolRounds || bounded.Turn.LastTurnMutations != 0 {
 		t.Fatalf("untrusted turn values were not canonicalized: %#v", bounded.Turn)
+	}
+	if len(bounded.Turn.LastTurnChangedFiles) != maxTurnContractChangedFiles || !bounded.Turn.LastTurnChangedFilesCapped {
+		t.Fatalf("changed-file projection was not bounded: %#v", bounded.Turn)
 	}
 	if len(bounded.Turn.LastHypothesis) != maxTurnContractText {
 		t.Fatalf("hypothesis was not bounded: %d", len(bounded.Turn.LastHypothesis))

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -101,26 +102,27 @@ type Result struct {
 }
 
 type Agent struct {
-	CFG          config.Config
-	LLM          llm.Client
-	Tools        *tools.Registry
-	Gate         *perm.Gate
-	ProjectRules string
-	SkillRules   string
-	Memory       evolve.Store // learned habits/playbooks; injected per-turn with a hard byte budget
-	TaskMode     TaskMode
-	Goal         string
-	GoalRevision uint64
-	Trace        *trace.Log
-	TaskStore    *taskstate.Store
-	TaskSession  string
-	stateMu      sync.RWMutex
-	taskMu       sync.RWMutex
-	task         *taskstate.Task
-	taskLoadErr  error
-	undoMu       sync.Mutex
-	latestUndo   *turnUndo
-	runTool      func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
+	CFG                   config.Config
+	LLM                   llm.Client
+	Tools                 *tools.Registry
+	Gate                  *perm.Gate
+	ProjectRules          string
+	SkillRules            string
+	Memory                evolve.Store // learned habits/playbooks; injected per-turn with a hard byte budget
+	TaskMode              TaskMode
+	Goal                  string
+	GoalRevision          uint64
+	Trace                 *trace.Log
+	TaskStore             *taskstate.Store
+	TaskSession           string
+	taskSessionGeneration uint64
+	stateMu               sync.RWMutex
+	taskMu                sync.RWMutex
+	task                  *taskstate.Task
+	taskLoadErr           error
+	undoMu                sync.Mutex
+	latestUndo            *turnUndo
+	runTool               func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
 }
 
 // RuntimeState is an immutable-at-the-call-boundary view of the settings that
@@ -376,6 +378,32 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	return a.RunWithOptions(ctx, history, user, ev, RunOptions{})
 }
 
+func (a *Agent) acquireProjectRunLockForWorkspace(workspace string) (func() error, error) {
+	store := a.TaskStoreSnapshot()
+	var storeErr error
+	if store != nil {
+		release, err := store.AcquireRunLock()
+		if err == nil {
+			return release, nil
+		}
+		storeErr = err
+	}
+	if strings.TrimSpace(workspace) != "" {
+		release, err := taskstate.WorkspaceStore(workspace).AcquireRunLock()
+		if err == nil {
+			return release, nil
+		}
+		if storeErr != nil {
+			return nil, fmt.Errorf("task store lock: %v; workspace lock: %w", storeErr, err)
+		}
+		return nil, err
+	}
+	if storeErr != nil {
+		return nil, storeErr
+	}
+	return func() error { return nil }, nil
+}
+
 // RunWithOptions runs one isolated turn. Scope preflight callers use this to
 // apply a temporary Plan/Ask boundary without mutating the next turn's mode.
 func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user llm.Message, ev EventHandler, opts RunOptions) ([]llm.Message, Result, error) {
@@ -383,6 +411,17 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		ev = NopHandler{}
 	}
 	state := a.RuntimeSnapshot()
+	releaseRun, err := a.acquireProjectRunLockForWorkspace(state.CFG.Workspace)
+	if err != nil {
+		wrapped := fmt.Errorf("project run is unavailable: %w", err)
+		ev.OnError(wrapped)
+		return history, Result{}, wrapped
+	}
+	defer func() {
+		if err := releaseRun(); err != nil {
+			ev.OnError(fmt.Errorf("project run lock release failed: %w", err))
+		}
+	}()
 	cfg := state.CFG
 	taskMode := state.TaskMode
 	if opts.TaskMode != nil && opts.TaskMode.Valid() {
@@ -423,7 +462,66 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	if durablePrompt == "" {
 		durablePrompt = userText
 	}
-	taskPersistenceFailed := a.beginDurableTask(durablePrompt, ev)
+	if failed, taskErr := a.beginDurableTask(durablePrompt, ev); failed {
+		if taskErr == nil {
+			taskErr = errors.New("durable task state is unavailable")
+		}
+		return history, Result{Task: a.TaskSnapshot()}, taskErr
+	}
+	var turnSequence uint64
+	if task := a.TaskSnapshot(); task != nil {
+		var started bool
+		turnSequence, started = a.beginDurableTurn(durableTurnStartRoute(task, taskMode), ev)
+		if !started {
+			return history, Result{Task: a.TaskSnapshot()}, errors.New("durable turn could not be started")
+		}
+	}
+
+	var res Result
+	changed := map[string]struct{}{}
+	sessionID, sessionGeneration := a.taskSessionSnapshot()
+	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
+	nativeWriteRan := false
+	mutationCount := 0
+	lastToolKind := ""
+	verificationCurrent := false
+	lastVerification := ""
+	lastVerificationEvidence := verificationEvidence{}
+	taskBlocker := ""
+	nextOutcomeFocus := ""
+	turnClosed := turnSequence == 0
+	closeTurn := func(interrupted bool, route taskstate.TurnRoute, hypothesis, evidence string, stop taskstate.StopReason, toolRounds int) {
+		if turnSequence == 0 || turnClosed {
+			return
+		}
+		if ctx.Err() != nil {
+			interrupted = true
+			route = taskstate.TurnRouteRecover
+			hypothesis = "turn canceled before completion"
+			stop = taskstate.StopCanceled
+		}
+		if a.closeDurableTurn(turnSequence, interrupted, route, hypothesis, evidence, stop, toolRounds, mutationCount, ev) {
+			turnClosed = true
+		}
+	}
+	closeTurnFor := func(failed, goalDone bool, stop taskstate.StopReason) {
+		task := a.TaskSnapshot()
+		interrupted := ctx.Err() != nil
+		if interrupted {
+			stop = taskstate.StopCanceled
+		} else if failed && stop == taskstate.StopNone {
+			stop = taskstate.StopResourceUnavailable
+		}
+		filesChanged := sortedChanged(changed)
+		closeTurn(interrupted, durableTurnRouteForOutcome(task, taskMode, lastVerification, taskBlocker, filesChanged, goalDone, interrupted, failed), durableTurnHypothesis(task, taskMode, lastVerification, taskBlocker, filesChanged, goalDone, interrupted, failed), lastVerification, stop, res.ToolRounds)
+	}
+	defer func() {
+		if turnSequence == 0 || turnClosed {
+			return
+		}
+		closeTurnFor(true, false, taskstate.StopResourceUnavailable)
+	}()
+
 	// Always refresh the system prompt so mid-chat task mode / goal changes take effect.
 	msgs := make([]llm.Message, 0, len(history)+3)
 	msgs = append(msgs, llm.Message{Role: "system", Content: systemPromptFor(state, userText, a.taskPromptSuffix(), opts.ScopeBoundary)})
@@ -438,17 +536,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	compactMsgs, ctxStats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 	msgs = compactMsgs
 
-	var res Result
 	res.Context = ctxStats
-	changed := map[string]struct{}{}
-	turnUndo := newTurnUndo(regCtx.Workspace)
-	nativeWriteRan := false
-	lastToolKind := ""
-	verificationCurrent := false
-	lastVerification := ""
-	lastVerificationEvidence := verificationEvidence{}
-	taskBlocker := ""
-	nextOutcomeFocus := ""
 
 	for round := 0; round < cfg.MaxToolRounds; round++ {
 		if r, ok := state.LLM.(*llm.Router); ok {
@@ -483,6 +571,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			ev.OnError(wrapped)
 			res.FilesChanged = sortedChanged(changed)
 			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
+			closeTurnFor(true, false, taskstate.StopResourceUnavailable)
 			return msgs, res, wrapped
 		}
 		msg := out.Message
@@ -556,7 +645,15 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			res.Task = a.TaskSnapshot()
 			goalEvidencePassed := !completionEvidenceRequired || verificationStatus(lastVerification) == "PASS"
 			taskComplete := res.Task == nil || (res.Task.Status == taskstate.StatusDone && !res.Task.NeedsVerification())
-			res.GoalDone = completionMarker && goalEvidencePassed && !taskPersistenceFailed && strings.TrimSpace(opts.ScopeBoundary) == "" && taskComplete
+			res.GoalDone = completionMarker && goalEvidencePassed && strings.TrimSpace(opts.ScopeBoundary) == "" && taskComplete
+			stop := taskstate.StopNone
+			if res.GoalDone || (res.Task != nil && res.Task.Status == taskstate.StatusDone) {
+				stop = taskstate.StopGoalComplete
+			} else if res.Task != nil && res.Task.Status == taskstate.StatusBlocked {
+				stop = res.Task.StopReason
+			}
+			closeTurnFor(false, res.GoalDone, stop)
+			res.Task = a.TaskSnapshot()
 			_ = traceLog.Append("turn_end", "", text, trace.Bool(true), 0)
 			msgs = stripDurableInternal(msgs)
 			final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
@@ -609,6 +706,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				ev.OnToolEnd(call, "", err)
 				res.FilesChanged = sortedChanged(changed)
 				a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
+				closeTurnFor(true, false, taskstate.StopResourceUnavailable)
 				return msgs, res, err
 			}
 			if dec == perm.Deny {
@@ -629,62 +727,57 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			pending = append(pending, executed{call: call, req: req})
 		}
 
-		var wg sync.WaitGroup
 		for i := range pending {
 			if pending[i].text != "" {
 				continue
 			}
-			wg.Add(1)
-			go func(i int) {
-				defer wg.Done()
-				call := pending[i].call
-				tool, _ := reg.Get(call.Name)
-				pending[i].ran = true
-				var outText string
-				var err error
-				var verification verificationEvidence
-				run := func() {
-					if ctxErr := ctx.Err(); ctxErr != nil {
-						err = ctxErr
-						return
-					}
-					if call.Name == "verify" {
-						verification = executeVerification(ctx, tool, call, regCtx, a.runTool)
-						outText, err = verification.output, verification.err
-						return
-					}
-					if a.runTool != nil {
-						outText, err = a.runTool(ctx, call, tool, regCtx)
-					} else {
-						outText, err = tool.Run(ctx, call.Arguments, regCtx)
-					}
-				}
-				if call.Name == "mcp_manage" {
-					reg.WithExclusive(run)
-				} else {
-					run()
-				}
-				pending[i].text = outText
-				pending[i].err = err
-				if err != nil {
-					pending[i].text = "error: " + err.Error()
+			call := pending[i].call
+			tool, _ := reg.Get(call.Name)
+			pending[i].ran = true
+			var outText string
+			var runErr error
+			var verification verificationEvidence
+			run := func() {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					runErr = ctxErr
+					return
 				}
 				if call.Name == "verify" {
-					pending[i].verificationTargets = append([]string(nil), verification.targets...)
-					pending[i].observation = cloneWorkspaceObservation(verification.observation)
-					pending[i].observationUsable = verification.observationUsable
-					pending[i].observationReason = verification.observationReason
+					verification = executeVerification(ctx, tool, call, regCtx, a.runTool)
+					outText, runErr = verification.output, verification.err
+					return
 				}
-				ev.OnToolEnd(call, outText, err)
-				ok := err == nil
-				_ = traceLog.Append("tool_end", call.Name, outText, &ok, 0)
-			}(i)
+				if a.runTool != nil {
+					outText, runErr = a.runTool(ctx, call, tool, regCtx)
+				} else {
+					outText, runErr = tool.Run(ctx, call.Arguments, regCtx)
+				}
+			}
+			if call.Name == "mcp_manage" {
+				reg.WithExclusive(run)
+			} else {
+				run()
+			}
+			pending[i].text = outText
+			pending[i].err = runErr
+			if runErr != nil {
+				pending[i].text = "error: " + runErr.Error()
+			}
+			if call.Name == "verify" {
+				pending[i].verificationTargets = append([]string(nil), verification.targets...)
+				pending[i].observation = cloneWorkspaceObservation(verification.observation)
+				pending[i].observationUsable = verification.observationUsable
+				pending[i].observationReason = verification.observationReason
+			}
+			ev.OnToolEnd(call, outText, runErr)
+			ok := runErr == nil
+			_ = traceLog.Append("tool_end", call.Name, outText, &ok, 0)
 		}
-		wg.Wait()
 
-		// Consume all explicit verification evidence before recording writes from
-		// this batch. A verification co-batched with a write may have observed
-		// the old workspace; RecordChanged below deliberately invalidates it.
+		// Apply tool results and durable evidence in model order. A verify after a
+		// write then records the current change sequence, while a later write still
+		// invalidates evidence that was collected before it.
+		var successfulWrites []string
 		for _, ex := range pending {
 			if ex.ran && (ex.call.Name == "write_file" || ex.call.Name == "edit_file") {
 				nativeWriteRan = true
@@ -705,30 +798,23 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				a.noteTaskVerification(lastVerificationEvidence, ev)
 				verificationCurrent = verificationStatus(lastVerification) == "PASS"
 			}
-		}
-
-		var successfulWrites []string
-		for _, ex := range pending {
 			if ex.call.Name != "verify" && ex.ran {
 				a.setTaskStatus(taskstate.StatusWorking, ev)
 			}
 			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
+				mutationCount++
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
 					changed[p] = struct{}{}
 					successfulWrites = append(successfulWrites, p)
+					a.noteTaskChanged(p, ev)
 				}
+				verificationCurrent = false
 			}
 			content := ex.text
 			if content == "" && ex.err != nil {
 				content = ex.err.Error()
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
-		}
-		for _, path := range successfulWrites {
-			a.noteTaskChanged(path, ev)
-		}
-		if len(successfulWrites) > 0 {
-			verificationCurrent = false
 		}
 		// A project-health observation is useful for choosing the next safe
 		// action, but only a sole read-only call is fresh enough to guide the
@@ -748,10 +834,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		msgs = compactMsgs
 		res.Context = stats
 	}
-	err := fmt.Errorf("stopped after %d tool rounds (limit)", cfg.MaxToolRounds)
+	err = fmt.Errorf("stopped after %d tool rounds (limit)", cfg.MaxToolRounds)
 	res.FilesChanged = sortedChanged(changed)
 	a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 	a.blockDurableTask("task budget exhausted", ev)
+	res.Task = a.TaskSnapshot()
+	closeTurnFor(false, false, taskstate.StopBudgetExhausted)
 	res.Task = a.TaskSnapshot()
 	ev.OnError(err)
 	msgs = stripDurableInternal(msgs)

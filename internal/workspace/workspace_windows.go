@@ -21,6 +21,10 @@ const (
 	openEdit
 )
 
+func isWorkspaceNotExist(err error) bool {
+	return os.IsNotExist(err) || errors.Is(err, os.ErrNotExist)
+}
+
 func open(root, path string, kind openKind) (*os.File, error) {
 	rel, err := Relative(root, path)
 	if err != nil {
@@ -59,6 +63,35 @@ func open(root, path string, kind openKind) (*os.File, error) {
 	if err := verifyHandle(root, f, false); err != nil {
 		_ = f.Close()
 		return nil, fmt.Errorf("workspace file %q failed containment check: %w", rel, err)
+	}
+	return f, nil
+}
+
+func openDir(root, path string) (*os.File, error) {
+	parts, err := directoryParts(root, path)
+	if err != nil {
+		return nil, err
+	}
+	current, err := openWindowsRoot(root)
+	if err != nil {
+		return nil, fmt.Errorf("open workspace directory: %w", err)
+	}
+	for _, part := range parts {
+		child, openErr := openWindowsDirectory(current, part, false)
+		_ = windows.CloseHandle(current)
+		if openErr != nil {
+			return nil, fmt.Errorf("open workspace directory %q: %w", part, openErr)
+		}
+		current = child
+	}
+	f := os.NewFile(uintptr(current), path)
+	if f == nil {
+		_ = windows.CloseHandle(current)
+		return nil, errors.New("open workspace directory: could not wrap handle")
+	}
+	if err := verifyHandle(root, f, true); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("workspace directory %q failed containment check: %w", path, err)
 	}
 	return f, nil
 }
@@ -172,6 +205,12 @@ func objectAttributes(name *windows.NTUnicodeString, parent windows.Handle) wind
 }
 
 func ntPath(path string) string {
+	if strings.HasPrefix(path, `\\?\UNC\`) {
+		return `\??\UNC\` + strings.TrimPrefix(path, `\\?\UNC\`)
+	}
+	if strings.HasPrefix(path, `\\?\`) {
+		return `\??\` + strings.TrimPrefix(path, `\\?\`)
+	}
 	if strings.HasPrefix(path, `\\`) {
 		return `\??\UNC\` + strings.TrimPrefix(path, `\\`)
 	}
@@ -208,14 +247,32 @@ func verifyHandle(root string, f *os.File, directory bool) error {
 	} else if !stat.Mode().IsRegular() {
 		return errors.New("not a regular file")
 	}
+	if !directory {
+		if err := rejectHardLinkFile(f); err != nil {
+			return err
+		}
+	}
 	actual, err := finalPath(windows.Handle(f.Fd()))
 	if err != nil {
 		return err
 	}
-	if !within(root, actual) {
+	canonicalRoot, err := workspaceRootFinalPath(root)
+	if err != nil {
+		return fmt.Errorf("resolve workspace root for containment: %w", err)
+	}
+	if !within(canonicalRoot, actual) {
 		return fmt.Errorf("resolved path %q is outside workspace", actual)
 	}
 	return nil
+}
+
+func workspaceRootFinalPath(root string) (string, error) {
+	h, err := openWindowsRoot(root)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(h)
+	return finalPath(h)
 }
 
 func finalPath(handle windows.Handle) (string, error) {
@@ -314,7 +371,7 @@ func remove(root, path string) error {
 	if err := verifyHandle(root, f, false); err != nil {
 		return fmt.Errorf("remove workspace file %q failed containment check: %w", rel, err)
 	}
-	var disposition uint32 = windows.FILE_DISPOSITION_DELETE
+	var disposition uint32 = windows.FILE_DISPOSITION_DELETE | windows.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE
 	if err := windows.NtSetInformationFile(
 		windows.Handle(f.Fd()),
 		&iosb,

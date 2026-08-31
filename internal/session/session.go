@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/redact"
 )
 
 type Session struct {
@@ -45,6 +47,9 @@ const (
 	maxSessionPartDataBytes  = 8 << 10
 	maxSessionParts          = 4
 	maxSessionToolCalls      = 8
+	// Leave ample room for JSON indentation and escaping before returning a
+	// decoded session without the full size-fitting pass.
+	maxSessionFastPathBytes = MaxSessionBytes / 16
 )
 
 // ErrSessionTooLarge reports a session record that cannot be safely loaded or
@@ -71,6 +76,106 @@ type Meta struct {
 	ID      string    `json:"id"`
 	Title   string    `json:"title"`
 	Updated time.Time `json:"updated"`
+}
+
+// sessionMeta is the subset needed by list and prune operations. Keeping the
+// message history out of this decode avoids running the full retention and
+// redaction pipeline when a caller only needs a session summary.
+type sessionMeta struct {
+	ID        string              `json:"id"`
+	Title     string              `json:"title"`
+	Workspace string              `json:"workspace"`
+	Updated   time.Time           `json:"updated"`
+	Messages  sessionMessagesJSON `json:"messages"`
+}
+
+// sessionMessagesJSON validates the outer shape of the persisted message
+// history without materializing that history for metadata-only operations.
+// Load still performs the complete typed decode and normalization.
+type sessionMessagesJSON struct{}
+
+func (sessionMessagesJSON) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 4 && trimmed[0] == 'n' && trimmed[1] == 'u' && trimmed[2] == 'l' && trimmed[3] == 'l' {
+		return nil
+	}
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return errors.New("session messages must be an array")
+	}
+	for index := 1; ; {
+		index = skipJSONSpace(trimmed, index)
+		if index >= len(trimmed) {
+			return errors.New("session messages have an unterminated array")
+		}
+		if trimmed[index] == ']' {
+			return nil
+		}
+		if trimmed[index] == '{' {
+			index = skipJSONComposite(trimmed, index)
+			if index < 0 {
+				return errors.New("session messages contain an unterminated object")
+			}
+		} else if index+4 <= len(trimmed) && trimmed[index] == 'n' && trimmed[index+1] == 'u' && trimmed[index+2] == 'l' && trimmed[index+3] == 'l' {
+			// encoding/json accepts null as a zero-value message.
+			index += 4
+		} else {
+			return errors.New("session messages must contain objects")
+		}
+		index = skipJSONSpace(trimmed, index)
+		if index >= len(trimmed) {
+			return errors.New("session messages have an unterminated array")
+		}
+		if trimmed[index] == ']' {
+			return nil
+		}
+		if trimmed[index] != ',' {
+			return errors.New("session messages must be comma-separated")
+		}
+		index++
+	}
+}
+
+func skipJSONSpace(data []byte, index int) int {
+	for index < len(data) {
+		switch data[index] {
+		case ' ', '\t', '\n', '\r':
+			index++
+		default:
+			return index
+		}
+	}
+	return index
+}
+
+func skipJSONComposite(data []byte, index int) int {
+	depth := 0
+	inString := false
+	escaped := false
+	for ; index < len(data); index++ {
+		char := data[index]
+		if inString {
+			if escaped {
+				escaped = false
+			} else if char == '\\' {
+				escaped = true
+			} else if char == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch char {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+		case '}', ']':
+			depth--
+			if depth == 0 {
+				return index + 1
+			}
+		}
+	}
+	return -1
 }
 
 func New(workspace string) *Session {
@@ -225,19 +330,15 @@ func listMetaLocked(dir, workspace string, limit int) ([]Meta, error) {
 			continue
 		}
 		id := strings.TrimSuffix(e.Name(), ".json")
-		s, err := loadLocked(filepath.Join(dir, e.Name()), id)
+		meta, err := loadMetaLocked(filepath.Join(dir, e.Name()), id)
 		if err != nil {
 			continue
 		}
-		sw, _ := filepath.Abs(s.Workspace)
+		sw, _ := filepath.Abs(meta.Workspace)
 		if ws != "" && sw != ws {
 			continue
 		}
-		title := s.Title
-		if title == "" {
-			title = deriveTitle(s.Messages)
-		}
-		out = append(out, Meta{ID: s.ID, Title: title, Updated: s.Updated})
+		out = append(out, Meta{ID: meta.ID, Title: meta.Title, Updated: meta.Updated})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Updated.After(out[j].Updated)
@@ -328,6 +429,140 @@ func SaveMessages(workspace string, id string, msgs []llm.Message) error {
 }
 
 func loadLocked(path, id string) (*Session, error) {
+	data, err := readLocked(path)
+	if err != nil {
+		return nil, err
+	}
+	var s Session
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, err
+	}
+	if s.ID != id {
+		return nil, errors.New("session id mismatch")
+	}
+	if sessionNeedsNormalization(&s, len(data)) {
+		if err := boundSession(&s); err != nil {
+			return nil, err
+		}
+	}
+	return &s, nil
+}
+
+// sessionNeedsNormalization is deliberately conservative. It only permits a
+// fast return for small, already-bounded records whose decoded values cannot
+// be changed by boundSession. Records near the durable byte limit, legacy
+// histories, and anything containing a potentially sensitive or oversized
+// value take the existing full normalization path.
+func sessionNeedsNormalization(s *Session, encodedSize int) bool {
+	if s == nil || encodedSize > maxSessionFastPathBytes {
+		return true
+	}
+	if len(s.Workspace) > maxSessionWorkspaceBytes || len(s.Title) > maxSessionTitleBytes || redact.NeedsRedaction(s.Title) {
+		return true
+	}
+	if len(s.Messages) > MaxSessionMessages {
+		return true
+	}
+	if s.Messages != nil && len(s.Messages) == 0 {
+		// boundedMessages canonicalizes an empty, present array to nil.
+		return true
+	}
+	for _, message := range s.Messages {
+		if messageNeedsNormalization(message) {
+			return true
+		}
+	}
+	return hasOrphanedToolMessages(s.Messages)
+}
+
+func messageNeedsNormalization(message llm.Message) bool {
+	if message.Role == "system" || len(message.Role) > 32 || len(message.Content) > maxSessionContentBytes || redact.NeedsRedaction(message.Content) || len(message.ToolCallID) > 128 || len(message.Name) > 128 {
+		return true
+	}
+	if len(message.Parts) > maxSessionParts || len(message.ToolCalls) > maxSessionToolCalls {
+		return true
+	}
+	for _, part := range message.Parts {
+		if partNeedsNormalization(part) {
+			return true
+		}
+	}
+	for _, call := range message.ToolCalls {
+		if toolCallNeedsNormalization(call) {
+			return true
+		}
+	}
+	return false
+}
+
+func partNeedsNormalization(part llm.Part) bool {
+	return len(part.Type) > 32 || len(part.Text) > maxSessionPartTextBytes || redact.NeedsRedaction(part.Text) || len(part.MIME) > 128 || len(part.Name) > 256 || len(part.Data) > maxSessionPartDataBytes
+}
+
+func toolCallNeedsNormalization(call llm.ToolCall) bool {
+	return len(call.ID) > 128 || len(call.ItemID) > 128 || len(call.Name) > 128 || len(call.Arguments) > maxSessionToolBytes || redact.NeedsRedaction(call.Arguments)
+}
+
+func hasOrphanedToolMessages(messages []llm.Message) bool {
+	for i, message := range messages {
+		if message.Role != "tool" {
+			continue
+		}
+		assistant := i - 1
+		for assistant >= 0 && messages[assistant].Role == "tool" {
+			assistant--
+		}
+		if assistant < 0 || messages[assistant].Role != "assistant" || !hasToolCallID(messages[assistant].ToolCalls, message.ToolCallID) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasToolCallID(calls []llm.ToolCall, id string) bool {
+	if id == "" {
+		return false
+	}
+	for _, call := range calls {
+		if call.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func loadMetaLocked(path, id string) (sessionMeta, error) {
+	data, err := readLocked(path)
+	if err != nil {
+		return sessionMeta{}, err
+	}
+	var meta sessionMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return sessionMeta{}, err
+	}
+	if meta.ID != id {
+		return sessionMeta{}, errors.New("session id mismatch")
+	}
+	if len(meta.Workspace) > maxSessionWorkspaceBytes {
+		return sessionMeta{}, ErrSessionTooLarge
+	}
+	meta.Title = sessionText(meta.Title, maxSessionTitleBytes)
+	if meta.Title == "" {
+		// Preserve the legacy title fallback without paying the full history
+		// decode cost for normal sessions that already have a title.
+		var s Session
+		if err := json.Unmarshal(data, &s); err != nil {
+			return sessionMeta{}, err
+		}
+		if err := boundSession(&s); err != nil {
+			return sessionMeta{}, err
+		}
+		meta.Title = deriveTitle(s.Messages)
+	}
+	return meta, nil
+}
+
+func readLocked(path string) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
@@ -347,17 +582,7 @@ func loadLocked(path, id string) (*Session, error) {
 	if len(data) > MaxSessionBytes {
 		return nil, ErrSessionTooLarge
 	}
-	var s Session
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, err
-	}
-	if s.ID != id {
-		return nil, errors.New("session id mismatch")
-	}
-	if err := boundSession(&s); err != nil {
-		return nil, err
-	}
-	return &s, nil
+	return data, nil
 }
 
 func saveLocked(path string, s *Session) error {
@@ -381,7 +606,7 @@ func boundSession(s *Session) error {
 	if len(s.Workspace) > maxSessionWorkspaceBytes {
 		return ErrSessionTooLarge
 	}
-	s.Title = clipSessionText(s.Title, maxSessionTitleBytes)
+	s.Title = sessionText(s.Title, maxSessionTitleBytes)
 	s.Messages = boundedMessages(s.Messages, *s)
 	return nil
 }
@@ -437,7 +662,7 @@ func boundedMessages(messages []llm.Message, base Session) []llm.Message {
 
 func boundMessage(message llm.Message) llm.Message {
 	message.Role = clipSessionText(message.Role, 32)
-	message.Content = clipSessionText(message.Content, maxSessionContentBytes)
+	message.Content = sessionText(message.Content, maxSessionContentBytes)
 	message.ToolCallID = clipSessionText(message.ToolCallID, 128)
 	message.Name = clipSessionText(message.Name, 128)
 	if len(message.Parts) > maxSessionParts {
@@ -447,7 +672,7 @@ func boundMessage(message llm.Message) llm.Message {
 		parts := make([]llm.Part, 0, len(message.Parts))
 		for _, part := range message.Parts {
 			part.Type = clipSessionText(part.Type, 32)
-			part.Text = clipSessionText(part.Text, maxSessionPartTextBytes)
+			part.Text = sessionText(part.Text, maxSessionPartTextBytes)
 			part.MIME = clipSessionText(part.MIME, 128)
 			part.Name = clipSessionText(part.Name, 256)
 			if len(part.Data) > maxSessionPartDataBytes {
@@ -471,12 +696,20 @@ func boundMessage(message llm.Message) llm.Message {
 			call.ID = clipSessionText(call.ID, 128)
 			call.ItemID = clipSessionText(call.ItemID, 128)
 			call.Name = clipSessionText(call.Name, 128)
-			call.Arguments = clipSessionText(call.Arguments, maxSessionToolBytes)
+			call.Arguments = sessionText(call.Arguments, maxSessionToolBytes)
 			calls = append(calls, call)
 		}
 		message.ToolCalls = calls
 	}
 	return message
+}
+
+// sessionText applies the shared credential redactor before enforcing the
+// per-field history bound. A saved transcript can contain user text, model
+// text, tool arguments, and tool results, so transcript-bearing values must
+// cross the same persistence boundary.
+func sessionText(value string, limit int) string {
+	return clipSessionText(redact.Text(value), limit)
 }
 
 func splitTurns(messages []llm.Message) [][]llm.Message {

@@ -19,6 +19,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/redact"
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/slash"
@@ -129,14 +130,14 @@ func (h *handler) OnTextFinal(text string) {
 	h.sendMsg(logMsg{Kind: "assistant_final", Text: text})
 }
 func (h *handler) OnToolStart(call llm.ToolCall) {
-	h.sendMsg(logMsg{Kind: "tool", Text: "→  " + call.Name + "  " + clip(call.Arguments, 100)})
+	h.sendMsg(logMsg{Kind: "tool", Text: "→  " + redact.Diagnostic(call.Name, 100) + "  " + redact.Diagnostic(call.Arguments, 100)})
 }
 func (h *handler) OnToolEnd(_ llm.ToolCall, result string, err error) {
 	if err != nil {
-		h.sendMsg(logMsg{Kind: "error", Text: "   " + err.Error()})
+		h.sendMsg(logMsg{Kind: "error", Text: "   " + redact.Diagnostic(err.Error(), 180)})
 		return
 	}
-	h.sendMsg(logMsg{Kind: "tool", Text: "   " + clip(result, 180)})
+	h.sendMsg(logMsg{Kind: "tool", Text: "   " + redact.Diagnostic(result, 180)})
 }
 func (h *handler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error) {
 	h.sendMsg(permAskMsg{Request: req})
@@ -147,7 +148,12 @@ func (h *handler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.
 		return d, nil
 	}
 }
-func (h *handler) OnError(err error) { h.sendMsg(logMsg{Kind: "error", Text: err.Error()}) }
+func (h *handler) OnError(err error) {
+	if err == nil {
+		return
+	}
+	h.sendMsg(logMsg{Kind: "error", Text: redact.Diagnostic(err.Error(), 180)})
+}
 func (h *handler) OnTaskState(task *taskstate.Task) {
 	h.sendMsg(taskProgressMsg{task: task})
 }
@@ -176,14 +182,17 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	m := newModel(cfg, a)
+	m, err := newModel(cfg, a)
+	if err != nil {
+		return err
+	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	m.h.send = func(msg tea.Msg) { p.Send(msg) }
 	_, err = p.Run()
 	return err
 }
 
-func newModel(cfg config.Config, a *agent.Agent) *model {
+func newModel(cfg config.Config, a *agent.Agent) (*model, error) {
 	ta := textarea.New()
 	ta.Placeholder = "What should Picogent do?"
 	ta.Focus()
@@ -197,7 +206,9 @@ func newModel(cfg config.Config, a *agent.Agent) *model {
 	sessionID, history, resumed := initialSession(cfg.Workspace)
 	m := &model{cfg: cfg, ag: a, ta: ta, vp: vp, h: h, sessionID: sessionID, history: history}
 	if a != nil {
-		a.SetTaskSession(m.sessionID)
+		if err := a.SetTaskSession(m.sessionID); err != nil {
+			return nil, fmt.Errorf("load durable task state: %w", err)
+		}
 		m.task = a.TaskSnapshot()
 	}
 	m.lines = []logLine{{Kind: "system", Text: greeting(cfg, a)}}
@@ -208,7 +219,7 @@ func newModel(cfg config.Config, a *agent.Agent) *model {
 		m.lines = append(m.lines, logLine{Kind: "error", Text: err.Error()})
 	}
 	m.refresh()
-	return m
+	return m, nil
 }
 
 func initialSession(workspace string) (id string, history []llm.Message, resumed bool) {
@@ -284,6 +295,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		req := msg.Request
+		req.Hint = redact.Diagnostic(req.Hint, 240)
+		req.Summary = redact.Diagnostic(req.Summary, 240)
 		m.perm = &req
 		body := req.Summary
 		if req.Hint != "" {
@@ -352,7 +365,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if msg.err != nil && !strings.Contains(strings.ToLower(msg.err.Error()), "context canceled") {
-			m.lines = append(m.lines, logLine{Kind: "error", Text: msg.err.Error()})
+			m.lines = append(m.lines, logLine{Kind: "error", Text: redact.Diagnostic(msg.err.Error(), 240)})
 		}
 		m.refresh()
 		var cmds []tea.Cmd
@@ -635,7 +648,9 @@ func (m *model) reflectCmd(prompt string, result agent.Result, turnID uint64, se
 func (m *model) slashLocal(payload string) tea.Cmd {
 	switch {
 	case payload == "clear":
-		m.startNewSession("cleared")
+		if err := m.startNewSession("cleared"); err != nil {
+			m.lines = append(m.lines, logLine{Kind: "error", Text: err.Error()})
+		}
 	case payload == "compact":
 		if len(m.history) > 16 {
 			head := m.history[0]
@@ -651,6 +666,8 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		if err != nil {
 			kind = "error"
 			text = err.Error()
+		} else if m.ag != nil {
+			m.task = m.ag.TaskSnapshot()
 		}
 		m.lines = append(m.lines, logLine{Kind: kind, Text: text})
 	case payload == "status":
@@ -665,7 +682,7 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 		}
 		m.lines = append(m.lines, logLine{Kind: "system", Text: st})
 	case payload == "diff":
-		m.lines = append(m.lines, logLine{Kind: "system", Text: slash.GitDiff()})
+		m.lines = append(m.lines, logLine{Kind: "system", Text: slash.GitDiff(m.cfg.Workspace)})
 	case strings.HasPrefix(payload, "memory:"):
 		text := strings.TrimPrefix(payload, "memory:")
 		if text == "" {
@@ -675,10 +692,21 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 	case payload == "resume":
 		m.stop()
 		if prev, err := session.Latest(m.cfg.Workspace); err == nil {
+			previous := m.sessionID
+			if m.ag != nil {
+				if err := m.ag.SetTaskSession(prev.ID); err != nil {
+					_ = m.ag.SetTaskSession(previous)
+					m.lines = append(m.lines, logLine{Kind: "error", Text: "couldn't resume session: " + err.Error()})
+					break
+				}
+			}
 			m.history = prev.Messages
 			m.sessionID = prev.ID
-			m.ag.SetTaskSession(prev.ID)
-			m.task = m.ag.TaskSnapshot()
+			if m.ag != nil {
+				m.task = m.ag.TaskSnapshot()
+			} else {
+				m.task = nil
+			}
 			m.lines = append(m.lines, logLine{Kind: "system", Text: "resumed " + prev.ID})
 		} else {
 			m.lines = append(m.lines, logLine{Kind: "error", Text: "no saved session"})
@@ -811,7 +839,9 @@ func (m *model) slash(line string) tea.Cmd {
 		_ = config.Save(m.cfg)
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "provider: " + string(m.cfg.Provider) + "  model: " + m.cfg.Model})
 	case "/reset":
-		m.startNewSession("new session")
+		if err := m.startNewSession("new session"); err != nil {
+			m.lines = append(m.lines, logLine{Kind: "error", Text: err.Error()})
+		}
 	default:
 		m.lines = append(m.lines, logLine{Kind: "error", Text: "unknown command " + cmd + "  (try /help)"})
 	}
@@ -840,7 +870,7 @@ func (m *model) saveMode(mode config.Mode) {
 // startNewSession drops the current chat and durable execution state before
 // assigning a fresh session ID. A canceled turn may still emit late events,
 // so stop invalidates its turn ID before the session switch.
-func (m *model) startNewSession(message string) {
+func (m *model) startNewSession(message string) error {
 	m.stop()
 	previous := m.sessionID
 	next := session.New(m.cfg.Workspace).ID
@@ -849,10 +879,15 @@ func (m *model) startNewSession(message string) {
 		// /clear followed by /reset cannot reopen the current task state.
 		next = fmt.Sprintf("%s-%d", next, time.Now().UnixNano())
 	}
+	if m.ag != nil {
+		if err := m.ag.SetTaskSession(next); err != nil {
+			_ = m.ag.SetTaskSession(previous)
+			return fmt.Errorf("couldn't start new session: %w", err)
+		}
+	}
 	m.history = nil
 	m.sessionID = next
 	if m.ag != nil {
-		m.ag.SetTaskSession(m.sessionID)
 		// Inferred task modes belong to the old conversation. Restore the
 		// configured/manual baseline for this fresh session instead.
 		m.ag.SetTaskMode(agent.ParseTaskMode(m.cfg.TaskMode))
@@ -861,6 +896,7 @@ func (m *model) startNewSession(message string) {
 		m.task = nil
 	}
 	m.lines = []logLine{{Kind: "system", Text: message}}
+	return nil
 }
 
 func (m *model) layout() {

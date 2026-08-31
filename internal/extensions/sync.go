@@ -1,31 +1,33 @@
 package extensions
 
 import (
+	"errors"
+	"io/fs"
 	"os"
-	"path/filepath"
 )
 
 // SyncCursorSkills discovers skills already in ~/.cursor/skills-cursor and returns their folder names.
 func SyncCursorSkills() ([]string, error) {
-	home, err := os.UserHomeDir()
+	root, _, err := openSkillsRoot(false)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
-	root := filepath.Join(home, ".cursor", "skills-cursor")
-	entries, err := os.ReadDir(root)
+	defer root.Close()
+	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() {
-			skillMD := filepath.Join(root, e.Name(), "SKILL.md")
-			if _, err := os.Stat(skillMD); err == nil {
-				out = append(out, e.Name())
-			}
+		if e.Type()&os.ModeSymlink != 0 || !e.IsDir() {
+			continue
+		}
+		valid, err := validSkillAtRoot(root, e.Name())
+		if err == nil && valid {
+			out = append(out, e.Name())
 		}
 	}
 	return out, nil

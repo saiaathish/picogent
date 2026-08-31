@@ -20,7 +20,7 @@ func (s *server) evolveAPI(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		store, err := evolve.Load(ws)
 		if err != nil {
-			http.Error(w, err.Error(), 500)
+			writeGUIError(w, err.Error(), 500)
 			return
 		}
 		active := 0
@@ -45,7 +45,7 @@ func (s *server) evolveAPI(w http.ResponseWriter, r *http.Request) {
 			ID   string `json:"id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad json", 400)
+			writeGUIError(w, "bad json", 400)
 			return
 		}
 		var store evolve.Store
@@ -63,7 +63,7 @@ func (s *server) evolveAPI(w http.ResponseWriter, r *http.Request) {
 				return store, nil
 			})
 			if err != nil {
-				http.Error(w, err.Error(), 500)
+				writeGUIError(w, err.Error(), 500)
 				return
 			}
 		case "playbook":
@@ -77,11 +77,11 @@ func (s *server) evolveAPI(w http.ResponseWriter, r *http.Request) {
 				return store, nil
 			})
 			if err != nil {
-				http.Error(w, err.Error(), 500)
+				writeGUIError(w, err.Error(), 500)
 				return
 			}
 		default:
-			http.Error(w, "kind must be habit or playbook", 400)
+			writeGUIError(w, "kind must be habit or playbook", 400)
 			return
 		}
 		s.mu.Lock()
@@ -91,7 +91,7 @@ func (s *server) evolveAPI(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "summary": evolve.Summary(store)})
 	default:
-		http.Error(w, "GET or DELETE", 405)
+		writeGUIError(w, "GET or DELETE", 405)
 	}
 }
 

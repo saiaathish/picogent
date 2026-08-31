@@ -7,13 +7,13 @@ import (
 	"net"
 	"net/http"
 	neturl "net/url"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 const maxDirEntries = 200
@@ -61,7 +61,7 @@ func (listDir) Run(_ context.Context, args string, c Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ents, err := os.ReadDir(abs)
+	ents, err := workspace.ReadDir(ws, abs)
 	if err != nil {
 		return "", err
 	}
