@@ -1,7 +1,7 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-08-31 against exact `main` head
-`0dc4c6d425747bc18474009d52cb05906858124d` after PRs #219–#235 merged.
+`29e4b1cb7623022fc4316704cbaffb43fae8a661` after PRs #219–#240 and #242 merged.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -17,7 +17,7 @@ not enough to establish real runtime behavior.
 
 | Specialty | Excellent | Adequate | Brittle | Wasteful | Highest-leverage next improvement |
 | --- | --- | --- | --- | --- | --- |
-| Architecture | Tiny local-first, single-agent boundary; bounded state; shared outcome/turn contract | Compact `taskstate` model | Lifecycle and persistence semantics remain distributed across `agent`, `goal`, `verify`, and the surfaces | Separate GUI side-chat path and repeated surface orchestration | Collapse or justify the separate side-chat control plane; do not add a second planner or index |
+| Architecture | Tiny local-first, single-agent boundary; bounded state; shared outcome/turn contract | Compact `taskstate` model | Lifecycle and persistence semantics remain distributed across `agent`, `goal`, `verify`, and the surfaces | Remaining duplicate surface orchestration and repeated admission/inference | Collapse or justify remaining duplicate control paths; do not add a second planner or index |
 | Agent reasoning | Evidence-gated completion, stale-goal protection, and durable intent/turn evidence | Bounded repair loop and durable context | Keyword intent inference; repair diversity is prompt advice rather than route enforcement | Repeated admission/inference logic in GUI, TUI, and headless | Enforce route diversity structurally only if recovery evidence justifies the added state |
 | Intent/outcome | Monotonic goal revisions, tombstones, atomic clear | Permission boundary and bounded criteria | Template-only definition of done; ambiguity, negation, and conflicting goals are not structured | Duplicate `Steps`/`DefinitionOfDone` and `Verification`/`Evidence` representations | Make criteria and criterion evidence authoritative before expanding outcome features |
 | Memory | Bounded task and session records with save-before-publish; cooperative cross-process CAS/rebase coverage | Causal learning remains small and advisory | FIFO retention is not value-aware; session restart/reconnect recovery remains unverified | Transcript-shaped session storage duplicates structured task/evidence state | Make retention value-aware after measuring restart and compaction behavior |
@@ -31,7 +31,7 @@ not enough to establish real runtime behavior.
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
 | GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, and bounded owned-browser reconnect/recovery evidence | Lifecycle and undo wiring; one local rendered reconnect path | Live-provider behavior, permission decisions, undoable changes, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; side chat bypasses core task/evidence path | Add owned-browser permission, undo, full-recovery, and cross-platform evidence before release claims |
 | TUI/headless | Headless stdout/stderr, fail-closed permission behavior, resume state, and explicit cleanup/persistence errors | CLI dispatch and exit classes | Non-TTY/TUI behavior and cross-platform EOF/signal behavior remain unproven | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Add subprocess/EOF/signal evidence before changing the shared runtime boundary |
-| Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing is duplicated; side-chat bypasses the main task/evidence path | Duplicate control-plane paths and stale benchmark anchors | Remove or simplify duplicate control planes only after caller/API confirmation |
+| Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing remains duplicated | Repeated surface/control paths and stale benchmark anchors | Remove or simplify remaining duplicate control paths only after caller/API confirmation |
 
 ## Cross-cutting scorecard
 
@@ -70,7 +70,7 @@ not enough to establish real runtime behavior.
 
 ### Wasteful
 
-- Duplicate surface admission/inference and separate side-chat orchestration.
+- Duplicate surface admission/inference and stale benchmark anchors.
 - Duplicate stale-output reduction paths and duplicate task/evidence models.
 - Optional provider installation and advanced UI concepts in the first-run
   path.
@@ -113,13 +113,14 @@ green unit tests or bounded hosted quality gates:
 
 These are candidates, not approved deletions:
 
-1. The separate GUI side-chat path if a user-value benchmark does not justify
-   its task/evidence bypass.
-2. Duplicate GUI/TUI admission wrappers after a shared outcome transition path
+The former separate GUI side-chat path was removed by PR #242 after caller/API
+confirmation; it is no longer a deletion candidate.
+
+1. Duplicate GUI/TUI admission wrappers after a shared outcome transition path
    has equivalent coverage.
-3. Prompt-only repair diversity hints after structural route/recovery evidence
+2. Prompt-only repair diversity hints after structural route/recovery evidence
    exists.
-4. Optional provider installers and advanced first-run cards from the default
+3. Optional provider installers and advanced first-run cards from the default
    setup path.
 
 ## Completed and selected slices
@@ -236,3 +237,11 @@ full tests, full race tests, vet, Windows/Linux package cross-compilation, and
 the hosted Ubuntu, macOS, Windows, security, and release-evidence gates passed.
 This is project-registry transaction evidence, not a general hostile
 filesystem-race or release-readiness claim.
+
+PR #242 merged as `29e4b1cb7623022fc4316704cbaffb43fae8a661`. It removes the
+duplicate GUI companion control plane: the `/api/sidechat` handler and state,
+side-stream events, companion drawer/FAB, and retired prompt/cache paths. The
+primary chat/help/task flows remain in place, and the focused, full, race,
+vet, build, Ubuntu, Windows, macOS, security, and release-evidence checks
+passed. Executable browser-level primary event coverage remains a follow-up
+tracked in issue #243.
