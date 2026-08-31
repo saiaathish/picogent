@@ -20,6 +20,9 @@ const (
 	KeepAfterCompact = 10
 	ToolKeepChars    = 500
 	ToolMaskChars    = 48
+	// maxSummaryInputBytes keeps the provider-bound summarization request well
+	// below the main context budget while retaining both ends of the older log.
+	maxSummaryInputBytes = 32 * 1024
 )
 
 type Stats struct {
@@ -144,6 +147,8 @@ Files: (paths touched)
 Open: (unresolved items, if any)
 Keep facts, decisions, and errors. No filler.`
 
+const summaryInputOmission = "\n[… middle summary input omitted …]\n"
+
 func Summarize(ctx context.Context, client llm.Client, model string, msgs []llm.Message) (string, error) {
 	if client == nil {
 		return "", fmt.Errorf("no LLM client for summarization")
@@ -165,7 +170,7 @@ func Summarize(ctx context.Context, client llm.Client, model string, msgs []llm.
 			fmt.Fprintf(&b, "tool(%s): %s\n", name, clip(m.Content, 400))
 		}
 	}
-	body := strings.TrimSpace(b.String())
+	body := boundSummaryInput(strings.TrimSpace(b.String()))
 	if body == "" {
 		return "", fmt.Errorf("nothing to summarize")
 	}
@@ -180,6 +185,24 @@ func Summarize(ctx context.Context, client llm.Client, model string, msgs []llm.
 		return "", err
 	}
 	return strings.TrimSpace(out.Message.Content), nil
+}
+
+func boundSummaryInput(body string) string {
+	if len(body) <= maxSummaryInputBytes {
+		return body
+	}
+	available := maxSummaryInputBytes - len(summaryInputOmission)
+	prefixLimit := available / 2
+	suffixLimit := available - prefixLimit
+	prefixEnd := strings.LastIndexByte(body[:prefixLimit], '\n')
+	if prefixEnd <= 0 {
+		prefixEnd = prefixLimit
+	}
+	suffixStart := len(body) - suffixLimit
+	if newline := strings.IndexByte(body[suffixStart:], '\n'); newline >= 0 {
+		suffixStart += newline + 1
+	}
+	return body[:prefixEnd] + summaryInputOmission + body[suffixStart:]
 }
 
 // Manage applies tiered compaction every round so context grows slowly under a soft target
