@@ -377,6 +377,32 @@ func TestRunPipelineCancellationSkipsRepairCallback(t *testing.T) {
 	}
 }
 
+func TestRunPipelineCancellationDuringRepairSkipsRecheck(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "go.mod", "module x\n")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	runs := 0
+
+	result := RunPipeline(ctx, dir, Options{
+		Targets: []string{"internal/auth/auth.go"},
+		Executor: func(_ context.Context, _ string, _ Command, _ int, _ time.Duration) Result {
+			runs++
+			return Result{Status: StatusFail, Failed: 1, Reason: "regression"}
+		},
+		Repair: func(context.Context, RepairRequest) error {
+			cancel()
+			return nil
+		},
+	})
+	if result.Status != StatusInconclusive || runs != 1 || len(result.RepairAttempts) != 1 {
+		t.Fatalf("canceled repair recheck = %+v runs=%d", result, runs)
+	}
+	if result.RepairAttempts[0].Status != StatusInconclusive || !strings.Contains(result.RepairAttempts[0].Reason, "canceled") {
+		t.Fatalf("canceled repair attempt = %+v", result.RepairAttempts[0])
+	}
+}
+
 func TestDetectPlanIgnoresNonGoFileTargets(t *testing.T) {
 	dir := t.TempDir()
 	writeVerifyFile(t, dir, "go.mod", "module x\n")
