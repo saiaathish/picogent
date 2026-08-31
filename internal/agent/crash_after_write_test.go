@@ -53,8 +53,14 @@ func (c *crashAfterWriteClient) Chat(ctx context.Context, _ llm.ChatRequest) (ll
 	if err := os.WriteFile(c.readyPath, []byte("active turn persisted\n"), 0o600); err != nil {
 		return llm.ChatResponse{}, err
 	}
-	<-ctx.Done()
-	return llm.ChatResponse{}, ctx.Err()
+	// context.Background().Done() is nil, so include a timer to keep the
+	// helper process alive without relying on a cancellable parent context.
+	select {
+	case <-ctx.Done():
+		return llm.ChatResponse{}, ctx.Err()
+	case <-time.After(agentCrossProcessWaitTimeout):
+		return llm.ChatResponse{}, context.DeadlineExceeded
+	}
 }
 
 // TestAgentCrashAfterWriteFreshProcessRecovery is the issue #263 acceptance
@@ -78,7 +84,12 @@ func TestAgentCrashAfterWriteFreshProcessRecovery(t *testing.T) {
 	waitForAgentCrossProcessReady(t, child)
 
 	if err := child.cmd.Process.Kill(); err != nil {
-		t.Fatalf("kill child: %v", err)
+		select {
+		case <-child.done:
+		case <-time.After(agentCrossProcessWaitTimeout):
+			t.Fatalf("kill child failed and child did not report exit: %v", err)
+		}
+		t.Fatalf("kill child: %v; child error: %v\n%s", err, child.err, child.output.String())
 	}
 	select {
 	case <-child.done:
