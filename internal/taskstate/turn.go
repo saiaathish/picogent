@@ -161,6 +161,31 @@ func (t *Task) BeginTurn(route TurnRoute) (uint64, bool) {
 	return record.Sequence, true
 }
 
+// RecoverActiveTurn closes an active record left by a prior process. Session
+// attachment holds the project run lock before calling this method, so an
+// active record at that boundary is a stale attempt rather than a concurrent
+// writer. The explicit metadata keeps restart recovery distinguishable from a
+// user cancellation or an ordinary superseded turn.
+func (t *Task) RecoverActiveTurn() bool {
+	if t == nil || len(t.Turns) == 0 {
+		return false
+	}
+	latest := &t.Turns[len(t.Turns)-1]
+	if latest.State != TurnActive {
+		return false
+	}
+	return t.closeTurn(
+		latest.Sequence,
+		TurnInterrupted,
+		TurnRouteRecover,
+		"previous process ended before the durable turn closed",
+		"UNVERIFIED",
+		StopProcessRestart,
+		latest.ToolRounds,
+		latest.MutationCount,
+	)
+}
+
 // FinishTurn closes the active turn identified by sequence. Unknown or stale
 // identities are ignored, preserving lifecycle ordering under replacement or
 // restart races.
