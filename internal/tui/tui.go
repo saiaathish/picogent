@@ -68,9 +68,10 @@ type logMsg struct {
 	sessionID string
 }
 type taskProgressMsg struct {
-	task      *taskstate.Task
-	turnID    uint64
-	sessionID string
+	task       *taskstate.Task
+	completion taskstate.CompletionCheck
+	turnID     uint64
+	sessionID  string
 }
 type doneMsg struct {
 	history      []llm.Message
@@ -159,7 +160,7 @@ func (h *handler) OnError(err error) {
 	h.sendMsg(logMsg{Kind: "error", Text: redact.Diagnostic(err.Error(), 180)})
 }
 func (h *handler) OnTaskState(task *taskstate.Task) {
-	h.sendMsg(taskProgressMsg{task: task})
+	h.sendMsg(taskProgressMsg{task: task, completion: agent.CompletionProof(task)})
 }
 
 type model struct {

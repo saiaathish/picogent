@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -616,6 +617,25 @@ func TestFormatTaskProgress(t *testing.T) {
 				t.Fatalf("formatTaskProgress() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTaskProgressMessageCarriesSharedCompletionProof(t *testing.T) {
+	task, err := taskstate.New("session-proof", "finish the loop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []taskstate.Criterion{{Description: "required proof", Required: true}}
+	var got tea.Msg
+	h := &handler{send: func(msg tea.Msg) { got = msg }}
+	h.OnTaskState(task)
+	msg, ok := got.(taskProgressMsg)
+	if !ok {
+		t.Fatalf("message = %T, want taskProgressMsg", got)
+	}
+	want := agent.CompletionProof(task)
+	if !reflect.DeepEqual(msg.completion, want) {
+		t.Fatalf("message proof = %#v, want %#v", msg.completion, want)
 	}
 }
 

@@ -7,6 +7,13 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
+// CompletionProof returns the durable criterion/evidence proof used by every
+// surface that presents task progress. It deliberately exposes the existing
+// outcome predicate without adding turn-specific retirement context.
+func CompletionProof(task *taskstate.Task) taskstate.CompletionCheck {
+	return outcome.EvaluateCompletion(task)
+}
+
 // CompletionProjection is the bounded result-level completion decision shared
 // by the agent and every execution surface. Proof is the authoritative
 // criterion/evidence check; Ready also accounts for the explicit completion
