@@ -29,12 +29,19 @@ func TestEmbeddedIndex(t *testing.T) {
 			t.Fatalf("index still contains retired companion UI: %s", marker)
 		}
 	}
+	if !strings.Contains(string(b), `<script src="/contracts.js"></script>`) {
+		t.Fatal("index does not load executable web contracts before app.js")
+	}
 	js, err := gui.ReadWeb("web/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(js), "/api/sessions") || !strings.Contains(string(js), "viewEpoch") || !strings.Contains(string(js), `message || "Couldn't save mode"`) {
 		t.Fatal("gui missing session client or new-chat race guard")
+	}
+	if !strings.Contains(string(js), "window.PicogentWebContracts?.createPrimaryEventDispatcher") ||
+		!strings.Contains(string(js), "primaryEventDispatcher?.dispatch(e)") {
+		t.Fatal("gui primary SSE events are not wired through executable contracts")
 	}
 	if !strings.Contains(string(js), "function renderRecentSessions()") || !strings.Contains(string(js), "setUndoAvailable(true)") || !strings.Contains(string(js), `prompt: "/undo"`) {
 		t.Fatal("gui recovery controls are not wired to session resume and undo")
@@ -119,10 +126,19 @@ func TestEmbeddedIndex(t *testing.T) {
 	if finishStart < 0 || finishEnd < finishStart || !strings.Contains(string(js)[finishStart:finishEnd], "activityComplete = true;") || !strings.Contains(string(js)[finishStart:finishEnd], "updateActivityPanel();") {
 		t.Fatal("completed turn UI does not finalize the activity panel")
 	}
-	doneStart := strings.Index(string(js), `if (e.type === "done")`)
-	doneEnd := strings.Index(string(js), `if (e.type === "think")`)
-	if doneStart < 0 || doneEnd < doneStart || !strings.Contains(string(js)[doneStart:doneEnd], "finishTurnUI();") {
-		t.Fatal("done SSE path does not finalize the turn UI")
+	dispatchStart := strings.Index(string(js), "const primaryEventDispatcher")
+	dispatchEnd := strings.Index(string(js), "function verificationPresentation")
+	if dispatchStart < 0 || dispatchEnd < dispatchStart || !strings.Contains(string(js)[dispatchStart:dispatchEnd], "finishTurnUI();") {
+		t.Fatal("primary done SSE contract does not finalize the turn UI")
+	}
+	contracts, err := gui.ReadWeb("web/contracts.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, marker := range []string{"createPrimaryEventDispatcher", `case "assistant_delta"`, `case "assistant_final"`, `case "done"`, `case "prompts_refresh"`, "mainPromptRequest"} {
+		if !strings.Contains(string(contracts), marker) {
+			t.Fatalf("web contracts missing %q", marker)
+		}
 	}
 	styles, err := gui.ReadWeb("web/styles.css")
 	if err != nil {

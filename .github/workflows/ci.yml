@@ -17,8 +17,14 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.x"
       - name: Test
         run: go test ./...
+      - name: Web contract tests
+        shell: bash
+        run: node --test internal/gui/web/contracts.test.js
       - name: v0.2 release acceptance
         run: go test ./internal/acceptance -run TestV02ReleaseLoop -count=1
       - name: Vet

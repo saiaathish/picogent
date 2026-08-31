@@ -2043,6 +2043,31 @@ function finishTurnUI() {
 
 /* ─── SSE ─── */
 let ev;
+const primaryEventDispatcher = window.PicogentWebContracts?.createPrimaryEventDispatcher({
+  assistantDelta: (text) => appendAssistantDelta(text),
+  assistantFinal: (text) => {
+    if (stream) {
+      stream.target = text;
+      stream.shown = Math.min(stream.shown, stream.target.length);
+      stream.finishing = true;
+      stream.live = false;
+      if (stream.shown >= stream.target.length) finalizeStream();
+      else kickTypewriter();
+    } else if (text) {
+      typeAssistantFull(text);
+    }
+  },
+  done: () => {
+    permEl.classList.remove("is-on");
+    if (permHint) {
+      permHint.hidden = true;
+      permHint.textContent = "";
+    }
+    finishTurnUI();
+    if ($("panel-activity") && !$("panel-activity").hidden) refreshActivity();
+  },
+  promptsRefresh: (force) => loadHeroPrompts(force),
+});
 function verificationPresentation(status) {
   switch (status) {
     case "pass":
@@ -2083,6 +2108,7 @@ function connectEvents() {
       sendBtn.disabled = !ready;
       return;
     }
+    if (primaryEventDispatcher?.dispatch(e)) return;
     if (e.type === "task_progress") {
       const hasTaskEnvelope = Object.prototype.hasOwnProperty.call(e, "task");
       const task = hasTaskEnvelope ? e.task : e;
@@ -2163,21 +2189,6 @@ function connectEvents() {
     if (e.type === "review" && e.path) {
       openReview(e.path, e.line || 0, e.line_end || e.line || 0, "Reading file…");
       pushActivity("read", e.path, e.path);
-      return;
-    }
-    if (e.type === "done") {
-      permEl.classList.remove("is-on");
-      if (permHint) {
-        permHint.hidden = true;
-        permHint.textContent = "";
-      }
-      finishTurnUI();
-      if ($("panel-activity") && !$("panel-activity").hidden) refreshActivity();
-      return;
-    }
-    if (e.type === "prompts_refresh") {
-      const kind = e.text || "all";
-      if (kind === "main" || kind === "all") loadHeroPrompts(true);
       return;
     }
     if (e.type === "think") {
@@ -2277,10 +2288,6 @@ function connectEvents() {
     if (e.type === "tool") {
       return;
     }
-    if (e.type === "assistant_delta") {
-      appendAssistantDelta(e.text || "");
-      return;
-    }
     if (e.type === "assistant") {
       if (stream?.live) {
         if (e.text && e.text.length >= stream.target.length) stream.target = e.text;
@@ -2292,19 +2299,6 @@ function connectEvents() {
         typeAssistantFull(e.text);
       } else {
         finalizeStream();
-      }
-      return;
-    }
-    if (e.type === "assistant_final") {
-      if (stream) {
-        stream.target = e.text || "";
-        stream.shown = Math.min(stream.shown, stream.target.length);
-        stream.finishing = true;
-        stream.live = false;
-        if (stream.shown >= stream.target.length) finalizeStream();
-        else kickTypewriter();
-      } else if (e.text) {
-        typeAssistantFull(e.text);
       }
       return;
     }
@@ -2343,11 +2337,15 @@ async function loadHeroPrompts(force) {
   loading.innerHTML = "<span>Recommended</span><small>Tuning to this repo…</small>";
   host.appendChild(loading);
   try {
-    const res = await fetch("/api/prompts?kind=main", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "main", refresh: !!force }),
-    });
+    const request = window.PicogentWebContracts?.mainPromptRequest(force) || {
+      url: "/api/prompts?kind=main",
+      options: {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "main", refresh: !!force }),
+      },
+    };
+    const res = await fetch(request.url, request.options);
     const data = await res.json();
     loading.remove();
     renderHeroPrompts(data.prompts || [], folder);

@@ -1,6 +1,7 @@
 package gui
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -310,6 +311,40 @@ func TestGUIAPIPostReturnsFreshPromptCache(t *testing.T) {
 	}
 	if !strings.Contains(res.Body.String(), "Already cached") {
 		t.Fatalf("response did not return the fresh cache: %s", res.Body.String())
+	}
+}
+
+func TestGUIAPIPostGeneratesFallbackForEmptyPromptCache(t *testing.T) {
+	s := newLoopbackAPITestServer(t)
+	if err := os.WriteFile(filepath.Join(s.cfg.Workspace, "go.mod"), []byte("module example.com/test\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req := loopbackAPIRequest(http.MethodPost, "/api/prompts?kind=main", `{"kind":"main","refresh":false}`)
+	req.Header.Set("Origin", "http://"+loopbackTestHost)
+	res := httptest.NewRecorder()
+	s.Handler().ServeHTTP(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	}
+
+	var payload struct {
+		Kind    string      `json:"kind"`
+		Prompts []promptRec `json:"prompts"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Kind != "main" {
+		t.Fatalf("kind = %q, want main", payload.Kind)
+	}
+	if len(payload.Prompts) == 0 {
+		t.Fatal("empty-cache POST returned no prompt recommendations")
+	}
+	if payload.Prompts[0].Title != "Go tests" {
+		t.Fatalf("first fallback recommendation = %q, want Go tests", payload.Prompts[0].Title)
+	}
+	if len(s.cachedPromptRecs()) != len(payload.Prompts) {
+		t.Fatalf("fallback response was not cached: response=%d cache=%d", len(payload.Prompts), len(s.cachedPromptRecs()))
 	}
 }
 
