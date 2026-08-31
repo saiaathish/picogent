@@ -79,6 +79,10 @@ quality claims.
 
 ## Current evidence gaps
 
+The deterministic v3/v4 comparison was refreshed at exact heads on
+2026-08-31; see [V4-BENCHMARK-COMPARISON.md](V4-BENCHMARK-COMPARISON.md) for
+commands, metadata, ranges, and the recorded regression signals.
+
 The v3 benchmark matrix still marks these scenarios `UNRECORDED` or proxy-only:
 
 - live-provider outcome quality
