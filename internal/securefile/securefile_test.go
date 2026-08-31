@@ -23,6 +23,20 @@ func TestReadFileLimitedReturnsSentinel(t *testing.T) {
 	}
 }
 
+func TestReadFileMissingPreservesOSNotExist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.json")
+	_, err := ReadFile(path)
+	if err == nil {
+		t.Fatal("ReadFile succeeded for a missing file")
+	}
+	if !os.IsNotExist(err) {
+		t.Fatalf("ReadFile missing error=%v, want os.IsNotExist", err)
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("ReadFile missing error=%v, want errors.Is(os.ErrNotExist)", err)
+	}
+}
+
 func TestWriteAtomicRejectsSymlinkTarget(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(t.TempDir(), "outside.yaml")
