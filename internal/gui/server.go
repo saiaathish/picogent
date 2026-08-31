@@ -157,7 +157,6 @@ type server struct {
 	// AI prompt recommendations for the primary chat hero.
 	mainRecs   []promptRec
 	mainRecsAt time.Time
-	recsKey    string
 }
 
 func Run() error {

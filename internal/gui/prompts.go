@@ -73,8 +73,6 @@ func (s *server) cachedPromptRecs() []promptRec {
 
 func (s *server) getPromptRecs(force bool) []promptRec {
 	s.mu.Lock()
-	ws := s.cfg.Workspace
-	sid := s.sessionID
 	cached := append([]promptRec(nil), s.mainRecs...)
 	cachedAt := s.mainRecsAt
 	s.mu.Unlock()
@@ -87,7 +85,6 @@ func (s *server) getPromptRecs(force bool) []promptRec {
 	s.mu.Lock()
 	s.mainRecs = recs
 	s.mainRecsAt = time.Now()
-	s.recsKey = ws + "|" + sid
 	s.mu.Unlock()
 	return recs
 }
@@ -96,7 +93,6 @@ func (s *server) invalidatePromptRecs() {
 	s.mu.Lock()
 	s.mainRecs = nil
 	s.mainRecsAt = time.Time{}
-	s.recsKey = ""
 	s.mu.Unlock()
 }
 
@@ -285,12 +281,6 @@ func heuristicPromptRecs(ctx string, st agentStatus) []promptRec {
 	return out
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
 
 func (s *server) lightModelID() string {
 	s.mu.Lock()
