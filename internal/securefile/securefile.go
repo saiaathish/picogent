@@ -57,7 +57,21 @@ func OpenLockFile(path string) (*os.File, error) {
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return nil, statErr
 	}
-	return root.openLock(name)
+	// Several fresh processes can observe the missing entry together on the
+	// first-use path. Some supported filesystems may briefly return ENOENT from
+	// the descriptor-anchored O_CREAT open while that entry is being published.
+	// Retry against the same already-validated parent; never reopen the path or
+	// weaken the symlink boundary just to smooth over that race.
+	for attempt := 0; ; attempt++ {
+		file, openErr := root.openLock(name)
+		if openErr == nil {
+			return file, nil
+		}
+		if !errors.Is(openErr, os.ErrNotExist) || attempt >= 31 {
+			return nil, openErr
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // TryLockFile takes a non-blocking lock on file. The returned function releases
