@@ -146,6 +146,16 @@ func New(cfg config.Config, client llm.Client, reg *tools.Registry, gate *perm.G
 	return &Agent{CFG: cfg, LLM: client, Tools: reg, Gate: gate, TaskMode: ParseTaskMode(cfg.TaskMode)}
 }
 
+// Close releases runtime-owned resources after the caller has stopped
+// admitting turns. It is idempotent so CLI, GUI, and TUI boundaries can each
+// defend their own cleanup path without coordinating a second owner.
+func (a *Agent) Close() {
+	if a == nil || a.Tools == nil {
+		return
+	}
+	a.Tools.Close()
+}
+
 // SetClient replaces the provider client at a turn boundary. A running turn
 // keeps the client captured in its RuntimeSnapshot, so a settings change
 // cannot switch providers halfway through a request.
