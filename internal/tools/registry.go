@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,10 @@ const (
 	maxReadLines = 2000
 	maxToolOut   = 32 << 10
 )
+
+// ErrRegistryClosed is returned when a runtime tries to attach a manager after
+// its tool registry has been shut down.
+var ErrRegistryClosed = errors.New("tool registry is closed")
 
 type Context struct {
 	Workspace     string
@@ -43,10 +48,12 @@ type Tool interface {
 type Registry struct {
 	mu         sync.RWMutex
 	mutationMu sync.Mutex
+	closed     bool
 	byName     map[string]Tool
 	order      []string
 	Ctx        Context
 	MCP        *mcpbridge.Manager
+	mcpLease   *mcpbridge.ManagerLease
 }
 
 // WithExclusive serializes operations that mutate the live tool topology
@@ -94,10 +101,77 @@ func NewRegistry(c Context) *Registry {
 	return r
 }
 
-func (r *Registry) AttachMCP(m *mcpbridge.Manager) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+func (r *Registry) AttachMCP(m *mcpbridge.Manager) error {
+	if r == nil {
+		return ErrRegistryClosed
+	}
 
+	// A refresh of the same runtime must keep its current lease. This is used
+	// after a server is added or removed from an already attached manager.
+	r.mu.RLock()
+	current := r.MCP
+	closed := r.closed
+	r.mu.RUnlock()
+	if closed {
+		return ErrRegistryClosed
+	}
+	if m != nil && current != nil && current.SameRuntime(m) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.closed {
+			return ErrRegistryClosed
+		}
+		r.replaceMCPToolsLocked()
+		return nil
+	}
+
+	var lease *mcpbridge.ManagerLease
+	view := m
+	if m != nil {
+		var err error
+		lease, err = m.Acquire()
+		if err != nil {
+			return err
+		}
+		view = lease.Manager()
+	}
+	var specs []llm.ToolSpec
+	if view != nil {
+		specs = view.Specs()
+	}
+
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		if lease != nil {
+			lease.Release()
+		}
+		return ErrRegistryClosed
+	}
+	old := r.MCP
+	oldLease := r.mcpLease
+	r.replaceMCPToolsLocked()
+	r.MCP = view
+	r.mcpLease = lease
+	for _, spec := range specs {
+		r.registerLocked(mcpTool{mgr: view, name: spec.Name})
+	}
+	r.mu.Unlock()
+
+	// Retirement is separate from lease release: an admitted call may still
+	// use the old view, while no future raw attachment can revive its root.
+	if old != nil && (view == nil || !old.SameRuntime(view)) {
+		old.Retire()
+	}
+	if oldLease != nil {
+		oldLease.Release()
+	}
+	return nil
+}
+
+// replaceMCPToolsLocked removes the currently registered MCP tool specs. The
+// caller must hold r.mu for writing.
+func (r *Registry) replaceMCPToolsLocked() {
 	filtered := r.order[:0]
 	for _, name := range r.order {
 		if _, isMCP := r.byName[name].(mcpTool); isMCP {
@@ -107,12 +181,33 @@ func (r *Registry) AttachMCP(m *mcpbridge.Manager) {
 		filtered = append(filtered, name)
 	}
 	r.order = filtered
-	r.MCP = m
-	if m == nil {
+}
+
+// Close retires the attached MCP runtime and releases the registry's lease.
+// It is safe to call repeatedly and prevents a late settings callback from
+// attaching a manager to a finished application.
+func (r *Registry) Close() {
+	if r == nil {
 		return
 	}
-	for _, spec := range m.Specs() {
-		r.registerLocked(mcpTool{mgr: m, name: spec.Name})
+	r.mu.Lock()
+	if r.closed {
+		r.mu.Unlock()
+		return
+	}
+	r.closed = true
+	old := r.MCP
+	oldLease := r.mcpLease
+	r.replaceMCPToolsLocked()
+	r.MCP = nil
+	r.mcpLease = nil
+	r.mu.Unlock()
+
+	if old != nil {
+		old.Retire()
+	}
+	if oldLease != nil {
+		oldLease.Release()
 	}
 }
 
