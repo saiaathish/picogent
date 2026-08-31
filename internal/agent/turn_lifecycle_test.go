@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -56,6 +58,25 @@ func newDurableTurnAgent(t *testing.T, client llm.Client, store *taskstate.Store
 		t.Fatal(err)
 	}
 	return a
+}
+
+type turnCloseFailureHandler struct {
+	allowAll
+	ag       *agent.Agent
+	badStore *taskstate.Store
+	switched bool
+}
+
+func (h *turnCloseFailureHandler) OnTaskState(task *taskstate.Task) {
+	if h.switched || task == nil || task.Status != taskstate.StatusDone {
+		return
+	}
+	last := task.LastTurn()
+	if last == nil || last.State != taskstate.TurnActive {
+		return
+	}
+	h.switched = true
+	h.ag.SetTaskStore(h.badStore)
 }
 
 func TestRunWithOptionsPersistsActiveTurnBeforeProviderAndClosesCompleted(t *testing.T) {
@@ -121,6 +142,65 @@ func TestRunWithOptionsPersistsActiveTurnBeforeProviderAndClosesCompleted(t *tes
 	}
 	if result.Task.LastTurn() == nil || result.Task.LastTurn().State != taskstate.TurnCompleted {
 		t.Fatalf("result did not include closed turn = %#v", result.Task)
+	}
+}
+
+func TestRunWithOptionsReturnsTurnClosePersistenceFailure(t *testing.T) {
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "turn-close-persist-failure"
+	workspace := t.TempDir()
+	badRoot := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(badRoot, []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]string{"path": "done.txt", "content": "completed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &durableTurnProbeClient{
+		store:     store,
+		sessionID: sessionID,
+		responses: []llm.ChatResponse{
+			toolResponse("write", "write_file", json.RawMessage(args)),
+			{Message: llm.Message{Role: "assistant", Content: "Goal complete: done"}},
+		},
+		observed: make(chan *taskstate.TurnRecord, 1),
+	}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(context.Context, []string) (string, error) {
+			return "verify PASS\nrequested checks passed", nil
+		},
+	})
+	a := agent.New(cfg, client, reg, perm.New(config.ModeFast, workspace, nil))
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	h := &turnCloseFailureHandler{ag: a, badStore: taskstate.NewStore(badRoot)}
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish the requested change"}, h)
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "durable task state") {
+		t.Fatalf("turn close persistence failure = %v, want explicit persistence error", err)
+	}
+	if !h.switched {
+		t.Fatal("test did not switch stores after terminal task persistence")
+	}
+	if result.GoalDone {
+		t.Fatal("turn close persistence failure must not report GoalDone")
+	}
+	persisted, err := store.Load(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != taskstate.StatusDone {
+		t.Fatalf("persisted terminal task = %#v, want saved task completion", persisted)
+	}
+	if last := persisted.LastTurn(); last == nil || last.State != taskstate.TurnActive {
+		t.Fatalf("persisted turn = %#v, want active turn for recovery", last)
 	}
 }
 
