@@ -17,6 +17,9 @@ func TestIntentRevisionChangesOnlyWhenInterpretationChanges(t *testing.T) {
 	if !changedInitial || task.IntentRevision != 1 {
 		t.Fatalf("initial intent update = changed:%v revision:%d", changedInitial, task.IntentRevision)
 	}
+	if task.NeedsVerification() {
+		t.Fatal("recording the initial intent made an untouched task need verification")
+	}
 	if task.SetIntent(intent) {
 		t.Fatal("identical intent unexpectedly advanced revision")
 	}
