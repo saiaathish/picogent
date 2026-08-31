@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -461,15 +462,18 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	if durablePrompt == "" {
 		durablePrompt = userText
 	}
-	taskPersistenceFailed := a.beginDurableTask(durablePrompt, ev)
+	if failed, taskErr := a.beginDurableTask(durablePrompt, ev); failed {
+		if taskErr == nil {
+			taskErr = errors.New("durable task state is unavailable")
+		}
+		return history, Result{Task: a.TaskSnapshot()}, taskErr
+	}
 	var turnSequence uint64
-	if !taskPersistenceFailed {
-		if task := a.TaskSnapshot(); task != nil {
-			var started bool
-			turnSequence, started = a.beginDurableTurn(durableTurnStartRoute(task, taskMode), ev)
-			if !started {
-				taskPersistenceFailed = true
-			}
+	if task := a.TaskSnapshot(); task != nil {
+		var started bool
+		turnSequence, started = a.beginDurableTurn(durableTurnStartRoute(task, taskMode), ev)
+		if !started {
+			return history, Result{Task: a.TaskSnapshot()}, errors.New("durable turn could not be started")
 		}
 	}
 
@@ -641,7 +645,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			res.Task = a.TaskSnapshot()
 			goalEvidencePassed := !completionEvidenceRequired || verificationStatus(lastVerification) == "PASS"
 			taskComplete := res.Task == nil || (res.Task.Status == taskstate.StatusDone && !res.Task.NeedsVerification())
-			res.GoalDone = completionMarker && goalEvidencePassed && !taskPersistenceFailed && strings.TrimSpace(opts.ScopeBoundary) == "" && taskComplete
+			res.GoalDone = completionMarker && goalEvidencePassed && strings.TrimSpace(opts.ScopeBoundary) == "" && taskComplete
 			stop := taskstate.StopNone
 			if res.GoalDone || (res.Task != nil && res.Task.Status == taskstate.StatusDone) {
 				stop = taskstate.StopGoalComplete

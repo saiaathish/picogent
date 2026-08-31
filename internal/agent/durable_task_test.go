@@ -125,6 +125,45 @@ func TestDurableTaskLoadFailureIsSurfaced(t *testing.T) {
 	}
 }
 
+func TestDurableTaskLoadFailureStopsBeforeProvider(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	path, err := store.Path("corrupt-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(workspace, "must-not-change.txt")
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: `{"path":"must-not-change.txt","content":"unsafe"}`}}}}}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession("corrupt-session"); err == nil {
+		t.Fatal("corrupt task state should be reported")
+	}
+
+	_, result, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "write the file"}, allowAll{}, agent.RunOptions{})
+	if err == nil {
+		t.Fatal("run should fail closed when durable task loading failed")
+	}
+	if len(fake.Calls) != 0 {
+		t.Fatalf("provider calls = %d, want 0", len(fake.Calls))
+	}
+	if result.Text != "" || result.ToolRounds != 0 {
+		t.Fatalf("failed run produced work: %#v", result)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target file changed despite failed durable load: %v", err)
+	}
+}
+
 func TestDurableTaskContinuesPastRoutineDeferral(t *testing.T) {
 	workspace := t.TempDir()
 	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
@@ -711,8 +750,8 @@ func TestDurableTaskDoesNotPublishUnsavedState(t *testing.T) {
 	h := &taskRecordingHandler{ag: a}
 
 	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, h)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("run should fail closed when durable task state cannot be saved")
 	}
 	if result.Task == nil || result.Task.Status != lastPersisted.Status || result.Task.Attempts != lastPersisted.Attempts {
 		t.Fatalf("result task changed despite failed saves: got=%#v last=%#v", result.Task, lastPersisted)
@@ -722,6 +761,9 @@ func TestDurableTaskDoesNotPublishUnsavedState(t *testing.T) {
 	}
 	if len(h.snapshots) != 0 {
 		t.Fatalf("published unsaved snapshots: %#v", h.snapshots)
+	}
+	if len(fake.Calls) != 0 {
+		t.Fatalf("provider calls = %d, want 0", len(fake.Calls))
 	}
 	if len(h.errors) == 0 || !strings.Contains(h.errors[0].Error(), "durable task state was not saved") {
 		t.Fatalf("persistence failure was not surfaced: %v", h.errors)
