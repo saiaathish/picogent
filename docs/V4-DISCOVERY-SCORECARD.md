@@ -1,7 +1,7 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-08-31 against exact `main` head
-`5f7d31237a4ffd586c27882588a49cdaed78d9f9` after PRs #219–#220 merged.
+`e02caf63da63796990c057b4bc0c293dcce52153` after PRs #219–#224 merged.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -17,21 +17,21 @@ not enough to establish real runtime behavior.
 
 | Specialty | Excellent | Adequate | Brittle | Wasteful | Highest-leverage next improvement |
 | --- | --- | --- | --- | --- | --- |
-| Architecture | Tiny local-first, single-agent boundary; bounded state | Compact `taskstate` model | Lifecycle and persistence semantics are distributed across `agent`, `goal`, `verify`, and the surfaces | Separate GUI side-chat path and repeated surface orchestration | Add one internal outcome/turn contract around the existing task state; do not add a second planner or index |
-| Agent reasoning | Evidence-gated completion and stale-goal protection | Bounded repair loop and durable context | Keyword intent inference; repair diversity is prompt advice rather than route enforcement | Repeated admission/inference logic in GUI, TUI, and headless | Record intent revision, hypothesis/route, evidence, and stop reason in one shared contract |
+| Architecture | Tiny local-first, single-agent boundary; bounded state; shared outcome/turn contract | Compact `taskstate` model | Lifecycle and persistence semantics remain distributed across `agent`, `goal`, `verify`, and the surfaces | Separate GUI side-chat path and repeated surface orchestration | Collapse or justify the separate side-chat control plane; do not add a second planner or index |
+| Agent reasoning | Evidence-gated completion, stale-goal protection, and durable intent/turn evidence | Bounded repair loop and durable context | Keyword intent inference; repair diversity is prompt advice rather than route enforcement | Repeated admission/inference logic in GUI, TUI, and headless | Enforce route diversity structurally only if recovery evidence justifies the added state |
 | Intent/outcome | Monotonic goal revisions, tombstones, atomic clear | Permission boundary and bounded criteria | Template-only definition of done; ambiguity, negation, and conflicting goals are not structured | Duplicate `Steps`/`DefinitionOfDone` and `Verification`/`Evidence` representations | Make criteria and criterion evidence authoritative before expanding outcome features |
-| Memory | Bounded task and session records with save-before-publish | Causal learning remains small and advisory | FIFO retention is not value-aware; cross-process task writes are last-writer-wins | Transcript-shaped session storage duplicates structured task/evidence state | Make retention value-aware after measuring restart and compaction behavior |
-| Context efficiency | Pair-safe compaction; 8,192-character durable context; failure signals retained | Deterministic stale-output reduction | Aggregate summarization input and token estimates are not hard-bounded/calibrated; lexical priority misses structured/non-English failures | Repeated stale skeletonization/deduplication passes | Add an aggregate `Manage`/`Summarize` budget and measure bytes, tokens, allocations, and latency |
-| Repo intelligence | On-demand deterministic map with no daemon/index/watcher | Bounded search and map output | Short-head/dirty status omits path provenance; nested roots and fallback semantics drift | Duplicate phrase/default command tables | Add a bounded provenance-bearing repo snapshot refreshed at admission and after mutation |
+| Memory | Bounded task and session records with save-before-publish; cooperative cross-process CAS/rebase coverage | Causal learning remains small and advisory | FIFO retention is not value-aware; hostile process-death and reconnect recovery remain unverified | Transcript-shaped session storage duplicates structured task/evidence state | Make retention value-aware after measuring restart and compaction behavior |
+| Context efficiency | Pair-safe compaction; 8,192-character durable context; failure signals retained; bounded 32 KiB summary input | Deterministic stale-output reduction | Token estimates are rough and not provider-calibrated; lexical priority misses structured/non-English failures | Repeated stale skeletonization/deduplication passes | Measure token estimates and retention value before adding another compaction mechanism |
+| Repo intelligence | On-demand deterministic map with exact bounded provenance and no daemon/index/watcher | Bounded search and map output | Nested roots and fallback semantics still need broader behavioral evidence | Duplicate phrase/default command tables | Exercise provenance refresh at admission and after mutation across supported surfaces |
 | Verification | Explicit `PASS`/`FAIL`/`INCONCLUSIVE`/`SKIPPED`; targeted-to-broader stages; exact-head manifest | Changed-file cap forces broader verification; hosted matrix now runs vet and bounded fuzz gates | Task-local verification does not yet aggregate every release gate; textual proof truncation lacks structured metadata | Legacy verification paths pending caller confirmation | Keep the exact-head manifest and CI quality gates aligned; add structured gate results without broadening completion authority |
 | Repair/recovery | Local checkpoint/undo conflict safety and fail-closed permissions | Durable task resume and GUI steering | Retry taxonomy, route diversity, partial rollback reporting, and process-restart undo are incomplete | Prompt recovery hints would duplicate a future durable recovery ledger | Test and then persist side-effect/recovery metadata; do not replace checkpoint safety prematurely |
-| Performance | Deterministic local microbenchmarks and a long-horizon resume envelope exist | Bounded output/context controls | Current refresh shows large repo-map/session allocation overhead; GUI/TUI/headless process envelopes remain unmeasured | Repeated large-output scans and unbounded summary construction may waste CPU | Profile retention/provenance overhead and rerun v3-v4 comparisons before claiming performance gains |
+| Performance | Deterministic local microbenchmarks, long-horizon resume, and a child-process RSS envelope exist | Bounded output/context controls | Provider-token accuracy, cross-surface startup, and stable cross-platform budgets remain unmeasured | Repeated large-output scans and broad provenance passes may waste CPU | Profile retention/provenance overhead and rerun v3-v4 comparisons before claiming performance gains |
 | Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Hosted `govulncheck` now scans the dependency graph; tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Add hostile runtime evidence and preserve explicit limits around dependency reachability and path races |
-| Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, and barrier-driven cancellation/save/publish stress | Unix/Windows lock primitives and deterministic recovery harnesses | Cross-surface event/reconnect behavior and cross-process writers lack complete stress evidence | New orchestration would add complexity before invariants are measured | Add cross-process writer/reconnect harness and run it on every release candidate |
+| Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, barrier-driven cancellation/save/publish stress, and cooperative cross-process writers | Unix/Windows lock primitives and deterministic recovery harnesses | Cross-surface event/reconnect behavior, hostile process death, and filesystem races lack complete stress evidence | New orchestration would add complexity before invariants are measured | Extend cross-process evidence only where it proves a user-visible recovery invariant |
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
 | GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, and bounded owned-browser reconnect/recovery evidence | Lifecycle and undo wiring; one local rendered reconnect path | Live-provider behavior, permission decisions, undoable changes, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; side chat bypasses core task/evidence path | Add owned-browser permission, undo, full-recovery, and cross-platform evidence before release claims |
-| TUI/headless | Headless stdout/stderr and fail-closed permission behavior; resume state | CLI dispatch and exit classes | Non-TTY/TUI behavior and session-save failures are not proven or always surfaced | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Surface persistence failures and test subprocess exit/EOF/signal contracts |
-| Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing is duplicated; docs retain stale benchmark anchors | Duplicate control-plane paths and stale benchmark anchors | Delete only after caller/API confirmation; first reduce duplicated control-plane semantics |
+| TUI/headless | Headless stdout/stderr, fail-closed permission behavior, resume state, and explicit cleanup/persistence errors | CLI dispatch and exit classes | Non-TTY/TUI behavior and cross-platform EOF/signal behavior remain unproven | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Add subprocess/EOF/signal evidence before changing the shared runtime boundary |
+| Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing is duplicated; side-chat bypasses the main task/evidence path | Duplicate control-plane paths and stale benchmark anchors | Remove or simplify duplicate control planes only after caller/API confirmation |
 
 ## Cross-cutting scorecard
 
@@ -58,8 +58,9 @@ not enough to establish real runtime behavior.
 - Outcome authority is split: generic criteria, legacy verification, newer
   evidence, goal text, and `Goal complete:` presentation can drift.
 - Current-head/dirty-tree provenance is now captured by the exact-head
-  manifest, but cross-process writes, route-aware recovery, event ordering,
-  and filesystem TOCTOU boundaries remain incomplete.
+  manifest, and cooperative cross-process writes plus route-aware recovery have
+  deterministic coverage; event ordering, hostile process death, and filesystem
+  TOCTOU boundaries remain incomplete.
 - GUI verification events now preserve PASS, FAIL, SKIPPED, and INCONCLUSIVE.
   PR #197 records bounded macOS/arm64 BrowserOS evidence for reconnect,
   active-turn prompt preservation, and durable transcript recovery against a
@@ -90,14 +91,15 @@ green unit tests or bounded hosted quality gates:
 - full restart/resume/steer behavior after process termination or changing
   goals; bounded fresh-process session attachment now records stale active-turn
   recovery with explicit route, evidence, and stop-reason metadata;
-- cancellation/save/publish ordering, goroutine leaks, cross-process writers,
-  and Windows runtime persistence. The MCP lease, TUI/CLI cleanup, GUI
-  shutdown admission, and turn-wait slices are unit- and hosted-CI-covered;
-  they do not establish hostile process-death, cross-process, or rendered
-  runtime proof;
-- provider-token accuracy, RSS/startup/first-turn envelopes, long-session
-  growth beyond the bounded session record, and large-output CPU/allocation
-  behavior;
+- hostile cancellation/process-death ordering, goroutine leaks, cross-surface
+  reconnects, and Windows runtime persistence. Cooperative
+  cancellation/save/publish and cross-process writer scenarios are covered by
+  deterministic tests; the MCP lease, TUI/CLI cleanup, GUI shutdown admission,
+  and turn-wait slices are unit- and hosted-CI-covered, but none establish
+  hostile process-death or rendered runtime proof;
+- provider-token accuracy, cross-platform performance budgets, first-turn
+  envelopes, long-session growth beyond the bounded session record, and
+  large-output CPU/allocation behavior;
 - symlink-swap/TOCTOU, child-environment secret leakage, git hook/textconv
   execution, MCP prompt injection, installer safety, and dependency/SBOM
   evidence beyond the hosted vulnerability reachability scan;
@@ -151,9 +153,10 @@ PRs #211–#216 then harden MCP runtime replacement and registry leases, agent
 and TUI cleanup, context-driven GUI HTTP shutdown, one-shot CLI cleanup, and
 GUI shutdown admission plus admitted-turn waiting. Hosted macOS, Ubuntu,
 Windows, security, and release-evidence checks passed for each slice. The
-remaining proof work is still open: cross-process writers, cross-surface
+remaining proof work is still open: hostile process death, cross-surface
 event/reconnect behavior, v3-versus-v4 outcome/retry measurements, and
-owned-browser permission/undo/full-recovery evidence.
+owned-browser permission/undo/full-recovery evidence. Cooperative
+cross-process writer coverage was added by PRs #222 and #224.
 
 PR #219 merged as `afd787289c61ae65a2adcca6f5eecdfbdc15c2f7`. It preserves a
 recoverable active task when turn-close persistence fails and joins that error
@@ -168,3 +171,15 @@ effects, and live task state remain consistent after cancellation. The focused
 and race test runs, full Go suite, and all hosted macOS, Ubuntu, Windows,
 security, and release-evidence checks passed. This is deterministic agent
 boundary evidence, not cross-process writer or rendered cross-surface proof.
+
+PR #223 merged as `15ece28a59d244ca5786acae5850b3ec54f61ea6`. It bounds the
+provider-bound aggregate summarization input at 32 KiB while retaining both
+ends of the older conversation and adds regression coverage for the cap. The
+focused, race, and full Go test runs plus all hosted macOS, Ubuntu, Windows,
+security, and release-evidence checks passed.
+
+PR #224 merged as `e02caf63da63796990c057b4bc0c293dcce52153`. It hardens the
+cross-process agent test harness so child startup failures are observed with
+their diagnostics, cleanup does not race a second `Wait`, and readiness/exit
+waits remain bounded. The focused repeated test, race test, full Go suite, and
+all hosted macOS, Ubuntu, Windows, security, and release-evidence checks passed.
