@@ -27,7 +27,7 @@ const (
 	agentCrossProcessReadyEnv     = "PICOGENT_AGENT_CROSS_PROCESS_READY"
 	agentCrossProcessReleaseEnv   = "PICOGENT_AGENT_CROSS_PROCESS_RELEASE"
 	agentCrossProcessResultEnv    = "PICOGENT_AGENT_CROSS_PROCESS_RESULT"
-	agentCrossProcessWaitTimeout  = 90 * time.Second
+	agentCrossProcessWaitTimeout  = 30 * time.Second
 )
 
 type agentCrossProcessChild struct {
@@ -35,6 +35,8 @@ type agentCrossProcessChild struct {
 	ready  string
 	result string
 	output bytes.Buffer
+	done   chan struct{}
+	err    error
 }
 
 type agentCrossProcessResult struct {
@@ -76,11 +78,16 @@ func TestAgentCrossProcessMutationsPreserveProgress(t *testing.T) {
 	children := make([]agentCrossProcessChild, writers)
 	defer func() {
 		for i := range children {
-			if children[i].cmd == nil || children[i].cmd.Process == nil || children[i].cmd.ProcessState != nil {
+			child := &children[i]
+			if child.cmd == nil || child.cmd.Process == nil || child.done == nil {
 				continue
 			}
-			_ = children[i].cmd.Process.Kill()
-			_ = children[i].cmd.Wait()
+			select {
+			case <-child.done:
+			default:
+				_ = child.cmd.Process.Kill()
+				<-child.done
+			}
 		}
 	}()
 
@@ -100,19 +107,25 @@ func TestAgentCrossProcessMutationsPreserveProgress(t *testing.T) {
 		cmd.Stdout = &children[i].output
 		cmd.Stderr = &children[i].output
 		children[i].cmd = cmd
+		children[i].done = make(chan struct{})
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start child %d: %v", i, err)
 		}
+		child := &children[i]
+		go func() {
+			child.err = child.cmd.Wait()
+			close(child.done)
+		}()
 	}
 
 	for i := range children {
-		waitForAgentCrossProcessFile(t, children[i].ready)
+		waitForAgentCrossProcessReady(t, &children[i])
 	}
 	if err := os.WriteFile(releasePath, []byte("go\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for i := range children {
-		if err := children[i].cmd.Wait(); err != nil {
+		if err := waitForAgentCrossProcessExit(t, &children[i]); err != nil {
 			t.Fatalf("child %d failed: %v\n%s", i, err, children[i].output.String())
 		}
 	}
@@ -211,4 +224,59 @@ func waitForAgentCrossProcessFile(t *testing.T, path string) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func waitForAgentCrossProcessReady(t *testing.T, child *agentCrossProcessChild) {
+	t.Helper()
+	deadline := time.Now().Add(agentCrossProcessWaitTimeout)
+	for {
+		data, err := os.ReadFile(child.ready)
+		if err == nil && len(data) > 0 {
+			return
+		}
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		select {
+		case <-child.done:
+			t.Fatalf("child exited before ready: %v\n%s", child.err, child.output.String())
+		default:
+		}
+		if time.Now().After(deadline) {
+			failAgentCrossProcessChild(t, child, fmt.Sprintf("timed out waiting for %s", child.ready))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func waitForAgentCrossProcessExit(t *testing.T, child *agentCrossProcessChild) error {
+	t.Helper()
+	if child.done == nil {
+		return fmt.Errorf("child was not started")
+	}
+	select {
+	case <-child.done:
+		return child.err
+	case <-time.After(agentCrossProcessWaitTimeout):
+		if child.cmd != nil && child.cmd.Process != nil {
+			_ = child.cmd.Process.Kill()
+		}
+		<-child.done
+		return fmt.Errorf("timed out waiting for child exit")
+	}
+}
+
+func failAgentCrossProcessChild(t *testing.T, child *agentCrossProcessChild, reason string) {
+	t.Helper()
+	if child.done != nil {
+		select {
+		case <-child.done:
+		default:
+			if child.cmd != nil && child.cmd.Process != nil {
+				_ = child.cmd.Process.Kill()
+			}
+			<-child.done
+		}
+	}
+	t.Fatalf("%s: %v\n%s", reason, child.err, child.output.String())
 }
