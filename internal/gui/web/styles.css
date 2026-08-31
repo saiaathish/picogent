@@ -936,8 +936,7 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 .drawer-left { left: 0; border-right: 1px solid var(--line); }
 .app.chats-open .drawer-left,
-.app.review-open .drawer-right,
-.app.side-open .drawer-side { transform: none; }
+.app.review-open .drawer-right { transform: none; }
 
 .drawer-head {
   display: flex;
@@ -2173,162 +2172,10 @@ button, input, textarea { font: inherit; color: inherit; }
 
 .approve-row button[data-always="1"] { font-size: 11px; }
 
-/* Side chat FAB + companion drawer */
-.side-fab {
-  position: fixed;
-  right: max(16px, env(safe-area-inset-right));
-  bottom: max(20px, env(safe-area-inset-bottom));
-  z-index: 40;
-  width: 48px;
-  height: 48px;
-  border: 1px solid var(--line);
-  border-radius: 50%;
-  background: var(--card);
-  color: var(--ink);
-  cursor: pointer;
-  display: grid;
-  place-items: center;
-  box-shadow:
-    0 8px 24px color-mix(in srgb, var(--ink) 14%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #fff 40%, transparent);
-  transition: transform .18s ease, background .18s ease, border-color .18s ease, color .18s ease;
-}
-.side-fab:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-  transform: translateY(-1px);
-}
-.side-fab:active { transform: scale(0.94); }
-.app.side-open .side-fab {
-  display: none;
-}
-.drawer-side {
-  right: 0;
-  left: auto;
-  width: min(420px, 94vw);
-  transform: translateX(110%);
-  border-left: 1px solid var(--line);
-  z-index: 31;
-}
-.side-title {
-  display: block;
-  font-size: 17px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-}
-.side-intro {
-  margin: 0;
-  padding: 4px 14px 8px;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--mute);
-}
-.side-chat {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.side-starters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 12px 8px;
-}
-.side-chip {
-  border: 1px solid var(--line);
-  background: var(--paper);
-  color: var(--ink);
-  border-radius: 999px;
-  padding: 5px 10px;
-  font-size: 11px;
-  font-weight: 550;
-  cursor: pointer;
-  transition: background .16s ease, border-color .16s ease;
-}
-.side-chip:hover {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
-  background: color-mix(in srgb, var(--accent) 8%, var(--paper));
-}
-.side-chip.is-loading {
-  opacity: 0.55;
-  pointer-events: none;
-}
-.side-log {
-  flex: 1;
-  overflow: auto;
-  padding: 8px 12px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.side-bubble {
-  max-width: 100%;
-  padding: 10px 12px;
-  border-radius: 14px;
-  font-size: 13px;
-  line-height: 1.45;
-}
-.side-you {
-  align-self: flex-end;
-  background: var(--ink);
-  color: var(--card);
-  border-bottom-right-radius: 6px;
-}
-.side-assistant {
-  align-self: stretch;
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-bottom-left-radius: 6px;
-}
-.side-bubble .content.md p { margin: 0 0 0.55em; }
-.side-bubble .content.md p:last-child { margin-bottom: 0; }
-.side-bubble .content.md ul,
-.side-bubble .content.md ol { margin: 0.3em 0 0.6em; padding-left: 1.2em; }
-.side-bubble .content.md .katex-display { margin: 0.5em 0; overflow-x: auto; }
-.side-bubble .content.md pre {
-  margin: 0.4em 0;
-  padding: 8px;
-  overflow: auto;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--ink) 6%, transparent);
-  font-size: 11px;
-}
-.side-ask.prompt {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  margin: 0 10px 10px;
-  padding: 6px 6px 6px 12px;
-  border-radius: 999px;
-}
-.side-ask.prompt > :not(.beam) { z-index: 1; }
-.side-ask input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  padding: 8px 0;
-  outline: none;
-}
-.side-ask button {
-  border: 0;
-  border-radius: 999px;
-  background: var(--ink);
-  color: var(--card);
-  padding: 8px 14px;
-  font-weight: 600;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.side-ask button:disabled { opacity: 0.4; cursor: not-allowed; }
 .recs .rec.is-ai small { opacity: 0.9; }
 .recs .rec.is-loading {
   opacity: 0.55;
   pointer-events: none;
-}
-@media (max-width: 560px) {
-  .side-fab { right: 12px; bottom: 12px; }
 }
 
 @media (max-width: 360px) {
@@ -2368,7 +2215,7 @@ button, input, textarea { font: inherit; color: inherit; }
   .work-orb,
   .stream-cursor,
   .reason-thinking::before,
-  .icon, .ghost-btn, .rec, .attach-btn, .prompt button#send, .approve-row button, .chip, .side-fab {
+  .icon, .ghost-btn, .rec, .attach-btn, .prompt button#send, .approve-row button, .chip {
     animation: none !important;
     transition: none !important;
   }

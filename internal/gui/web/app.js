@@ -27,7 +27,6 @@ const contextPopNote = $("context-pop-note");
 const threadList = $("thread-list");
 const shell = $("shell");
 const reviewRail = $("rail-review");
-const sideRail = $("rail-side");
 const reviewPath = $("review-path");
 const reviewScroll = $("review-scroll");
 const reviewNote = $("review-note");
@@ -64,9 +63,6 @@ const taskAnnouncerEl = $("task-progress-announcer");
 const statusAnnouncerEl = $("status-announcer");
 let threadsCache = [];
 let chatsOpen = false;
-let sideOpen = false;
-let sideBusy = false;
-let sideStream = null;
 let turnChanges = [];
 let turnStats = { reads: 0, searches: 0, edits: 0, added: 0, removed: 0 };
 let activityItems = [];
@@ -674,7 +670,7 @@ async function switchProject(id) {
 $("add-project").onclick = pickProjectFolder;
 
 function syncScrim() {
-  const on = chatsOpen || reviewOpen || sideOpen;
+  const on = chatsOpen || reviewOpen;
   scrim.hidden = !on;
 }
 
@@ -730,7 +726,6 @@ function setReviewOpen(on) {
   reviewOpen = on;
   reviewRail.hidden = !on;
   shell.classList.toggle("review-open", on);
-  if (on) setSideOpen(false);
   syncScrim();
   syncTaskActivityButton();
   if (!on && reviewReturnFocus) {
@@ -738,18 +733,6 @@ function setReviewOpen(on) {
     reviewReturnFocus = null;
     if (target.isConnected) target.focus();
   }
-}
-
-function setSideOpen(on) {
-  sideOpen = on;
-  shell.classList.toggle("side-open", on);
-  if (sideRail) sideRail.hidden = !on;
-  if (on) {
-    setReviewOpen(false);
-    loadSidePrompts(false);
-    $("side-input")?.focus();
-  }
-  syncScrim();
 }
 
 function scrollChat() {
@@ -1122,7 +1105,6 @@ async function newChat() {
     renderOverview({ ...(s.overview || {}), evolve: s.evolve });
     renderAuthBanner(s.auth);
   } catch (_) {}
-  loadSideChat();
   promptEl.focus();
 }
 
@@ -2013,8 +1995,6 @@ $("review-ask").onsubmit = (e) => {
 $("toggle-review").onclick = () => setReviewOpen(!reviewOpen);
 $("close-review").onclick = () => setReviewOpen(false);
 $("toggle-rail").onclick = () => setChatsOpen(!chatsOpen);
-$("side-fab")?.addEventListener("click", () => setSideOpen(!sideOpen));
-$("close-side")?.addEventListener("click", () => setSideOpen(false));
 contextRing?.addEventListener("click", (e) => {
   e.stopPropagation();
   if (!contextPop) return;
@@ -2028,14 +2008,12 @@ document.addEventListener("click", (e) => {
 scrim.onclick = () => {
   setChatsOpen(false);
   setReviewOpen(false);
-  setSideOpen(false);
   setContextPopOpen(false);
 };
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     setChatsOpen(false);
     setReviewOpen(false);
-    setSideOpen(false);
     setContextPopOpen(false);
   }
 });
@@ -2195,26 +2173,11 @@ function connectEvents() {
       }
       finishTurnUI();
       if ($("panel-activity") && !$("panel-activity").hidden) refreshActivity();
-      if (sideOpen) refreshSideBusy();
-      return;
-    }
-    if (e.type === "side_delta") {
-      appendSideDelta(e.text || "");
-      return;
-    }
-    if (e.type === "side") {
-      finalizeSide(e.text || "");
-      return;
-    }
-    if (e.type === "side_done") {
-      if (sideStream) finalizeSide(sideStream.text || "");
-      else setSideBusyUI(false);
       return;
     }
     if (e.type === "prompts_refresh") {
       const kind = e.text || "all";
       if (kind === "main" || kind === "all") loadHeroPrompts(true);
-      if ((kind === "side" || kind === "all") && sideOpen) loadSidePrompts(true);
       return;
     }
     if (e.type === "think") {
@@ -2365,79 +2328,8 @@ syncEmpty();
 refresh().then(() => {
   loadHeroPrompts(false);
 });
-loadSideChat();
 
-/* ─── PicoChat Companion + AI prompt recommendations ─── */
-function setSideBusyUI(on) {
-  sideBusy = !!on;
-  const form = $("side-ask");
-  form?.classList.toggle("is-busy", sideBusy);
-  const send = form?.querySelector("button");
-  if (send) send.disabled = sideBusy;
-}
-
-function refreshSideBusy() {
-  /* status widget removed — only keep send/beam in sync after main turns */
-}
-
-async function loadSideChat() {
-  try {
-    const res = await fetch("/api/sidechat");
-    const data = await res.json();
-    renderSidePromptChips(data.prompts || []);
-    const log = $("side-log");
-    if (log) {
-      log.innerHTML = "";
-      (data.messages || []).forEach((m) => addSideBubble(m.role === "user" ? "you" : "assistant", m.text || ""));
-      if (!log.children.length) {
-        addSideBubble(
-          "assistant",
-          "Ask for anything about the project or help using Picogent."
-        );
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-async function loadSidePrompts(force) {
-  const row = $("side-starters");
-  if (row && force) {
-    row.innerHTML = '<button type="button" class="side-chip is-loading">Updating…</button>';
-  }
-  try {
-    const res = await fetch("/api/prompts?kind=side", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind: "side", refresh: !!force }),
-    });
-    const data = await res.json();
-    renderSidePromptChips(data.prompts || []);
-  } catch {
-    if (row && !row.children.length) {
-      row.innerHTML = "";
-    }
-  }
-}
-
-function renderSidePromptChips(items) {
-  const row = $("side-starters");
-  if (!row) return;
-  row.innerHTML = "";
-  (items || []).forEach((it) => {
-    const title = it.title || it.prompt || "";
-    const prompt = it.prompt || it.title || "";
-    if (!prompt) return;
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "side-chip";
-    b.textContent = title;
-    b.title = it.subtitle || prompt;
-    b.onclick = () => askSide(prompt);
-    row.appendChild(b);
-  });
-}
+/* ─── AI prompt recommendations ─── */
 
 async function loadHeroPrompts(force) {
   const host = $("hero-recs");
@@ -2488,85 +2380,3 @@ function renderHeroPrompts(items, folderBtn) {
   });
   if (folder) host.insertBefore(folder, host.firstChild);
 }
-
-function addSideBubble(role, text) {
-  const log = $("side-log");
-  if (!log || !text) return null;
-  const wrap = document.createElement("div");
-  wrap.className = "side-bubble side-" + role;
-  const body = document.createElement("div");
-  body.className = "content md";
-  if (role === "assistant" && window.renderContent) {
-    window.renderContent(text, body);
-  } else {
-    body.textContent = text;
-  }
-  wrap.appendChild(body);
-  log.appendChild(wrap);
-  log.scrollTop = log.scrollHeight;
-  return { wrap, body };
-}
-
-function ensureSideStream() {
-  if (sideStream?.body?.isConnected) return sideStream;
-  const bubble = addSideBubble("assistant", "…");
-  if (!bubble) return null;
-  bubble.body.textContent = "";
-  sideStream = { body: bubble.body, text: "" };
-  return sideStream;
-}
-
-function appendSideDelta(delta) {
-  const s = ensureSideStream();
-  if (!s || !delta) return;
-  s.text += delta;
-  if (window.renderStreamingContent) {
-    window.renderStreamingContent(s.text, s.body);
-  } else if (window.renderContent) {
-    window.renderContent(s.text, s.body);
-  } else {
-    s.body.textContent = s.text;
-  }
-  const log = $("side-log");
-  if (log) log.scrollTop = log.scrollHeight;
-}
-
-function finalizeSide(text) {
-  const finalText = text || sideStream?.text || "";
-  if (sideStream?.body) {
-    if (window.renderContent) window.renderContent(finalText, sideStream.body);
-    else sideStream.body.textContent = finalText;
-  } else if (finalText) {
-    addSideBubble("assistant", finalText);
-  }
-  sideStream = null;
-  setSideBusyUI(false);
-}
-
-async function askSide(question) {
-  const q = (question || "").trim();
-  if (!q || sideBusy) return;
-  addSideBubble("you", q);
-  setSideBusyUI(true);
-  try {
-    const res = await fetch("/api/sidechat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt: q }),
-    });
-    if (!res.ok) {
-      finalizeSide("PicoChat is busy or unavailable.");
-    }
-  } catch {
-    finalizeSide("Couldn’t reach PicoChat.");
-  }
-}
-
-$("side-ask")?.addEventListener("submit", (e) => {
-  e.preventDefault();
-  const input = $("side-input");
-  const q = input?.value.trim();
-  if (!q) return;
-  input.value = "";
-  askSide(q);
-});

@@ -24,6 +24,11 @@ func TestEmbeddedIndex(t *testing.T) {
 	if strings.Contains(string(b), "scope-card") {
 		t.Fatal("index still contains the blocking scope picker")
 	}
+	for _, marker := range []string{`id="rail-side"`, `id="side-fab"`, "PicoChat"} {
+		if strings.Contains(string(b), marker) {
+			t.Fatalf("index still contains retired companion UI: %s", marker)
+		}
+	}
 	js, err := gui.ReadWeb("web/app.js")
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +44,11 @@ func TestEmbeddedIndex(t *testing.T) {
 	}
 	if !strings.Contains(string(js), "statusAnnouncerEl.textContent = text") {
 		t.Fatal("gui does not announce accepted-turn status without moving focus")
+	}
+	for _, marker := range []string{"/api/sidechat", "sideOpen", "sideBusy", "side_delta", "PicoChat"} {
+		if strings.Contains(string(js), marker) {
+			t.Fatalf("gui still contains retired companion behavior: %s", marker)
+		}
 	}
 	if !strings.Contains(string(js), "const wasThinking = thinkingEl.classList.contains(\"is-on\");") ||
 		!strings.Contains(string(js), "if (!wasThinking) resetReasoning();") {
@@ -110,7 +120,7 @@ func TestEmbeddedIndex(t *testing.T) {
 		t.Fatal("completed turn UI does not finalize the activity panel")
 	}
 	doneStart := strings.Index(string(js), `if (e.type === "done")`)
-	doneEnd := strings.Index(string(js), `if (e.type === "side_delta")`)
+	doneEnd := strings.Index(string(js), `if (e.type === "think")`)
 	if doneStart < 0 || doneEnd < doneStart || !strings.Contains(string(js)[doneStart:doneEnd], "finishTurnUI();") {
 		t.Fatal("done SSE path does not finalize the turn UI")
 	}
@@ -120,6 +130,11 @@ func TestEmbeddedIndex(t *testing.T) {
 	}
 	if !strings.Contains(string(styles), ".recent-recovery") || !strings.Contains(string(styles), ".turn-recovery") {
 		t.Fatal("recovery controls are missing product styling")
+	}
+	for _, marker := range []string{".side-fab", ".drawer-side", ".side-chat", ".side-ask"} {
+		if strings.Contains(string(styles), marker) {
+			t.Fatalf("styles still contain retired companion UI: %s", marker)
+		}
 	}
 	if !strings.Contains(string(styles), ".test-result.is-skipped") || !strings.Contains(string(styles), ".test-result.is-inconclusive") {
 		t.Fatal("unresolved verification states are missing distinct styling")
