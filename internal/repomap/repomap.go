@@ -4,7 +4,6 @@ package repomap
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -114,6 +113,24 @@ type snapshotOutput struct {
 	Provenance snapshotProvenance `json:"provenance"`
 }
 
+type captureGitResult struct {
+	root                string
+	state               GitState
+	head                string
+	headKnown           bool
+	dirtyKnown          bool
+	dirtyPaths          []string
+	dirtyPathsTruncated bool
+}
+
+type parsedGitStatus struct {
+	state               GitState
+	head                string
+	headKnown           bool
+	dirtyPaths          []string
+	dirtyPathsTruncated bool
+}
+
 // Inspect creates a fresh repo map. It never stores repository contents.
 func Inspect(ctx context.Context, root string) (Map, error) {
 	m, _, err := inspect(ctx, root)
@@ -123,27 +140,26 @@ func Inspect(ctx context.Context, root string) (Map, error) {
 // Capture returns a bounded map plus exact, workspace-scoped provenance.
 // Git failures are represented as unknown evidence rather than as clean state.
 func Capture(ctx context.Context, root string) (Snapshot, error) {
-	m, files, err := inspect(ctx, root)
-	if err != nil {
-		return Snapshot{}, err
-	}
 	abs, err := absoluteDirectory(root)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	gitRoot, gitOK := gitRootFor(ctx, abs)
-	head, headKnown := fullHead(ctx, gitRoot, gitOK)
-	dirty, dirtyTruncated, dirtyKnown := dirtyPaths(ctx, abs, gitRoot, gitOK)
+	files, cutOff, err := inventory(ctx, abs)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	captured := captureGit(ctx, abs)
+	m := mapFromFiles(abs, files, cutOff, captured.state)
 	manifests, manifestsTruncated := manifestPaths(files)
 	return Snapshot{
 		Summary:                m,
 		Root:                   abs,
-		GitRoot:                gitRoot,
-		Head:                   head,
-		HeadKnown:              headKnown,
-		DirtyKnown:             dirtyKnown,
-		DirtyPaths:             dirty,
-		DirtyPathsTruncated:    dirtyTruncated,
+		GitRoot:                captured.root,
+		Head:                   captured.head,
+		HeadKnown:              captured.headKnown,
+		DirtyKnown:             captured.dirtyKnown,
+		DirtyPaths:             captured.dirtyPaths,
+		DirtyPathsTruncated:    captured.dirtyPathsTruncated,
 		ManifestPaths:          manifests,
 		ManifestPathsTruncated: manifestsTruncated,
 	}, nil
@@ -158,15 +174,19 @@ func inspect(ctx context.Context, root string) (Map, []string, error) {
 	if err != nil {
 		return Map{}, nil, err
 	}
+	return mapFromFiles(abs, files, cutOff, inspectGit(ctx, abs)), files, nil
+}
+
+func mapFromFiles(abs string, files []string, cutOff bool, git GitState) Map {
 	m := Map{
 		Version:         1,
 		Root:            cleanValue(abs),
-		Git:             inspectGit(ctx, abs),
+		Git:             git,
 		InventoryFiles:  len(files),
 		InventoryCutOff: cutOff,
 	}
 	detectFiles(abs, files, &m)
-	return m, files, nil
+	return m
 }
 
 // Format renders stable JSON and keeps it within MaxOutputBytes.
@@ -569,21 +589,6 @@ func gitRootFor(ctx context.Context, root string) (string, bool) {
 	return filepath.Clean(abs), true
 }
 
-func fullHead(ctx context.Context, gitRoot string, known bool) (string, bool) {
-	if !known {
-		return "", false
-	}
-	head, err := commandText(ctx, gitRoot, "git", "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil {
-		return "", false
-	}
-	head = strings.TrimSpace(head)
-	if !validCommitID(head) {
-		return "", false
-	}
-	return head, true
-}
-
 func validCommitID(value string) bool {
 	if len(value) != 40 && len(value) != 64 {
 		return false
@@ -596,26 +601,75 @@ func validCommitID(value string) bool {
 	return true
 }
 
-func dirtyPaths(ctx context.Context, workspace, gitRoot string, known bool) ([]string, bool, bool) {
-	if !known {
-		return nil, false, false
+func captureGit(ctx context.Context, workspace string) captureGitResult {
+	gitRoot, ok := gitRootFor(ctx, workspace)
+	if !ok {
+		return captureGitResult{}
 	}
-	status, err := commandText(ctx, gitRoot, "git", "status", "--porcelain=v1", "-z", "--untracked-files=all")
-	if err != nil || len(status) >= 1<<20 {
-		return nil, false, false
+	captured := captureGitResult{
+		root:  gitRoot,
+		state: GitState{Repository: true},
 	}
+	status, err := commandText(ctx, gitRoot, "git", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all")
+	if err != nil {
+		return captured
+	}
+	parsed := parseGitStatusV2(status, workspace, gitRoot)
+	captured.state = parsed.state
+	captured.head = parsed.head
+	captured.headKnown = parsed.headKnown
+	captured.dirtyKnown = true
+	captured.dirtyPaths = parsed.dirtyPaths
+	captured.dirtyPathsTruncated = parsed.dirtyPathsTruncated
+	return captured
+}
+
+func parseGitStatusV2(status, workspace, gitRoot string) parsedGitStatus {
+	parsed := parsedGitStatus{state: GitState{Repository: true, Clean: true}}
 	paths := make(map[string]bool)
-	parts := bytes.Split([]byte(status), []byte{0})
-	for i := 0; i < len(parts); i++ {
-		entry := parts[i]
-		if len(entry) < 4 || entry[2] != ' ' {
+	for i, records := 0, strings.Split(status, "\x00"); i < len(records); i++ {
+		record := records[i]
+		if record == "" {
 			continue
 		}
-		addWorkspacePath(paths, workspace, gitRoot, string(entry[3:]))
-		if entry[0] == 'R' || entry[0] == 'C' || entry[1] == 'R' || entry[1] == 'C' {
-			if i+1 < len(parts) {
+		switch {
+		case strings.HasPrefix(record, "# branch.oid "):
+			head := strings.TrimSpace(strings.TrimPrefix(record, "# branch.oid "))
+			if validCommitID(head) {
+				parsed.head = head
+				parsed.headKnown = true
+				parsed.state.Head = shortCommitID(head)
+			}
+		case strings.HasPrefix(record, "# branch.head "):
+			branch := strings.TrimSpace(strings.TrimPrefix(record, "# branch.head "))
+			if !strings.HasPrefix(branch, "(") {
+				parsed.state.Branch = branch
+			}
+		case record[0] == '?':
+			parsed.state.Clean = false
+			parsed.state.Untracked++
+			addWorkspacePath(paths, workspace, gitRoot, strings.TrimPrefix(record, "? "))
+		case record[0] == '1' || record[0] == '2' || record[0] == 'u':
+			parsed.state.Clean = false
+			fieldCount := 9
+			if record[0] == '2' || record[0] == 'u' {
+				fieldCount = 10
+			}
+			fields := strings.SplitN(record, " ", fieldCount)
+			if len(fields) != fieldCount || len(fields[1]) < 2 {
+				continue
+			}
+			xy := fields[1]
+			if xy[0] != '.' {
+				parsed.state.Staged++
+			}
+			if xy[1] != '.' {
+				parsed.state.Modified++
+			}
+			addWorkspacePath(paths, workspace, gitRoot, fields[fieldCount-1])
+			if record[0] == '2' && i+1 < len(records) {
 				i++
-				addWorkspacePath(paths, workspace, gitRoot, string(parts[i]))
+				addWorkspacePath(paths, workspace, gitRoot, records[i])
 			}
 		}
 	}
@@ -623,8 +677,15 @@ func dirtyPaths(ctx context.Context, workspace, gitRoot string, known bool) ([]s
 	for path := range paths {
 		values = append(values, path)
 	}
-	bounded, truncated := boundPaths(values, len(values) > maxListItems)
-	return bounded, truncated, true
+	parsed.dirtyPaths, parsed.dirtyPathsTruncated = boundPaths(values, len(values) > maxListItems)
+	return parsed
+}
+
+func shortCommitID(value string) string {
+	if len(value) > 12 {
+		return value[:12]
+	}
+	return value
 }
 
 func addWorkspacePath(paths map[string]bool, workspace, gitRoot, path string) {
