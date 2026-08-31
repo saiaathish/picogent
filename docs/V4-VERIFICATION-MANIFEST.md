@@ -39,10 +39,19 @@ cross-platform test matrix. For pull requests it checks out
 and passes that same full commit ID to `cmd/verify-manifest`. Pushes to `main`
 use the pushed commit SHA.
 
-The job uploads `verification-manifest.json` as a bounded Actions artifact.
-The artifact is review evidence for the exact tested tree; it is not, by
-itself, a release approval. In particular, the manifest can remain
-`UNVERIFIED` when coverage or another provenance requirement is not collected.
+The job first emits `release-gates.json`, a bounded ledger for the required
+`test` and `security` jobs, and validates it against the same candidate SHA and
+event. The ledger rejects missing, duplicate, failed, mismatched, nonzero, or
+truncated records; the `release-evidence` job runs with `always()` so a failed
+dependency cannot silently turn into a skipped evidence job. The job uploads
+both `verification-manifest.json` and `release-gates.json` as a bounded Actions
+artifact.
+
+These artifacts are review evidence for the exact tested tree; they are not, by
+themselves, a release approval. In particular, the verification manifest can
+remain `UNVERIFIED` when coverage or another provenance requirement is not
+collected, while the required CI gate ledger still fails closed on a missing or
+failed job.
 
 ## Local benchmark evidence
 
