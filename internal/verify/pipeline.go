@@ -2,6 +2,7 @@ package verify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -156,6 +157,11 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 
 	runStage := func(scope Scope, commands []Command) StageResult {
 		stage := StageResult{Scope: scope}
+		if err := ctx.Err(); err != nil {
+			stage.Status = StatusInconclusive
+			stage.Reason = verificationContextReason(err)
+			return stage
+		}
 		if len(commands) == 0 {
 			stage.Status = StatusSkipped
 			stage.Reason = "no safe targeted command detected"
@@ -165,21 +171,47 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 		for _, command := range commands {
 			verificationAttempt++
 			current := normalizeResult(execute(ctx, workspace, command, verificationAttempt, timeout), command, verificationAttempt)
+			if err := ctx.Err(); err != nil {
+				current = contextEndedResult(current, command, verificationAttempt, err)
+			}
 			stage.Evidence = append(stage.Evidence, current)
 			for current.Status == StatusFail && options.Repair != nil && len(result.RepairAttempts) < maxRepairs {
+				if err := ctx.Err(); err != nil {
+					current = contextEndedResult(current, command, verificationAttempt, err)
+					stage.Evidence[len(stage.Evidence)-1] = current
+					break
+				}
 				number := len(result.RepairAttempts) + 1
 				attempt := RepairAttempt{Number: number, Failure: current}
 				repairStarted := time.Now()
 				err := options.Repair(ctx, RepairRequest{Number: number, MaxAttempts: maxRepairs, Failure: current})
 				attempt.Duration = time.Since(repairStarted)
 				if err != nil {
-					attempt.Status = StatusFail
-					attempt.Reason = err.Error()
+					if contextErr := ctx.Err(); contextErr != nil {
+						current = contextEndedResult(current, command, verificationAttempt, contextErr)
+						stage.Evidence[len(stage.Evidence)-1] = current
+						attempt.Status = StatusInconclusive
+						attempt.Reason = verificationContextReason(contextErr)
+					} else {
+						attempt.Status = StatusFail
+						attempt.Reason = err.Error()
+					}
+					result.RepairAttempts = append(result.RepairAttempts, attempt)
+					break
+				}
+				if contextErr := ctx.Err(); contextErr != nil {
+					current = contextEndedResult(current, command, verificationAttempt, contextErr)
+					stage.Evidence[len(stage.Evidence)-1] = current
+					attempt.Status = StatusInconclusive
+					attempt.Reason = verificationContextReason(contextErr)
 					result.RepairAttempts = append(result.RepairAttempts, attempt)
 					break
 				}
 				verificationAttempt++
 				current = normalizeResult(execute(ctx, workspace, command, verificationAttempt, timeout), command, verificationAttempt)
+				if contextErr := ctx.Err(); contextErr != nil {
+					current = contextEndedResult(current, command, verificationAttempt, contextErr)
+				}
 				attempt.Result = current
 				attempt.Status = current.Status
 				result.RepairAttempts = append(result.RepairAttempts, attempt)
@@ -287,6 +319,25 @@ func normalizeResult(result Result, command Command, attempt int) Result {
 	}
 	result.OK = result.Status == StatusPass
 	return result
+}
+
+func contextEndedResult(result Result, command Command, attempt int, contextErr error) Result {
+	result = normalizeResult(result, command, attempt)
+	result.OK = false
+	result.Status = StatusInconclusive
+	result.Reason = verificationContextReason(contextErr)
+	return result
+}
+
+func verificationContextReason(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "verification deadline exceeded"
+	case errors.Is(err, context.Canceled):
+		return "verification canceled"
+	default:
+		return "verification context ended"
+	}
 }
 
 func normalizeTargets(workspace string, targets []string) []string {
