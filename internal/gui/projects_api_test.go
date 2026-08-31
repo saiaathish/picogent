@@ -8,6 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/projects"
 )
 
 func TestProjectsAPIErrorResponsesSanitizeUntrustedText(t *testing.T) {
@@ -56,5 +60,36 @@ func assertSanitizedProjectsAPIError(t *testing.T, res *httptest.ResponseRecorde
 	}
 	if strings.Contains(body, "\x1b") || strings.Contains(body, "\naccess_token") {
 		t.Fatalf("project API error retained terminal/newline injection: %q", body)
+	}
+}
+
+func TestProjectsAPIDoesNotPersistSelectionWhenRuntimeBuildFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	oldWorkspace := t.TempDir()
+	newWorkspace := t.TempDir()
+	s := &server{
+		cfg:    config.Config{Workspace: oldWorkspace, Provider: config.Provider("invalid")},
+		permCh: make(chan perm.Decision, 1),
+	}
+	body, err := json.Marshal(map[string]string{
+		"action": "add",
+		"name":   "new",
+		"path":   newWorkspace,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	s.projectsAPI(res, httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(string(body))))
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body=%s; want runtime build failure", res.Code, res.Body.String())
+	}
+	reg, err := projects.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reg.Projects) != 0 || reg.Current != "" {
+		t.Fatalf("failed runtime switch persisted project selection: %#v", reg)
 	}
 }

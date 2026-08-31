@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/config"
@@ -52,6 +53,8 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 			"workspace":  ws,
 		})
 	case http.MethodPost:
+		s.configTxMu.Lock()
+		defer s.configTxMu.Unlock()
 		var in struct {
 			Action string `json:"action"`
 			Name   string `json:"name"`
@@ -73,42 +76,56 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 				writeGUIError(w, err.Error(), 500)
 				return
 			}
-			p, err := projects.Add("", path)
+			expected, next, p, err := projects.PrepareAdd("", path)
 			if err != nil {
 				writeGUIError(w, err.Error(), 400)
 				return
 			}
-			res, err := s.switchWorkspace(p.Path)
+			res, err := s.switchPreparedProject(expected, next, p)
 			if err != nil {
 				writeGUIError(w, err.Error(), 500)
 				return
 			}
 			s.writeProjectSwitch(w, p, res)
 		case "add":
-			p, err := projects.Add(in.Name, in.Path)
+			expected, next, p, err := projects.PrepareAdd(in.Name, in.Path)
 			if err != nil {
 				writeGUIError(w, err.Error(), 400)
 				return
 			}
-			res, err := s.switchWorkspace(p.Path)
+			res, err := s.switchPreparedProject(expected, next, p)
 			if err != nil {
 				writeGUIError(w, err.Error(), 500)
 				return
 			}
 			s.writeProjectSwitch(w, p, res)
 		case "switch":
-			p, err := projects.Switch(in.ID)
+			expected, next, p, err := projects.PrepareSwitch(in.ID)
 			if err != nil {
 				writeGUIError(w, err.Error(), 404)
 				return
 			}
-			res, err := s.switchWorkspace(p.Path)
+			res, err := s.switchPreparedProject(expected, next, p)
 			if err != nil {
 				writeGUIError(w, err.Error(), 500)
 				return
 			}
 			s.writeProjectSwitch(w, p, res)
 		case "remove":
+			s.mu.Lock()
+			activeWorkspace := s.cfg.Workspace
+			s.mu.Unlock()
+			reg, err := projects.Load()
+			if err != nil {
+				writeGUIError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			for _, p := range reg.Projects {
+				if p.ID == in.ID && (p.ID == reg.Current || filepath.Clean(p.Path) == filepath.Clean(activeWorkspace)) {
+					writeGUIError(w, "switch away from the active project before removing it", http.StatusConflict)
+					return
+				}
+			}
 			if err := projects.Remove(in.ID); err != nil {
 				writeGUIError(w, err.Error(), 404)
 				return
@@ -122,6 +139,33 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *server) switchPreparedProject(expected, next projects.Registry, p projects.Project) (projectSwitchResult, error) {
+	s.mu.Lock()
+	previousPath := s.cfg.Workspace
+	s.mu.Unlock()
+	res, err := s.switchWorkspace(p.Path)
+	if err != nil {
+		s.mu.Lock()
+		currentPath := s.cfg.Workspace
+		s.mu.Unlock()
+		if filepath.Clean(currentPath) != filepath.Clean(previousPath) {
+			if _, restoreErr := s.switchWorkspace(previousPath); restoreErr != nil {
+				return projectSwitchResult{}, fmt.Errorf("switch project: %w; restore previous workspace: %v", err, restoreErr)
+			}
+		}
+		return projectSwitchResult{}, err
+	}
+	if err := projects.SaveIfCurrent(expected, next); err != nil {
+		if filepath.Clean(previousPath) != filepath.Clean(p.Path) {
+			if _, restoreErr := s.switchWorkspace(previousPath); restoreErr != nil {
+				return projectSwitchResult{}, fmt.Errorf("commit project selection: %w; restore previous workspace: %v", err, restoreErr)
+			}
+		}
+		return projectSwitchResult{}, fmt.Errorf("commit project selection: %w", err)
+	}
+	return res, nil
+}
+
 func (s *server) switchWorkspace(path string) (projectSwitchResult, error) {
 	s.mu.Lock()
 	cfg := s.cfg
@@ -131,7 +175,9 @@ func (s *server) switchWorkspace(path string) (projectSwitchResult, error) {
 	if err != nil {
 		return projectSwitchResult{}, err
 	}
-	_ = config.Save(cfg)
+	if err := s.persistConfig(cfg); err != nil {
+		return projectSwitchResult{}, fmt.Errorf("save workspace config: %w", err)
+	}
 	return res, nil
 }
 
@@ -170,7 +216,6 @@ func (s *server) replaceWorkspace(cfg config.Config) (projectSwitchResult, error
 		s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
 	}
 	s.attachRouterHook()
-	_, _, _ = projects.Ensure(path)
 	s.emit(event{Type: "undo", Status: "cleared"})
 	s.emit(event{Type: "system", Text: "Opened " + projects.NameFromPath(path)})
 	s.emitTaskSnapshot(sessID)
