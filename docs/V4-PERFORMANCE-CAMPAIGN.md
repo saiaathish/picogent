@@ -103,33 +103,38 @@ recorded rather than hidden. No broad claim that v4 is faster is justified.
 
 ## Current-head microbenchmark refresh
 
-The same benchmark command was rerun on the exact merged v4 head
-`cb69c4bb820f49d10f49d702e3ee061ca4a22ec2` and the clean v3 baseline
-`a07943b31044049afb0142f39198244cd3c75218` on an Apple M3 arm64 Mac with
-Go `go1.26.6`. The command and three-run settings are the same as above.
+The focused benchmark subset was rerun on the exact merged v4 head
+`98558144b159c0ada258ac1b92b0c85855d81d9e` on an Apple M3 arm64 Mac with Go
+`go1.26.6`. It used the same `-benchtime=100ms -benchmem -count=3` settings as
+the comparison above. The v3 values remain the clean-baseline measurements
+recorded on `a07943b31044049afb0142f39198244cd3c75218`; only the v4 column was
+refreshed here.
 
 | Operation | v3 time | v4 time | v3 memory / allocs | v4 memory / allocs |
 | --- | ---: | ---: | ---: | ---: |
-| Context manage, working set | 41.933–44.446 µs | 37.168–37.281 µs | 105,065–105,072 B / 243 | 67,459–67,464 B / 185 |
-| Context manage, context-heavy | 2.288–2.333 ms | 2.314–2.321 ms | 485,922–486,491 B / 658–659 | 485,925–486,407 B / 658–659 |
-| Repo-map inspect | 22.602–23.494 ms | 22.022–22.087 ms | 48,702–54,760 B / 249–250 | 118,121–125,203 B / 288–290 |
-| Repo-map format | 2.786–2.802 µs | 32.785–33.349 µs | 2,370 B / 12 | 7,053–7,065 B / 244 |
-| Session metadata list, 60 records | 7.051–8.619 ms | 9.536–16.127 ms | 183,168–183,200 B / 1,962 | 924,914–928,649 B / 10,667–10,669 |
-| Session load | 198.876–526.745 µs | 285.336–369.454 µs | 3,368 B / 37 | 15,593–15,613 B / 182 |
-| Verification plan | 1.895–2.027 µs | 1.959–1.977 µs | 864 B / 15 | 864 B / 15 |
-| Verification evidence status | 3.434–3.450 µs | 3.306–3.414 µs | 1,792 B / 1 | 1,792 B / 1 |
+| Context manage, working set | 41.933–44.446 µs | 34.226–34.356 µs | 105,065–105,072 B / 243 | 67,461–67,463 B / 185 |
+| Context manage, context-heavy | 2.288–2.333 ms | 2.194–2.331 ms | 485,922–486,491 B / 658–659 | 486,270–487,552 B / 659–661 |
+| Repo-map inspect | 22.602–23.494 ms | 21.281–22.814 ms | 48,702–54,760 B / 249–250 | 119,004–119,966 B / 289–290 |
+| Repo-map format | 2.786–2.802 µs | 26.622–29.141 µs | 2,370 B / 12 | 2,542–2,561 B / 20 |
+| Session metadata list, 60 records | 7.051–8.619 ms | 8.490–11.155 ms | 183,168–183,200 B / 1,962 | 181,786–185,151 B / 1,482 |
+| Session load, canonical | 198.876–526.745 µs | 295.781–449.590 µs | 3,368 B / 37 | 4,352–4,445 B / 41 |
+| Session load, legacy history | — | 2.799–3.344 ms | — | 2,454,667–2,464,960 B / 1,549–1,552 |
+| Verification plan | 1.895–2.027 µs | 1.980–2.056 µs | 864 B / 15 | 864 B / 15 |
+| Verification evidence status | 3.434–3.450 µs | 3.186–3.292 µs | 1,792 B / 1 | 1,792 B / 1 |
+| Verification manifest | — | 4.551–4.664 µs | — | 3,669 B / 7; 1,001 bytes/op |
 
-The current head retains the working-set and verification improvements, while
-repo-map formatting and session retention are materially more expensive than
-the v3 fixture. The repo-map inspect time overlaps, but its allocations do
-not. These results make a targeted retention/provenance optimization a better
-next experiment than a general performance claim.
+The current head retains the working-set and verification improvements. The
+canonical session load now has a separate 41-allocation measurement, while
+legacy histories intentionally remain on the full retention path. Metadata
+listing is lower-allocation than the prior v4 refresh, but filesystem timing
+still varies across runs. These results make a targeted retention/provenance
+optimization a better next experiment than a general performance claim.
 
 ## Current-head long-horizon composition probe
 
-The current `origin/main` head at measurement time
-(`cb69c4bb820f49d10f49d702e3ee061ca4a22ec2`)
-now has a deterministic composition probe in
+The earlier measurement used `origin/main` head
+`cb69c4bb820f49d10f49d702e3ee061ca4a22ec2` and recorded a deterministic
+composition probe in
 `internal/agent/long_horizon_test.go`. It drives 96 logical turns, saves and
 reloads the session and task state on every turn, runs context management, and
 changes the intent once midway through the run. The fixture intentionally
