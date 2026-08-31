@@ -228,7 +228,7 @@ func TestVerificationMutationDuringCheckBecomesInconclusive(t *testing.T) {
 	}
 }
 
-func TestStaleAgentTaskRevisionCannotPublishCandidate(t *testing.T) {
+func TestStaleAgentTaskRevisionRebasesBeforePublishing(t *testing.T) {
 	root := t.TempDir()
 	store := taskstate.NewStore(t.TempDir())
 	task, err := taskstate.New("stale-agent-revision", "fix the file", []string{"work"})
@@ -260,21 +260,23 @@ func TestStaleAgentTaskRevisionCannotPublishCandidate(t *testing.T) {
 
 	h := &taskRecordingHandler{ag: a}
 	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the file"}, h)
-	if err == nil {
-		t.Fatal("run should fail closed on a stale durable task revision")
+	if err != nil {
+		t.Fatalf("run should recover from a stale durable task revision: %v", err)
 	}
-	if result.Task == nil || result.Task.Revision != stale.Revision || result.Task.Attempts != stale.Attempts || result.Task.Status != stale.Status {
-		t.Fatalf("stale candidate was published: got=%#v stale=%#v", result.Task, stale)
+	if result.Task == nil || result.Task.Revision <= stale.Revision || result.Task.Attempts <= other.Attempts || result.Task.Status != taskstate.StatusWorking {
+		t.Fatalf("rebased task did not preserve newer progress: got=%#v stale=%#v current=%#v", result.Task, stale, other)
 	}
 	current, err := store.Load(task.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if current.Revision != other.Revision || current.Attempts != other.Attempts {
-		t.Fatalf("stale agent overwrote current state: got=%#v current=%#v", current, other)
+	if current.Revision != result.Task.Revision || current.Attempts != result.Task.Attempts || current.Status != taskstate.StatusWorking {
+		t.Fatalf("rebased agent did not publish the merged state: got=%#v result=%#v", current, result.Task)
 	}
-	if len(h.errors) == 0 || !strings.Contains(h.errors[0].Error(), "revision conflict") {
-		t.Fatalf("revision conflict was not surfaced: %v", h.errors)
+	for _, updateErr := range h.errors {
+		if strings.Contains(strings.ToLower(updateErr.Error()), "revision conflict") {
+			t.Fatalf("recoverable revision conflict was surfaced as an error: %v", h.errors)
+		}
 	}
 }
 

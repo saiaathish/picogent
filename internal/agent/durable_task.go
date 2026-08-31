@@ -21,6 +21,12 @@ const durableRepairMarker = "Internal verification-repair instruction:"
 // persistence failure to the user.
 var errTaskMutationSkipped = errors.New("durable task mutation skipped")
 
+// maxTaskMutationAttempts bounds recovery from a compare-and-swap conflict.
+// A task mutation is replayed only against a freshly loaded durable snapshot;
+// it never overwrites a newer cross-process update or retries an arbitrary
+// persistence failure indefinitely.
+const maxTaskMutationAttempts = 3
+
 type taskPersistenceError struct {
 	err error
 }
@@ -238,39 +244,41 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) (bool, error) {
 	} else {
 		candidate = cloneTask(a.task)
 	}
-	// Keep the original durable outcome and definition of done stable while
-	// recording a changed interpretation of a later user request. This makes
-	// steering visible to routing and recovery without letting one short
-	// follow-up silently erase the larger outcome.
-	if inferred := taskstate.Infer(prompt); inferred.TaskLike && inferred.Intent != nil && !strings.EqualFold(strings.TrimSpace(inferred.Goal), strings.TrimSpace(candidate.Goal)) {
-		intent := *inferred.Intent
-		intent.Outcome = candidate.Goal
-		candidate.SetIntent(&intent)
-	}
-	candidate.InitializeChangeSequence()
-	if candidate.Status == taskstate.StatusDone && candidate.NeedsVerification() {
-		if err := candidate.SetStatus(taskstate.StatusVerifying); err != nil {
-			a.taskMu.Unlock()
-			a.reportTaskUpdateError(ev, err)
-			return true, err
+	prepare := func(candidate *taskstate.Task) error {
+		// Keep the original durable outcome and definition of done stable while
+		// recording a changed interpretation of a later user request. This makes
+		// steering visible to routing and recovery without letting one short
+		// follow-up silently erase the larger outcome.
+		if inferred := taskstate.Infer(prompt); inferred.TaskLike && inferred.Intent != nil && !strings.EqualFold(strings.TrimSpace(inferred.Goal), strings.TrimSpace(candidate.Goal)) {
+			intent := *inferred.Intent
+			intent.Outcome = candidate.Goal
+			candidate.SetIntent(&intent)
 		}
-	}
-	if candidate.Status == taskstate.StatusBlocked {
-		if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
-			a.taskMu.Unlock()
-			a.reportTaskUpdateError(ev, err)
-			return true, err
+		candidate.InitializeChangeSequence()
+		if candidate.Status == taskstate.StatusDone && candidate.NeedsVerification() {
+			if err := candidate.SetStatus(taskstate.StatusVerifying); err != nil {
+				return err
+			}
 		}
-	}
-	if candidate.Status == taskstate.StatusPlanning {
-		if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
-			a.taskMu.Unlock()
-			a.reportTaskUpdateError(ev, err)
-			return true, err
+		if candidate.Status == taskstate.StatusBlocked {
+			if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
+				return err
+			}
 		}
+		if candidate.Status == taskstate.StatusPlanning {
+			if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
+				return err
+			}
+		}
+		candidate.NoteAttempt()
+		return nil
 	}
-	candidate.NoteAttempt()
-	snapshot, err := a.persistTaskCandidateLocked(candidate)
+	if err := prepare(candidate); err != nil {
+		a.taskMu.Unlock()
+		a.reportTaskUpdateError(ev, err)
+		return true, err
+	}
+	snapshot, err := a.persistTaskCandidateWithRetryLocked(candidate, prepare)
 	if err != nil {
 		a.taskMu.Unlock()
 		a.reportTaskPersistenceError(ev, err)
@@ -580,30 +588,59 @@ func (a *Agent) mutateTask(ev EventHandler, mutate func(*taskstate.Task) error) 
 }
 
 // mutateTaskResult applies a durable task update through the same isolated
-// save-before-publish/CAS commit point as ordinary turn mutations. A nil
-// snapshot means that no durable task is attached to this agent; callers that
-// need to surface persistence failures can inspect the returned error.
+// save-before-publish/CAS commit point as ordinary turn mutations. A conflict
+// reloads the newest task and replays the pure candidate mutation a bounded
+// number of times, preserving progress written by another process without
+// allowing a stale candidate to overwrite it. A nil snapshot means that no
+// durable task is attached to this agent; callers that need to surface
+// persistence failures can inspect the returned error.
 func (a *Agent) mutateTaskResult(mutate func(*taskstate.Task) error) (*taskstate.Task, error) {
 	if mutate == nil {
 		return nil, nil
 	}
 	a.taskMu.Lock()
+	defer a.taskMu.Unlock()
 	if a.task == nil || a.TaskStore == nil {
-		a.taskMu.Unlock()
 		return nil, nil
 	}
 	candidate := cloneTask(a.task)
 	if err := mutate(candidate); err != nil {
-		a.taskMu.Unlock()
 		return nil, err
 	}
-	snapshot, err := a.persistTaskCandidateLocked(candidate)
+	snapshot, err := a.persistTaskCandidateWithRetryLocked(candidate, mutate)
 	if err != nil {
-		a.taskMu.Unlock()
 		return nil, &taskPersistenceError{err: err}
 	}
-	a.taskMu.Unlock()
 	return snapshot, nil
+}
+
+// persistTaskCandidateWithRetryLocked commits a prepared candidate without
+// overwriting a newer cross-process task revision. On a CAS conflict it loads
+// the current durable task and replays the candidate mutation before trying
+// again. The caller must hold taskMu; mutate must only change its argument.
+func (a *Agent) persistTaskCandidateWithRetryLocked(candidate *taskstate.Task, mutate func(*taskstate.Task) error) (*taskstate.Task, error) {
+	if candidate == nil || mutate == nil {
+		return nil, errors.New("durable task mutation is not configured")
+	}
+	for attempt := 0; attempt < maxTaskMutationAttempts; attempt++ {
+		snapshot, err := a.persistTaskCandidateLocked(candidate)
+		if err == nil {
+			return snapshot, nil
+		}
+		if !errors.Is(err, taskstate.ErrRevisionConflict) || attempt == maxTaskMutationAttempts-1 {
+			return nil, err
+		}
+		current, loadErr := a.TaskStore.Load(candidate.SessionID)
+		if loadErr != nil {
+			return nil, errors.Join(err, fmt.Errorf("reload durable task after revision conflict: %w", loadErr))
+		}
+		a.task = current
+		candidate = cloneTask(current)
+		if err := mutate(candidate); err != nil {
+			return nil, err
+		}
+	}
+	return nil, taskstate.ErrRevisionConflict
 }
 
 // rebaseTaskFromStore refreshes the in-memory task from the latest durable
