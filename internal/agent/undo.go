@@ -58,7 +58,12 @@ func (u *turnUndo) preparePublish(path string, data []byte, mode os.FileMode) er
 	if !changed && !u.durable {
 		return nil
 	}
-	return u.saveJournal(record, undoJournalPending)
+	if err := u.saveJournal(record, undoJournalPending); err != nil {
+		return err
+	}
+	u.durable = true
+	u.journalSlot = undoJournalPending
+	return nil
 }
 
 func (u *turnUndo) saveJournal(record checkpoint.Record, state string) error {
@@ -284,6 +289,9 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		}
 		return "", stateErr
 	}
+	if a.latestUndo.durable && a.TaskStoreSnapshot() != nil && a.TaskSnapshot() == nil {
+		return "", errors.New("files restored but durable task state is unavailable; restore task state and retry /undo")
+	}
 	undoMutation := func(task *taskstate.Task) error {
 		wasDone := task.Status == taskstate.StatusDone
 		changed := task.InvalidateWorkspaceEvidence("undo restored workspace files")
@@ -393,6 +401,14 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 
 func (a *Agent) undoBelongsToCurrentSession(u *turnUndo) bool {
 	if a == nil || u == nil {
+		return false
+	}
+	currentWorkspace, err := undoWorkspaceIdentity(a.ConfigSnapshot().Workspace)
+	if err != nil {
+		return false
+	}
+	checkpointWorkspace, err := undoWorkspaceIdentity(u.workspace)
+	if err != nil || currentWorkspace != checkpointWorkspace {
 		return false
 	}
 	a.taskMu.RLock()
