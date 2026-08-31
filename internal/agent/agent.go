@@ -95,6 +95,7 @@ type Result struct {
 	ToolRounds    int
 	Context       ctxmgr.Stats
 	GoalDone      bool
+	Completion    CompletionProjection
 	Verified      string
 	Task          *taskstate.Task
 	UndoAvailable bool
@@ -655,6 +656,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			res.ToolRounds = round
 			if err := a.finishDurableTask(text, taskBlocker, ev); err != nil {
 				res.Task = a.TaskSnapshot()
+				res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
 				res.GoalDone = false
 				return msgs, res, err
 			}
@@ -672,9 +674,8 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			res.Text = text
 			res.Task = a.TaskSnapshot()
-			goalEvidencePassed := !completionEvidenceRequired || verificationStatus(lastVerification) == "PASS"
-			taskComplete := res.Task == nil || (res.Task.Status == taskstate.StatusDone && !res.Task.NeedsVerification())
-			res.GoalDone = completionMarker && goalEvidencePassed && strings.TrimSpace(opts.ScopeBoundary) == "" && taskComplete
+			res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
+			res.GoalDone = completionMarker && res.Completion.Ready
 			stop := taskstate.StopNone
 			if res.GoalDone || (res.Task != nil && res.Task.Status == taskstate.StatusDone) {
 				stop = taskstate.StopGoalComplete
@@ -684,6 +685,8 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			closeTurnFor(false, res.GoalDone, stop)
 			if turnCloseErr != nil {
 				res.GoalDone = false
+				res.Completion.Ready = false
+				res.Completion.Reason = "durable turn could not be closed"
 				res.Task = a.TaskSnapshot()
 				return msgs, res, turnCloseErr
 			}
