@@ -10,10 +10,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/taskstate"
+	"github.com/saiaathish/picogent/internal/tools"
 )
 
 const (
@@ -282,9 +285,13 @@ func advanceLongHorizon(tb testing.TB, fixture *longHorizonFixture, turns int) l
 }
 
 type longHorizonHelperResult struct {
-	TurnState       taskstate.TurnState `json:"turn_state"`
-	SessionMessages int                 `json:"session_messages"`
-	TaskRevision    uint64              `json:"task_revision"`
+	TurnState       taskstate.TurnState  `json:"turn_state"`
+	TurnRoute       string               `json:"turn_route"`
+	EvidenceState   string               `json:"evidence_state"`
+	StopReason      taskstate.StopReason `json:"stop_reason"`
+	Hypothesis      string               `json:"hypothesis"`
+	SessionMessages int                  `json:"session_messages"`
+	TaskRevision    uint64               `json:"task_revision"`
 }
 
 func TestLongHorizonResumeAfterProcessExit(t *testing.T) {
@@ -344,40 +351,51 @@ func TestLongHorizonResumeAfterProcessExit(t *testing.T) {
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.TurnState != taskstate.TurnInterrupted || result.SessionMessages != 1 || result.TaskRevision != 2 {
-		t.Fatalf("fresh process result = %#v, want interrupted/1/revision-2", result)
+	if result.TurnState != taskstate.TurnInterrupted || result.TurnRoute != string(taskstate.TurnRouteRecover) || result.EvidenceState != "UNVERIFIED" || result.StopReason != taskstate.StopProcessRestart || result.Hypothesis == "" || result.SessionMessages != 1 || result.TaskRevision != 2 {
+		t.Fatalf("fresh process result = %#v, want recovered interrupted turn with restart metadata", result)
 	}
 	loaded, err := store.Load(task.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if last := loaded.LastTurn(); last == nil || last.State != taskstate.TurnInterrupted || last.StopReason != taskstate.StopCanceled {
-		t.Fatalf("persisted restart turn = %#v, want canceled interruption", last)
+	if last := loaded.LastTurn(); last == nil || last.State != taskstate.TurnInterrupted || last.Route != string(taskstate.TurnRouteRecover) || last.EvidenceState != "UNVERIFIED" || last.StopReason != taskstate.StopProcessRestart {
+		t.Fatalf("persisted restart turn = %#v, want process-restart recovery", last)
 	}
 }
 
 func longHorizonResumeHelper(t *testing.T) {
 	t.Helper()
 	store := taskstate.NewStore(os.Getenv("PICOGENT_LONG_HORIZON_TASK_DIR"))
-	task, err := store.Load(os.Getenv("PICOGENT_LONG_HORIZON_SESSION"))
-	if err != nil {
+	workspace := os.Getenv("PICOGENT_LONG_HORIZON_WORKSPACE")
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = store
+	if err := a.SetTaskSession(os.Getenv("PICOGENT_LONG_HORIZON_SESSION")); err != nil {
 		t.Fatal(err)
+	}
+	task := a.TaskSnapshot()
+	if task == nil {
+		t.Fatal("fresh process did not load durable task")
 	}
 	last := task.LastTurn()
-	if last == nil || last.State != taskstate.TurnActive {
-		t.Fatalf("fresh process loaded turn = %#v, want active", last)
-	}
-	if !task.InterruptTurn(last.Sequence, taskstate.TurnRouteRecover, "process restarted before provider completion", "UNVERIFIED", taskstate.StopCanceled, 0, 0) {
-		t.Fatal("fresh process did not interrupt active turn")
-	}
-	if err := store.Save(task); err != nil {
-		t.Fatal(err)
+	if last == nil || last.State != taskstate.TurnInterrupted {
+		t.Fatalf("fresh process recovered turn = %#v, want interrupted", last)
 	}
 	s, err := session.Load(os.Getenv("PICOGENT_LONG_HORIZON_SESSION"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := longHorizonHelperResult{TurnState: task.LastTurn().State, SessionMessages: len(s.Messages), TaskRevision: task.Revision}
+	result := longHorizonHelperResult{
+		TurnState:       last.State,
+		TurnRoute:       last.Route,
+		EvidenceState:   last.EvidenceState,
+		StopReason:      last.StopReason,
+		Hypothesis:      last.Hypothesis,
+		SessionMessages: len(s.Messages),
+		TaskRevision:    task.Revision,
+	}
 	data, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
