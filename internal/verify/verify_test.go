@@ -331,6 +331,52 @@ func TestRunPipelineWithoutTargetsRunsBroaderSuite(t *testing.T) {
 	}
 }
 
+func TestRunPipelineCancellationCannotReportPass(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "go.mod", "module x\n")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	result := RunPipeline(ctx, dir, Options{
+		Executor: func(_ context.Context, _ string, _ Command, _ int, _ time.Duration) Result {
+			cancel()
+			return Result{OK: true, Status: StatusPass, Passed: 1}
+		},
+	})
+	if result.Status != StatusInconclusive || !strings.Contains(result.Reason, "canceled") {
+		t.Fatalf("canceled pipeline = %+v", result)
+	}
+	if len(result.Stages) != 2 || result.Stages[1].Status != StatusInconclusive {
+		t.Fatalf("canceled stages = %+v", result.Stages)
+	}
+	if len(result.Stages[1].Evidence) != 1 || result.Stages[1].Evidence[0].Status != StatusInconclusive {
+		t.Fatalf("canceled evidence = %+v", result.Stages[1].Evidence)
+	}
+}
+
+func TestRunPipelineCancellationSkipsRepairCallback(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "go.mod", "module x\n")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	repairs := 0
+
+	result := RunPipeline(ctx, dir, Options{
+		Targets: []string{"internal/auth/auth.go"},
+		Executor: func(_ context.Context, _ string, _ Command, _ int, _ time.Duration) Result {
+			cancel()
+			return Result{Status: StatusFail, Failed: 1, Reason: "regression"}
+		},
+		Repair: func(context.Context, RepairRequest) error {
+			repairs++
+			return nil
+		},
+	})
+	if result.Status != StatusInconclusive || repairs != 0 {
+		t.Fatalf("canceled repair path = %+v repairs=%d", result, repairs)
+	}
+}
+
 func TestDetectPlanIgnoresNonGoFileTargets(t *testing.T) {
 	dir := t.TempDir()
 	writeVerifyFile(t, dir, "go.mod", "module x\n")
