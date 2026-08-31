@@ -43,22 +43,32 @@ func TestEmbeddedIndex(t *testing.T) {
 	if !strings.Contains(string(js), "async function refresh(reconcileHistory = false)") ||
 		!strings.Contains(string(js), "const sessionChanged = nextSessionID !== sessionId;") ||
 		!strings.Contains(string(js), "let historyReplayPending = false;") ||
+		!strings.Contains(string(js), "let refreshGeneration = 0;") ||
 		!strings.Contains(string(js), "if (reconcileHistory || sessionChanged || historyReplayPending)") ||
 		!strings.Contains(string(js), "const serverBusy = !!s.busy;") ||
 		!strings.Contains(string(js), "historyReplayPending = serverBusy;") ||
 		!strings.Contains(string(js), "if (!serverBusy || sessionChanged || !clientBusy)") ||
+		!strings.Contains(string(js), "const generation = ++refreshGeneration;") ||
+		!strings.Contains(string(js), "generation !== refreshGeneration") ||
 		!strings.Contains(string(js), "refresh(true).catch(() => {});") {
 		t.Fatal("gui reconnect refresh does not reconcile durable session history")
 	}
-	threadsStart := strings.Index(string(js), "async function loadThreads()")
+	threadsStart := strings.Index(string(js), "async function loadThreads(")
 	threadsEnd := strings.Index(string(js), "function renderThreads()")
-	if threadsStart < 0 || threadsEnd < threadsStart || strings.Contains(string(js)[threadsStart:threadsEnd], "sessionId = data.current_id") {
+	if threadsStart < 0 || threadsEnd < threadsStart || strings.Contains(string(js)[threadsStart:threadsEnd], "sessionId = data.current_id") ||
+		!strings.Contains(string(js)[threadsStart:threadsEnd], "if (epoch !== viewEpoch || generation !== refreshGeneration) return;") {
 		t.Fatal("chat-list refresh can overwrite the selected session")
+	}
+	projectsStart := strings.Index(string(js), "async function loadProjects(")
+	projectsEnd := strings.Index(string(js), "async function applyProjectSwitch")
+	if projectsStart < 0 || projectsEnd < projectsStart ||
+		!strings.Contains(string(js)[projectsStart:projectsEnd], "if (epoch !== viewEpoch || generation !== refreshGeneration) return;") {
+		t.Fatal("project-list refresh can repaint a newer selection")
 	}
 	refreshStart := strings.Index(string(js), "async function refresh(reconcileHistory = false)")
 	refreshEnd := strings.Index(string(js), "let authPollTimer = null")
 	if refreshStart < 0 || refreshEnd < refreshStart ||
-		!strings.Contains(string(js)[refreshStart:refreshEnd], "if (epoch !== viewEpoch) return;") {
+		!strings.Contains(string(js)[refreshStart:refreshEnd], "if (epoch !== viewEpoch || generation !== refreshGeneration) return;") {
 		t.Fatal("refresh does not guard asynchronous session-list updates")
 	}
 	if !strings.Contains(string(js), "function verificationPresentation(status)") ||

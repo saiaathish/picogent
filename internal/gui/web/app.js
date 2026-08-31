@@ -80,6 +80,7 @@ let ready = false;
 let busy = false;
 let sessionId = "";
 let viewEpoch = 0;
+let refreshGeneration = 0;
 let pendingAttachments = [];
 let modelOptions = [];
 let userModelChoice = "auto";
@@ -589,8 +590,9 @@ document.querySelectorAll(".review-tab").forEach((b) => {
   };
 });
 
-async function loadProjects() {
+async function loadProjects(epoch = viewEpoch, generation = refreshGeneration) {
   const data = await (await fetch("/api/projects")).json();
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
   projectList.innerHTML = "";
   const active = (data.projects || []).find((p) => p.id === data.current_id);
   const sub = $("active-project");
@@ -976,8 +978,9 @@ function replayMessages(msgs) {
   }
 }
 
-async function loadThreads() {
+async function loadThreads(epoch = viewEpoch, generation = refreshGeneration) {
   const data = await (await fetch("/api/sessions")).json();
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
   threadsCache = data.sessions || [];
   renderThreads();
   renderRecentSessions();
@@ -1125,8 +1128,9 @@ async function deleteThread(id) {
 
 async function refresh(reconcileHistory = false) {
   const epoch = viewEpoch;
+  const generation = ++refreshGeneration;
   const s = await (await fetch("/api/state")).json();
-  if (epoch !== viewEpoch) return;
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
   renderTopContext(s);
   const nextSessionID = s.session_id || sessionId;
   const sessionChanged = nextSessionID !== sessionId;
@@ -1182,10 +1186,10 @@ async function refresh(reconcileHistory = false) {
   sendBtn.disabled = !ready || !!s.auth?.needed;
   setThinking(busy);
   syncEmpty();
-  await loadThreads();
-  if (epoch !== viewEpoch) return;
-  await loadProjects();
-  if (epoch !== viewEpoch) return;
+  await loadThreads(epoch, generation);
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
+  await loadProjects(epoch, generation);
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
   return s;
 }
 
