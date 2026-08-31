@@ -40,14 +40,22 @@ func TestEmbeddedIndex(t *testing.T) {
 	if !strings.Contains(string(js), "statusAnnouncerEl.textContent = text") {
 		t.Fatal("gui does not announce accepted-turn status without moving focus")
 	}
+	if !strings.Contains(string(js), "const wasThinking = thinkingEl.classList.contains(\"is-on\");") ||
+		!strings.Contains(string(js), "if (!wasThinking) resetReasoning();") {
+		t.Fatal("gui reconnect refresh can reset active-turn activity evidence")
+	}
 	if !strings.Contains(string(js), "async function refresh(reconcileHistory = false)") ||
 		!strings.Contains(string(js), "const sessionChanged = nextSessionID !== sessionId;") ||
 		!strings.Contains(string(js), "let historyReplayPending = false;") ||
 		!strings.Contains(string(js), "let refreshGeneration = 0;") ||
+		!strings.Contains(string(js), "let chatRequestsPending = 0;") ||
 		!strings.Contains(string(js), "if (reconcileHistory || sessionChanged || historyReplayPending)") ||
 		!strings.Contains(string(js), "const serverBusy = !!s.busy;") ||
-		!strings.Contains(string(js), "historyReplayPending = serverBusy;") ||
-		!strings.Contains(string(js), "if (!serverBusy || sessionChanged || !clientBusy)") ||
+		!strings.Contains(string(js), "const preserveLocalTurn = clientBusy && !sessionChanged") ||
+		!strings.Contains(string(js), "historyReplayPending = serverBusy || chatRequestsPending > 0;") ||
+		!strings.Contains(string(js), "busy = sessionChanged ? serverBusy : serverBusy || chatRequestsPending > 0;") ||
+		!strings.Contains(string(js), "chatRequestsPending++;") ||
+		!strings.Contains(string(js), "chatRequestsPending--;") ||
 		!strings.Contains(string(js), "const generation = ++refreshGeneration;") ||
 		!strings.Contains(string(js), "generation !== refreshGeneration") ||
 		!strings.Contains(string(js), "refresh(true).catch(() => {});") {
@@ -64,6 +72,18 @@ func TestEmbeddedIndex(t *testing.T) {
 	if projectsStart < 0 || projectsEnd < projectsStart ||
 		!strings.Contains(string(js)[projectsStart:projectsEnd], "if (epoch !== viewEpoch || generation !== refreshGeneration) return;") {
 		t.Fatal("project-list refresh can repaint a newer selection")
+	}
+	for _, marker := range []string{"async function pickProjectFolder()", "async function switchProject(id)"} {
+		start := strings.Index(string(js), marker)
+		if start < 0 {
+			t.Fatalf("missing project switch handler: %s", marker)
+		}
+		end := strings.Index(string(js)[start:], "\n}")
+		if end < 0 || !strings.Contains(string(js)[start:start+end], "viewEpoch++") ||
+			!strings.Contains(string(js)[start:start+end], "const epoch = viewEpoch") ||
+			!strings.Contains(string(js)[start:start+end], "if (epoch !== viewEpoch) return;") {
+			t.Fatalf("%s does not invalidate stale project requests", marker)
+		}
 	}
 	refreshStart := strings.Index(string(js), "async function refresh(reconcileHistory = false)")
 	refreshEnd := strings.Index(string(js), "let authPollTimer = null")

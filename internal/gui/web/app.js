@@ -81,6 +81,7 @@ let busy = false;
 let sessionId = "";
 let viewEpoch = 0;
 let refreshGeneration = 0;
+let chatRequestsPending = 0;
 let pendingAttachments = [];
 let modelOptions = [];
 let userModelChoice = "auto";
@@ -119,10 +120,11 @@ function syncEmpty() {
 }
 
 function setThinking(on) {
+  const wasThinking = thinkingEl.classList.contains("is-on");
   thinkingEl.classList.toggle("is-on", !!on);
   $("composer")?.classList.toggle("is-busy", !!on);
   if (on) {
-    resetReasoning();
+    if (!wasThinking) resetReasoning();
     reasoningEl.hidden = false;
   } else {
     reasoningEl.hidden = reasoningEl.children.length === 0;
@@ -631,6 +633,8 @@ async function applyProjectSwitch(data) {
 
 async function pickProjectFolder() {
   if (busy) return;
+  viewEpoch++;
+  const epoch = viewEpoch;
   try {
     const res = await fetch("/api/projects", {
       method: "POST",
@@ -644,7 +648,9 @@ async function pickProjectFolder() {
       add("error", await res.text());
       return;
     }
-    await applyProjectSwitch(await res.json());
+    const data = await res.json();
+    if (epoch !== viewEpoch) return;
+    await applyProjectSwitch(data);
   } catch (err) {
     add("error", err.message || "Couldn't open folder picker");
   }
@@ -652,13 +658,17 @@ async function pickProjectFolder() {
 
 async function switchProject(id) {
   if (busy) return;
+  viewEpoch++;
+  const epoch = viewEpoch;
   const res = await fetch("/api/projects", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action: "switch", id }),
   });
   if (!res.ok) return;
-  await applyProjectSwitch(await res.json());
+  const data = await res.json();
+  if (epoch !== viewEpoch) return;
+  await applyProjectSwitch(data);
 }
 
 $("add-project").onclick = pickProjectFolder;
@@ -1165,19 +1175,21 @@ async function refresh(reconcileHistory = false) {
   } else if (!s.busy) {
     permEl.classList.remove("is-on");
   }
+  const preserveLocalTurn = clientBusy && !sessionChanged &&
+    (serverBusy || chatRequestsPending > 0);
   if (reconcileHistory || sessionChanged || historyReplayPending) {
     // A reconnect during an active turn must not erase the local prompt or
     // partial assistant stream: the durable snapshot intentionally lags until
     // the turn completes. If the session changed, however, the old transcript
     // is already stale and must be replaced immediately.
-    if (!serverBusy || sessionChanged || !clientBusy) {
+    if (!preserveLocalTurn) {
       replayMessages(Array.isArray(s.messages) ? s.messages : []);
     }
-    historyReplayPending = serverBusy;
-  } else if (logEl.children.length === 0 && s.messages?.length) {
+    historyReplayPending = serverBusy || chatRequestsPending > 0;
+  } else if (!clientBusy && logEl.children.length === 0 && s.messages?.length) {
     replayMessages(s.messages);
   }
-  busy = serverBusy;
+  busy = sessionChanged ? serverBusy : serverBusy || chatRequestsPending > 0;
   if (Object.prototype.hasOwnProperty.call(s, "undo_available")) {
     setUndoAvailable(!!s.undo_available);
   } else {
@@ -1686,43 +1698,49 @@ async function submitChat(prompt, attachments, sentAttachments) {
   if (!wasBusy) setThinking(true);
   sendBtn.disabled = !ready;
   const body = { prompt, attachments };
-  let res;
+  chatRequestsPending++;
   try {
-    res = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    add("error", err?.message || "Could not reach Picogent.");
+    let res;
+    try {
+      res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (err) {
+      add("error", err?.message || "Could not reach Picogent.");
+      if (!wasBusy) {
+        busy = false;
+        sendBtn.disabled = !ready;
+        setThinking(false);
+      }
+      return;
+    }
+
+    if (res.status === 204) {
+      if (!wasBusy) {
+        busy = false;
+        sendBtn.disabled = !ready;
+        setThinking(false);
+      }
+      return;
+    }
+    let data = null;
+    if (res.headers.get("content-type")?.includes("application/json")) {
+      try { data = await res.json(); } catch (_) {}
+    }
+    if (res.ok) {
+      if (data?.queued) return;
+      return;
+    }
+    add("error", data?.error || "Could not start that task.");
     if (!wasBusy) {
       busy = false;
       sendBtn.disabled = !ready;
       setThinking(false);
     }
-    return;
-  }
-  if (res.status === 204) {
-    if (!wasBusy) {
-      busy = false;
-      sendBtn.disabled = !ready;
-      setThinking(false);
-    }
-    return;
-  }
-  let data = null;
-  if (res.headers.get("content-type")?.includes("application/json")) {
-    try { data = await res.json(); } catch (_) {}
-  }
-  if (res.ok) {
-    if (data?.queued) return;
-    return;
-  }
-  add("error", data?.error || "Could not start that task.");
-  if (!wasBusy) {
-    busy = false;
-    sendBtn.disabled = !ready;
-    setThinking(false);
+  } finally {
+    chatRequestsPending--;
   }
 }
 
