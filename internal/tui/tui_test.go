@@ -348,6 +348,39 @@ func TestStaleCompletedTurnCannotClearNewerGoal(t *testing.T) {
 	}
 }
 
+func TestUnprovenCompletionUsesSharedProjection(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	revision, err := goal.SetState(workspace, "finish this project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ag.SetGoalState("finish this project", revision)
+	m := &model{cfg: cfg, ag: ag, turnID: 1, sessionID: "session-1", vp: viewport.New(80, 20)}
+	const reason = "required criterion evidence is incomplete"
+	_, _ = m.Update(doneMsg{
+		result: agent.Result{Completion: agent.CompletionProjection{
+			Required: true,
+			Marker:   true,
+			Reason:   reason,
+		}},
+		goal:         "finish this project",
+		goalRevision: revision,
+		turnID:       1,
+		sessionID:    "session-1",
+	})
+	if got, _ := goal.Load(workspace); got != "finish this project" {
+		t.Fatalf("unproven completion cleared goal: %q", got)
+	}
+	if len(m.lines) == 0 || m.lines[len(m.lines)-1].Kind != "system" || !strings.Contains(m.lines[len(m.lines)-1].Text, reason) {
+		t.Fatalf("shared completion explanation was not visible: %#v", m.lines)
+	}
+}
+
 func TestGoalSlashFailsClosedWhenDurableWriteFails(t *testing.T) {
 	home := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(home, []byte("not a directory"), 0o600); err != nil {

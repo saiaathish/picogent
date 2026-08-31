@@ -219,6 +219,38 @@ func TestHeadlessOutcomeClassificationUsesTaskEvidence(t *testing.T) {
 	}
 }
 
+func TestHeadlessOutcomeClassificationUsesSharedCompletionProjection(t *testing.T) {
+	const reason = "required criterion evidence is incomplete"
+	notReady := agent.Result{Completion: agent.CompletionProjection{
+		Required: true,
+		Marker:   true,
+		Reason:   reason,
+	}}
+	err := classifyHeadlessOutcome(context.Background(), "", notReady, nil)
+	if err == nil || exitCode(err) != 3 || !strings.Contains(err.Error(), reason) {
+		t.Fatalf("shared not-ready projection = %v, exit=%d; want reason and exit 3", err, exitCode(err))
+	}
+
+	ready := agent.Result{Completion: agent.CompletionProjection{
+		Required: true,
+		Ready:    true,
+		Marker:   true,
+		Reason:   "all required completion proof is current",
+	}}
+	if err := classifyHeadlessOutcome(context.Background(), "finish the project", ready, nil); err != nil {
+		t.Fatalf("shared ready projection = %v, want success", err)
+	}
+
+	withoutMarker := agent.Result{Completion: agent.CompletionProjection{
+		Required: true,
+		Ready:    true,
+		Reason:   "all required completion proof is current",
+	}}
+	if err := classifyHeadlessOutcome(context.Background(), "finish the project", withoutMarker, nil); exitCode(err) != 3 {
+		t.Fatalf("missing completion marker = %v, exit=%d; want exit 3", err, exitCode(err))
+	}
+}
+
 func TestStdioSeparatesAnswerPromptsAndDiagnostics(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	h := &stdioHandler{

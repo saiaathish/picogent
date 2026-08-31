@@ -395,7 +395,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.result.Task != nil && msg.result.Task.SessionID == m.sessionID {
 			m.task = msg.result.Task
 		}
-		if msg.result.GoalDone && strings.TrimSpace(msg.goal) != "" && m.ag != nil {
+		completion := msg.result.CompletionGate(msg.goal)
+		if strings.TrimSpace(msg.goal) != "" && completion.Marker && !completion.Ready {
+			m.lines = append(m.lines, logLine{Kind: "system", Text: "Completion not proven: " + completion.Explanation()})
+		}
+		if completion.Ready && strings.TrimSpace(msg.goal) != "" && m.ag != nil {
 			workspace := m.ag.ConfigSnapshot().Workspace
 			currentGoal, currentRevision := m.ag.GoalStateSnapshot()
 			if currentGoal == msg.goal && currentRevision == msg.goalRevision {
