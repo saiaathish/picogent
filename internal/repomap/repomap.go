@@ -615,6 +615,18 @@ func captureGit(ctx context.Context, workspace string) captureGitResult {
 		return captured
 	}
 	parsed := parseGitStatusV2(status, workspace, gitRoot)
+	// Keep the bounded summary compatible with Inspect: its untracked count
+	// intentionally follows Git's normal directory-level presentation, while
+	// Capture still uses the all-files status above for precise dirty paths.
+	if summary, summaryErr := commandText(ctx, gitRoot, "git", "status", "--porcelain=v1", "--untracked-files=normal"); summaryErr == nil {
+		legacy := parseGitStatusV1(summary)
+		legacy.Branch = parsed.state.Branch
+		legacy.Head = parsed.state.Head
+		parsed.state = legacy
+	}
+	if shortHead, shortErr := commandText(ctx, gitRoot, "git", "rev-parse", "--short=12", "HEAD"); shortErr == nil {
+		parsed.state.Head = strings.TrimSpace(shortHead)
+	}
 	captured.state = parsed.state
 	captured.head = parsed.head
 	captured.headKnown = parsed.headKnown
@@ -686,6 +698,27 @@ func shortCommitID(value string) string {
 		return value[:12]
 	}
 	return value
+}
+
+func parseGitStatusV1(status string) GitState {
+	g := GitState{Repository: true}
+	for _, line := range strings.Split(status, "\n") {
+		if len(line) < 2 {
+			continue
+		}
+		if strings.HasPrefix(line, "??") {
+			g.Untracked++
+			continue
+		}
+		if line[0] != ' ' {
+			g.Staged++
+		}
+		if line[1] != ' ' {
+			g.Modified++
+		}
+	}
+	g.Clean = g.Staged == 0 && g.Modified == 0 && g.Untracked == 0
+	return g
 }
 
 func addWorkspacePath(paths map[string]bool, workspace, gitRoot, path string) {
@@ -773,23 +806,10 @@ func inspectGit(ctx context.Context, root string) GitState {
 	if err != nil {
 		return g
 	}
-	for _, line := range strings.Split(status, "\n") {
-		if len(line) < 2 {
-			continue
-		}
-		if strings.HasPrefix(line, "??") {
-			g.Untracked++
-			continue
-		}
-		if line[0] != ' ' {
-			g.Staged++
-		}
-		if line[1] != ' ' {
-			g.Modified++
-		}
-	}
-	g.Clean = g.Staged == 0 && g.Modified == 0 && g.Untracked == 0
-	return g
+	state := parseGitStatusV1(status)
+	state.Branch = g.Branch
+	state.Head = g.Head
+	return state
 }
 
 func commandText(ctx context.Context, root, name string, args ...string) (string, error) {
