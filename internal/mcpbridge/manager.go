@@ -152,6 +152,25 @@ func (m *Manager) Closed() bool {
 	return root.closeRequested || root.closed
 }
 
+// SameRuntime reports whether two manager handles share the same underlying
+// MCP runtime. A registry can use this when refreshing the tool list without
+// releasing and reacquiring the lease that currently owns the runtime.
+func (m *Manager) SameRuntime(other *Manager) bool {
+	return m != nil && other != nil && m.rootManager() == other.rootManager()
+}
+
+// Retire requests shutdown of the underlying runtime without releasing the
+// caller's lease. This is the ownership-side operation used when a registry
+// replaces or closes its handle; callers that acquired a lease must still
+// release that lease separately.
+func (m *Manager) Retire() {
+	if m == nil {
+		return
+	}
+	root := m.rootManager()
+	root.requestClose()
+}
+
 func (m *Manager) rootManager() *Manager {
 	if m == nil || m.root == nil {
 		return m
@@ -775,6 +794,23 @@ func (m *Manager) closeResourcesLocked() []func() {
 	return cleanup
 }
 
+func (m *Manager) requestClose() {
+	root := m.rootManager()
+	root.callMu.Lock()
+	var cleanup []func()
+	root.mu.Lock()
+	root.ensureInitializedLocked()
+	if !root.closeRequested {
+		root.closeRequested = true
+		if root.leaseRefs == 0 {
+			cleanup = root.closeResourcesLocked()
+		}
+	}
+	root.mu.Unlock()
+	root.callMu.Unlock()
+	runManagerCleanup(cleanup)
+}
+
 func runManagerCleanup(cleanup []func()) {
 	for _, close := range cleanup {
 		close()
@@ -792,18 +828,5 @@ func (m *Manager) Close() {
 		m.lease.Release()
 		return
 	}
-	root := m.rootManager()
-	root.callMu.Lock()
-	var cleanup []func()
-	root.mu.Lock()
-	root.ensureInitializedLocked()
-	if !root.closeRequested {
-		root.closeRequested = true
-		if root.leaseRefs == 0 {
-			cleanup = root.closeResourcesLocked()
-		}
-	}
-	root.mu.Unlock()
-	root.callMu.Unlock()
-	runManagerCleanup(cleanup)
+	m.Retire()
 }

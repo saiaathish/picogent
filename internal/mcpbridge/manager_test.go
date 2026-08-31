@@ -211,6 +211,55 @@ func TestManagerLeaseDefersRetirementAndRejectsLateAcquire(t *testing.T) {
 	open.Close()
 }
 
+func TestRetirePreservesActiveLeaseUntilRelease(t *testing.T) {
+	var cleanups atomic.Int32
+	m := &Manager{
+		tools: []Tool{{PublicName: "mcp_demo_tool", Server: "demo"}},
+		conns: []conn{{close: func() { cleanups.Add(1) }}},
+	}
+	lease, err := m.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := lease.Manager()
+
+	view.Retire()
+	view.Retire()
+	if _, ok := view.Get("mcp_demo_tool"); !ok {
+		t.Fatal("retiring a handle released its active lease")
+	}
+	if got := cleanups.Load(); got != 0 {
+		t.Fatalf("retirement cleaned up an active lease %d times", got)
+	}
+	if _, err := m.Acquire(); !errors.Is(err, ErrManagerClosed) {
+		t.Fatalf("acquire after handle retirement = %v, want ErrManagerClosed", err)
+	}
+
+	lease.Release()
+	if got := cleanups.Load(); got != 1 {
+		t.Fatalf("final release ran %d cleanups, want 1", got)
+	}
+}
+
+func TestManagerSameRuntimeRecognizesRootAndLeaseHandles(t *testing.T) {
+	root := &Manager{}
+	lease, err := root.Acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := lease.Manager()
+	other := &Manager{}
+	if !root.SameRuntime(view) || !view.SameRuntime(root) {
+		t.Fatal("root and lease handles were not recognized as one runtime")
+	}
+	if root.SameRuntime(other) || view.SameRuntime(other) {
+		t.Fatal("independent runtimes were treated as identical")
+	}
+	lease.Release()
+	root.Close()
+	other.Close()
+}
+
 func TestReleasedLeaseRejectsManagerMutations(t *testing.T) {
 	m := &Manager{tools: []Tool{{PublicName: "mcp_demo_tool", Server: "demo"}}}
 	lease, err := m.Acquire()
