@@ -164,22 +164,23 @@ func (h *handler) OnTaskState(task *taskstate.Task) {
 }
 
 type model struct {
-	cfg       config.Config
-	ag        *agent.Agent
-	history   []llm.Message
-	sessionID string
-	lines     []logLine
-	vp        viewport.Model
-	ta        textarea.Model
-	busy      bool
-	perm      *perm.Request
-	h         *handler
-	turnID    uint64
-	width     int
-	height    int
-	cancel    context.CancelFunc
-	task      *taskstate.Task
-	turnMode  *agent.TaskMode
+	cfg        config.Config
+	ag         *agent.Agent
+	history    []llm.Message
+	sessionID  string
+	lines      []logLine
+	vp         viewport.Model
+	ta         textarea.Model
+	busy       bool
+	perm       *perm.Request
+	h          *handler
+	turnID     uint64
+	width      int
+	height     int
+	cancel     context.CancelFunc
+	task       *taskstate.Task
+	completion taskstate.CompletionCheck
+	turnMode   *agent.TaskMode
 }
 
 func Run() error {
@@ -251,6 +252,7 @@ func newModel(cfg config.Config, a *agent.Agent) (*model, error) {
 			return nil, fmt.Errorf("load durable task state: %w", err)
 		}
 		m.task = a.TaskSnapshot()
+		m.completion = agent.CompletionProof(m.task)
 	}
 	m.lines = []logLine{{Kind: "system", Text: greeting(cfg, a)}}
 	if resumed {
@@ -377,6 +379,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.task != nil && msg.task.SessionID == m.sessionID {
 			m.task = msg.task
+			m.completion = msg.completion
 			m.layout()
 		}
 		return m, nil
@@ -395,6 +398,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.result.Task != nil && msg.result.Task.SessionID == m.sessionID {
 			m.task = msg.result.Task
+			m.completion = agent.CompletionProof(msg.result.Task)
+		} else if msg.result.Task == nil {
+			m.completion = agent.CompletionProof(nil)
 		}
 		completion := msg.result.CompletionGate(msg.goal)
 		if strings.TrimSpace(msg.goal) != "" && completion.Marker && !completion.Ready {
@@ -715,6 +721,7 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 			text = err.Error()
 		} else if m.ag != nil {
 			m.task = m.ag.TaskSnapshot()
+			m.completion = agent.CompletionProof(m.task)
 		}
 		m.lines = append(m.lines, logLine{Kind: kind, Text: text})
 	case payload == "status":
@@ -751,8 +758,10 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 			m.sessionID = prev.ID
 			if m.ag != nil {
 				m.task = m.ag.TaskSnapshot()
+				m.completion = agent.CompletionProof(m.task)
 			} else {
 				m.task = nil
+				m.completion = agent.CompletionProof(nil)
 			}
 			m.lines = append(m.lines, logLine{Kind: "system", Text: "resumed " + prev.ID})
 		} else {
@@ -940,8 +949,10 @@ func (m *model) startNewSession(message string) error {
 		// configured/manual baseline for this fresh session instead.
 		m.ag.SetTaskMode(agent.ParseTaskMode(m.cfg.TaskMode))
 		m.task = m.ag.TaskSnapshot()
+		m.completion = agent.CompletionProof(m.task)
 	} else {
 		m.task = nil
+		m.completion = agent.CompletionProof(nil)
 	}
 	m.lines = []logLine{{Kind: "system", Text: message}}
 	return nil
@@ -949,7 +960,7 @@ func (m *model) startNewSession(message string) error {
 
 func (m *model) layout() {
 	headerH, permH, inputH := 2, 0, 6
-	if formatTaskProgress(m.task) != "" {
+	if formatTaskProgressWithProof(m.task, m.completion) != "" {
 		headerH++
 	}
 	if m.perm != nil {
@@ -1016,7 +1027,7 @@ func (m *model) View() string {
 	head := lipgloss.JoinHorizontal(lipgloss.Center, left, "  ", right)
 	ws := metaStyle.Render(clip(m.cfg.Workspace, max(20, m.width-4)))
 	taskProgress := ""
-	if text := formatTaskProgress(m.task); text != "" {
+	if text := formatTaskProgressWithProof(m.task, m.completion); text != "" {
 		taskProgress = metaStyle.Render(clip(text, max(20, m.width-4)))
 	}
 	body := m.vp.View()
@@ -1042,6 +1053,10 @@ func (m *model) View() string {
 }
 
 func formatTaskProgress(task *taskstate.Task) string {
+	return formatTaskProgressWithProof(task, agent.CompletionProof(task))
+}
+
+func formatTaskProgressWithProof(task *taskstate.Task, proof taskstate.CompletionCheck) string {
 	if task == nil {
 		return ""
 	}
@@ -1063,7 +1078,18 @@ func formatTaskProgress(task *taskstate.Task) string {
 	if len(task.ChangedFiles) == 1 {
 		files = "file"
 	}
-	return fmt.Sprintf("task · %s · %d/%d · %s · %d %s", task.Status, done, len(task.Steps), detail, len(task.ChangedFiles), files)
+	return fmt.Sprintf("task · %s · %d/%d · %s · %s · %d %s", task.Status, done, len(task.Steps), detail, completionProofLabel(proof), len(task.ChangedFiles), files)
+}
+
+func completionProofLabel(proof taskstate.CompletionCheck) string {
+	if proof.Ready {
+		return "proof ready"
+	}
+	reason := strings.TrimSpace(proof.Reason)
+	if reason == "" {
+		reason = "completion proof is incomplete"
+	}
+	return "proof pending: " + reason
 }
 
 func clip(s string, n int) string {

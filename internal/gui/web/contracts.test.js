@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
 
-const { createPrimaryEventDispatcher, mainPromptRequest } = require("./contracts.js");
+const { createPrimaryEventDispatcher, mainPromptRequest, completionProofSummary } = require("./contracts.js");
 
 test("dispatches the primary assistant, completion, and prompt-refresh events", () => {
   const calls = [];
@@ -58,4 +58,18 @@ test("builds the deterministic main-prompt POST contract", () => {
     },
   });
   assert.equal(JSON.parse(mainPromptRequest(true).options.body).refresh, true);
+});
+
+test("summarizes durable completion proof without exposing evidence text", () => {
+  assert.equal(completionProofSummary({ ready: true }), "Completion proof ready");
+  assert.equal(completionProofSummary({
+    ready: false,
+    reason: "required criterion evidence is incomplete",
+    missing_criteria: [0, 2],
+    missing_requirements: ["tests"],
+    verification_required: true,
+    verification_current: false,
+    evidence_summary: "secret tool output must not appear",
+  }), "Completion proof pending: required criterion evidence is incomplete (2 required criteria missing, 1 quality requirement missing, workspace verification is not current)");
+  assert.equal(completionProofSummary(null), "");
 });

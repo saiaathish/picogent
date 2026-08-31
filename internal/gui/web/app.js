@@ -55,6 +55,7 @@ const taskProgressEl = $("task-progress");
 const taskStatusEl = $("task-progress-status");
 const taskGoalEl = $("task-progress-goal");
 const taskMetaEl = $("task-progress-meta");
+const taskProofEl = $("task-progress-proof");
 const taskStepsEl = $("task-progress-steps");
 const taskBlockedEl = $("task-progress-blocked");
 const taskFilesBtn = $("task-progress-files");
@@ -167,6 +168,9 @@ function clearTaskProgress() {
   taskGoalEl.textContent = "";
   taskMetaEl.textContent = "";
   taskMetaEl.hidden = true;
+  taskProofEl.textContent = "";
+  taskProofEl.hidden = true;
+  taskProofEl.removeAttribute("data-ready");
   taskStepsEl.replaceChildren();
   taskBlockedEl.textContent = "";
   taskBlockedEl.hidden = true;
@@ -181,9 +185,9 @@ function taskStepState(task, step, index) {
   return "Queued";
 }
 
-function announceTaskProgress(task, statusLabel) {
+function announceTaskProgress(task, statusLabel, completion) {
   const currentStep = Number.isInteger(task.current_step) ? task.current_step : 0;
-  const key = [task.session_id, task.id, task.status, currentStep].join(":");
+  const key = [task.session_id, task.id, task.status, currentStep, completion?.ready, completion?.reason].join(":");
   if (key === taskAnnouncementKey) return;
   taskAnnouncementKey = key;
 
@@ -191,10 +195,12 @@ function announceTaskProgress(task, statusLabel) {
   let message = statusLabel + ".";
   if (step?.description) message += " Current step: " + step.description;
   else if (task.status === "done") message += " All recorded steps complete.";
+  const proofSummary = window.PicogentWebContracts?.completionProofSummary(completion) || "";
+  if (proofSummary) message += " " + proofSummary + ".";
   taskAnnouncerEl.textContent = message;
 }
 
-function renderTaskProgress(task, sourceSession) {
+function renderTaskProgress(task, sourceSession, completion) {
   if (sourceSession && sourceSession !== sessionId) return;
   if (!task) {
     clearTaskProgress();
@@ -213,6 +219,14 @@ function renderTaskProgress(task, sourceSession) {
   taskProgressEl.dataset.status = status;
   taskStatusEl.textContent = statusLabel;
   taskGoalEl.textContent = task.goal || "";
+  const proofSummary = window.PicogentWebContracts?.completionProofSummary(completion) || "";
+  taskProofEl.textContent = proofSummary;
+  taskProofEl.hidden = !proofSummary;
+  if (proofSummary) {
+    taskProofEl.dataset.ready = completion?.ready === true ? "true" : "false";
+  } else {
+    taskProofEl.removeAttribute("data-ready");
+  }
 
   const meta = [];
   if (steps.length) {
@@ -262,7 +276,7 @@ function renderTaskProgress(task, sourceSession) {
 
   taskFilesBtn.textContent = "Changed files (" + changedFiles.length + ")";
   taskFilesBtn.disabled = changedFiles.length === 0;
-  announceTaskProgress(task, statusLabel);
+  announceTaskProgress(task, statusLabel, completion);
 }
 
 function renderTaskChangedFiles(files) {
@@ -1101,7 +1115,7 @@ async function newChat() {
   try {
     const s = await (await fetch("/api/state")).json();
     if (epoch !== viewEpoch) return;
-    renderTaskProgress(s.task, s.session_id);
+    renderTaskProgress(s.task, s.session_id, s.completion);
     renderOverview({ ...(s.overview || {}), evolve: s.evolve });
     renderAuthBanner(s.auth);
   } catch (_) {}
@@ -1151,7 +1165,7 @@ async function refresh(reconcileHistory = false) {
     evolve: s.evolve,
   });
   renderContext(s.context);
-  renderTaskProgress(s.task, s.session_id);
+  renderTaskProgress(s.task, s.session_id, s.completion);
   if (s.pending_perm) {
     showPermission(s.pending_perm);
   } else if (!s.busy) {
@@ -2114,7 +2128,7 @@ function connectEvents() {
       const task = hasTaskEnvelope ? e.task : e;
       const eventSession = task?.session_id || e.session_id || "";
       if (!eventSession || eventSession !== sessionId) return;
-      renderTaskProgress(task, eventSession);
+      renderTaskProgress(task, eventSession, e.completion);
       return;
     }
     if (e.type === "permission") {
