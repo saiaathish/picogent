@@ -1,7 +1,7 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-08-30 against exact `main` head
-`cb69c4bb820f49d10f49d702e3ee061ca4a22ec2`.
+`98558144b159c0ada258ac1b92b0c85855d81d9e`.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25; the findings below are carried forward and reconciled with the
