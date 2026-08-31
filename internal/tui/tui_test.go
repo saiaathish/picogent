@@ -672,6 +672,28 @@ func TestStopInvalidatesActiveTurnID(t *testing.T) {
 	}
 }
 
+func TestRunProgramStopsModelAfterProgramReturns(t *testing.T) {
+	programErr := errors.New("program ended")
+	stopped := false
+	m := &model{
+		turnID: 2,
+		busy:   true,
+		cancel: func() { stopped = true },
+		h:      &handler{permCh: make(chan perm.Decision, 1)},
+	}
+
+	err := runProgram(m, func() (tea.Model, error) { return m, programErr })
+	if !errors.Is(err, programErr) {
+		t.Fatalf("runProgram error = %v, want %v", err, programErr)
+	}
+	if !stopped {
+		t.Fatal("runProgram did not stop the model")
+	}
+	if m.busy || m.cancel != nil {
+		t.Fatalf("model remained active after program return: busy=%v cancel=%v", m.busy, m.cancel != nil)
+	}
+}
+
 func TestQuitKeysStopBeforeQuitting(t *testing.T) {
 	for _, key := range []struct {
 		name string
