@@ -113,6 +113,7 @@ type server struct {
 	ag             *agent.Agent
 	saveConfig     func(config.Config) error
 	configTxMu     sync.Mutex
+	sessionTxMu    sync.Mutex
 	mu             sync.Mutex
 	hist           []llm.Message
 	sessionID      string
@@ -138,6 +139,10 @@ type server struct {
 	// the agent/session it captured before a session switch. Production leaves
 	// it nil.
 	beforeAgentRun func()
+	// beforeSessionClone is test-only synchronization for proving that session
+	// transitions release s.mu before waiting on the project run lock.
+	beforeSessionClone func()
+	sessionTransition  bool
 
 	// Side chat companion (Codex-style)
 	sideHist     []llm.Message
@@ -600,25 +605,46 @@ func cloneAgentForSession(src *agent.Agent, sessionID string) (*agent.Agent, err
 	return clone, nil
 }
 
-// newSessionLocked rotates the chat and agent together. Callers must hold
-// s.mu. A stale turn retains the old agent pointer and therefore can never
-// create or update durable task state for the new session.
-func (s *server) newSessionLocked() (string, error, error) {
-	var saveErr error
-	if len(s.hist) > 0 {
-		saveErr = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
-	}
+// newSession rotates the chat and agent together. The transition marker blocks
+// new admissions while the replacement agent loads durable state, but the
+// potentially blocking project-run lock is acquired without holding s.mu. A
+// canceled turn may still be unwinding through a GUI callback that needs s.mu.
+func (s *server) newSession() (string, error, error) {
+	s.sessionTxMu.Lock()
+	defer s.sessionTxMu.Unlock()
+
+	s.mu.Lock()
+	workspace := s.cfg.Workspace
+	oldSession := s.sessionID
+	oldHistory := append([]llm.Message(nil), s.hist...)
+	src := s.ag
+	nextID := session.New(workspace).ID
+	s.sessionTransition = true
 	s.abortTurnLocked()
-	nextID := session.New(s.cfg.Workspace).ID
+	beforeClone := s.beforeSessionClone
+	if beforeClone != nil {
+		beforeClone()
+	}
+	s.mu.Unlock()
+
+	var saveErr error
+	if len(oldHistory) > 0 {
+		saveErr = session.SaveMessages(workspace, oldSession, oldHistory)
+	}
 	var next *agent.Agent
-	if s.ag != nil {
+	if src != nil {
 		var err error
-		next, err = cloneAgentForSession(s.ag, nextID)
+		next, err = cloneAgentForSession(src, nextID)
 		if err != nil {
-			return s.sessionID, saveErr, err
+			s.mu.Lock()
+			s.sessionTransition = false
+			s.mu.Unlock()
+			return oldSession, saveErr, err
 		}
 		next.SetTaskMode(agent.TaskAgent)
 	}
+
+	s.mu.Lock()
 	s.sessionID = nextID
 	s.hist = nil
 	s.sideHist = nil
@@ -626,7 +652,9 @@ func (s *server) newSessionLocked() (string, error, error) {
 	if next != nil {
 		s.ag = next
 	}
-	return s.sessionID, saveErr, nil
+	s.sessionTransition = false
+	s.mu.Unlock()
+	return nextID, saveErr, nil
 }
 
 func (s *server) snapshot() map[string]any {
@@ -1314,7 +1342,7 @@ func (s *server) startAgentTurnAsMode(prompt string, parts []llm.Part, displayPr
 // turn. Callers must hold s.mu. allowBusy is used only by the atomic queued
 // handoff in runAdmittedTurn; the current turn is still marked busy there.
 func (s *server) admitAgentTurnLocked(mode *agent.TaskMode, allowBusy bool) (turnAdmission, bool) {
-	if s.shuttingDown || (s.busy && !allowBusy) {
+	if s.shuttingDown || s.sessionTransition || (s.busy && !allowBusy) {
 		return turnAdmission{}, false
 	}
 	s.busy = true
@@ -1673,9 +1701,7 @@ func (s *server) clearGoalIf(expected string, expectedRevision, expectedEpoch, e
 }
 
 func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
-	s.mu.Lock()
-	id, saveErr, taskErr := s.newSessionLocked()
-	s.mu.Unlock()
+	id, saveErr, taskErr := s.newSession()
 	if taskErr != nil {
 		writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
 		return
@@ -1886,9 +1912,7 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	} else if kind == slash.Local {
 		switch payload {
 		case "clear":
-			s.mu.Lock()
-			id, saveErr, taskErr := s.newSessionLocked()
-			s.mu.Unlock()
+			id, saveErr, taskErr := s.newSession()
 			if taskErr != nil {
 				writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
 				return
@@ -2472,9 +2496,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 		}
 		switch in.Action {
 		case "new":
-			s.mu.Lock()
-			id, saveErr, taskErr := s.newSessionLocked()
-			s.mu.Unlock()
+			id, saveErr, taskErr := s.newSession()
 			if taskErr != nil {
 				writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
 				return
@@ -2545,10 +2567,13 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			var saveErr error
 			var taskErr error
 			s.mu.Lock()
-			if s.sessionID == in.ID {
-				_, saveErr, taskErr = s.newSessionLocked()
+			isCurrent := s.sessionID == in.ID
+			s.mu.Unlock()
+			if isCurrent {
+				_, saveErr, taskErr = s.newSession()
 				rotated = taskErr == nil
 			}
+			s.mu.Lock()
 			currentID := s.sessionID
 			s.mu.Unlock()
 			if taskErr != nil {
