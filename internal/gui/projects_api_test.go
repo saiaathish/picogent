@@ -93,3 +93,30 @@ func TestProjectsAPIDoesNotPersistSelectionWhenRuntimeBuildFails(t *testing.T) {
 		t.Fatalf("failed runtime switch persisted project selection: %#v", reg)
 	}
 }
+
+func TestProjectsAPICannotRemoveCurrentProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	workspace := t.TempDir()
+	_, project, err := projects.Ensure(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: config.Config{Workspace: workspace}}
+	body, err := json.Marshal(map[string]string{"action": "remove", "id": project.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := httptest.NewRecorder()
+	s.projectsAPI(res, httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(string(body))))
+	if res.Code != http.StatusConflict {
+		t.Fatalf("remove current project status = %d, body=%s", res.Code, res.Body.String())
+	}
+	reg, err := projects.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.Current != project.ID || len(reg.Projects) != 1 {
+		t.Fatalf("current project was removed: %#v", reg)
+	}
+}

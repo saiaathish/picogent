@@ -126,6 +126,52 @@ func TestSaveIfCurrentRejectsStaleRollback(t *testing.T) {
 	}
 }
 
+func TestRemoveIfCurrentRejectsConcurrentSelection(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	initial := projects.Registry{
+		Current: "other",
+		Projects: []projects.Project{
+			{ID: "target", Path: t.TempDir()},
+			{ID: "other", Path: t.TempDir()},
+		},
+	}
+	if err := projects.Save(initial); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := projects.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := expected
+	changed.Current = "target"
+	if err := projects.Save(changed); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := projects.RemoveIfCurrent(expected, "target"); !errors.Is(err, projects.ErrRegistryChanged) {
+		t.Fatalf("stale project removal error = %v, want ErrRegistryChanged", err)
+	}
+	got, err := projects.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Current != "target" || len(got.Projects) != 2 {
+		t.Fatalf("stale project removal changed registry: %#v", got)
+	}
+
+	if err := projects.RemoveIfCurrent(got, "target"); err != nil {
+		t.Fatalf("current project removal = %v", err)
+	}
+	got, err = projects.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Current != "other" || len(got.Projects) != 1 || got.Projects[0].ID != "other" {
+		t.Fatalf("project removal result = %#v", got)
+	}
+}
+
 func TestSaveRejectsOversizedRegistryBeforePublication(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("PICOGENT_HOME", home)

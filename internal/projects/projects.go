@@ -366,26 +366,59 @@ func switchInRegistry(reg Registry, id string) (Registry, Project, error) {
 
 func Remove(id string) error {
 	_, err := updateRegistry(func(reg *Registry) error {
-		out := reg.Projects[:0]
-		var removed bool
-		for _, p := range reg.Projects {
-			if p.ID == id {
-				removed = true
-				continue
-			}
-			out = append(out, p)
-		}
-		if !removed {
-			return os.ErrNotExist
-		}
-		reg.Projects = out
-		if reg.Current == id {
-			reg.Current = ""
-			if len(reg.Projects) > 0 {
-				reg.Current = reg.Projects[0].ID
-			}
-		}
-		return nil
+		return removeFromRegistry(reg, id)
 	})
 	return err
+}
+
+// RemoveIfCurrent removes id only when the registry still matches expected.
+// Callers can safely perform a read/check before a destructive removal without
+// deleting a project selected by another process in the meantime.
+func RemoveIfCurrent(expected Registry, id string) error {
+	path, err := registryPath()
+	if err != nil {
+		return err
+	}
+	if err := securefile.EnsureDir(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	unlock, err := acquireRegistryLock(path)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	current, err := loadLocked(path)
+	if err != nil {
+		return err
+	}
+	if !registryEqual(current, expected) {
+		return ErrRegistryChanged
+	}
+	if err := removeFromRegistry(&current, id); err != nil {
+		return err
+	}
+	return saveLocked(path, current)
+}
+
+func removeFromRegistry(reg *Registry, id string) error {
+	out := reg.Projects[:0]
+	var removed bool
+	for _, p := range reg.Projects {
+		if p.ID == id {
+			removed = true
+			continue
+		}
+		out = append(out, p)
+	}
+	if !removed {
+		return os.ErrNotExist
+	}
+	reg.Projects = out
+	if reg.Current == id {
+		reg.Current = ""
+		if len(reg.Projects) > 0 {
+			reg.Current = reg.Projects[0].ID
+		}
+	}
+	return nil
 }
