@@ -88,20 +88,22 @@ func (t *Task) SetIntent(intent *IntentContract) bool {
 		if t.IntentRevision < ^uint64(0) {
 			t.IntentRevision++
 		}
-		t.touch()
-		return true
-	}
-	if t.Intent != nil && *t.Intent == *normalized {
+	} else if t.Intent != nil && *t.Intent == *normalized {
 		return false
-	}
-	t.Intent = normalized
-	t.IntentRevision++
-	if t.IntentRevision == 0 {
-		// Saturate rather than allowing an ABA-style wraparound after an
-		// impossibly long-lived task.
-		t.IntentRevision = ^uint64(0)
+	} else {
+		t.Intent = normalized
+		t.IntentRevision++
+		if t.IntentRevision == 0 {
+			// Saturate rather than allowing an ABA-style wraparound after an
+			// impossibly long-lived task.
+			t.IntentRevision = ^uint64(0)
+		}
 	}
 	t.touch()
+	// A changed intent changes the claim that existing proof supports. Keep
+	// that history for diagnosis, but make the completion boundary prove the
+	// new contract again.
+	t.invalidateCompletionEvidence("durable outcome contract changed")
 	return true
 }
 
