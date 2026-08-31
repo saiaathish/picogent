@@ -27,6 +27,34 @@ type taskRecordingHandler struct {
 	errors    []error
 }
 
+type terminalSaveFailureHandler struct {
+	allowAll
+	ag       *agent.Agent
+	badStore *taskstate.Store
+	switched bool
+	mu       sync.Mutex
+	errors   []error
+}
+
+func (h *terminalSaveFailureHandler) OnTaskState(task *taskstate.Task) {
+	if task == nil {
+		return
+	}
+	if !h.switched && task.Status == taskstate.StatusVerifying && len(task.Verification) > 0 {
+		h.switched = true
+		h.ag.SetTaskStore(h.badStore)
+	}
+}
+
+func (h *terminalSaveFailureHandler) OnError(err error) {
+	if err == nil {
+		return
+	}
+	h.mu.Lock()
+	h.errors = append(h.errors, err)
+	h.mu.Unlock()
+}
+
 func (h *taskRecordingHandler) OnTaskState(task *taskstate.Task) {
 	// A callback must be able to re-enter read-only task APIs. This would
 	// deadlock if Agent invoked it while holding taskMu.
@@ -809,6 +837,58 @@ func TestDurableTaskDoesNotPublishUnsavedState(t *testing.T) {
 	}
 	if loaded.Status != lastPersisted.Status || loaded.Attempts != lastPersisted.Attempts {
 		t.Fatalf("last persisted state changed: got=%#v last=%#v", loaded, lastPersisted)
+	}
+}
+
+func TestDurableTaskTerminalSaveFailureIsReturned(t *testing.T) {
+	workspace := t.TempDir()
+	goodStore := taskstate.NewStore(t.TempDir())
+	badRoot := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(badRoot, []byte("occupied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(context.Context, []string) (string, error) {
+			return "verify PASS\n1 passed", nil
+		},
+	})
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = goodStore
+	if err := a.SetTaskSession("terminal-save-failure"); err != nil {
+		t.Fatal(err)
+	}
+	h := &terminalSaveFailureHandler{ag: a, badStore: taskstate.NewStore(badRoot)}
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, h)
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "durable task state") {
+		t.Fatalf("terminal save failure = %v, want explicit persistence error", err)
+	}
+	if !h.switched {
+		t.Fatal("test did not switch stores after persisted verification")
+	}
+	if result.GoalDone {
+		t.Fatal("terminal save failure must not report GoalDone")
+	}
+	loaded, err := goodStore.Load("terminal-save-failure")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status == taskstate.StatusDone || loaded.NeedsVerification() == false {
+		t.Fatalf("last persisted task = %#v, want non-terminal verification state", loaded)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.errors) == 0 || !strings.Contains(strings.ToLower(h.errors[len(h.errors)-1].Error()), "durable task state was not saved") {
+		t.Fatalf("persistence error events = %v", h.errors)
 	}
 }
 
