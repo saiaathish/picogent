@@ -50,26 +50,27 @@ import (
 )
 
 type event struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	Summary   string          `json:"summary,omitempty"`
-	Hint      string          `json:"hint,omitempty"`
-	Path      string          `json:"path,omitempty"`
-	Line      int             `json:"line,omitempty"`
-	LineEnd   int             `json:"line_end,omitempty"`
-	Added     int             `json:"added,omitempty"`
-	Removed   int             `json:"removed,omitempty"`
-	Count     int             `json:"count,omitempty"`
-	Kind      string          `json:"kind,omitempty"`
-	Status    string          `json:"status,omitempty"`
-	Available bool            `json:"available,omitempty"`
-	Tokens    int             `json:"tokens,omitempty"`
-	Budget    int             `json:"budget,omitempty"`
-	Pct       float64         `json:"pct,omitempty"`
-	Level     string          `json:"level,omitempty"`
-	SessionID string          `json:"session_id,omitempty"`
-	Task      *taskstate.Task `json:"task"`
-	turnGen   uint64          `json:"-"`
+	Type       string                     `json:"type"`
+	Text       string                     `json:"text,omitempty"`
+	Summary    string                     `json:"summary,omitempty"`
+	Hint       string                     `json:"hint,omitempty"`
+	Path       string                     `json:"path,omitempty"`
+	Line       int                        `json:"line,omitempty"`
+	LineEnd    int                        `json:"line_end,omitempty"`
+	Added      int                        `json:"added,omitempty"`
+	Removed    int                        `json:"removed,omitempty"`
+	Count      int                        `json:"count,omitempty"`
+	Kind       string                     `json:"kind,omitempty"`
+	Status     string                     `json:"status,omitempty"`
+	Available  bool                       `json:"available,omitempty"`
+	Tokens     int                        `json:"tokens,omitempty"`
+	Budget     int                        `json:"budget,omitempty"`
+	Pct        float64                    `json:"pct,omitempty"`
+	Level      string                     `json:"level,omitempty"`
+	SessionID  string                     `json:"session_id,omitempty"`
+	Task       *taskstate.Task            `json:"task"`
+	Completion *taskstate.CompletionCheck `json:"completion,omitempty"`
+	turnGen    uint64                     `json:"-"`
 }
 
 type transcriptLine struct {
@@ -560,7 +561,15 @@ func (s *server) emitTaskSnapshot(sessionID string) {
 			task = nil
 		}
 	}
-	s.emit(event{Type: "task_progress", SessionID: sessionID, Task: task})
+	s.emit(event{Type: "task_progress", SessionID: sessionID, Task: task, Completion: taskCompletionProof(task)})
+}
+
+func taskCompletionProof(task *taskstate.Task) *taskstate.CompletionCheck {
+	if task == nil {
+		return nil
+	}
+	proof := agent.CompletionProof(task)
+	return &proof
 }
 
 func initialSession(workspace string) (id string, hist []llm.Message) {
@@ -721,6 +730,9 @@ func (s *server) snapshot() map[string]any {
 		"router":              s.routerSnapshot(),
 		"model_options":       llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
 		"slash":               slash.Catalog(cfg.Workspace),
+	}
+	if proof := taskCompletionProof(task); proof != nil {
+		out["completion"] = proof
 	}
 	if store, err := learn.Load(cfg.Workspace); err == nil {
 		out["overview"] = store
@@ -2131,7 +2143,7 @@ func (h *guiHandler) OnTaskState(task *taskstate.Task) {
 	if task == nil || task.SessionID != h.sessionID {
 		return
 	}
-	h.emit(event{Type: "task_progress", SessionID: h.sessionID, Task: task})
+	h.emit(event{Type: "task_progress", SessionID: h.sessionID, Task: task, Completion: taskCompletionProof(task)})
 }
 
 func (h *guiHandler) beginTurn(prompt string) {

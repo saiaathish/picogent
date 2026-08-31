@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -104,6 +105,47 @@ func TestTaskProgressClearEventKeepsNullTaskEnvelope(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"task":null`) {
 		t.Fatalf("clear event = %s", raw)
+	}
+	if strings.Contains(string(raw), `"completion"`) {
+		t.Fatalf("clear event should not include proof: %s", raw)
+	}
+}
+
+func TestGUIHandlerIncludesSharedCompletionProof(t *testing.T) {
+	task, err := taskstate.New("session-proof", "finish the loop", []string{"implement"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []taskstate.Criterion{{Description: "required proof", Required: true}}
+	events := make(chan event, 2)
+	s := &server{subs: []chan event{events}, sessionID: task.SessionID, turnGen: 1}
+	h := &guiHandler{s: s, sessionID: task.SessionID, turnGen: 1}
+	h.OnTaskState(task)
+	got := <-events
+	want := agent.CompletionProof(task)
+	if got.Completion == nil || !reflect.DeepEqual(*got.Completion, want) {
+		t.Fatalf("event proof = %#v, want %#v", got.Completion, want)
+	}
+	var wire struct {
+		Task       *taskstate.Task            `json:"task"`
+		Completion *taskstate.CompletionCheck `json:"completion"`
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Task == nil || wire.Completion == nil || !reflect.DeepEqual(*wire.Completion, want) {
+		t.Fatalf("wire event = %#v, want task and proof %#v", wire, want)
+	}
+
+	task.RecordCriterionVerification(0, "PASS", "criterion passed", "verify")
+	h.OnTaskState(task)
+	ready := <-events
+	if ready.Completion == nil || !ready.Completion.Ready {
+		t.Fatalf("ready event proof = %#v, want ready", ready.Completion)
 	}
 }
 
@@ -1677,9 +1719,14 @@ func TestSnapshotIncludesDurableTaskForCurrentSession(t *testing.T) {
 	ag.SetTaskSession("session-current")
 	s := &server{ag: ag, sessionID: "session-current"}
 
-	got, ok := s.snapshot()["task"].(*taskstate.Task)
+	state := s.snapshot()
+	got, ok := state["task"].(*taskstate.Task)
 	if !ok || got == nil || got.ID != task.ID {
-		t.Fatalf("snapshot task = %#v", s.snapshot()["task"])
+		t.Fatalf("snapshot task = %#v", state["task"])
+	}
+	proof, ok := state["completion"].(*taskstate.CompletionCheck)
+	if !ok || proof == nil || !reflect.DeepEqual(*proof, agent.CompletionProof(task)) {
+		t.Fatalf("snapshot completion = %#v, want shared proof", state["completion"])
 	}
 }
 

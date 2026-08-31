@@ -45,5 +45,25 @@
     };
   }
 
-  return Object.freeze({ createPrimaryEventDispatcher, mainPromptRequest });
+  function completionProofSummary(proof) {
+    if (!proof || typeof proof !== "object") return "";
+    if (proof.ready === true) return "Completion proof ready";
+
+    const reason = typeof proof.reason === "string" && proof.reason.trim()
+      ? proof.reason.trim()
+      : "completion proof is incomplete";
+    const details = [];
+    if (Array.isArray(proof.missing_criteria) && proof.missing_criteria.length) {
+      details.push(proof.missing_criteria.length + " required " + (proof.missing_criteria.length === 1 ? "criterion" : "criteria") + " missing");
+    }
+    if (Array.isArray(proof.missing_requirements) && proof.missing_requirements.length) {
+      details.push(proof.missing_requirements.length + " quality requirement" + (proof.missing_requirements.length === 1 ? "" : "s") + " missing");
+    }
+    if (proof.verification_required && proof.verification_current !== true) {
+      details.push("workspace verification is not current");
+    }
+    return "Completion proof pending: " + reason + (details.length ? " (" + details.join(", ") + ")" : "");
+  }
+
+  return Object.freeze({ createPrimaryEventDispatcher, mainPromptRequest, completionProofSummary });
 });

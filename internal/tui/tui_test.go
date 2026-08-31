@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -597,7 +598,7 @@ func TestFormatTaskProgress(t *testing.T) {
 				CurrentStep:  1,
 				ChangedFiles: []string{"one.go"},
 			},
-			want: "task · working · 1/2 · Implement UI · 1 file",
+			want: "task · working · 1/2 · Implement UI · proof pending: required criterion evidence is incomplete · 1 file",
 		},
 		{
 			name: "blocked",
@@ -607,7 +608,7 @@ func TestFormatTaskProgress(t *testing.T) {
 				BlockedBy:    "verification repeatedly failed",
 				ChangedFiles: []string{"one.go", "two.go"},
 			},
-			want: "task · blocked · 0/1 · blocked: verification repeatedly failed · 2 files",
+			want: "task · blocked · 0/1 · blocked: verification repeatedly failed · proof pending: durable task is blocked · 2 files",
 		},
 	}
 	for _, tt := range tests {
@@ -616,6 +617,58 @@ func TestFormatTaskProgress(t *testing.T) {
 				t.Fatalf("formatTaskProgress() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatTaskProgressDistinguishesReadyProof(t *testing.T) {
+	task := &taskstate.Task{
+		Status:           taskstate.StatusDone,
+		DefinitionOfDone: []taskstate.Criterion{{Description: "required proof", Required: true}},
+	}
+	task.RecordCriterionVerification(0, "PASS", "criterion passed", "verify")
+	if got := formatTaskProgress(task); !strings.Contains(got, "proof ready") {
+		t.Fatalf("formatTaskProgress() = %q, want ready proof", got)
+	}
+}
+
+func TestTaskProgressMessageCarriesSharedCompletionProof(t *testing.T) {
+	task, err := taskstate.New("session-proof", "finish the loop", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []taskstate.Criterion{{Description: "required proof", Required: true}}
+	var got tea.Msg
+	h := &handler{send: func(msg tea.Msg) { got = msg }}
+	h.OnTaskState(task)
+	msg, ok := got.(taskProgressMsg)
+	if !ok {
+		t.Fatalf("message = %T, want taskProgressMsg", got)
+	}
+	want := agent.CompletionProof(task)
+	if !reflect.DeepEqual(msg.completion, want) {
+		t.Fatalf("message proof = %#v, want %#v", msg.completion, want)
+	}
+}
+
+func TestAcceptedTaskProgressStoresCompletionProof(t *testing.T) {
+	task := &taskstate.Task{SessionID: "session-current", Status: taskstate.StatusWorking, Goal: "finish the loop"}
+	proof := agent.CompletionProof(task)
+	m := &model{
+		sessionID: "session-current",
+		turnID:    4,
+		task:      &taskstate.Task{SessionID: "session-current", Goal: "old task"},
+		vp:        viewport.New(80, 20),
+		lines:     []logLine{{Kind: "system", Text: "current"}},
+	}
+
+	_, _ = m.Update(taskProgressMsg{
+		task:       task,
+		completion: proof,
+		turnID:     4,
+		sessionID:  "session-current",
+	})
+	if m.task != task || !reflect.DeepEqual(m.completion, proof) {
+		t.Fatalf("accepted progress = task %#v proof %#v, want task %#v proof %#v", m.task, m.completion, task, proof)
 	}
 }
 

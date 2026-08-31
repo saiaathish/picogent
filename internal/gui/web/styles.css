@@ -1443,6 +1443,15 @@ button, input, textarea { font: inherit; color: inherit; }
   font-family: var(--mono);
   font-size: 10px;
 }
+.task-progress-proof {
+  margin: 7px 0 0;
+  color: var(--mute);
+  font-size: 11px;
+  line-height: 1.4;
+}
+.task-progress-proof[data-ready="true"] {
+  color: var(--ok);
+}
 .task-progress-steps {
   display: grid;
   gap: 2px;
