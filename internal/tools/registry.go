@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -26,17 +27,21 @@ const (
 var ErrRegistryClosed = errors.New("tool registry is closed")
 
 type Context struct {
-	Workspace     string
-	BashTimeout   time.Duration
-	Todos         []TodoItem
-	ClassifyBash  func(command, workspace string) perm.Request
-	ClassifyPath  func(tool, path, workspace, summary string) perm.Request
-	MCPList       func() string
-	MCPSuggest    func(query string) string
-	MCPAdd        func(ctx context.Context, id string) (string, error)
-	MCPRemove     func(ctx context.Context, id string) (string, error)
-	Verify        func(ctx context.Context) (string, error)
-	VerifyTargets func(ctx context.Context, targets []string) (string, error)
+	Workspace   string
+	BashTimeout time.Duration
+	// BeforeWorkspacePublish runs after a native-file write has been staged
+	// and validated but before its final atomic publication. It is optional and
+	// is used by the agent to persist crash-recovery metadata.
+	BeforeWorkspacePublish func(path string, data []byte, mode os.FileMode) error
+	Todos                  []TodoItem
+	ClassifyBash           func(command, workspace string) perm.Request
+	ClassifyPath           func(tool, path, workspace, summary string) perm.Request
+	MCPList                func() string
+	MCPSuggest             func(query string) string
+	MCPAdd                 func(ctx context.Context, id string) (string, error)
+	MCPRemove              func(ctx context.Context, id string) (string, error)
+	Verify                 func(ctx context.Context) (string, error)
+	VerifyTargets          func(ctx context.Context, targets []string) (string, error)
 }
 
 type Tool interface {

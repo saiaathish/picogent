@@ -4,6 +4,7 @@ package checkpoint
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +24,38 @@ var (
 	ErrAlreadyRestored = errors.New("checkpoint is already restored")
 	ErrConflict        = errors.New("checkpoint restore conflicts with newer changes")
 )
+
+const (
+	// RecordVersion is the serialized checkpoint format understood by this
+	// package. Unsupported versions fail closed during import.
+	RecordVersion = 1
+	// MaxRecordEntries bounds one durable undo record to the same practical
+	// path budget used by workspace observations.
+	MaxRecordEntries = 128
+	// MaxRecordFileBytes bounds the pre-turn bytes retained for one path.
+	MaxRecordFileBytes = 1 << 20
+	// MaxRecordBytes bounds the total pre-turn payload before JSON/base64
+	// serialization expands it in the journal.
+	MaxRecordBytes = 8 << 20
+)
+
+// Record is the portable, validated form of a sealed checkpoint. It omits the
+// workspace root so an importing process must explicitly bind it to the
+// current workspace before any restore can occur.
+type Record struct {
+	Version int           `json:"version"`
+	Entries []RecordEntry `json:"entries"`
+}
+
+// RecordEntry contains the pre-turn state and the post-seal fingerprint for
+// one workspace-relative regular file.
+type RecordEntry struct {
+	Path         string `json:"path"`
+	BeforeExists bool   `json:"before_exists"`
+	BeforeMode   uint32 `json:"before_mode,omitempty"`
+	BeforeData   []byte `json:"before_data,omitempty"`
+	Expected     string `json:"expected"`
+}
 
 // Conflict identifies a path changed after the checkpoint was sealed.
 type Conflict struct {
@@ -61,9 +94,10 @@ type Checkpoint struct {
 }
 
 type entry struct {
-	path     string
-	before   fileState
-	expected fingerprint
+	path        string
+	before      fileState
+	expected    fingerprint
+	expectedSet bool
 }
 
 type fileState struct {
@@ -172,9 +206,180 @@ func (c *Checkpoint) Seal() error {
 	}
 	for i := range c.entries {
 		c.entries[i].expected = states[i].sum
+		c.entries[i].expectedSet = true
 	}
 	c.sealed = true
 	return nil
+}
+
+// PrepareExpected records the exact regular-file state that an imminent
+// atomic write will publish. It is used by durable undo to publish a pending
+// recovery record before the workspace rename. The checkpoint remains
+// unsealed so later tool writes can update their own expected state.
+func (c *Checkpoint) PrepareExpected(path string, data []byte, mode fs.FileMode) (bool, error) {
+	if c == nil {
+		return false, ErrNotSealed
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sealed {
+		return false, ErrAlreadySealed
+	}
+	rel, err := normalizePath(c.rootInput, c.root, path)
+	if err != nil {
+		return false, fmt.Errorf("checkpoint path %q: %w", path, err)
+	}
+	for i := range c.entries {
+		if c.entries[i].path != rel {
+			continue
+		}
+		state := fileState{exists: true, mode: restorableMode(mode), data: append([]byte(nil), data...)}
+		state.sum = fingerprintFor(state)
+		c.entries[i].expected = state.sum
+		c.entries[i].expectedSet = true
+		return c.entries[i].before.sum != state.sum, nil
+	}
+	return false, fmt.Errorf("checkpoint path %q was not captured", path)
+}
+
+// Export returns the changed, expected states prepared on this checkpoint.
+// It accepts a sealed checkpoint or a pending checkpoint with at least one
+// prepared write. Unprepared paths are omitted so a crash between two writes
+// can recover only the paths that were actually published or being published.
+func (c *Checkpoint) Export() (Record, error) {
+	if c == nil {
+		return Record{}, ErrNotSealed
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.sealed {
+		prepared := false
+		for _, item := range c.entries {
+			prepared = prepared || item.expectedSet
+		}
+		if !prepared {
+			return Record{}, ErrNotSealed
+		}
+	}
+	return exportEntries(c.entries)
+}
+
+func exportEntries(entries []entry) (Record, error) {
+	record := Record{Version: RecordVersion}
+	if len(entries) > MaxRecordEntries {
+		return Record{}, fmt.Errorf("checkpoint has too many entries: %d", len(entries))
+	}
+	bytes := 0
+	for _, item := range entries {
+		if !item.expectedSet || item.before.sum == item.expected {
+			continue
+		}
+		if len(item.before.data) > MaxRecordFileBytes {
+			return Record{}, fmt.Errorf("checkpoint file %q exceeds the %d-byte durable undo limit", filepath.ToSlash(item.path), MaxRecordFileBytes)
+		}
+		bytes += len(item.before.data)
+		if bytes > MaxRecordBytes {
+			return Record{}, fmt.Errorf("checkpoint exceeds the %d-byte durable undo limit", MaxRecordBytes)
+		}
+		record.Entries = append(record.Entries, RecordEntry{
+			Path:         filepath.ToSlash(item.path),
+			BeforeExists: item.before.exists,
+			BeforeMode:   uint32(item.before.mode),
+			BeforeData:   append([]byte(nil), item.before.data...),
+			Expected:     hex.EncodeToString(item.expected[:]),
+		})
+	}
+	return record, nil
+}
+
+// Import binds a validated serialized record to a current workspace. No
+// workspace file is changed during import; Restore performs the later
+// fingerprint checks before publishing any pre-turn state.
+func Import(workspace string, record Record) (*Checkpoint, error) {
+	if record.Version != RecordVersion {
+		return nil, fmt.Errorf("unsupported checkpoint record version %d", record.Version)
+	}
+	if len(record.Entries) == 0 {
+		return nil, errors.New("checkpoint record has no entries")
+	}
+	if len(record.Entries) > MaxRecordEntries {
+		return nil, fmt.Errorf("checkpoint record has too many entries: %d", len(record.Entries))
+	}
+	rootInput, root, err := resolveWorkspace(workspace)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]entry, 0, len(record.Entries))
+	seen := make(map[string]struct{}, len(record.Entries))
+	bytes := 0
+	for _, item := range record.Entries {
+		if filepath.IsAbs(item.Path) {
+			return nil, fmt.Errorf("checkpoint record path %q must be relative", item.Path)
+		}
+		rel, err := normalizePath(rootInput, root, item.Path)
+		if err != nil {
+			return nil, fmt.Errorf("checkpoint record path %q: %w", item.Path, err)
+		}
+		if _, ok := seen[rel]; ok {
+			return nil, fmt.Errorf("checkpoint record repeats path %q", item.Path)
+		}
+		seen[rel] = struct{}{}
+		if len(item.BeforeData) > MaxRecordFileBytes {
+			return nil, fmt.Errorf("checkpoint record file %q exceeds the %d-byte durable undo limit", item.Path, MaxRecordFileBytes)
+		}
+		bytes += len(item.BeforeData)
+		if bytes > MaxRecordBytes {
+			return nil, fmt.Errorf("checkpoint record exceeds the %d-byte durable undo limit", MaxRecordBytes)
+		}
+		if !item.BeforeExists && (len(item.BeforeData) != 0 || item.BeforeMode != 0) {
+			return nil, fmt.Errorf("checkpoint record absent path %q has file state", item.Path)
+		}
+		expectedBytes, err := hex.DecodeString(item.Expected)
+		if err != nil || len(expectedBytes) != sha256.Size {
+			return nil, fmt.Errorf("checkpoint record path %q has invalid expected fingerprint", item.Path)
+		}
+		var expected fingerprint
+		copy(expected[:], expectedBytes)
+		before := fileState{exists: item.BeforeExists, mode: restorableMode(fs.FileMode(item.BeforeMode)), data: append([]byte(nil), item.BeforeData...)}
+		before.sum = fingerprintFor(before)
+		entries = append(entries, entry{path: rel, before: before, expected: expected, expectedSet: true})
+	}
+	return &Checkpoint{rootInput: rootInput, root: root, entries: entries, sealed: true}, nil
+}
+
+// PublishedSubset returns a checkpoint containing only entries whose current
+// workspace state matches the expected post-write fingerprint. Entries still
+// at their pre-turn state are omitted, which lets a fresh process recover a
+// crash before the final rename of a later path. Any other state is a conflict
+// and returns no subset so recovery remains fail closed.
+func (c *Checkpoint) PublishedSubset() (*Checkpoint, bool, error) {
+	if c == nil {
+		return nil, false, ErrNotSealed
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.sealed {
+		return nil, false, ErrNotSealed
+	}
+	entries := make([]entry, 0, len(c.entries))
+	for i := range c.entries {
+		current, err := readWorkspaceFile(c.root, c.entries[i].path)
+		if err != nil {
+			return nil, false, err
+		}
+		if current.sum == c.entries[i].expected {
+			entries = append(entries, c.entries[i])
+			continue
+		}
+		if current.sum == c.entries[i].before.sum {
+			continue
+		}
+		return nil, false, ErrConflict
+	}
+	if len(entries) == 0 {
+		return nil, false, nil
+	}
+	return &Checkpoint{rootInput: c.rootInput, root: c.root, entries: entries, sealed: true}, true, nil
 }
 
 // ChangedPaths returns paths whose sealed state differs from their captured

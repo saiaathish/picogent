@@ -234,10 +234,14 @@ func remove(root, path string) error {
 }
 
 func writeAtomic(root, path string, data []byte) error {
-	return writeAtomicWithMode(root, path, data, 0, false)
+	return writeAtomicWithHook(root, path, data, 0, false, nil)
 }
 
 func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMode, setMode bool) error {
+	return writeAtomicWithHook(root, path, data, requestedMode, setMode, nil)
+}
+
+func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hook func(os.FileMode) error) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -310,6 +314,15 @@ func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMo
 	}
 	if _, _, err := workspaceTargetMode(parent, leaf); err != nil {
 		return fmt.Errorf("validate workspace target %q: %w", rel, err)
+	}
+	if hook != nil {
+		info, err := file.Stat()
+		if err != nil {
+			return fmt.Errorf("inspect workspace publication %q: %w", rel, err)
+		}
+		if err := hook(info.Mode()); err != nil {
+			return fmt.Errorf("prepare workspace publication %q: %w", rel, err)
+		}
 	}
 	// Renameat publishes a complete inode, so ordinary path readers never see
 	// the temporary file being filled. POSIX has no compare-and-rename-by-inode

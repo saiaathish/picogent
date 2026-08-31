@@ -165,6 +165,15 @@ func WriteAtomic(root, path string, data []byte) error {
 	return writeAtomic(root, path, data)
 }
 
+// WriteAtomicWithPublishHook writes a complete file and invokes hook after
+// the new inode is fully written and validated but immediately before it is
+// published at path. A hook error aborts publication. This seam lets callers
+// persist recovery metadata before the workspace rename without exposing a
+// temporary pathname or weakening the normal workspace safety checks.
+func WriteAtomicWithPublishHook(root, path string, data []byte, hook func(os.FileMode) error) error {
+	return writeAtomicWithHook(root, path, data, 0, false, hook)
+}
+
 // WriteAtomicWithMode writes a complete file below root and publishes its
 // contents and permission mode as one filesystem replacement. Missing parent
 // directories are created like OpenWrite. Unlike WriteAtomic, the replacement
@@ -183,6 +192,13 @@ func WriteAtomicWithMode(root, path string, data []byte, mode os.FileMode) error
 // lookup can observe a replacement workspace root. This does not provide a
 // hostile same-UID filesystem race barrier or cross-process lock.
 func WriteAtomicIfUnchanged(root, path string, expected, data []byte) error {
+	return WriteAtomicIfUnchangedWithPublishHook(root, path, expected, data, nil)
+}
+
+// WriteAtomicIfUnchangedWithPublishHook is the compare-before-publish edit
+// primitive with the same pre-publication recovery hook as
+// WriteAtomicWithPublishHook.
+func WriteAtomicIfUnchangedWithPublishHook(root, path string, expected, data []byte, hook func(os.FileMode) error) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -205,7 +221,7 @@ func WriteAtomicIfUnchanged(root, path string, expected, data []byte) error {
 	if !bytes.Equal(currentContent, expected) {
 		return fmt.Errorf("%w: %s", ErrContentConflict, rel)
 	}
-	return writeAtomic(root, path, data)
+	return writeAtomicWithHook(root, path, data, 0, false, hook)
 }
 
 func writeWorkspaceAll(file *os.File, data []byte) error {
