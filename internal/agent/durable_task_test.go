@@ -537,6 +537,41 @@ func TestDurableTaskUnverifiedCompletionMarkerDoesNotCompleteGoal(t *testing.T) 
 	}
 }
 
+func TestDurableTaskTruncatedVerificationCannotCompleteGoal(t *testing.T) {
+	workspace := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "Goal complete: all tests pass"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(context.Context, []string) (string, error) {
+			return "verify INCONCLUSIVE\nverification output was truncated", nil
+		},
+	})
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(t.TempDir())
+	a.SetTaskSession("session-truncated-verification")
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.GoalDone {
+		t.Fatal("truncated verification must not complete the result goal")
+	}
+	if result.Task == nil || !result.Task.NeedsVerification() {
+		t.Fatalf("truncated verification task = %#v", result.Task)
+	}
+	if len(result.Task.Verification) == 0 || result.Task.Verification[len(result.Task.Verification)-1].Passed || !strings.HasPrefix(result.Task.Verification[len(result.Task.Verification)-1].Summary, "verify INCONCLUSIVE") {
+		t.Fatalf("truncated verification evidence = %#v", result.Task)
+	}
+}
+
 func TestDurableTaskRepairsFailedVerification(t *testing.T) {
 	workspace := t.TempDir()
 	writeArgs, _ := json.Marshal(map[string]string{"path": "fixed.txt", "content": "first"})
