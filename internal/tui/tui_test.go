@@ -15,6 +15,7 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/mcpbridge"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/taskstate"
@@ -691,6 +692,26 @@ func TestRunProgramStopsModelAfterProgramReturns(t *testing.T) {
 	}
 	if m.busy || m.cancel != nil {
 		t.Fatalf("model remained active after program return: busy=%v cancel=%v", m.busy, m.cancel != nil)
+	}
+}
+
+func TestRunProgramClosesAgentRegistryAfterProgramReturns(t *testing.T) {
+	workspace := t.TempDir()
+	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	if err := reg.AttachMCP(&mcpbridge.Manager{}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	a := agent.New(cfg, &llm.Scripted{}, reg, perm.New(config.ModeFast, workspace, nil))
+	m := &model{ag: a}
+
+	if err := runProgram(m, func() (tea.Model, error) { return m, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.AttachMCP(&mcpbridge.Manager{}); !errors.Is(err, tools.ErrRegistryClosed) {
+		t.Fatalf("attach after TUI return = %v, want tools.ErrRegistryClosed", err)
 	}
 }
 

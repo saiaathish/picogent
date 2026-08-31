@@ -2,8 +2,12 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -178,24 +182,45 @@ type model struct {
 }
 
 func Run() error {
-	cfg, a, err := app.Load(".")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return RunContext(ctx)
+}
+
+// RunContext lets an owning command or test control the lifetime of the TUI.
+// The signal-backed Run wrapper keeps the standalone CLI behavior equivalent.
+func RunContext(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cfg, a, err := app.LoadContext(ctx, ".")
 	if err != nil {
 		return err
 	}
 	m, err := newModel(cfg, a)
 	if err != nil {
+		a.Close()
 		return err
 	}
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	m.h.send = func(msg tea.Msg) { p.Send(msg) }
-	return runProgram(m, p.Run)
+	err = runProgram(m, p.Run)
+	if err != nil && ctx.Err() != nil && errors.Is(err, tea.ErrProgramKilled) {
+		return nil
+	}
+	return err
 }
 
 // runProgram owns the final TUI cleanup boundary. Bubble Tea can return from
 // an input quit, terminal error, or another program-level exit after the model
 // has started work; cleanup must not depend on one particular key path.
 func runProgram(m *model, run func() (tea.Model, error)) (err error) {
-	defer stopModelIfActive(m)
+	defer func() {
+		stopModelIfActive(m)
+		if m != nil && m.ag != nil {
+			m.ag.Close()
+		}
+	}()
 	_, err = run()
 	return err
 }
