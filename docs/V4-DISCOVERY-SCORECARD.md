@@ -1,7 +1,7 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-08-31 against exact `main` head
-`83f4d3105bf10c94619eb9544a1b4feb7752040d` after PRs #211–#216 merged.
+`5f7d31237a4ffd586c27882588a49cdaed78d9f9` after PRs #219–#220 merged.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -27,7 +27,7 @@ not enough to establish real runtime behavior.
 | Repair/recovery | Local checkpoint/undo conflict safety and fail-closed permissions | Durable task resume and GUI steering | Retry taxonomy, route diversity, partial rollback reporting, and process-restart undo are incomplete | Prompt recovery hints would duplicate a future durable recovery ledger | Test and then persist side-effect/recovery metadata; do not replace checkpoint safety prematurely |
 | Performance | Deterministic local microbenchmarks and a long-horizon resume envelope exist | Bounded output/context controls | Current refresh shows large repo-map/session allocation overhead; GUI/TUI/headless process envelopes remain unmeasured | Repeated large-output scans and unbounded summary construction may waste CPU | Profile retention/provenance overhead and rerun v3-v4 comparisons before claiming performance gains |
 | Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Hosted `govulncheck` now scans the dependency graph; tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Add hostile runtime evidence and preserve explicit limits around dependency reachability and path races |
-| Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, and bounded GUI active-turn reconnect evidence | Unix/Windows lock primitives and deterministic recovery harnesses | Cancellation/event ordering, cross-surface reconnect behavior, and cross-process writers lack complete stress evidence | New orchestration would add complexity before invariants are measured | Add barrier-driven cancellation/save/publish/reconnect harness and run it on every release candidate |
+| Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, and barrier-driven cancellation/save/publish stress | Unix/Windows lock primitives and deterministic recovery harnesses | Cross-surface event/reconnect behavior and cross-process writers lack complete stress evidence | New orchestration would add complexity before invariants are measured | Add cross-process writer/reconnect harness and run it on every release candidate |
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
 | GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, and bounded owned-browser reconnect/recovery evidence | Lifecycle and undo wiring; one local rendered reconnect path | Live-provider behavior, permission decisions, undoable changes, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; side chat bypasses core task/evidence path | Add owned-browser permission, undo, full-recovery, and cross-platform evidence before release claims |
 | TUI/headless | Headless stdout/stderr and fail-closed permission behavior; resume state | CLI dispatch and exit classes | Non-TTY/TUI behavior and session-save failures are not proven or always surfaced | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Surface persistence failures and test subprocess exit/EOF/signal contracts |
@@ -151,6 +151,20 @@ PRs #211–#216 then harden MCP runtime replacement and registry leases, agent
 and TUI cleanup, context-driven GUI HTTP shutdown, one-shot CLI cleanup, and
 GUI shutdown admission plus admitted-turn waiting. Hosted macOS, Ubuntu,
 Windows, security, and release-evidence checks passed for each slice. The
-remaining proof work is still open: deterministic cancellation/save/publish
-stress, cross-process writers, v3-versus-v4 outcome/retry measurements, and
+remaining proof work is still open: cross-process writers, cross-surface
+event/reconnect behavior, v3-versus-v4 outcome/retry measurements, and
 owned-browser permission/undo/full-recovery evidence.
+
+PR #219 merged as `afd787289c61ae65a2adcca6f5eecdfbdc15c2f7`. It preserves a
+recoverable active task when turn-close persistence fails and joins that error
+with an earlier provider or permission failure, so the primary failure and the
+durability failure are both visible. Hosted macOS, Ubuntu, Windows, security,
+and release-evidence checks passed.
+
+PR #220 merged as `5f7d31237a4ffd586c27882588a49cdaed78d9f9`. Its
+barrier-driven cancellation harness ran 24 isolated probes, checking that
+save-before-publish ordering, interrupted-turn metadata, persisted side
+effects, and live task state remain consistent after cancellation. The focused
+and race test runs, full Go suite, and all hosted macOS, Ubuntu, Windows,
+security, and release-evidence checks passed. This is deterministic agent
+boundary evidence, not cross-process writer or rendered cross-surface proof.
