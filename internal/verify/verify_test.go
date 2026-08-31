@@ -430,6 +430,13 @@ func TestNormalizeResultRejectsContradictoryPass(t *testing.T) {
 	}
 }
 
+func TestNormalizeResultRejectsTruncatedPass(t *testing.T) {
+	result := normalizeResult(Result{OK: true, Status: StatusPass, Passed: 1, OutputTruncated: true}, Command{Runner: "go", Display: "go test ./..."}, 1)
+	if result.Status != StatusInconclusive || result.OK || result.Reason != "verification output was truncated" {
+		t.Fatalf("truncated result = %+v", result)
+	}
+}
+
 func TestDetectPlanTargetsGoPackageThenBroader(t *testing.T) {
 	dir := t.TempDir()
 	writeVerifyFile(t, dir, "go.mod", "module x\n")
