@@ -119,7 +119,9 @@ type server struct {
 	permCh         chan perm.Decision
 	subs           []chan event
 	busy           bool
+	shuttingDown   bool
 	activeTurns    int
+	turnWG         sync.WaitGroup
 	cancel         context.CancelFunc
 	steerMu        sync.Mutex
 	steerQueue     []queuedTurn
@@ -208,11 +210,9 @@ func RunContext(ctx context.Context) error {
 	if os.Getenv("PICOGENT_NO_BROWSER") == "" {
 		go openBrowser(url)
 	}
-	return serveContext(ctx, ln, s.Handler(), func() {
-		s.mu.Lock()
-		s.abortTurnLocked()
-		s.mu.Unlock()
-	})
+	serveErr := serveContext(ctx, ln, s.Handler(), s.stopForShutdown)
+	s.waitForTurns()
+	return serveErr
 }
 
 // serveContext adapts net/http's blocking Serve loop to an owning context.
@@ -1269,6 +1269,26 @@ func (s *server) abortTurnLocked() {
 	s.steerMu.Unlock()
 }
 
+// stopForShutdown prevents new admissions and cancels the current turn. The
+// wait happens after the HTTP listener has stopped so long-lived event
+// streams cannot delay cancellation of the agent itself.
+func (s *server) stopForShutdown() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.shuttingDown = true
+	s.abortTurnLocked()
+	s.mu.Unlock()
+}
+
+func (s *server) waitForTurns() {
+	if s == nil {
+		return
+	}
+	s.turnWG.Wait()
+}
+
 func (s *server) startAgentTurn(prompt string, parts []llm.Part) {
 	s.startAgentTurnAsMode(prompt, parts, prompt, nil)
 }
@@ -1294,7 +1314,7 @@ func (s *server) startAgentTurnAsMode(prompt string, parts []llm.Part, displayPr
 // turn. Callers must hold s.mu. allowBusy is used only by the atomic queued
 // handoff in runAdmittedTurn; the current turn is still marked busy there.
 func (s *server) admitAgentTurnLocked(mode *agent.TaskMode, allowBusy bool) (turnAdmission, bool) {
-	if s.busy && !allowBusy {
+	if s.shuttingDown || (s.busy && !allowBusy) {
 		return turnAdmission{}, false
 	}
 	s.busy = true
@@ -1409,9 +1429,11 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 	}
 	s.noteTurnStart(displayPrompt)
 	s.mu.Lock()
-	stillLive := s.turnGen == myGen
+	stillLive := s.turnGen == myGen && !s.shuttingDown
 	if !stillLive {
 		s.activeTurns--
+	} else {
+		s.turnWG.Add(1)
 	}
 	s.mu.Unlock()
 	if !stillLive {
@@ -1419,6 +1441,7 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 	}
 
 	go func() {
+		defer s.turnWG.Done()
 		defer func() {
 			if rec := recover(); rec != nil {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("agent panic: %v", rec)})
