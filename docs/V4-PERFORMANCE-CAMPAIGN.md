@@ -163,11 +163,13 @@ go test ./internal/agent -run '^$' \
 | Session / task JSON peak | 26,563 / 8,506–8,512 bytes/op |
 
 The higher current-head allocation cost is a useful regression signal and
-motivates a separate optimization experiment; it is not a release budget. The test also
-covers a cooperative fresh-process restart: an active durable turn is loaded,
-marked interrupted, and persisted by a new process. Hostile process death,
-sustained RSS, live-provider quality, rendered surfaces, and v3-v4 comparative
-quality remain unverified.
+motivates a separate optimization experiment; it is not a release budget. The
+test also covers a bounded fresh-process attachment through
+`Agent.SetTaskSession`: an active durable turn is loaded, marked interrupted
+with `recover` / `process_restart` / `UNVERIFIED` metadata, and persisted by the
+new process. This is not hostile process-death proof. Sustained RSS,
+live-provider quality, rendered surfaces, and v3-v4 comparative quality remain
+unverified.
 
 ## Not measured here
 
