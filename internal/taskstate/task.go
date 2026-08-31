@@ -839,14 +839,36 @@ func (t *Task) InvalidateLatestVerification(reason string) bool {
 
 // InvalidateWorkspaceEvidence clears passing evidence that was bound to the
 // current workspace generation. It is used after an external restoration,
-// such as /undo, or after a durable outcome contract change, where the task's
-// durable change sequence remains useful for history but existing proof no
-// longer supports the current completion boundary.
+// such as /undo, where the task's durable change sequence remains useful for
+// history but existing proof no longer proves the files that are now on disk.
 func (t *Task) InvalidateWorkspaceEvidence(reason string) bool {
-	return t.invalidateCompletionEvidence(reason)
+	return t.invalidateCompletionEvidence(reason, completionInvalidationProvenance{
+		source:            "workspace-observation",
+		origin:            EvidenceOriginVerifier,
+		reference:         "workspace restoration",
+		criterionTrusted:  true,
+		resetVerification: true,
+	})
 }
 
-func (t *Task) invalidateCompletionEvidence(reason string) bool {
+type completionInvalidationProvenance struct {
+	source            string
+	origin            EvidenceOrigin
+	reference         string
+	criterionTrusted  bool
+	resetVerification bool
+}
+
+func (t *Task) invalidateOutcomeContractEvidence(reason string) bool {
+	return t.invalidateCompletionEvidence(reason, completionInvalidationProvenance{
+		source:            "outcome-contract",
+		origin:            EvidenceOriginSystem,
+		reference:         "durable intent change",
+		resetVerification: false,
+	})
+}
+
+func (t *Task) invalidateCompletionEvidence(reason string, provenance completionInvalidationProvenance) bool {
 	if t == nil {
 		return false
 	}
@@ -856,9 +878,11 @@ func (t *Task) invalidateCompletionEvidence(reason string) bool {
 		summary += " — " + reason
 	}
 	changed := false
+	proofInvalidated := false
 	if len(t.Verification) > 0 {
 		latest := &t.Verification[len(t.Verification)-1]
 		if latest.Passed {
+			proofInvalidated = true
 			latest.Passed = false
 			latest.Summary = compactText(summary, maxVerificationSummary)
 			latest.At = time.Now().UTC()
@@ -866,21 +890,14 @@ func (t *Task) invalidateCompletionEvidence(reason string) bool {
 			t.AddEvidence(Evidence{
 				Kind:       EvidenceKindVerification,
 				Status:     "INCONCLUSIVE",
-				Source:     "workspace-observation",
-				Origin:     EvidenceOriginVerifier,
+				Source:     provenance.source,
+				Origin:     provenance.origin,
 				Summary:    latest.Summary,
-				Reference:  "workspace restoration",
+				Reference:  provenance.reference,
 				Confidence: "high",
 				ChangeSeq:  t.ChangeSeq,
 			})
 		}
-	}
-	// A zero verified sequence is also the legacy/default value for a task
-	// that has never run verification. Do not turn that initialization marker
-	// into a failure merely because a new intent was recorded.
-	if len(t.Verification) > 0 && t.VerifiedChangeSeq >= 0 {
-		t.VerifiedChangeSeq = -1
-		changed = true
 	}
 	for index := range t.criteriaDefinition() {
 		status, current := t.CriterionEvidenceState(index)
@@ -890,13 +907,14 @@ func (t *Task) invalidateCompletionEvidence(reason string) bool {
 		t.addEvidenceForCriterion(index, Evidence{
 			Kind:       EvidenceKindVerification,
 			Status:     "INCONCLUSIVE",
-			Source:     "workspace-observation",
-			Origin:     EvidenceOriginVerifier,
+			Source:     provenance.source,
+			Origin:     provenance.origin,
 			Summary:    summary,
-			Reference:  "workspace restoration",
+			Reference:  provenance.reference,
 			Confidence: "high",
 			ChangeSeq:  t.ChangeSeq,
-		}, true)
+		}, provenance.criterionTrusted)
+		proofInvalidated = true
 		changed = true
 	}
 	for _, kind := range t.RequiredEvidenceKinds() {
@@ -907,13 +925,22 @@ func (t *Task) invalidateCompletionEvidence(reason string) bool {
 		t.AddEvidence(Evidence{
 			Kind:       kind,
 			Status:     "INCONCLUSIVE",
-			Source:     "workspace-observation",
+			Source:     provenance.source,
 			Origin:     EvidenceOriginSystem,
 			Summary:    summary,
-			Reference:  "workspace restoration",
+			Reference:  provenance.reference,
 			Confidence: "high",
 			ChangeSeq:  t.ChangeSeq,
 		})
+		proofInvalidated = true
+		changed = true
+	}
+	// A zero verified sequence is also the legacy/default value for a task
+	// that has never run verification. Preserve that initialization marker for
+	// a new intent, but reset it when this invalidation actually found proof or
+	// when the workspace-restoration boundary explicitly requires a recheck.
+	if (provenance.resetVerification || proofInvalidated) && t.VerifiedChangeSeq >= 0 {
+		t.VerifiedChangeSeq = -1
 		changed = true
 	}
 	if changed {

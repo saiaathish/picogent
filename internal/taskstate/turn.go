@@ -103,7 +103,7 @@ func (t *Task) SetIntent(intent *IntentContract) bool {
 	// A changed intent changes the claim that existing proof supports. Keep
 	// that history for diagnosis, but make the completion boundary prove the
 	// new contract again.
-	t.invalidateCompletionEvidence("durable outcome contract changed")
+	t.invalidateOutcomeContractEvidence("durable outcome contract changed")
 	return true
 }
 
