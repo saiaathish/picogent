@@ -1,13 +1,18 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/saiaathish/picogent/internal/config"
+	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/outcome"
+	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/projecthealth"
 	"github.com/saiaathish/picogent/internal/taskstate"
+	"github.com/saiaathish/picogent/internal/tools"
 )
 
 func TestOutcomeFocusForToolUsesDurableOutcomeContract(t *testing.T) {
@@ -154,4 +159,117 @@ func TestOutcomeFocusForTaskUsesDurableMutationAndRecoveryState(t *testing.T) {
 			t.Fatalf("recovery marker %q missing from focus: %q", marker, recoveredFocus)
 		}
 	}
+}
+
+func TestRunInjectsOutcomeFocusAfterRecoveredTurn(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "outcome-focus-recovery"
+
+	task, ok, err := taskstate.NewFromPrompt(sessionID, "fix the broken note workflow")
+	if err != nil || !ok || task == nil {
+		t.Fatalf("initial task = %#v, ok=%v, err=%v", task, ok, err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := task.BeginTurn(taskstate.TurnRouteImplement); !ok {
+		t.Fatal("turn did not start")
+	}
+	task.RecordChanged("note.txt")
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{{
+		Message: llm.Message{Role: "assistant", Content: "the recovered turn still needs verification"},
+	}}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	recovered := a.TaskSnapshot()
+	if recovered == nil || recovered.LastTurn() == nil || recovered.LastTurn().Route != string(taskstate.TurnRouteRecover) {
+		t.Fatalf("session attachment did not recover the turn: %#v", recovered)
+	}
+
+	if _, _, err := a.Run(context.Background(), nil, llm.Message{
+		Role: "user", Content: "resume the broken note workflow",
+	}, NopHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(fake.Calls))
+	}
+	focus := outcomeFocusFromMessages(fake.Calls[0].Messages)
+	for _, marker := range []string{
+		"Outcome data: \"Fix the broken note workflow\"",
+		"Outcome state: VERIFY",
+		"Turn state: sequence=2 state=active route=recover evidence=UNVERIFIED",
+		"Health observation: status=UNKNOWN",
+	} {
+		if !strings.Contains(focus, marker) {
+			t.Fatalf("recovery focus missing %q: %q", marker, focus)
+		}
+	}
+}
+
+func TestRunInjectsOutcomeFocusAfterSteering(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "outcome-focus-steering"
+
+	task, ok, err := taskstate.NewFromPrompt(sessionID, "fix the broken note workflow")
+	if err != nil || !ok || task == nil {
+		t.Fatalf("initial task = %#v, ok=%v, err=%v", task, ok, err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{{
+		Message: llm.Message{Role: "assistant", Content: "the revised intent still needs work"},
+	}}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, err := a.Run(context.Background(), nil, llm.Message{
+		Role: "user", Content: "instead, document the note workflow",
+	}, NopHandler{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls) != 1 {
+		t.Fatalf("model calls = %d, want 1", len(fake.Calls))
+	}
+	focus := outcomeFocusFromMessages(fake.Calls[0].Messages)
+	for _, marker := range []string{
+		"Outcome data: \"Fix the broken note workflow\"",
+		"Intent revision: 2",
+	} {
+		if !strings.Contains(focus, marker) {
+			t.Fatalf("steering focus missing %q: %q", marker, focus)
+		}
+	}
+}
+
+func outcomeFocusFromMessages(messages []llm.Message) string {
+	for _, message := range messages {
+		if message.Role == "system" && strings.Contains(message.Content, "Internal outcome focus:") {
+			return message.Content
+		}
+	}
+	return ""
 }

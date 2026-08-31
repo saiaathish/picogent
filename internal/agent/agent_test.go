@@ -328,6 +328,10 @@ func TestProjectHealthFocusIsSkippedWhenCoBatchedWithWrite(t *testing.T) {
 	cfg.Workspace = dir
 	cfg.Provider = config.ProviderOllama
 	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("co-batched-focus"); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "create the file"}, allowAll{}); err != nil {
 		t.Fatal(err)
@@ -344,8 +348,14 @@ func TestProjectHealthFocusIsSkippedWhenCoBatchedWithWrite(t *testing.T) {
 	if strings.Contains(focus, "Outcome state: DIAGNOSE") || strings.Contains(focus, "Health observation: status=ATTENTION") {
 		t.Fatalf("stale health focus was injected after a co-batched write: %q", focus)
 	}
-	if focus != "" && !strings.Contains(focus, "Health observation: status=UNKNOWN") {
-		t.Fatalf("post-write focus did not mark health as unknown: %q", focus)
+	for _, marker := range []string{
+		"Outcome state: VERIFY",
+		"Turn side effects data: changed_files=[\"created.txt\"] capped=false",
+		"Health observation: status=UNKNOWN",
+	} {
+		if !strings.Contains(focus, marker) {
+			t.Fatalf("post-write task-only focus missing %q: %q", marker, focus)
+		}
 	}
 }
 
