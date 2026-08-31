@@ -77,7 +77,8 @@ func (h *persistedTaskObserver) statuses() []taskstate.Status {
 	return append([]taskstate.Status(nil), h.statusSeen...)
 }
 
-func TestDurableTaskCancellationRetainsLastPersistedState(t *testing.T) {
+func runDurableTaskCancellationProbe(t *testing.T, sessionID string) {
+	t.Helper()
 	workspace := t.TempDir()
 	store := taskstate.NewStore(t.TempDir())
 	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after"})
@@ -93,7 +94,6 @@ func TestDurableTaskCancellationRetainsLastPersistedState(t *testing.T) {
 	cfg.Provider = config.ProviderOllama
 	a := agent.New(cfg, client, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
 	a.TaskStore = store
-	const sessionID = "cancel-after-durable-write"
 	if err := a.SetTaskSession(sessionID); err != nil {
 		t.Fatal(err)
 	}
@@ -152,5 +152,18 @@ func TestDurableTaskCancellationRetainsLastPersistedState(t *testing.T) {
 	}
 	if run.result.Task != nil {
 		t.Fatalf("canceled run returned a terminal result task: %#v", run.result.Task)
+	}
+}
+
+func TestDurableTaskCancellationRetainsLastPersistedState(t *testing.T) {
+	runDurableTaskCancellationProbe(t, "cancel-after-durable-write")
+}
+
+func TestDurableTaskCancellationStressRetainsLastPersistedState(t *testing.T) {
+	const probes = 24
+	for i := 0; i < probes; i++ {
+		t.Run(fmt.Sprintf("probe-%02d", i), func(t *testing.T) {
+			runDurableTaskCancellationProbe(t, fmt.Sprintf("cancel-after-durable-write-%02d", i))
+		})
 	}
 }
