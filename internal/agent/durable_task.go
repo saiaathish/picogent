@@ -167,14 +167,21 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	}
 	task, err := a.TaskStore.Load(a.TaskSession)
 	if err == nil {
-		invalidated, revalidateErr := revalidatePersistedTask(workspaceRoot, task)
+		changed, revalidateErr := revalidatePersistedTask(workspaceRoot, task)
 		if revalidateErr != nil {
 			a.taskLoadErr = revalidateErr
 			return revalidateErr
 		}
-		if invalidated {
+		// A task loaded with an active turn was left behind by a process that
+		// did not reach its close point. The project run lock makes this
+		// attachment boundary exclusive, so record the stale attempt before
+		// publishing the resumed task.
+		if task.RecoverActiveTurn() {
+			changed = true
+		}
+		if changed {
 			if err := a.TaskStore.Save(task); err != nil {
-				revalidateErr := fmt.Errorf("persist invalidated verification: %w", err)
+				revalidateErr := fmt.Errorf("persist recovered durable task: %w", err)
 				a.taskLoadErr = revalidateErr
 				return revalidateErr
 			}

@@ -12,13 +12,15 @@ const (
 	StopResourceUnavailable  StopReason = "resource_unavailable"
 	StopBudgetExhausted      StopReason = "budget_exhausted"
 	StopCanceled             StopReason = "canceled"
+	StopProcessRestart       StopReason = "process_restart"
 )
 
 // Valid reports whether the stop reason is one of the bounded policy values.
 func (r StopReason) Valid() bool {
 	switch r {
 	case StopNone, StopGoalComplete, StopPermissionNeeded, StopUserChoiceRequired,
-		StopVerificationFailures, StopResourceUnavailable, StopBudgetExhausted, StopCanceled:
+		StopVerificationFailures, StopResourceUnavailable, StopBudgetExhausted, StopCanceled,
+		StopProcessRestart:
 		return true
 	default:
 		return false
