@@ -48,6 +48,34 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPersistenceRejectsSymlinkedConfig(t *testing.T) {
+	home := t.TempDir()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "config.yaml")
+	if err := os.WriteFile(target, []byte("provider: ollama\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, "config.yaml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	if err := config.Save(cfg); err == nil {
+		t.Fatal("Save accepted a symlinked config path")
+	}
+	if got, err := os.ReadFile(target); err != nil {
+		t.Fatal(err)
+	} else if string(got) != "provider: ollama\n" {
+		t.Fatalf("symlink target changed to %q", got)
+	}
+	if _, err := config.Load(); err == nil {
+		t.Fatal("Load accepted a symlinked config path")
+	}
+}
+
 func TestLoadPromotesCodexWhenLoggedIn(t *testing.T) {
 	pic := t.TempDir()
 	codex := t.TempDir()
