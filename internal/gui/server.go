@@ -46,6 +46,7 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/trace"
 	"github.com/saiaathish/picogent/internal/verify"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 type event struct {
@@ -143,6 +144,9 @@ type server struct {
 	// transitions release s.mu before waiting on the project run lock.
 	beforeSessionClone func()
 	sessionTransition  bool
+	// openPreview is test-only injection for exercising filesystem replacement
+	// between path resolution and the descriptor-safe open.
+	openPreview func(string, string) (*os.File, error)
 
 	// Side chat companion (Codex-style)
 	sideHist     []llm.Message
@@ -2638,7 +2642,11 @@ func (s *server) readFile(w http.ResponseWriter, r *http.Request) {
 	}
 	wsAbs := resolved.Root
 	abs := resolved.Path
-	f, err := os.Open(abs)
+	openPreview := workspace.OpenRead
+	if s.openPreview != nil {
+		openPreview = s.openPreview
+	}
+	f, err := openPreview(wsAbs, abs)
 	if err != nil {
 		http.Error(w, err.Error(), 404)
 		return

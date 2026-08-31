@@ -26,6 +26,7 @@ import (
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/tools"
 	"github.com/saiaathish/picogent/internal/verify"
+	"github.com/saiaathish/picogent/internal/workspace"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/taskstate"
@@ -1624,6 +1625,42 @@ func TestReadFileRejectsOutsideSymlink(t *testing.T) {
 	s.readFile(res, httptest.NewRequest(http.MethodGet, "/api/file?path=escape%2Fsecret.txt", nil))
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusForbidden)
+	}
+}
+
+func TestReadFileUsesDescriptorSafeOpenAfterResolution(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	outside := t.TempDir()
+	preview := filepath.Join(workspaceRoot, "preview.txt")
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(preview, []byte("public"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(secret, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+
+	s := &server{cfg: config.Config{Workspace: workspaceRoot}}
+	s.openPreview = func(root, path string) (*os.File, error) {
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("replace preview: %v", err)
+		}
+		if err := os.Symlink(secret, path); err != nil {
+			t.Fatalf("replace preview with symlink: %v", err)
+		}
+		return workspace.OpenRead(root, path)
+	}
+
+	res := httptest.NewRecorder()
+	s.readFile(res, httptest.NewRequest(http.MethodGet, "/api/file?path=preview.txt", nil))
+	if res.Code == http.StatusOK {
+		t.Fatalf("preview opened replaced symlink: %q", res.Body.String())
+	}
+	if strings.Contains(res.Body.String(), "private") {
+		t.Fatalf("preview leaked outside secret: %q", res.Body.String())
 	}
 }
 
