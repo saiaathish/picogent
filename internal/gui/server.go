@@ -2472,8 +2472,8 @@ func messagesToTranscript(msgs []llm.Message) []transcriptLine {
 				out = append(out, transcriptLine{Role: "assistant", Text: t})
 			}
 		case "tool":
-			if t := strings.TrimSpace(m.Content); t != "" {
-				out = append(out, transcriptLine{Role: "tool", Text: clip(t, 400)})
+			if t := strings.TrimSpace(redact.Diagnostic(m.Content, 400)); t != "" {
+				out = append(out, transcriptLine{Role: "tool", Text: t})
 			}
 		}
 	}
