@@ -334,6 +334,22 @@ func TestRunPipelineWithoutTargetsRunsBroaderSuite(t *testing.T) {
 	}
 }
 
+func TestRunPipelineRejectsTruncatedPass(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "go.mod", "module x\n")
+	result := RunPipeline(t.Context(), dir, Options{
+		Executor: func(_ context.Context, _ string, _ Command, _ int, _ time.Duration) Result {
+			return Result{OK: true, Status: StatusPass, Passed: 1, OutputTruncated: true}
+		},
+	})
+	if result.Status != StatusInconclusive || result.Reason != "verification output was truncated" {
+		t.Fatalf("truncated pipeline = %+v", result)
+	}
+	if len(result.Stages) != 2 || len(result.Stages[1].Evidence) != 1 || result.Stages[1].Evidence[0].Status != StatusInconclusive {
+		t.Fatalf("truncated pipeline evidence = %+v", result.Stages)
+	}
+}
+
 func TestRunPipelineCancellationCannotReportPass(t *testing.T) {
 	dir := t.TempDir()
 	writeVerifyFile(t, dir, "go.mod", "module x\n")
