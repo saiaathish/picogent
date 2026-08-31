@@ -875,7 +875,10 @@ func (t *Task) invalidateCompletionEvidence(reason string) bool {
 			})
 		}
 	}
-	if t.VerifiedChangeSeq >= 0 {
+	// A zero verified sequence is also the legacy/default value for a task
+	// that has never run verification. Do not turn that initialization marker
+	// into a failure merely because a new intent was recorded.
+	if len(t.Verification) > 0 && t.VerifiedChangeSeq >= 0 {
 		t.VerifiedChangeSeq = -1
 		changed = true
 	}
