@@ -627,6 +627,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				msg.Content = text
 				msgs[len(msgs)-1] = msg
 			}
+			res.ToolRounds = round
+			if err := a.finishDurableTask(text, taskBlocker, ev); err != nil {
+				res.Task = a.TaskSnapshot()
+				res.GoalDone = false
+				return msgs, res, err
+			}
 			if streamed {
 				if finalizer, ok := ev.(FinalTextHandler); ok {
 					finalizer.OnTextFinal(text)
@@ -640,8 +646,6 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				ev.OnText(text)
 			}
 			res.Text = text
-			res.ToolRounds = round
-			a.finishDurableTask(text, taskBlocker, ev)
 			res.Task = a.TaskSnapshot()
 			goalEvidencePassed := !completionEvidenceRequired || verificationStatus(lastVerification) == "PASS"
 			taskComplete := res.Task == nil || (res.Task.Status == taskstate.StatusDone && !res.Task.NeedsVerification())
