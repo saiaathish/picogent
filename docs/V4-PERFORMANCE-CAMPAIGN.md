@@ -1,7 +1,7 @@
 # V4 performance campaign
 
-Status: historical comparison captured on 2026-08-25, with a current-head
-refresh captured on 2026-08-30. This document records deterministic local
+Status: historical comparison captured on 2026-08-25, with current-head
+refreshes captured on 2026-08-30. This document records deterministic local
 controls; it does not claim live-provider quality or end-to-end product
 performance.
 
@@ -42,7 +42,7 @@ regression signals, not product SLAs.
 | Verification evidence status | 3.315–3.557 µs | 3.475–3.613 µs | 1,792 B / 1 | 1,792 B / 1 |
 | Scripted edit turn | 1.068–2.016 ms | 0.759–0.990 ms | 113,328–116,176 B / 1,114–1,150 | 113,328–116,336 B / 1,114–1,151 |
 
-V4-only additions:
+Earlier v4-only additions, before the current-head refresh:
 
 - Repository provenance capture: `39.449–128.307 ms`, `71,637–84,348 B`,
   `430–433 allocs`.
@@ -104,18 +104,18 @@ recorded rather than hidden. No broad claim that v4 is faster is justified.
 ## Current-head microbenchmark refresh
 
 The focused benchmark subset was rerun on the exact merged v4 head
-`98558144b159c0ada258ac1b92b0c85855d81d9e` on an Apple M3 arm64 Mac with Go
+`eb824f293255d913dca894228bbd23609f37fe96` on an Apple M3 arm64 Mac with Go
 `go1.26.6`. It used the same `-benchtime=100ms -benchmem -count=3` settings as
 the comparison above. The v3 values remain the clean-baseline measurements
-recorded on `a07943b31044049afb0142f39198244cd3c75218`; only the v4 column was
-refreshed here.
+recorded on `a07943b31044049afb0142f39198244cd3c75218`.
 
 | Operation | v3 time | v4 time | v3 memory / allocs | v4 memory / allocs |
 | --- | ---: | ---: | ---: | ---: |
 | Context manage, working set | 41.933–44.446 µs | 34.226–34.356 µs | 105,065–105,072 B / 243 | 67,461–67,463 B / 185 |
 | Context manage, context-heavy | 2.288–2.333 ms | 2.194–2.331 ms | 485,922–486,491 B / 658–659 | 486,270–487,552 B / 659–661 |
-| Repo-map inspect | 22.602–23.494 ms | 21.281–22.814 ms | 48,702–54,760 B / 249–250 | 119,004–119,966 B / 289–290 |
-| Repo-map format | 2.786–2.802 µs | 26.622–29.141 µs | 2,370 B / 12 | 2,542–2,561 B / 20 |
+| Repo-map inspect | 22.602–23.494 ms | 34.236–104.401 ms | 48,702–54,760 B / 249–250 | 125,830–149,224 B / 346–370 |
+| Repo-map capture | — | 25.268–25.480 ms | — | 125,562–134,690 B / 351–353 |
+| Repo-map format | 2.786–2.802 µs | 28.515–29.395 µs | 2,370 B / 12 | 2,551–2,552 B / 20 |
 | Session metadata list, 60 records | 7.051–8.619 ms | 8.490–11.155 ms | 183,168–183,200 B / 1,962 | 181,786–185,151 B / 1,482 |
 | Session load, canonical | 198.876–526.745 µs | 295.781–449.590 µs | 3,368 B / 37 | 4,352–4,445 B / 41 |
 | Session load, legacy history | — | 2.799–3.344 ms | — | 2,454,667–2,464,960 B / 1,549–1,552 |
@@ -125,10 +125,12 @@ refreshed here.
 
 The current head retains the working-set and verification improvements. The
 canonical session load now has a separate 41-allocation measurement, while
-legacy histories intentionally remain on the full retention path. Metadata
-listing is lower-allocation than the prior v4 refresh, but filesystem timing
-still varies across runs. These results make a targeted retention/provenance
-optimization a better next experiment than a general performance claim.
+legacy histories intentionally remain on the full retention path. Repository
+capture now reuses one porcelain-v2 status projection for the full head,
+branch, dirty counters, and workspace-scoped dirty paths; the current sample
+is about 351–353 allocations and 126–135 KB per operation. Filesystem timing
+still varies substantially across runs, so the allocation reduction is the
+reliable signal and no broad latency claim is justified.
 
 ## Current-head long-horizon composition probe
 
