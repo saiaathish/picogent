@@ -126,8 +126,12 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			if err := projects.Remove(in.ID); err != nil {
-				writeGUIError(w, err.Error(), 404)
+			if err := projects.RemoveIfCurrent(reg, in.ID); err != nil {
+				status := http.StatusNotFound
+				if errors.Is(err, projects.ErrRegistryChanged) {
+					status = http.StatusConflict
+				}
+				writeGUIError(w, err.Error(), status)
 				return
 			}
 			w.WriteHeader(204)
