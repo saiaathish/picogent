@@ -6,6 +6,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/projecthealth"
 	"github.com/saiaathish/picogent/internal/taskstate"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 // TestCompletionContractMatrix keeps the completion decision and its derived
@@ -78,6 +79,24 @@ func TestCompletionContractMatrix(t *testing.T) {
 			wantStop:  StopRecheck,
 		},
 		{
+			name: "definition of done outranks drifted legacy steps",
+			build: func(t *testing.T) *taskstate.Task {
+				task := newTask(t, "finish the outcome")
+				task.Steps = []taskstate.Step{{Description: "legacy progress", Done: true}}
+				task.CurrentStep = 1
+				task.DefinitionOfDone = []taskstate.Criterion{
+					{Description: "legacy progress", Required: true},
+					{Description: "new required proof", Required: true},
+				}
+				task.RecordCriterionVerification(0, "PASS", "legacy progress passed", "verify")
+				return task
+			},
+			wantState:   StateWorking,
+			wantNext:    KindCriterion,
+			wantStop:    StopContinue,
+			wantMissing: []int{1},
+		},
+		{
 			name: "later mutation invalidates criterion proof",
 			build: func(t *testing.T) *taskstate.Task {
 				task := newTask(t, "finish the outcome")
@@ -102,6 +121,22 @@ func TestCompletionContractMatrix(t *testing.T) {
 			wantNext:          KindRequirement,
 			wantStop:          StopContinue,
 			wantRequirements:  []taskstate.EvidenceKind{taskstate.EvidenceKindTests},
+			wantVerifyCurrent: false,
+		},
+		{
+			name: "partial verification cannot authorize completion",
+			build: func(t *testing.T) *taskstate.Task {
+				task := newTask(t, "verify the current workspace")
+				task.RecordChanged("internal/change.go")
+				observation := &workspace.Observation{
+					Files: []workspace.FileObservation{{Path: "internal/change.go", Known: true}},
+				}
+				task.AddVerificationForCriteriaWithCoverage(nil, "go test ./...", true, "verify PASS", observation, taskstate.VerificationCoveragePartial)
+				return task
+			},
+			wantState:         StateVerify,
+			wantNext:          KindVerify,
+			wantStop:          StopContinue,
 			wantVerifyCurrent: false,
 		},
 		{
