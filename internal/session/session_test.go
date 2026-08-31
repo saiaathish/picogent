@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -37,6 +38,41 @@ func TestSessionPathAndLoadRejectTraversal(t *testing.T) {
 	}
 	if _, err := (&Session{ID: "../escape"}).Path(); err == nil {
 		t.Fatal("Path accepted traversal ID")
+	}
+}
+
+func TestSessionDeleteRejectsSymlinkTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	s := New(t.TempDir())
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	path, err := s.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte("must survive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, path); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Delete(s.ID); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("Delete symlink = %v, want symbolic-link rejection", err)
+	}
+	if got, err := os.ReadFile(outside); err != nil || string(got) != "must survive" {
+		t.Fatalf("outside target after Delete = %q, %v", got, err)
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("session symlink was removed: %v", err)
 	}
 }
 

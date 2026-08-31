@@ -103,7 +103,7 @@ func (p *windowsParent) stat(name string) (secureEntry, error) {
 	}
 	h, err := openWindowsFile(p.handle, name, windows.FILE_GENERIC_READ, windows.FILE_OPEN)
 	if err != nil {
-		return secureEntry{}, translateWindowsError(err)
+		return secureEntry{}, translateWindowsError("stat", name, err)
 	}
 	defer windows.CloseHandle(h)
 	return windowsEntry(h)
@@ -124,7 +124,7 @@ func wrapWindowsFile(h windows.Handle, name string) (*os.File, error) {
 func (p *windowsParent) openRead(name string) (*os.File, error) {
 	h, err := openWindowsFile(p.handle, name, windows.FILE_GENERIC_READ, windows.FILE_OPEN)
 	if err != nil {
-		return nil, translateWindowsError(err)
+		return nil, translateWindowsError("open", name, err)
 	}
 	entry, err := windowsEntry(h)
 	if err != nil || entry.kind != secureEntryRegular {
@@ -140,7 +140,7 @@ func (p *windowsParent) openRead(name string) (*os.File, error) {
 func (p *windowsParent) openLock(name string) (*os.File, error) {
 	h, err := openWindowsFile(p.handle, name, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE, windows.FILE_OPEN_IF)
 	if err != nil {
-		return nil, translateWindowsError(err)
+		return nil, translateWindowsError("open", name, err)
 	}
 	entry, err := windowsEntry(h)
 	if err != nil || entry.kind != secureEntryRegular {
@@ -156,7 +156,7 @@ func (p *windowsParent) openLock(name string) (*os.File, error) {
 func (p *windowsParent) openExclusive(name string, _ os.FileMode) (*os.File, error) {
 	h, err := openWindowsFile(p.handle, name, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE|windows.DELETE, windows.FILE_CREATE)
 	if err != nil {
-		return nil, translateWindowsError(err)
+		return nil, translateWindowsError("create", name, err)
 	}
 	entry, err := windowsEntry(h)
 	if err != nil || entry.kind != secureEntryRegular {
@@ -172,7 +172,7 @@ func (p *windowsParent) openExclusive(name string, _ os.FileMode) (*os.File, err
 func (p *windowsParent) remove(name string) error {
 	h, err := openWindowsFile(p.handle, name, windows.DELETE|windows.FILE_GENERIC_READ, windows.FILE_OPEN)
 	if err != nil {
-		return translateWindowsError(err)
+		return translateWindowsError("remove", name, err)
 	}
 	defer windows.CloseHandle(h)
 	entry, err := windowsEntry(h)
@@ -187,7 +187,7 @@ func (p *windowsParent) remove(name string) error {
 	}
 	var iosb windows.IO_STATUS_BLOCK
 	disposition := uint32(windows.FILE_DISPOSITION_DELETE)
-	return translateWindowsError(windows.NtSetInformationFile(
+	return translateWindowsError("remove", name, windows.NtSetInformationFile(
 		h,
 		&iosb,
 		(*byte)(unsafe.Pointer(&disposition)),
@@ -243,7 +243,7 @@ func (p *windowsParent) removeMatching(name string, source *os.File) error {
 	}
 	var iosb windows.IO_STATUS_BLOCK
 	disposition := uint32(windows.FILE_DISPOSITION_DELETE)
-	return translateWindowsError(windows.NtSetInformationFile(
+	return translateWindowsError("remove", name, windows.NtSetInformationFile(
 		target,
 		&iosb,
 		(*byte)(unsafe.Pointer(&disposition)),
@@ -378,7 +378,7 @@ func renameWindowsHandle(source, parent windows.Handle, name string) error {
 	info.FileNameLength = uint32(fileNameLength)
 	copy((*[windows.MAX_LONG_PATH]uint16)(unsafe.Pointer(&info.FileName[0]))[:fileNameLength/2:fileNameLength/2], utf16Name[:len(utf16Name)-1])
 	var iosb windows.IO_STATUS_BLOCK
-	return translateWindowsError(windows.NtSetInformationFile(
+	return translateWindowsError("rename", name, windows.NtSetInformationFile(
 		source,
 		&iosb,
 		&buffer[0],
@@ -432,7 +432,7 @@ func openWindowsHandle(parent windows.Handle, name string, access, disposition, 
 		0,
 		0,
 	); err != nil {
-		return 0, translateWindowsError(err)
+		return 0, translateWindowsError("open", name, err)
 	}
 	return handle, nil
 }
@@ -458,7 +458,7 @@ func ntPath(path string) string {
 	return `\??\` + path
 }
 
-func translateWindowsError(err error) error {
+func translateWindowsError(op, path string, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -466,9 +466,13 @@ func translateWindowsError(err error) error {
 	if errors.As(err, &status) {
 		switch status {
 		case windows.STATUS_NO_SUCH_FILE, windows.STATUS_OBJECT_NAME_NOT_FOUND, windows.STATUS_OBJECT_PATH_NOT_FOUND:
-			return fmt.Errorf("%w: %v", os.ErrNotExist, err)
+			// Keep the legacy os.IsNotExist contract as well as errors.Is. The
+			// legacy helper only recognizes the standard os path-error shape;
+			// putting ErrNotExist behind fmt.Errorf would make callers treat a
+			// missing file as an unrelated failure.
+			return &os.PathError{Op: op, Path: path, Err: os.ErrNotExist}
 		case windows.STATUS_OBJECT_NAME_COLLISION, windows.STATUS_OBJECT_NAME_EXISTS:
-			return fmt.Errorf("%w: %v", os.ErrExist, err)
+			return &os.PathError{Op: op, Path: path, Err: os.ErrExist}
 		}
 	}
 	return err
