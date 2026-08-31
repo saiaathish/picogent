@@ -317,6 +317,10 @@ func normalizeResult(result Result, command Command, attempt int) Result {
 		result.Status = StatusFail
 		result.Reason = "verification reported failed tests"
 	}
+	if result.Status == StatusPass && result.OutputTruncated {
+		result.Status = StatusInconclusive
+		result.Reason = "verification output was truncated"
+	}
 	result.OK = result.Status == StatusPass
 	return result
 }

@@ -99,8 +99,11 @@ func TestRunCommandBoundsOutputDuringExecution(t *testing.T) {
 		Display: "verify noisy helper",
 		Args:    []string{"-test.run=^TestVerifyHelperProcess$"},
 	}, 1, 5*time.Second)
-	if result.Status != StatusPass || result.Failed != 0 || !strings.Contains(result.Output, "ok verify/noisy") {
+	if result.Status != StatusInconclusive || result.OK || result.Failed != 0 || !strings.Contains(result.Output, "ok verify/noisy") {
 		t.Fatalf("bounded verifier result = %+v", result)
+	}
+	if result.Reason != "verification output was truncated" {
+		t.Fatalf("bounded verifier reason = %q", result.Reason)
 	}
 	if !result.OutputTruncated || len(result.Output) > MaxOutputBytes || !strings.Contains(result.Output, "truncated") {
 		t.Fatalf("noisy verifier output = len %d truncated=%v", len(result.Output), result.OutputTruncated)
@@ -331,6 +334,22 @@ func TestRunPipelineWithoutTargetsRunsBroaderSuite(t *testing.T) {
 	}
 }
 
+func TestRunPipelineRejectsTruncatedPass(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "go.mod", "module x\n")
+	result := RunPipeline(t.Context(), dir, Options{
+		Executor: func(_ context.Context, _ string, _ Command, _ int, _ time.Duration) Result {
+			return Result{OK: true, Status: StatusPass, Passed: 1, OutputTruncated: true}
+		},
+	})
+	if result.Status != StatusInconclusive || result.Reason != "verification output was truncated" {
+		t.Fatalf("truncated pipeline = %+v", result)
+	}
+	if len(result.Stages) != 2 || len(result.Stages[1].Evidence) != 1 || result.Stages[1].Evidence[0].Status != StatusInconclusive {
+		t.Fatalf("truncated pipeline evidence = %+v", result.Stages)
+	}
+}
+
 func TestRunPipelineCancellationCannotReportPass(t *testing.T) {
 	dir := t.TempDir()
 	writeVerifyFile(t, dir, "go.mod", "module x\n")
@@ -427,6 +446,13 @@ func TestNormalizeResultRejectsContradictoryPass(t *testing.T) {
 	result := normalizeResult(Result{OK: true, Status: StatusPass, Passed: 1, Failed: 1}, Command{Runner: "go", Display: "go test ./..."}, 1)
 	if result.Status != StatusFail || result.OK || result.Reason == "" {
 		t.Fatalf("contradictory result = %+v", result)
+	}
+}
+
+func TestNormalizeResultRejectsTruncatedPass(t *testing.T) {
+	result := normalizeResult(Result{OK: true, Status: StatusPass, Passed: 1, OutputTruncated: true}, Command{Runner: "go", Display: "go test ./..."}, 1)
+	if result.Status != StatusInconclusive || result.OK || result.Reason != "verification output was truncated" {
+		t.Fatalf("truncated result = %+v", result)
 	}
 }
 

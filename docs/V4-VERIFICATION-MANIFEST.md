@@ -25,6 +25,12 @@ still produces `UNVERIFIED` when exact SHA, clean provenance, complete output,
 or required coverage is not proven. `UNVERIFIED` exists only in this evidence
 projection and is not an existing verifier status.
 
+Verification command output is bounded to `8 KiB`. If a command exits
+successfully but its evidence is truncated, the verifier reports
+`INCONCLUSIVE` instead of `PASS`; durable task completion and user-facing
+verification status preserve that conservative result because the captured
+test evidence may be incomplete.
+
 ## Hosted CI evidence
 
 The `release-evidence` job in `.github/workflows/ci.yml` runs after the
