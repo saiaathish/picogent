@@ -839,9 +839,14 @@ func (t *Task) InvalidateLatestVerification(reason string) bool {
 
 // InvalidateWorkspaceEvidence clears passing evidence that was bound to the
 // current workspace generation. It is used after an external restoration,
-// such as /undo, where the task's durable change sequence remains useful for
-// history but no longer proves the files that are now on disk.
+// such as /undo, or after a durable outcome contract change, where the task's
+// durable change sequence remains useful for history but existing proof no
+// longer supports the current completion boundary.
 func (t *Task) InvalidateWorkspaceEvidence(reason string) bool {
+	return t.invalidateCompletionEvidence(reason)
+}
+
+func (t *Task) invalidateCompletionEvidence(reason string) bool {
 	if t == nil {
 		return false
 	}
@@ -870,7 +875,10 @@ func (t *Task) InvalidateWorkspaceEvidence(reason string) bool {
 			})
 		}
 	}
-	if t.VerifiedChangeSeq >= 0 {
+	// A zero verified sequence is also the legacy/default value for a task
+	// that has never run verification. Do not turn that initialization marker
+	// into a failure merely because a new intent was recorded.
+	if len(t.Verification) > 0 && t.VerifiedChangeSeq >= 0 {
 		t.VerifiedChangeSeq = -1
 		changed = true
 	}

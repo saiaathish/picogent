@@ -17,6 +17,9 @@ func TestIntentRevisionChangesOnlyWhenInterpretationChanges(t *testing.T) {
 	if !changedInitial || task.IntentRevision != 1 {
 		t.Fatalf("initial intent update = changed:%v revision:%d", changedInitial, task.IntentRevision)
 	}
+	if task.NeedsVerification() {
+		t.Fatal("recording the initial intent made an untouched task need verification")
+	}
 	if task.SetIntent(intent) {
 		t.Fatal("identical intent unexpectedly advanced revision")
 	}
@@ -27,6 +30,123 @@ func TestIntentRevisionChangesOnlyWhenInterpretationChanges(t *testing.T) {
 	}
 	if err := task.Validate(); err != nil {
 		t.Fatalf("intent revision state invalid: %v", err)
+	}
+}
+
+func TestIntentChangeInvalidatesCurrentQualityProof(t *testing.T) {
+	task, err := New("intent-proof", "finish the requested change", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := &IntentContract{Outcome: task.Goal, Class: "general", NeedsTests: true}
+	if !task.SetIntent(initial) {
+		t.Fatal("initial intent was not recorded")
+	}
+	task.RecordTestsEvidence("PASS", "current tests passed", "go test ./...")
+	if !task.CompletionReady() {
+		t.Fatal("current quality proof did not complete the initial contract")
+	}
+	historical := len(task.Evidence)
+
+	changed := *initial
+	changed.Class = "bug"
+	if !task.SetIntent(&changed) {
+		t.Fatal("changed intent was not recorded")
+	}
+	if task.CompletionReady() {
+		t.Fatal("quality proof from the previous contract remained completion-ready")
+	}
+	status, current, origin := task.RequirementEvidenceState(EvidenceKindTests)
+	if status != "INCONCLUSIVE" || current || origin != EvidenceOriginSystem {
+		t.Fatalf("invalidated quality proof = status=%q current=%v origin=%q", status, current, origin)
+	}
+	if len(task.Evidence) <= historical {
+		t.Fatalf("contract change did not retain an invalidation record: %#v", task.Evidence)
+	}
+}
+
+func TestIntentChangeInvalidatesCurrentCriterionProof(t *testing.T) {
+	task, err := New("intent-criterion-proof", "finish the requested change", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []Criterion{{Description: "required proof", Required: true}}
+	if !task.SetIntent(&IntentContract{Outcome: task.Goal, Class: "general"}) {
+		t.Fatal("initial intent was not recorded")
+	}
+	task.RecordCriterionVerification(0, "PASS", "criterion passed", "verify")
+	if !task.CompletionReady() {
+		t.Fatal("current criterion proof did not complete the initial contract")
+	}
+
+	changed := &IntentContract{Outcome: task.Goal, Class: "documentation"}
+	if !task.SetIntent(changed) {
+		t.Fatal("changed intent was not recorded")
+	}
+	status, current := task.CriterionEvidenceState(0)
+	if status != "INCONCLUSIVE" || !current {
+		t.Fatalf("invalidated criterion proof = status=%q current=%v", status, current)
+	}
+	if task.CompletionReady() {
+		t.Fatal("criterion proof from the previous contract remained completion-ready")
+	}
+}
+
+func TestEquivalentIntentDoesNotInvalidateProof(t *testing.T) {
+	task, err := New("equivalent-intent", "finish the requested change", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := &IntentContract{Outcome: task.Goal, Class: "general", NeedsTests: true}
+	if !task.SetIntent(initial) {
+		t.Fatal("initial intent was not recorded")
+	}
+	task.RecordTestsEvidence("PASS", "current tests passed", "go test ./...")
+	historical := len(task.Evidence)
+
+	equivalent := *initial
+	equivalent.Outcome = "  " + task.Goal + "  "
+	if task.SetIntent(&equivalent) {
+		t.Fatal("equivalent normalized intent advanced the contract")
+	}
+	if len(task.Evidence) != historical || !task.CompletionReady() {
+		t.Fatalf("equivalent intent invalidated proof: evidence=%#v ready=%v", task.Evidence, task.CompletionReady())
+	}
+}
+
+func TestIntentProofInvalidationPersistsAcrossReload(t *testing.T) {
+	task, err := New("intent-reload", "finish the requested change", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial := &IntentContract{Outcome: task.Goal, Class: "general", NeedsTests: true}
+	if !task.SetIntent(initial) {
+		t.Fatal("initial intent was not recorded")
+	}
+	task.RecordTestsEvidence("PASS", "current tests passed", "go test ./...")
+	store := NewStore(t.TempDir())
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := *initial
+	changed.Class = "bug"
+	if !task.SetIntent(&changed) {
+		t.Fatal("changed intent was not recorded")
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := store.Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, current, origin := restored.RequirementEvidenceState(EvidenceKindTests)
+	if status != "INCONCLUSIVE" || current || origin != EvidenceOriginSystem {
+		t.Fatalf("reloaded invalidation = status=%q current=%v origin=%q", status, current, origin)
+	}
+	if restored.CompletionReady() {
+		t.Fatal("reloaded task reused proof from the previous contract")
 	}
 }
 
