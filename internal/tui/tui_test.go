@@ -672,6 +672,62 @@ func TestStopInvalidatesActiveTurnID(t *testing.T) {
 	}
 }
 
+func TestQuitKeysStopBeforeQuitting(t *testing.T) {
+	for _, key := range []struct {
+		name string
+		key  tea.KeyType
+	}{
+		{name: "ctrl-c", key: tea.KeyCtrlC},
+		{name: "ctrl-d", key: tea.KeyCtrlD},
+	} {
+		t.Run(key.name, func(t *testing.T) {
+			canceled := false
+			m := &model{
+				turnID: 2,
+				cancel: func() { canceled = true },
+				h:      &handler{permCh: make(chan perm.Decision, 1)},
+			}
+
+			_, cmd := m.Update(tea.KeyMsg{Type: key.key})
+			if cmd == nil {
+				t.Fatal("quit key returned no quit command")
+			}
+			if _, ok := cmd().(tea.QuitMsg); !ok {
+				t.Fatalf("quit key command = %T, want tea.QuitMsg", cmd())
+			}
+			if !canceled {
+				t.Fatal("quit key did not cancel the active turn")
+			}
+			if m.turnID != 3 {
+				t.Fatalf("turn ID after quit key = %d, want 3", m.turnID)
+			}
+		})
+	}
+}
+
+func TestQuitSlashStopsBeforeQuitting(t *testing.T) {
+	canceled := false
+	m := &model{
+		turnID: 2,
+		cancel: func() { canceled = true },
+		h:      &handler{permCh: make(chan perm.Decision, 1)},
+	}
+
+	cmd := m.slash("/quit")
+	if cmd == nil {
+		t.Fatal("/quit returned no quit command")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("/quit command = %T, want tea.QuitMsg", cmd())
+	}
+	if !canceled {
+		t.Fatal("/quit did not cancel the active turn")
+	}
+	if m.turnID != 3 {
+		t.Fatalf("turn ID after /quit = %d, want 3", m.turnID)
+	}
+}
+
 func TestHandlerTagsEventsWithTurnAndSession(t *testing.T) {
 	var got []tea.Msg
 	h := &handler{
