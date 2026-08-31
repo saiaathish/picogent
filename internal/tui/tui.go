@@ -182,14 +182,17 @@ func Run() error {
 	if err != nil {
 		return err
 	}
-	m := newModel(cfg, a)
+	m, err := newModel(cfg, a)
+	if err != nil {
+		return err
+	}
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	m.h.send = func(msg tea.Msg) { p.Send(msg) }
 	_, err = p.Run()
 	return err
 }
 
-func newModel(cfg config.Config, a *agent.Agent) *model {
+func newModel(cfg config.Config, a *agent.Agent) (*model, error) {
 	ta := textarea.New()
 	ta.Placeholder = "What should Picogent do?"
 	ta.Focus()
@@ -203,7 +206,9 @@ func newModel(cfg config.Config, a *agent.Agent) *model {
 	sessionID, history, resumed := initialSession(cfg.Workspace)
 	m := &model{cfg: cfg, ag: a, ta: ta, vp: vp, h: h, sessionID: sessionID, history: history}
 	if a != nil {
-		a.SetTaskSession(m.sessionID)
+		if err := a.SetTaskSession(m.sessionID); err != nil {
+			return nil, fmt.Errorf("load durable task state: %w", err)
+		}
 		m.task = a.TaskSnapshot()
 	}
 	m.lines = []logLine{{Kind: "system", Text: greeting(cfg, a)}}
@@ -214,7 +219,7 @@ func newModel(cfg config.Config, a *agent.Agent) *model {
 		m.lines = append(m.lines, logLine{Kind: "error", Text: err.Error()})
 	}
 	m.refresh()
-	return m
+	return m, nil
 }
 
 func initialSession(workspace string) (id string, history []llm.Message, resumed bool) {
@@ -643,7 +648,9 @@ func (m *model) reflectCmd(prompt string, result agent.Result, turnID uint64, se
 func (m *model) slashLocal(payload string) tea.Cmd {
 	switch {
 	case payload == "clear":
-		m.startNewSession("cleared")
+		if err := m.startNewSession("cleared"); err != nil {
+			m.lines = append(m.lines, logLine{Kind: "error", Text: err.Error()})
+		}
 	case payload == "compact":
 		if len(m.history) > 16 {
 			head := m.history[0]
@@ -685,10 +692,21 @@ func (m *model) slashLocal(payload string) tea.Cmd {
 	case payload == "resume":
 		m.stop()
 		if prev, err := session.Latest(m.cfg.Workspace); err == nil {
+			previous := m.sessionID
+			if m.ag != nil {
+				if err := m.ag.SetTaskSession(prev.ID); err != nil {
+					_ = m.ag.SetTaskSession(previous)
+					m.lines = append(m.lines, logLine{Kind: "error", Text: "couldn't resume session: " + err.Error()})
+					break
+				}
+			}
 			m.history = prev.Messages
 			m.sessionID = prev.ID
-			m.ag.SetTaskSession(prev.ID)
-			m.task = m.ag.TaskSnapshot()
+			if m.ag != nil {
+				m.task = m.ag.TaskSnapshot()
+			} else {
+				m.task = nil
+			}
 			m.lines = append(m.lines, logLine{Kind: "system", Text: "resumed " + prev.ID})
 		} else {
 			m.lines = append(m.lines, logLine{Kind: "error", Text: "no saved session"})
@@ -821,7 +839,9 @@ func (m *model) slash(line string) tea.Cmd {
 		_ = config.Save(m.cfg)
 		m.lines = append(m.lines, logLine{Kind: "system", Text: "provider: " + string(m.cfg.Provider) + "  model: " + m.cfg.Model})
 	case "/reset":
-		m.startNewSession("new session")
+		if err := m.startNewSession("new session"); err != nil {
+			m.lines = append(m.lines, logLine{Kind: "error", Text: err.Error()})
+		}
 	default:
 		m.lines = append(m.lines, logLine{Kind: "error", Text: "unknown command " + cmd + "  (try /help)"})
 	}
@@ -850,7 +870,7 @@ func (m *model) saveMode(mode config.Mode) {
 // startNewSession drops the current chat and durable execution state before
 // assigning a fresh session ID. A canceled turn may still emit late events,
 // so stop invalidates its turn ID before the session switch.
-func (m *model) startNewSession(message string) {
+func (m *model) startNewSession(message string) error {
 	m.stop()
 	previous := m.sessionID
 	next := session.New(m.cfg.Workspace).ID
@@ -859,10 +879,15 @@ func (m *model) startNewSession(message string) {
 		// /clear followed by /reset cannot reopen the current task state.
 		next = fmt.Sprintf("%s-%d", next, time.Now().UnixNano())
 	}
+	if m.ag != nil {
+		if err := m.ag.SetTaskSession(next); err != nil {
+			_ = m.ag.SetTaskSession(previous)
+			return fmt.Errorf("couldn't start new session: %w", err)
+		}
+	}
 	m.history = nil
 	m.sessionID = next
 	if m.ag != nil {
-		m.ag.SetTaskSession(m.sessionID)
 		// Inferred task modes belong to the old conversation. Restore the
 		// configured/manual baseline for this fresh session instead.
 		m.ag.SetTaskMode(agent.ParseTaskMode(m.cfg.TaskMode))
@@ -871,6 +896,7 @@ func (m *model) startNewSession(message string) {
 		m.task = nil
 	}
 	m.lines = []logLine{{Kind: "system", Text: message}}
+	return nil
 }
 
 func (m *model) layout() {

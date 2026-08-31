@@ -33,6 +33,90 @@ func TestInitialSessionResumesLatestSavedSession(t *testing.T) {
 	}
 }
 
+func TestNewModelSurfacesDurableTaskFailure(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	const sessionID = "corrupt-session"
+	if err := session.SaveMessages(workspace, sessionID, []llm.Message{{Role: "user", Content: "resume me"}}); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(t.TempDir())
+	path, err := store.Path(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = store
+
+	m, err := newModel(cfg, a)
+	if err == nil || !strings.Contains(err.Error(), "load durable task state") {
+		t.Fatalf("newModel error = %v, want durable-load failure", err)
+	}
+	if m != nil {
+		t.Fatalf("newModel returned a model after durable-load failure: %#v", m)
+	}
+}
+
+func TestResumeDoesNotClaimSuccessWhenDurableTaskLoadFails(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	const targetSession = "target-session"
+	if err := session.SaveMessages(workspace, targetSession, []llm.Message{{Role: "user", Content: "target"}}); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(t.TempDir())
+	path, err := store.Path(targetSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = store
+	const currentSession = "current-session"
+	if err := a.SetTaskSession(currentSession); err != nil {
+		t.Fatal(err)
+	}
+	m := &model{
+		cfg:       cfg,
+		ag:        a,
+		sessionID: currentSession,
+		history:   []llm.Message{{Role: "user", Content: "current"}},
+		lines:     []logLine{{Kind: "system", Text: "ready"}},
+		vp:        viewport.New(80, 20),
+	}
+
+	m.slashLocal("resume")
+	last := m.lines[len(m.lines)-1]
+	if last.Kind != "error" || !strings.Contains(last.Text, "couldn't resume session") {
+		t.Fatalf("resume result = %#v, want visible durable-load error", last)
+	}
+	for _, line := range m.lines {
+		if strings.Contains(line.Text, "resumed ") {
+			t.Fatalf("resume success message was published: %#v", m.lines)
+		}
+	}
+	if m.sessionID != currentSession || len(m.history) != 1 || m.history[0].Content != "current" || a.TaskSession != currentSession {
+		t.Fatalf("failed resume changed current session: model=%q history=%#v agent=%q", m.sessionID, m.history, a.TaskSession)
+	}
+}
+
 func TestAssistantFinalReplacesStreamedText(t *testing.T) {
 	m := &model{lines: []logLine{{Kind: "assistant", Text: "Undo: git checkout -- note.txt"}}}
 	_, _ = m.Update(logMsg{Kind: "assistant_final", Text: "Undo: /undo"})
@@ -503,7 +587,10 @@ func TestFormatTaskProgress(t *testing.T) {
 
 func TestTemporaryScopeModeVisibleInHeader(t *testing.T) {
 	mode := agent.TaskPlan
-	m := newModel(config.Default(), nil)
+	m, err := newModel(config.Default(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	m.turnMode = &mode
 	m.width, m.height = 100, 30
 	view := m.View()

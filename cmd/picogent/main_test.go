@@ -23,6 +23,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/projects"
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
@@ -136,6 +137,49 @@ func TestHeadlessTaskSessionIDIsStableAndSafe(t *testing.T) {
 	}
 	if a == headlessTaskSessionID("fix the logout flow") {
 		t.Fatal("different prompts shared a headless task session")
+	}
+}
+
+func TestHeadlessDurableLoadFailureStopsBeforeRun(t *testing.T) {
+	home := t.TempDir()
+	workspace := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+	t.Setenv("PICOGENT_PROVIDER", "")
+	t.Setenv("PICOGENT_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("PICOGENT_BASE_URL", "")
+	t.Setenv("PICOGENT_ROUTER", "0")
+	t.Setenv("PICOGENT_MODE", "")
+	cfg := config.Default()
+	cfg.SetupComplete = true
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	root, err := config.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(filepath.Join(root, "tasks", projects.IDForPath(workspace)))
+	path, err := store.Path(headlessTaskSessionID("say hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = run([]string{"run", "--dir", workspace, "say hello"})
+	if err == nil || !strings.Contains(err.Error(), "load durable task state") {
+		t.Fatalf("headless run error = %v, want durable-load failure", err)
+	}
+	if exitCode(err) != 1 {
+		t.Fatalf("headless durable-load exit code = %d, want 1", exitCode(err))
 	}
 }
 
