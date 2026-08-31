@@ -30,6 +30,31 @@ func TestIntentRevisionChangesOnlyWhenInterpretationChanges(t *testing.T) {
 	}
 }
 
+func TestRecoverActiveTurnRecordsProcessRestart(t *testing.T) {
+	task, err := New("restart-recovery", "resume the interrupted outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Attempts = 2
+	sequence, ok := task.BeginTurn(TurnRouteImplement)
+	if !ok {
+		t.Fatal("active turn did not start")
+	}
+	if !task.RecoverActiveTurn() {
+		t.Fatal("active turn was not recovered")
+	}
+	last := task.LastTurn()
+	if last == nil || last.Sequence != sequence || last.State != TurnInterrupted || last.Route != string(TurnRouteRecover) || last.EvidenceState != "UNVERIFIED" || last.StopReason != StopProcessRestart || last.Hypothesis == "" || last.FinishedAt == nil {
+		t.Fatalf("recovered turn = %#v, want explicit process-restart metadata", last)
+	}
+	if task.RecoverActiveTurn() {
+		t.Fatal("already recovered turn was changed again")
+	}
+	if err := task.Validate(); err != nil {
+		t.Fatalf("recovered task is invalid: %v", err)
+	}
+}
+
 func TestTurnLedgerIsBoundedPersistentAndIdentityBound(t *testing.T) {
 	task, err := New("turn-ledger", "finish the requested change", []string{"inspect"})
 	if err != nil {
