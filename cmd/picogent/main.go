@@ -361,6 +361,7 @@ func runOnceContext(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer a.Close()
 	if *model != "" {
 		cfg.Model = *model
 		a.SetModel(*model)
