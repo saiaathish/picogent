@@ -31,6 +31,28 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
+type reentrantGUIChatClient struct {
+	started       chan struct{}
+	allowCallback chan struct{}
+	callbackDone  chan struct{}
+	startOnce     sync.Once
+	callbackOnce  sync.Once
+	callback      func()
+}
+
+func (c *reentrantGUIChatClient) Chat(ctx context.Context, _ llm.ChatRequest) (llm.ChatResponse, error) {
+	c.startOnce.Do(func() { close(c.started) })
+	<-c.allowCallback
+	c.callbackOnce.Do(func() {
+		if c.callback != nil {
+			c.callback()
+		}
+		close(c.callbackDone)
+	})
+	<-ctx.Done()
+	return llm.ChatResponse{}, ctx.Err()
+}
+
 func TestVerificationEventStatusPreservesEveryOutcome(t *testing.T) {
 	tests := []struct {
 		status verify.Status
@@ -1842,6 +1864,68 @@ func TestStaleTurnUsesCapturedAgentSessionAfterReset(t *testing.T) {
 	if currentAgent.TaskSession != newID {
 		t.Fatalf("current agent task session = %q, want %q", currentAgent.TaskSession, newID)
 	}
+}
+
+func TestResetReleasesServerLockBeforeWaitingForActiveTurn(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	c := &reentrantGUIChatClient{
+		started:       make(chan struct{}),
+		allowCallback: make(chan struct{}),
+		callbackDone:  make(chan struct{}),
+	}
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, c, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	s := &server{
+		cfg:       cfg,
+		ag:        ag,
+		sessionID: "transition-deadlock",
+		liveTask:  agent.TaskAgent,
+		permCh:    make(chan perm.Decision, 1),
+	}
+	c.callback = func() {
+		s.mu.Lock()
+		s.mu.Unlock()
+	}
+	transitionLocked := make(chan struct{})
+	s.beforeSessionClone = func() { close(transitionLocked) }
+
+	s.startAgentTurn("hold the project run lock", nil)
+	select {
+	case <-c.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("turn did not reach the provider")
+	}
+
+	resetDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		res := httptest.NewRecorder()
+		s.reset(res, httptest.NewRequest(http.MethodPost, "/api/reset", nil))
+		resetDone <- res
+	}()
+	select {
+	case <-transitionLocked:
+	case <-time.After(5 * time.Second):
+		t.Fatal("reset did not reach the session transition")
+	}
+	close(c.allowCallback)
+
+	select {
+	case res := <-resetDone:
+		if res.Code != http.StatusOK {
+			t.Fatalf("reset status = %d, body=%s", res.Code, res.Body.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reset waited on the project run while holding the server mutex")
+	}
+	select {
+	case <-c.callbackDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("canceled provider callback could not reacquire the server mutex")
+	}
+	s.waitForTurns()
 }
 
 func TestSettingsWorkspaceChangeRebuildsProjectRuntime(t *testing.T) {

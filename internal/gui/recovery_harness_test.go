@@ -41,9 +41,7 @@ func TestReconnectSnapshotDoesNotResurfaceRetiredTask(t *testing.T) {
 		t.Fatalf("pre-rotation snapshot task = %#v", s.snapshot()["task"])
 	}
 
-	s.mu.Lock()
-	newSession, saveErr, taskErr := s.newSessionLocked()
-	s.mu.Unlock()
+	newSession, saveErr, taskErr := s.newSession()
 	if taskErr != nil {
 		t.Fatalf("load task session during rotation: %v", taskErr)
 	}
