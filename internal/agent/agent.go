@@ -531,6 +531,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		filesChanged := sortedChanged(changed)
 		closeTurn(interrupted, durableTurnRouteForOutcome(task, taskMode, lastVerification, taskBlocker, filesChanged, goalDone, interrupted, failed), durableTurnHypothesis(task, taskMode, lastVerification, taskBlocker, filesChanged, goalDone, interrupted, failed), lastVerification, stop, res.ToolRounds)
 	}
+	turnCloseFailure := func(err error) error {
+		if turnCloseErr == nil {
+			return err
+		}
+		return errors.Join(err, turnCloseErr)
+	}
 	defer func() {
 		if turnSequence == 0 || turnClosed {
 			return
@@ -588,7 +594,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			res.FilesChanged = sortedChanged(changed)
 			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 			closeTurnFor(true, false, taskstate.StopResourceUnavailable)
-			return msgs, res, wrapped
+			if turnCloseErr != nil {
+				res.Task = a.TaskSnapshot()
+			}
+			return msgs, res, turnCloseFailure(wrapped)
 		}
 		msg := out.Message
 		if msg.Role == "" {
@@ -732,7 +741,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				res.FilesChanged = sortedChanged(changed)
 				a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 				closeTurnFor(true, false, taskstate.StopResourceUnavailable)
-				return msgs, res, err
+				if turnCloseErr != nil {
+					res.Task = a.TaskSnapshot()
+				}
+				return msgs, res, turnCloseFailure(err)
 			}
 			if dec == perm.Deny {
 				taskBlocker = "permission needed"
@@ -866,6 +878,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	res.Task = a.TaskSnapshot()
 	closeTurnFor(false, false, taskstate.StopBudgetExhausted)
 	res.Task = a.TaskSnapshot()
+	err = turnCloseFailure(err)
 	ev.OnError(err)
 	msgs = stripDurableInternal(msgs)
 	final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
