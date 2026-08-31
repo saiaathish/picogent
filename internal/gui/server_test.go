@@ -872,6 +872,54 @@ func TestSessionLoadRequiresCurrentWorkspace(t *testing.T) {
 	}
 }
 
+func TestSessionLoadSurfacesDurableTaskFailure(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	const targetSession = "target-session"
+	path, err := store.Path(targetSession)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := session.SaveMessages(workspace, targetSession, []llm.Message{{Role: "user", Content: "resume me"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	ag.TaskStore = store
+	const currentSession = "current-session"
+	if err := ag.SetTaskSession(currentSession); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: cfg, ag: ag, sessionID: currentSession}
+
+	res := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"action":"load","id":"`+targetSession+`"}`))
+	s.sessions(res, req)
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body=%s; want durable-load failure", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "durable task state") {
+		t.Fatalf("body = %q, missing durable task diagnostic", res.Body.String())
+	}
+	s.mu.Lock()
+	gotSession := s.sessionID
+	gotAgent := s.ag
+	s.mu.Unlock()
+	if gotSession != currentSession || gotAgent != ag || ag.TaskSession != currentSession {
+		t.Fatalf("failed load changed live session: server=%q agent=%q replaced=%t", gotSession, ag.TaskSession, gotAgent != ag)
+	}
+}
+
 func TestChatRejectsInvalidExplicitScopeChoice(t *testing.T) {
 	s := &server{cfg: config.Config{Workspace: t.TempDir()}}
 	res := httptest.NewRecorder()
