@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -139,6 +140,9 @@ func saveLocked(path string, reg Registry) error {
 	data, err := yaml.Marshal(reg)
 	if err != nil {
 		return err
+	}
+	if len(data) > maxRegistryBytes {
+		return fmt.Errorf("%w: registry %q exceeds %d bytes", securefile.ErrReadLimit, path, maxRegistryBytes)
 	}
 	return securefile.WriteAtomic(path, data, 0o644)
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/projects"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 func TestAddAndSwitch(t *testing.T) {
@@ -122,5 +123,27 @@ func TestSaveIfCurrentRejectsStaleRollback(t *testing.T) {
 	}
 	if got.Current != second.Current {
 		t.Fatalf("stale rollback overwrote newer registry: got %#v", got)
+	}
+}
+
+func TestSaveRejectsOversizedRegistryBeforePublication(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+
+	path := filepath.Join(home, "projects.yaml")
+	original := []byte("current: keep\nprojects: []\n")
+	if err := os.WriteFile(path, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reg := projects.Registry{Projects: []projects.Project{{Name: string(make([]byte, 128<<10))}}}
+	if err := projects.Save(reg); !errors.Is(err, securefile.ErrReadLimit) {
+		t.Fatalf("oversized Save error = %v, want securefile.ErrReadLimit", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("oversized Save changed existing registry to %q", got)
 	}
 }
