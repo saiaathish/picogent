@@ -74,6 +74,7 @@ let activityPanel = null;
 let activityComplete = false;
 let undoAvailable = false;
 let undoInFlight = false;
+let historyReplayPending = false;
 
 let ready = false;
 let busy = false;
@@ -613,6 +614,9 @@ async function loadProjects() {
 }
 
 async function applyProjectSwitch(data) {
+  viewEpoch++;
+  const epoch = viewEpoch;
+  historyReplayPending = false;
   clearTaskProgress();
   setUndoAvailable(false);
   sessionId = data.session_id || sessionId;
@@ -620,6 +624,7 @@ async function applyProjectSwitch(data) {
   else clearLog();
   setChatsOpen(true);
   await refresh();
+  if (epoch !== viewEpoch) return;
 }
 
 async function pickProjectFolder() {
@@ -973,7 +978,6 @@ function replayMessages(msgs) {
 
 async function loadThreads() {
   const data = await (await fetch("/api/sessions")).json();
-  sessionId = data.current_id || sessionId;
   threadsCache = data.sessions || [];
   renderThreads();
   renderRecentSessions();
@@ -1055,6 +1059,7 @@ async function loadThread(id) {
   if (busy) return;
   viewEpoch++;
   const epoch = viewEpoch;
+  historyReplayPending = false;
   const data = await (
     await fetch("/api/sessions", {
       method: "POST",
@@ -1074,6 +1079,7 @@ async function loadThread(id) {
 async function newChat() {
   viewEpoch++;
   const epoch = viewEpoch;
+  historyReplayPending = false;
   setChatsOpen(false);
   if (busy) {
     try { await fetch("/api/cancel", { method: "POST" }); } catch (_) {}
@@ -1093,6 +1099,7 @@ async function newChat() {
   // Starter hero is inside #empty — force it visible before prompts paint.
   emptyEl.hidden = false;
   await loadThreads();
+  if (epoch !== viewEpoch) return;
   loadHeroPrompts(true);
   // Re-pull overview / auth so repo knowledge shows on a fresh chat.
   try {
@@ -1124,6 +1131,8 @@ async function refresh(reconcileHistory = false) {
   const nextSessionID = s.session_id || sessionId;
   const sessionChanged = nextSessionID !== sessionId;
   sessionId = nextSessionID;
+  const serverBusy = !!s.busy;
+  const clientBusy = busy;
   currentMode = s.mode || "safe";
   currentTaskMode = s.task_mode || "agent";
   taskModeTemporary = !!s.task_mode_temporary;
@@ -1152,12 +1161,19 @@ async function refresh(reconcileHistory = false) {
   } else if (!s.busy) {
     permEl.classList.remove("is-on");
   }
-  if (reconcileHistory || sessionChanged) {
-    replayMessages(Array.isArray(s.messages) ? s.messages : []);
+  if (reconcileHistory || sessionChanged || historyReplayPending) {
+    // A reconnect during an active turn must not erase the local prompt or
+    // partial assistant stream: the durable snapshot intentionally lags until
+    // the turn completes. If the session changed, however, the old transcript
+    // is already stale and must be replaced immediately.
+    if (!serverBusy || sessionChanged || !clientBusy) {
+      replayMessages(Array.isArray(s.messages) ? s.messages : []);
+    }
+    historyReplayPending = serverBusy;
   } else if (logEl.children.length === 0 && s.messages?.length) {
     replayMessages(s.messages);
   }
-  busy = !!s.busy;
+  busy = serverBusy;
   if (Object.prototype.hasOwnProperty.call(s, "undo_available")) {
     setUndoAvailable(!!s.undo_available);
   } else {
@@ -1167,7 +1183,9 @@ async function refresh(reconcileHistory = false) {
   setThinking(busy);
   syncEmpty();
   await loadThreads();
+  if (epoch !== viewEpoch) return;
   await loadProjects();
+  if (epoch !== viewEpoch) return;
   return s;
 }
 
