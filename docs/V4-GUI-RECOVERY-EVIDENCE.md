@@ -34,25 +34,37 @@ is attached to this evidence.
    `ready=true`, the new session ID, and an empty transcript. The prior chats
    remained in the history list, so recovery cleared only the stale in-session
    view.
+6. A delayed active-turn probe forced a fresh `EventSource` while
+   `clientBusy=true`; the submitted prompt remained visible during reconnect.
+   When the stub response completed, `Slow reconnect probe completed.` rendered
+   as the assistant turn. A full browser reload then showed both the prompt and
+   assistant response with the composer enabled, confirming durable completion
+   after the active-turn reconnect.
 
 The final patched observation was read directly from the rendered page after a
 five-second reconnect wait. It reported `sendDisabled=false`, an `OPEN`
 EventSource, the new session ID, and `logText=""`; the history list still held
-the two earlier completed conversations.
+the two earlier completed conversations. The active-turn follow-up was also
+reloaded from the server and retained both rendered turns.
 
 ## Implementation boundary
 
 `refresh(true)` now runs when the native `EventSource` opens. The refresh also
 detects a server-reported session change and replays the durable transcript (or
-clears it when the new session has no messages). Ordinary refreshes retain the
-existing empty-log fast path. The embedded GUI test asserts that the reconnect
-refresh and session-change reconciliation remain wired together.
+clears it when the new session has no messages). While the server is still busy,
+the reconciliation marks a pending replay so it does not erase the local prompt
+or partial assistant stream; the durable transcript is replayed after the turn
+finishes. Session-view epochs also prevent delayed session/project refreshes
+from repainting a newer selection. Ordinary refreshes retain the existing
+empty-log fast path. The embedded GUI test asserts that the reconnect refresh,
+session-change reconciliation, pending active-turn replay, and async view
+guards remain wired together.
 
 Focused validation:
 
 ```text
 go test ./internal/gui -count=1
-ok   github.com/saiaathish/picogent/internal/gui  13.943s
+ok   github.com/saiaathish/picogent/internal/gui  28.403s
 ```
 
 ## Limits and remaining gaps
