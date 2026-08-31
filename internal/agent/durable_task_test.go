@@ -34,6 +34,7 @@ type terminalSaveFailureHandler struct {
 	switched bool
 	mu       sync.Mutex
 	errors   []error
+	texts    []string
 }
 
 func (h *terminalSaveFailureHandler) OnTaskState(task *taskstate.Task) {
@@ -52,6 +53,12 @@ func (h *terminalSaveFailureHandler) OnError(err error) {
 	}
 	h.mu.Lock()
 	h.errors = append(h.errors, err)
+	h.mu.Unlock()
+}
+
+func (h *terminalSaveFailureHandler) OnText(text string) {
+	h.mu.Lock()
+	h.texts = append(h.texts, text)
 	h.mu.Unlock()
 }
 
@@ -877,6 +884,9 @@ func TestDurableTaskTerminalSaveFailureIsReturned(t *testing.T) {
 	}
 	if result.GoalDone {
 		t.Fatal("terminal save failure must not report GoalDone")
+	}
+	if len(h.texts) != 0 {
+		t.Fatalf("terminal success text was published after save failure: %q", h.texts)
 	}
 	loaded, err := goodStore.Load("terminal-save-failure")
 	if err != nil {

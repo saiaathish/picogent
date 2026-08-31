@@ -478,8 +478,8 @@ func (a *Agent) blockDurableTask(reason string, ev EventHandler) {
 	})
 }
 
-func (a *Agent) finishDurableTask(text, blocker string, ev EventHandler) {
-	a.mutateTask(ev, func(task *taskstate.Task) error {
+func (a *Agent) finishDurableTask(text, blocker string, ev EventHandler) error {
+	snapshot, err := a.mutateTaskResult(func(task *taskstate.Task) error {
 		if blocker != "" {
 			task.Block(blocker)
 		} else if task.Status == taskstate.StatusBlocked {
@@ -513,6 +513,29 @@ func (a *Agent) finishDurableTask(text, blocker string, ev EventHandler) {
 		}
 		return nil
 	})
+	if err != nil {
+		if errors.Is(err, errTaskMutationSkipped) {
+			return nil
+		}
+		var persistenceErr *taskPersistenceError
+		if errors.As(err, &persistenceErr) {
+			err = fmt.Errorf("durable task state was not saved: %w", err)
+			if ev != nil {
+				ev.OnError(err)
+			}
+			return err
+		}
+		// A logical completion refusal, such as missing current proof, is an
+		// expected non-terminal state. Preserve the existing behavior of
+		// reporting it to the event surface without turning the whole turn into
+		// a persistence failure.
+		a.reportTaskUpdateError(ev, err)
+		return nil
+	}
+	if snapshot != nil {
+		emitTaskState(ev, snapshot)
+	}
+	return nil
 }
 
 func (a *Agent) setTaskStatus(status taskstate.Status, ev EventHandler) {
