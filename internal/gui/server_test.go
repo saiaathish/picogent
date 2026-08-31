@@ -1650,6 +1650,65 @@ func TestGUIHTTPErrorSanitizesUntrustedText(t *testing.T) {
 	}
 }
 
+func TestGUITranscriptProjectionRedactsLiveToolOutput(t *testing.T) {
+	const secret = "gui-transcript-secret"
+	lines := messagesToTranscript([]llm.Message{
+		{Role: "user", Content: "ordinary user text; token=" + secret},
+		{Role: "assistant", Content: "ordinary assistant text; password=" + secret},
+		{Role: "tool", Content: "tool output\n\x1b[31maccess_token=" + secret},
+	})
+	if len(lines) != 3 {
+		t.Fatalf("transcript lines = %#v, want user, assistant, and tool", lines)
+	}
+	if strings.Contains(lines[0].Text, secret) || strings.Contains(lines[1].Text, secret) {
+		t.Fatalf("ordinary transcript text changed = %#v", lines[:2])
+	}
+	for _, text := range []string{lines[0].Text, lines[1].Text} {
+		if strings.ContainsAny(text, "\x1b\n\r") || !strings.Contains(text, "[REDACTED]") {
+			t.Fatalf("live transcript role was not sanitized: %q", text)
+		}
+	}
+	toolText := lines[2].Text
+	if strings.Contains(toolText, secret) {
+		t.Fatalf("live tool transcript leaked secret: %q", toolText)
+	}
+	if strings.ContainsAny(toolText, "\x1b\n\r") {
+		t.Fatalf("live tool transcript retained terminal control: %q", toolText)
+	}
+	if !strings.Contains(toolText, "[REDACTED]") {
+		t.Fatalf("live tool transcript did not show a redaction marker: %q", toolText)
+	}
+	if len(toolText) > 403 {
+		t.Fatalf("live tool transcript exceeded the existing 400-byte-plus-ellipsis bound: %d", len(toolText))
+	}
+}
+
+func TestGUIStateRedactsLiveTranscriptBeforeJSON(t *testing.T) {
+	const secret = "gui-state-transcript-secret"
+	s := &server{
+		cfg:  config.Config{Workspace: t.TempDir()},
+		hist: []llm.Message{{Role: "tool", Content: "provider output access_token=" + secret}},
+	}
+	rec := httptest.NewRecorder()
+	s.state(rec, httptest.NewRequest(http.MethodGet, "/api/state", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("state status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, secret) || strings.ContainsAny(body, "\x1b") {
+		t.Fatalf("state response leaked or retained hostile transcript text: %q", body)
+	}
+	var payload struct {
+		Messages []transcriptLine `json:"messages"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode state response: %v", err)
+	}
+	if len(payload.Messages) != 1 || payload.Messages[0].Role != "tool" || !strings.Contains(payload.Messages[0].Text, "[REDACTED]") {
+		t.Fatalf("state transcript projection = %#v", payload.Messages)
+	}
+}
+
 func TestReadFileRejectsOutsideSymlink(t *testing.T) {
 	workspace := t.TempDir()
 	outside := t.TempDir()
