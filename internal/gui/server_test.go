@@ -131,6 +131,45 @@ func TestServeContextShutsDownListenerAndRunsCleanupOnce(t *testing.T) {
 	}
 }
 
+func TestServerShutdownStopsAdmissionAndWaitsForTurn(t *testing.T) {
+	s := &server{}
+	release := make(chan struct{})
+	started := make(chan struct{})
+	s.turnWG.Add(1)
+	go func() {
+		close(started)
+		<-release
+		s.turnWG.Done()
+	}()
+	<-started
+
+	s.stopForShutdown()
+	s.mu.Lock()
+	_, admitted := s.admitAgentTurnLocked(nil, false)
+	shuttingDown := s.shuttingDown
+	s.mu.Unlock()
+	if admitted || !shuttingDown {
+		t.Fatal("shutdown allowed a new turn admission")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.waitForTurns()
+		close(done)
+	}()
+	select {
+	case <-done:
+		t.Fatal("waitForTurns returned before the admitted turn released")
+	default:
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitForTurns did not return after the turn released")
+	}
+}
+
 func TestSetModePersistsDeliberateChoiceWithEnvironmentOverride(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("PICOGENT_HOME", home)
