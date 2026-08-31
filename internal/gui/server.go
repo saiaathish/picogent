@@ -164,7 +164,9 @@ func Run() error {
 	}
 	sessID, hist := initialSession(cfg.Workspace)
 	if a != nil {
-		a.SetTaskSession(sessID)
+		if err := a.SetTaskSession(sessID); err != nil {
+			return fmt.Errorf("load durable task state: %w", err)
+		}
 	}
 	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
@@ -505,9 +507,9 @@ func initialSession(workspace string) (id string, hist []llm.Message) {
 // tool registry, and trace log are safe to share; the permission gate is
 // per-agent because a canceled turn may still be finishing while the next
 // session starts.
-func cloneAgentForSession(src *agent.Agent, sessionID string) *agent.Agent {
+func cloneAgentForSession(src *agent.Agent, sessionID string) (*agent.Agent, error) {
 	if src == nil {
-		return nil
+		return nil, nil
 	}
 	state := src.RuntimeSnapshot()
 	var gate *perm.Gate
@@ -525,28 +527,39 @@ func cloneAgentForSession(src *agent.Agent, sessionID string) *agent.Agent {
 	clone.SetTrace(state.Trace)
 	clone.SetTaskStore(src.TaskStoreSnapshot())
 	clone.SetTaskMode(state.TaskMode)
-	clone.SetTaskSession(sessionID)
-	return clone
+	if err := clone.SetTaskSession(sessionID); err != nil {
+		return nil, fmt.Errorf("load durable task state for session %q: %w", sessionID, err)
+	}
+	return clone, nil
 }
 
 // newSessionLocked rotates the chat and agent together. Callers must hold
 // s.mu. A stale turn retains the old agent pointer and therefore can never
 // create or update durable task state for the new session.
-func (s *server) newSessionLocked() (string, error) {
+func (s *server) newSessionLocked() (string, error, error) {
 	var saveErr error
 	if len(s.hist) > 0 {
 		saveErr = session.SaveMessages(s.cfg.Workspace, s.sessionID, s.hist)
 	}
 	s.abortTurnLocked()
-	s.sessionID = session.New(s.cfg.Workspace).ID
+	nextID := session.New(s.cfg.Workspace).ID
+	var next *agent.Agent
+	if s.ag != nil {
+		var err error
+		next, err = cloneAgentForSession(s.ag, nextID)
+		if err != nil {
+			return s.sessionID, saveErr, err
+		}
+		next.SetTaskMode(agent.TaskAgent)
+	}
+	s.sessionID = nextID
 	s.hist = nil
 	s.sideHist = nil
 	s.liveTask = agent.TaskAgent
-	if next := cloneAgentForSession(s.ag, s.sessionID); next != nil {
-		next.SetTaskMode(agent.TaskAgent)
+	if next != nil {
 		s.ag = next
 	}
-	return s.sessionID, saveErr
+	return s.sessionID, saveErr, nil
 }
 
 func (s *server) snapshot() map[string]any {
@@ -889,10 +902,14 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	if err := a.SetTaskSession(s.sessionID); err != nil {
+		s.mu.Unlock()
+		writeGUIError(w, "couldn't load durable task state: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	s.abortTurnLocked()
 	s.cfg = next
 	s.ag = a
-	a.SetTaskSession(s.sessionID)
 	s.hist = nil
 	s.mu.Unlock()
 	s.attachRouterHook()
@@ -1420,7 +1437,11 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 		s.mu.Lock()
 		if s.sessionID == runSession && s.turnGen == myGen && s.ag != nil {
 			runAgent = s.ag
-			runAgent.SetTaskSession(runSession)
+			if err := runAgent.SetTaskSession(runSession); err != nil {
+				s.mu.Unlock()
+				h.OnError(fmt.Errorf("load durable task state: %w", err))
+				return
+			}
 		}
 		s.mu.Unlock()
 		userMsg := llm.Message{Role: "user", Content: prompt, Parts: parts}
@@ -1565,8 +1586,12 @@ func (s *server) clearGoalIf(expected string, expectedRevision, expectedEpoch, e
 
 func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 	s.mu.Lock()
-	id, saveErr := s.newSessionLocked()
+	id, saveErr, taskErr := s.newSessionLocked()
 	s.mu.Unlock()
+	if taskErr != nil {
+		writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
+		return
+	}
 	if saveErr != nil {
 		s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
 	}
@@ -1774,8 +1799,12 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		switch payload {
 		case "clear":
 			s.mu.Lock()
-			id, saveErr := s.newSessionLocked()
+			id, saveErr, taskErr := s.newSessionLocked()
 			s.mu.Unlock()
+			if taskErr != nil {
+				writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
+				return
+			}
 			if saveErr != nil {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
 			}
@@ -2356,8 +2385,12 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 		switch in.Action {
 		case "new":
 			s.mu.Lock()
-			id, saveErr := s.newSessionLocked()
+			id, saveErr, taskErr := s.newSessionLocked()
 			s.mu.Unlock()
+			if taskErr != nil {
+				writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
+				return
+			}
 			if saveErr != nil {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
 			}
@@ -2386,10 +2419,18 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			s.mu.Lock()
+			src := s.ag
+			s.mu.Unlock()
+			next, err := cloneAgentForSession(src, sess.ID)
+			if err != nil {
+				writeGUIError(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			s.mu.Lock()
 			s.abortTurnLocked()
 			s.sessionID = sess.ID
 			s.hist = sess.Messages
-			if next := cloneAgentForSession(s.ag, sess.ID); next != nil {
+			if next != nil {
 				s.ag = next
 			}
 			ag := s.ag
@@ -2414,13 +2455,18 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 			}
 			rotated := false
 			var saveErr error
+			var taskErr error
 			s.mu.Lock()
 			if s.sessionID == in.ID {
-				_, saveErr = s.newSessionLocked()
-				rotated = true
+				_, saveErr, taskErr = s.newSessionLocked()
+				rotated = taskErr == nil
 			}
 			currentID := s.sessionID
 			s.mu.Unlock()
+			if taskErr != nil {
+				writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
+				return
+			}
 			if saveErr != nil {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
 			}
@@ -2676,7 +2722,20 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			nextAgent = built
 			if workspaceChanged {
 				nextSession, nextHistory = initialSession(cfg.Workspace)
-				nextAgent.SetTaskSession(nextSession)
+				if err := nextAgent.SetTaskSession(nextSession); err != nil {
+					closeCandidateAgent(nextAgent)
+					writeGUIError(w, "couldn't load durable task state: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			} else {
+				s.mu.Lock()
+				currentSession := s.sessionID
+				s.mu.Unlock()
+				if err := nextAgent.SetTaskSession(currentSession); err != nil {
+					closeCandidateAgent(nextAgent)
+					writeGUIError(w, "couldn't load durable task state: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
 			}
 		}
 		// Persist before publishing. The configuration transaction mutex is also
@@ -2705,7 +2764,6 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		} else {
 			s.cfg = cfg
 			if nextAgent != nil {
-				nextAgent.SetTaskSession(s.sessionID)
 				s.ag = nextAgent
 			} else if s.ag != nil {
 				s.ag.UpdateConfig(func(current *config.Config) { *current = cfg })

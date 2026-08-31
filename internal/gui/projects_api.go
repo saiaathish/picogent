@@ -147,7 +147,10 @@ func (s *server) replaceWorkspace(cfg config.Config) (projectSwitchResult, error
 
 	path := cfg.Workspace
 	sessID, hist := initialSession(path)
-	a.SetTaskSession(sessID)
+	if err := a.SetTaskSession(sessID); err != nil {
+		closeCandidateAgent(a)
+		return projectSwitchResult{}, fmt.Errorf("load durable task state: %w", err)
+	}
 
 	s.mu.Lock()
 	oldWorkspace := s.cfg.Workspace
