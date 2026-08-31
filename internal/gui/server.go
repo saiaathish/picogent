@@ -1592,7 +1592,11 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 			break
 		}
 		h.endTurn(result)
-		if result.GoalDone && runGoal != "" {
+		completion := result.CompletionGate(runGoal)
+		if runGoal != "" && completion.Marker && !completion.Ready {
+			s.emit(event{Type: "system", Text: "Completion not proven: " + completion.Explanation()})
+		}
+		if completion.Ready && runGoal != "" {
 			if err := s.clearGoalIf(runGoal, runGoalRevision, myGoalEpoch, myGen); err != nil {
 				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't clear completed goal: %v", err)})
 			}

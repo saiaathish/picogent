@@ -30,7 +30,6 @@ import (
 	"github.com/saiaathish/picogent/internal/setup"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tui"
-	"github.com/saiaathish/picogent/internal/verify"
 )
 
 var version = "1.0.0"
@@ -458,14 +457,10 @@ func classifyHeadlessOutcome(ctx context.Context, expectedGoal string, result ag
 	if runErr != nil {
 		return runErr
 	}
-	if result.Task != nil && result.Task.NeedsVerification() {
-		return newHeadlessUnverifiedError(result.Verified)
-	}
-	if len(result.FilesChanged) > 0 && verify.StatusFromEvidence(result.Verified) != verify.StatusPass {
-		return newHeadlessUnverifiedError(result.Verified)
-	}
-	if strings.TrimSpace(expectedGoal) != "" && !result.GoalDone {
-		return newHeadlessUnverifiedError(result.Verified)
+	completion := result.CompletionGate(expectedGoal)
+	if (completion.Required && !completion.Ready) ||
+		(strings.TrimSpace(expectedGoal) != "" && (!completion.Marker || !completion.Ready)) {
+		return newHeadlessUnverifiedError(completion.Explanation())
 	}
 	return nil
 }
@@ -481,10 +476,10 @@ func newHeadlessCanceledError(cause error) error {
 	}
 }
 
-func newHeadlessUnverifiedError(evidence string) error {
+func newHeadlessUnverifiedError(explanation string) error {
 	reason := "no passing verification evidence was recorded"
-	if evidence = strings.TrimSpace(evidence); evidence != "" {
-		reason = "the latest verification was not a passing result: " + redact.Diagnostic(evidence, 240)
+	if explanation = strings.TrimSpace(explanation); explanation != "" {
+		reason = redact.Diagnostic(explanation, 240)
 	}
 	return &headlessOutcomeError{
 		outcome: headlessOutcomeUnverified,
@@ -516,7 +511,8 @@ func applyHeadlessGoalInference(a *agent.Agent, cfg config.Config, prompt string
 // agent reports a completion marker backed by its verification gate.
 func clearHeadlessGoalAfterCompletion(a *agent.Agent, cfg config.Config, expectedGoal string, expectedRevision uint64, result agent.Result) error {
 	expectedGoal = strings.TrimSpace(expectedGoal)
-	if a == nil || !result.GoalDone || expectedGoal == "" {
+	completion := result.CompletionGate(expectedGoal)
+	if a == nil || !completion.Ready || expectedGoal == "" {
 		return nil
 	}
 	currentGoal, currentRevision := a.GoalStateSnapshot()
