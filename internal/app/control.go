@@ -139,7 +139,9 @@ func mcpRemove(a *agent.Agent, id string) (string, error) {
 	if a.Tools != nil {
 		if mcp := a.Tools.MCPManagerSnapshot(); mcp != nil {
 			mcp.DropServer(name)
-			a.Tools.AttachMCP(mcp)
+			if err := a.Tools.AttachMCP(mcp); err != nil {
+				return "", err
+			}
 		}
 	}
 	_ = a.TraceSnapshot().Append("mcp_remove", "mcp_manage", id, trace.Bool(true), 0)
@@ -151,14 +153,26 @@ func connectOne(a *agent.Agent, name string, cfg mcpbridge.ServerConfig) error {
 		return nil
 	}
 	mcp := a.Tools.MCPManagerSnapshot()
+	created := false
 	if mcp == nil {
 		mcp = &mcpbridge.Manager{}
-		a.Tools.AttachMCP(mcp)
+		created = true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 22*time.Second)
 	defer cancel()
 	err := mcp.ConnectServer(ctx, name, cfg)
-	a.Tools.AttachMCP(mcp)
+	if err != nil {
+		if created {
+			mcp.Close()
+		}
+		return err
+	}
+	if err := a.Tools.AttachMCP(mcp); err != nil {
+		if created {
+			mcp.Close()
+		}
+		return err
+	}
 	return err
 }
 
@@ -167,22 +181,21 @@ func ReloadMCP(a *agent.Agent) error {
 	if a == nil || a.Tools == nil {
 		return fmt.Errorf("no agent")
 	}
-	if mcp := a.Tools.MCPManagerSnapshot(); mcp != nil {
-		mcp.Close()
-	}
 	workspace := a.ConfigSnapshot().Workspace
 	servers, err := mcpbridge.LoadServers(workspace)
 	if err != nil {
 		return err
 	}
 	if len(servers) == 0 {
-		a.Tools.AttachMCP(nil)
-		return nil
+		return a.Tools.AttachMCP(nil)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	mgr, warns := mcpbridge.ConnectBestEffort(ctx, servers)
-	a.Tools.AttachMCP(mgr)
+	if err := a.Tools.AttachMCP(mgr); err != nil {
+		mgr.Close()
+		return err
+	}
 	if len(warns) > 0 {
 		return fmt.Errorf("%s", strings.Join(warns, "; "))
 	}
