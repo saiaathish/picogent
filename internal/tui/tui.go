@@ -277,9 +277,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.refresh()
 				return m, nil
 			}
+			m.stop()
 			return m, tea.Quit
 		case "ctrl+d":
 			if strings.TrimSpace(m.ta.Value()) == "" {
+				m.stop()
 				return m, tea.Quit
 			}
 		case "enter":
@@ -762,6 +764,7 @@ func (m *model) slash(line string) tea.Cmd {
 	cmd := strings.ToLower(parts[0])
 	switch cmd {
 	case "/quit", "/exit", "/q":
+		m.stop()
 		return tea.Quit
 	case "/help":
 		help := "Type what you want. Safe asks before edits.\nOptional: /commit /review /clear /quit"
