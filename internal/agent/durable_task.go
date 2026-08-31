@@ -202,17 +202,18 @@ func (a *Agent) TaskSnapshot() *taskstate.Task {
 	return cloneTask(a.task)
 }
 
-func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
+func (a *Agent) beginDurableTask(prompt string, ev EventHandler) (bool, error) {
 	a.taskMu.Lock()
 	if a.TaskStore == nil || a.TaskSession == "" {
 		a.taskMu.Unlock()
-		return false
+		return false, nil
 	}
 	if a.taskLoadErr != nil {
 		err := a.taskLoadErr
 		a.taskMu.Unlock()
-		a.reportTaskPersistenceError(ev, fmt.Errorf("load durable task state: %w", err))
-		return true
+		err = fmt.Errorf("load durable task state: %w", err)
+		a.reportTaskPersistenceError(ev, err)
+		return true, err
 	}
 	var candidate *taskstate.Task
 	if a.task == nil || (a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification()) {
@@ -220,11 +221,11 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
 		if err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
-			return true
+			return true, err
 		}
 		if !ok {
 			a.taskMu.Unlock()
-			return false
+			return false, nil
 		}
 		candidate = task
 	} else {
@@ -244,21 +245,21 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
 		if err := candidate.SetStatus(taskstate.StatusVerifying); err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
-			return true
+			return true, err
 		}
 	}
 	if candidate.Status == taskstate.StatusBlocked {
 		if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
-			return true
+			return true, err
 		}
 	}
 	if candidate.Status == taskstate.StatusPlanning {
 		if err := candidate.SetStatus(taskstate.StatusWorking); err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
-			return true
+			return true, err
 		}
 	}
 	candidate.NoteAttempt()
@@ -266,11 +267,11 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) bool {
 	if err != nil {
 		a.taskMu.Unlock()
 		a.reportTaskPersistenceError(ev, err)
-		return true
+		return true, err
 	}
 	a.taskMu.Unlock()
 	emitTaskState(ev, snapshot)
-	return false
+	return false, nil
 }
 
 func (a *Agent) taskPromptSuffix() string {

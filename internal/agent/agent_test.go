@@ -556,11 +556,14 @@ func TestActiveGoalCompletionRequiresDurableTaskStart(t *testing.T) {
 	a.SetGoal("finish this project")
 
 	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish this project"}, allowAll{})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("run should fail closed when durable task initialization fails")
 	}
 	if result.GoalDone {
 		t.Fatal("goal completed despite failed durable task initialization")
+	}
+	if len(fake.Calls) != 0 {
+		t.Fatalf("provider calls = %d, want 0", len(fake.Calls))
 	}
 }
 
