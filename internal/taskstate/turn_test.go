@@ -56,9 +56,16 @@ func TestIntentChangeInvalidatesCurrentQualityProof(t *testing.T) {
 	if task.CompletionReady() {
 		t.Fatal("quality proof from the previous contract remained completion-ready")
 	}
+	if !task.NeedsVerification() {
+		t.Fatal("invalidated quality proof did not request re-verification")
+	}
 	status, current, origin := task.RequirementEvidenceState(EvidenceKindTests)
 	if status != "INCONCLUSIVE" || current || origin != EvidenceOriginSystem {
 		t.Fatalf("invalidated quality proof = status=%q current=%v origin=%q", status, current, origin)
+	}
+	latest := task.Evidence[len(task.Evidence)-1]
+	if latest.Source != "outcome-contract" || latest.Reference != "durable intent change" || latest.Origin != EvidenceOriginSystem {
+		t.Fatalf("contract invalidation provenance = %#v", latest)
 	}
 	if len(task.Evidence) <= historical {
 		t.Fatalf("contract change did not retain an invalidation record: %#v", task.Evidence)
@@ -84,11 +91,44 @@ func TestIntentChangeInvalidatesCurrentCriterionProof(t *testing.T) {
 		t.Fatal("changed intent was not recorded")
 	}
 	status, current := task.CriterionEvidenceState(0)
-	if status != "INCONCLUSIVE" || !current {
+	if status != "INCONCLUSIVE" || current {
 		t.Fatalf("invalidated criterion proof = status=%q current=%v", status, current)
+	}
+	latest := task.Evidence[len(task.Evidence)-1]
+	if latest.Source != "outcome-contract" || latest.Reference != "durable intent change" || latest.Origin != EvidenceOriginSystem || latest.trusted {
+		t.Fatalf("criterion contract invalidation provenance = %#v", latest)
 	}
 	if task.CompletionReady() {
 		t.Fatal("criterion proof from the previous contract remained completion-ready")
+	}
+	if !task.NeedsVerification() {
+		t.Fatal("invalidated criterion proof did not request re-verification")
+	}
+}
+
+func TestWorkspaceInvalidationKeepsRestorationProvenance(t *testing.T) {
+	task, err := New("workspace-provenance", "restore the workspace safely", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []Criterion{{Description: "required proof", Required: true}}
+	if !task.SetIntent(&IntentContract{Outcome: task.Goal, Class: "general"}) {
+		t.Fatal("initial intent was not recorded")
+	}
+	task.RecordCriterionVerification(0, "PASS", "criterion passed", "verify")
+	if !task.CompletionReady() {
+		t.Fatal("current criterion proof did not complete the initial contract")
+	}
+	if !task.InvalidateWorkspaceEvidence("undo restored workspace files") {
+		t.Fatal("workspace proof was not invalidated")
+	}
+	latest := task.Evidence[len(task.Evidence)-1]
+	if latest.Source != "workspace-observation" || latest.Origin != EvidenceOriginVerifier || latest.Reference != "workspace restoration" || !latest.trusted {
+		t.Fatalf("workspace invalidation provenance = %#v", latest)
+	}
+	status, current := task.CriterionEvidenceState(0)
+	if status != "INCONCLUSIVE" || !current || !task.NeedsVerification() {
+		t.Fatalf("workspace invalidation state = status=%q current=%v needs=%v", status, current, task.NeedsVerification())
 	}
 }
 
