@@ -108,6 +108,56 @@ func TestFreshUndoConflictPreservesNewerWorkspaceEdit(t *testing.T) {
 	}
 }
 
+func TestSupersededFreshUndoFailsClosed(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(t.TempDir())
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	args, _ := json.Marshal(map[string]string{"path": "note.txt", "content": "agent edit\n"})
+	first := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		toolResponse("write", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	first.SetTaskStore(store)
+	if err := first.SetTaskSession("superseded"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := first.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note"}, allowAll{}); err != nil {
+		t.Fatal(err)
+	}
+
+	task, err := store.Load("superseded")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := task.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok || !task.FinishTurn(sequence, taskstate.TurnRouteImplement, "a later workspace mutation", "UNVERIFIED", taskstate.StopNone, 1, 1) {
+		t.Fatal("could not record the later mutating turn")
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+
+	second := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	second.SetTaskStore(store)
+	if err := second.SetTaskSession("superseded"); err != nil {
+		t.Fatal(err)
+	}
+	if second.UndoAvailable() {
+		t.Fatal("superseded durable undo was advertised as available")
+	}
+	if _, err := second.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("superseded durable undo error = %v", err)
+	}
+	assertFreshUndoFileContent(t, path, "agent edit\n")
+}
+
 func TestMalformedFreshUndoFailsClosed(t *testing.T) {
 	workspace := t.TempDir()
 	store := taskstate.NewStore(t.TempDir())

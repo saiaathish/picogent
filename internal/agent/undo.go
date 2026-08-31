@@ -261,6 +261,12 @@ func (a *Agent) UndoLastTurn() (string, error) {
 				a.undoLoadErr = loadErr
 				return "", fmt.Errorf("undo is unavailable: %w", loadErr)
 			}
+			if task := a.TaskSnapshot(); task != nil {
+				if validationErr := validateDurableUndoTask(loaded, task); validationErr != nil {
+					a.undoLoadErr = validationErr
+					return "", fmt.Errorf("undo is unavailable: %w", validationErr)
+				}
+			}
 			a.undoLoadErr = nil
 			a.latestUndo = loaded
 		}
@@ -414,4 +420,32 @@ func (a *Agent) undoBelongsToCurrentSession(u *turnUndo) bool {
 	a.taskMu.RLock()
 	defer a.taskMu.RUnlock()
 	return u.sessionID == a.TaskSession && u.sessionGeneration == a.taskSessionGeneration
+}
+
+// validateDurableUndoTask binds a journal to the durable turn history that
+// authorized it. A later read-only turn leaves the latest native-file undo
+// useful, but a later mutating turn supersedes it. If the referenced turn is
+// no longer present, the bounded history cannot prove that the record is
+// current, so recovery fails closed.
+func validateDurableUndoTask(u *turnUndo, task *taskstate.Task) error {
+	if u == nil || task == nil {
+		return nil
+	}
+	if task.SessionID != u.sessionID {
+		return fmt.Errorf("durable undo journal task session mismatch")
+	}
+	found := false
+	for _, turn := range task.Turns {
+		if turn.Sequence == u.turnSequence {
+			found = true
+			continue
+		}
+		if found && (turn.MutationCount > 0 || len(turn.ChangedFiles) > 0) {
+			return fmt.Errorf("durable undo journal was superseded by mutating turn %d", turn.Sequence)
+		}
+	}
+	if !found {
+		return fmt.Errorf("durable undo journal turn sequence %d is stale", u.turnSequence)
+	}
+	return nil
 }
