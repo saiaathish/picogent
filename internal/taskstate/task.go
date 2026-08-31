@@ -655,6 +655,12 @@ func (t *Task) recordActiveTurnChanged(path string) {
 	if latest.State != TurnActive {
 		return
 	}
+	// Count every successful mutation, including repeated edits to a path that
+	// is already in the bounded display list. The count is journaled while the
+	// turn is active so a process restart can retain the side-effect summary.
+	if latest.MutationCount < maxTurnMutations {
+		latest.MutationCount++
+	}
 	for _, changed := range latest.ChangedFiles {
 		if changed == path {
 			return

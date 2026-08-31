@@ -368,6 +368,33 @@ func TestTurnLedgerAttributesBoundedChangedFiles(t *testing.T) {
 	}
 }
 
+func TestTurnLedgerCountsActiveMutationsBeforeClose(t *testing.T) {
+	task, err := New("turn-mutation-count", "finish the requested change", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := task.BeginTurn(TurnRouteImplement); !ok {
+		t.Fatal("turn did not start")
+	}
+
+	// A repeated edit is still a second mutation even though the display list
+	// remains unique. This is the state a killed process must preserve.
+	task.RecordChanged("./note.txt")
+	task.RecordChanged("note.txt")
+	last := task.LastTurn()
+	if last == nil || last.MutationCount != 2 || len(last.ChangedFiles) != 1 || last.ChangedFiles[0] != "note.txt" {
+		t.Fatalf("active mutation journal = %#v", last)
+	}
+
+	for i := 0; i < maxTurnMutations; i++ {
+		task.RecordChanged(fmt.Sprintf("extra-%02d.txt", i))
+	}
+	last = task.LastTurn()
+	if last == nil || last.MutationCount != maxTurnMutations {
+		t.Fatalf("bounded active mutation count = %#v, want %d", last, maxTurnMutations)
+	}
+}
+
 func TestInterruptTurnClosesOnlyItsActiveSequence(t *testing.T) {
 	task, err := New("turn-cancel", "finish the requested change", nil)
 	if err != nil {
