@@ -12,7 +12,7 @@ func TestParsePromptRecs(t *testing.T) {
 
 func TestHeuristicMainRecs(t *testing.T) {
 	st := agentStatus{Workspace: "/tmp/x", Project: "x", ChatSummary: "empty"}
-	recs := heuristicPromptRecs("main", "go.mod internal/ cmd/", st)
+	recs := heuristicPromptRecs("go.mod internal/ cmd/", st)
 	if len(recs) == 0 {
 		t.Fatal("expected heuristic recs")
 	}
