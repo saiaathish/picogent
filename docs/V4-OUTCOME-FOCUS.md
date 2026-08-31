@@ -1,7 +1,10 @@
 # V4 transient outcome focus
 
-Picogent now has a small internal selector that connects an active durable
-task to one fresh `project_health` observation. It answers only:
+Picogent now has a small internal selector that connects the latest durable
+task state to the next safe category of work. A fresh `project_health`
+observation can enrich that category, but recovery, steering, mutation, and
+verification transitions also rebuild the advisory from task state alone. It
+answers only:
 
 > What is the next safe category of work for this turn?
 
@@ -28,10 +31,16 @@ new user-facing mode.
 
 ## Freshness boundary
 
-The agent adds this guidance only after a successful `project_health` tool
-call. If that read-only call was co-batched with a successful write, the
-guidance is discarded because the snapshot may predate the mutation. The next
-model round can request a new snapshot when it needs one.
+The agent gives the first model request and each relevant post-transition
+request one bounded task-derived advisory. That view uses an explicitly
+`UNKNOWN` health status unless a successful `project_health` call produced a
+fresh observation after the latest durable mutation. If that read-only call
+was co-batched with a successful write, its health-specific focus is discarded
+and the next request receives the post-write task view instead.
+
+The advisory is transient: it is not added to returned conversation history,
+durable task state, permissions, or completion authorization. A fresh health
+observation may guide exactly one subsequent model request.
 
 This is intentionally not evidence invalidation. `repomap` metadata and Git
 dirty paths cannot prove content equality, and task persistence has no
@@ -42,8 +51,8 @@ remain governed by the existing verifier and task-state change sequence.
 
 Focused tests cover blocker and verification precedence, intent-fit ranking,
 criterion fallback, malformed/hostile finding data, schema validation,
-instruction bounds, successful agent-loop injection, and stale co-batched
-writes. The deterministic benchmark is:
+instruction bounds, durable mutation/recovery guidance, successful agent-loop
+injection, and co-batched write freshness. The deterministic benchmark is:
 
 ```sh
 go test ./internal/benchmark -run '^$' \

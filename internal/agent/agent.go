@@ -499,7 +499,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	lastVerification := ""
 	lastVerificationEvidence := verificationEvidence{}
 	taskBlocker := ""
-	nextOutcomeFocus := ""
+	// Give the first model request the latest durable task contract. The helper
+	// uses an explicitly unknown health observation, so recovery and steering
+	// state can guide the turn without reusing stale project-health data.
+	nextOutcomeFocus := outcomeFocusForTask(a.TaskSnapshot())
 	turnClosed := turnSequence == 0
 	var turnCloseErr error
 	closeTurn := func(interrupted bool, route taskstate.TurnRoute, hypothesis, evidence string, stop taskstate.StopReason, toolRounds int) {
@@ -631,6 +634,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			res.Verified = lastVerification
 			if a.continueAfterVerificationFailure(text, round, autoEvidence, ev, cfg.MaxToolRounds) {
+				nextOutcomeFocus = outcomeFocusForTask(a.TaskSnapshot())
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified, a.repeatedVerificationFailure())})
 				continue
 			}
@@ -818,11 +822,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		// write then records the current change sequence, while a later write still
 		// invalidates evidence that was collected before it.
 		var successfulWrites []string
+		durableTransition := false
 		for _, ex := range pending {
 			if ex.ran && (ex.call.Name == "write_file" || ex.call.Name == "edit_file") {
 				nativeWriteRan = true
 			}
-			if ex.call.Name == "verify" {
+			if ex.call.Name == "verify" && ex.ran {
+				durableTransition = true
 				a.setTaskStatus(taskstate.StatusVerifying, ev)
 				lastVerificationEvidence = verificationEvidence{
 					output:            ex.text,
@@ -842,6 +848,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				a.setTaskStatus(taskstate.StatusWorking, ev)
 			}
 			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
+				durableTransition = true
 				mutationCount++
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
 					changed[p] = struct{}{}
@@ -855,6 +862,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				content = ex.err.Error()
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
+		}
+		if durableTransition {
+			// Rebuild from the post-tool snapshot. In particular, a write or
+			// verification must not carry a pre-mutation health observation into
+			// the next request.
+			nextOutcomeFocus = outcomeFocusForTask(a.TaskSnapshot())
 		}
 		// A project-health observation is useful for choosing the next safe
 		// action, but only a sole read-only call is fresh enough to guide the

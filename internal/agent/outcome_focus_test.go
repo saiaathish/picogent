@@ -100,3 +100,58 @@ func TestOutcomeFocusForToolRejectsInvalidHealthPayloads(t *testing.T) {
 		})
 	}
 }
+
+func TestOutcomeFocusForTaskUsesDurableMutationAndRecoveryState(t *testing.T) {
+	task, err := taskstate.New("engine-transition", "finish the requested change", []string{"implement", "verify"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !task.SetIntent(&taskstate.IntentContract{Outcome: task.Goal, Class: "implementation"}) {
+		t.Fatal("intent was not recorded")
+	}
+	if _, ok := task.BeginTurn(taskstate.TurnRouteImplement); !ok {
+		t.Fatal("turn did not start")
+	}
+	task.RecordChanged("note.txt")
+
+	focus := outcomeFocusForTask(task)
+	for _, marker := range []string{
+		"Outcome state: VERIFY",
+		"Intent revision: 1",
+		"Turn state: sequence=1 state=active route=implement evidence=UNVERIFIED",
+		"Turn side effects data: changed_files=[\"note.txt\"] capped=false",
+		"Completion proof ready: false",
+		"Health observation: status=UNKNOWN",
+	} {
+		if !strings.Contains(focus, marker) {
+			t.Fatalf("durable transition marker %q missing from focus: %q", marker, focus)
+		}
+	}
+	if strings.Contains(focus, "project-health observation is current") {
+		t.Fatalf("task-only focus claimed a fresh health observation: %q", focus)
+	}
+	steered := *task.Intent
+	steered.Class = "review"
+	if !task.SetIntent(&steered) {
+		t.Fatal("steering intent was not recorded")
+	}
+	steeredFocus := outcomeFocusForTask(task)
+	if !strings.Contains(steeredFocus, "Intent revision: 2") || !strings.Contains(steeredFocus, "Outcome data: \"finish the requested change\"") {
+		t.Fatalf("steering focus lost the new intent revision or durable outcome: %q", steeredFocus)
+	}
+
+	if !task.RecoverActiveTurn() {
+		t.Fatal("active turn was not recovered")
+	}
+	recoveredFocus := outcomeFocusForTask(task)
+	for _, marker := range []string{
+		"Turn state: sequence=1 state=interrupted route=recover evidence=UNVERIFIED stop=process_restart",
+		"Turn hypothesis data: \"previous process ended before the durable turn closed\"",
+		"Turn side effects data: changed_files=[\"note.txt\"] capped=false",
+		"Outcome state: VERIFY",
+	} {
+		if !strings.Contains(recoveredFocus, marker) {
+			t.Fatalf("recovery marker %q missing from focus: %q", marker, recoveredFocus)
+		}
+	}
+}
