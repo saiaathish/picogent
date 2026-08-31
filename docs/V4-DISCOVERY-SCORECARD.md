@@ -1,7 +1,7 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-08-31 against exact `main` head
-`6935b37e4b9bb6b1178bc8f9ead8d89b71e6bc13` after PRs #219–#233 merged.
+`0dc4c6d425747bc18474009d52cb05906858124d` after PRs #219–#235 merged.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -27,7 +27,7 @@ not enough to establish real runtime behavior.
 | Repair/recovery | Local checkpoint/undo conflict safety and fail-closed permissions | Durable task resume and GUI steering | Retry taxonomy, route diversity, partial rollback reporting, and process-restart undo are incomplete | Prompt recovery hints would duplicate a future durable recovery ledger | Test and then persist side-effect/recovery metadata; do not replace checkpoint safety prematurely |
 | Performance | Deterministic local microbenchmarks, bounded long-session persistence through 256 turns, and fresh/warm child-process RSS envelopes exist | Bounded output/context controls | Provider-token accuracy, cross-surface startup, and stable cross-platform budgets remain unmeasured | Repeated large-output scans and broad provenance passes may waste CPU | Profile retention/provenance overhead and rerun v3-v4 comparisons before claiming performance gains |
 | Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Hosted `govulncheck` now scans the dependency graph; tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Add hostile runtime evidence and preserve explicit limits around dependency reachability and path races |
-| Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, barrier-driven cancellation/save/publish stress, cooperative cross-process writers, trace lock-holder death recovery, sustained bounded trace retention, and first-use lock creation recovery | Unix/Windows lock primitives and deterministic recovery harnesses | Cross-surface event/reconnect behavior, hostile process death outside the trace lock handoff, and filesystem races lack complete stress evidence | New orchestration would add complexity before invariants are measured | Extend cross-process evidence only where it proves a user-visible recovery invariant |
+| Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, barrier-driven cancellation/save/publish stress, cooperative cross-process writers, trace lock-holder death recovery, sustained bounded trace retention, first-use lock creation recovery, and project-registry transactions | Unix/Windows lock primitives and deterministic recovery harnesses | Cross-surface event/reconnect behavior, hostile process death outside the trace lock handoff, and filesystem races lack complete stress evidence | New orchestration would add complexity before invariants are measured | Extend cross-process evidence only where it proves a user-visible recovery invariant |
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
 | GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, and bounded owned-browser reconnect/recovery evidence | Lifecycle and undo wiring; one local rendered reconnect path | Live-provider behavior, permission decisions, undoable changes, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; side chat bypasses core task/evidence path | Add owned-browser permission, undo, full-recovery, and cross-platform evidence before release claims |
 | TUI/headless | Headless stdout/stderr, fail-closed permission behavior, resume state, and explicit cleanup/persistence errors | CLI dispatch and exit classes | Non-TTY/TUI behavior and cross-platform EOF/signal behavior remain unproven | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Add subprocess/EOF/signal evidence before changing the shared runtime boundary |
@@ -224,3 +224,15 @@ state; the deterministic CLI process envelope measured 607.5 ms fresh-state
 and 27.3 ms warm-state with approximately 17.5 MB and 17.3 MB child RSS on
 Darwin/arm64. This is local fixture evidence, not a live-provider, GUI,
 cross-platform budget, or v3-versus-v4 performance claim.
+
+PR #235 merged as `0dc4c6d425747bc18474009d52cb05906858124d`. It serializes
+project-registry read/modify/write transactions with a secure sidecar lock,
+publishes bounded YAML atomically while rejecting symlink targets, and rejects
+oversized serialized state before replacing an existing registry. The GUI now
+prepares project selection, replaces the runtime, and commits the registry with
+a compare-and-swap; failed runtime construction leaves the prior selection
+untouched, and removing the active project is rejected. Focused repeated tests,
+full tests, full race tests, vet, Windows/Linux package cross-compilation, and
+the hosted Ubuntu, macOS, Windows, security, and release-evidence gates passed.
+This is project-registry transaction evidence, not a general hostile
+filesystem-race or release-readiness claim.
