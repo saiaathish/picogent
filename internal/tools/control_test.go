@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,10 +14,13 @@ import (
 
 func TestAttachMCPKeepsManage(t *testing.T) {
 	r := NewRegistry(Context{})
+	defer r.Close()
 	if _, ok := r.Get("mcp_manage"); !ok {
 		t.Fatal("mcp_manage missing before AttachMCP")
 	}
-	r.AttachMCP(&mcpbridge.Manager{})
+	if err := r.AttachMCP(&mcpbridge.Manager{}); err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := r.Get("mcp_manage"); !ok {
 		t.Fatal("AttachMCP dropped builtin mcp_manage")
 	}
@@ -33,8 +37,75 @@ func TestAttachMCPKeepsManage(t *testing.T) {
 	}
 }
 
+func TestRegistryMCPReplacementRetiresOldRuntime(t *testing.T) {
+	r := NewRegistry(Context{})
+	old := &mcpbridge.Manager{}
+	if err := r.AttachMCP(old); err != nil {
+		t.Fatal(err)
+	}
+	oldView := r.MCPManagerSnapshot()
+	if oldView == nil || oldView == old || !oldView.SameRuntime(old) {
+		t.Fatal("registry did not attach a lease-backed view")
+	}
+
+	next := &mcpbridge.Manager{}
+	if err := r.AttachMCP(next); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.Acquire(); !errors.Is(err, mcpbridge.ErrManagerClosed) {
+		t.Fatalf("replaced manager acquire = %v, want ErrManagerClosed", err)
+	}
+	current := r.MCPManagerSnapshot()
+	if current == nil || !current.SameRuntime(next) || current.SameRuntime(old) {
+		t.Fatal("registry retained the replaced MCP runtime")
+	}
+
+	r.Close()
+	if _, err := next.Acquire(); !errors.Is(err, mcpbridge.ErrManagerClosed) {
+		t.Fatalf("closed registry left manager attachable: %v", err)
+	}
+	if err := r.AttachMCP(&mcpbridge.Manager{}); !errors.Is(err, ErrRegistryClosed) {
+		t.Fatalf("late attach error = %v, want ErrRegistryClosed", err)
+	}
+	r.Close()
+}
+
+func TestRegistryMCPRefreshKeepsCurrentLease(t *testing.T) {
+	r := NewRegistry(Context{})
+	root := &mcpbridge.Manager{}
+	if err := r.AttachMCP(root); err != nil {
+		t.Fatal(err)
+	}
+	view := r.MCPManagerSnapshot()
+	if err := r.AttachMCP(view); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.MCPManagerSnapshot(); got != view {
+		t.Fatal("refresh replaced the current lease view")
+	}
+	r.Close()
+}
+
+func TestRegistryRejectsClosedMCPWithoutDroppingCurrent(t *testing.T) {
+	r := NewRegistry(Context{})
+	current := &mcpbridge.Manager{}
+	if err := r.AttachMCP(current); err != nil {
+		t.Fatal(err)
+	}
+	closed := &mcpbridge.Manager{}
+	closed.Close()
+	if err := r.AttachMCP(closed); !errors.Is(err, mcpbridge.ErrManagerClosed) {
+		t.Fatalf("closed manager attach = %v, want ErrManagerClosed", err)
+	}
+	if got := r.MCPManagerSnapshot(); got == nil || !got.SameRuntime(current) {
+		t.Fatal("failed MCP attach dropped the current runtime")
+	}
+	r.Close()
+}
+
 func TestRegistryConcurrentAttachAndRead(t *testing.T) {
 	r := NewRegistry(Context{})
+	defer r.Close()
 	const iterations = 200
 	var wg sync.WaitGroup
 	errCh := make(chan string, 1)

@@ -78,6 +78,12 @@ func BuildContext(ctx context.Context, cfg config.Config) (*agent.Agent, error) 
 		Workspace:   cfg.Workspace,
 		BashTimeout: time.Duration(cfg.BashTimeoutSec) * time.Second,
 	})
+	ready := false
+	defer func() {
+		if !ready {
+			reg.Close()
+		}
+	}()
 	if servers, err := mcpbridge.LoadServers(cfg.Workspace); err != nil {
 		return nil, err
 	} else if len(servers) > 0 {
@@ -87,7 +93,10 @@ func BuildContext(ctx context.Context, cfg config.Config) (*agent.Agent, error) 
 		for _, w := range warns {
 			fmt.Fprintf(os.Stderr, "picogent: mcp: %s\n", w)
 		}
-		reg.AttachMCP(mgr)
+		if err := reg.AttachMCP(mgr); err != nil {
+			mgr.Close()
+			return nil, err
+		}
 	}
 	gate := perm.New(cfg.Mode, cfg.Workspace, nil)
 	gate.SetAlwaysAllowed(cfg.Extensions.AlwaysAllowTools)
@@ -103,6 +112,7 @@ func BuildContext(ctx context.Context, cfg config.Config) (*agent.Agent, error) 
 		return nil, fmt.Errorf("couldn't load active goal: %w", err)
 	}
 	wireRuntime(a)
+	ready = true
 	return a, nil
 }
 

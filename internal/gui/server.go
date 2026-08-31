@@ -966,9 +966,7 @@ func closeCandidateAgent(a *agent.Agent) {
 	if a == nil || a.Tools == nil {
 		return
 	}
-	if mcp := a.Tools.MCPManagerSnapshot(); mcp != nil {
-		mcp.Close()
-	}
+	a.Tools.Close()
 }
 
 func (s *server) setTaskMode(w http.ResponseWriter, r *http.Request) {
