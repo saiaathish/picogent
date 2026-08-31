@@ -54,17 +54,18 @@ detects a server-reported session change and replays the durable transcript (or
 clears it when the new session has no messages). While the server is still busy,
 the reconciliation marks a pending replay so it does not erase the local prompt
 or partial assistant stream; the durable transcript is replayed after the turn
-finishes. Session-view epochs also prevent delayed session/project refreshes
-from repainting a newer selection. Ordinary refreshes retain the existing
-empty-log fast path. The embedded GUI test asserts that the reconnect refresh,
-session-change reconciliation, pending active-turn replay, and async view
-guards remain wired together.
+finishes. Session-view epochs plus refresh generations prevent delayed
+session/project refreshes, including an older reconnect refresh, from repainting
+a newer selection or restoring stale busy state. Ordinary refreshes retain the
+existing empty-log fast path. The embedded GUI test asserts that the reconnect
+refresh, session-change reconciliation, pending active-turn replay, and async
+view guards remain wired together.
 
 Focused validation:
 
 ```text
 go test ./internal/gui -count=1
-ok   github.com/saiaathish/picogent/internal/gui  28.403s
+ok   github.com/saiaathish/picogent/internal/gui  13.969s
 ```
 
 ## Limits and remaining gaps
