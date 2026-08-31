@@ -185,6 +185,13 @@ func newLongHorizonFixture(tb testing.TB) *longHorizonFixture {
 }
 
 func advanceLongHorizon(tb testing.TB, fixture *longHorizonFixture, turns int) longHorizonMetrics {
+	return advanceLongHorizonObserved(tb, fixture, turns, nil)
+}
+
+// advanceLongHorizonObserved keeps the benchmark fixture reusable by process
+// envelope tests without making the normal benchmark pay for reporting. The
+// observer runs after each logical turn has been durably saved and reloaded.
+func advanceLongHorizonObserved(tb testing.TB, fixture *longHorizonFixture, turns int, observer func(int)) longHorizonMetrics {
 	tb.Helper()
 	var metrics longHorizonMetrics
 	for i := 0; i < turns; i++ {
@@ -281,6 +288,9 @@ func advanceLongHorizon(tb testing.TB, fixture *longHorizonFixture, turns int) l
 		fixture.session = loadedSession
 		fixture.task = loadedTask
 		metrics.reloads++
+		if observer != nil {
+			observer(i + 1)
+		}
 	}
 	return metrics
 }

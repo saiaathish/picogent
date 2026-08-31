@@ -171,9 +171,43 @@ new process. This is not hostile process-death proof. Sustained RSS,
 live-provider quality, rendered surfaces, and v3-v4 comparative quality remain
 unverified.
 
+## Current-head process-envelope harness
+
+The process-level gap now has a deterministic test harness in
+`internal/agent/process_envelope_test.go`:
+
+```sh
+go test ./internal/agent -run '^TestLongHorizonProcessEnvelope$' -count=1 -v
+```
+
+The parent starts a fresh copy of the test binary with a minimal deterministic
+environment, waits for an explicit readiness marker, and then releases a
+96-turn child workload. The child reuses the canonical long-horizon fixture
+and emits one checkpoint only after each durable save/reload boundary. The
+parent samples the child resident set at those checkpoints, verifies all 96
+checkpoints and a clean child exit, and bounds failure diagnostics plus child
+runtime with a 45-second timeout.
+
+Resident-set sources are platform-specific but the logged metric is always
+`resident_set` in bytes: Linux reads `/proc/<pid>/status` `VmRSS` with a `ps`
+fallback, other Unix targets use `ps -o rss=`, and Windows uses
+`GetProcessMemoryInfo` `WorkingSetSize`. The log records platform, source,
+unit, horizon, sample count, unavailable samples, and peak growth. A sample
+that races with normal process exit is reported as `availability=partial`,
+not as zero.
+
+Observed locally on the exact process-harness checkpoint `31422b7` (Apple M3
+arm64 macOS, Go `go1.26.6`): 96 checkpoints, 96 resident-set samples,
+3.370-second child workload, 13,565,952-byte initial resident set, and
+9,027,584-byte peak growth. This is a runner-specific observation, not a
+cross-platform comparison or a release budget. Hosted Windows and Linux
+measurements, GUI/TUI/headless envelopes, live-provider behavior, and
+long-horizon product quality remain unverified.
+
 ## Not measured here
 
-- binary size, cold/warm startup, RSS, and long-session RSS growth;
+- cross-platform RSS ranges, a stable release budget, and GUI/TUI/headless
+  process envelopes;
 - live provider latency, token billing, model-call quality, or completion rate;
 - rendered GUI/TUI/headless journey latency;
 - browser, network, external research, and cross-platform runtime performance;
