@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -18,6 +19,9 @@ type turnUndo struct {
 	checkpoint        *checkpoint.Checkpoint
 	sessionID         string
 	sessionGeneration uint64
+	turnSequence      uint64
+	durable           bool
+	journalSlot       string
 	restored          bool
 	restoreMessage    string
 	restoreErr        error
@@ -27,6 +31,124 @@ const maxUndoTaskPersistenceAttempts = 3
 
 func newTurnUndo(workspace, sessionID string, sessionGeneration uint64) *turnUndo {
 	return &turnUndo{workspace: workspace, sessionID: sessionID, sessionGeneration: sessionGeneration}
+}
+
+// preparePublish persists a recovery-pending record immediately before the
+// workspace atomic rename. The record contains only paths whose expected
+// post-write state is already known, so a crash during a multi-file turn can
+// recover the writes that actually reached publication.
+func (u *turnUndo) preparePublish(path string, data []byte, mode os.FileMode) error {
+	if u == nil || u.checkpoint == nil || u.sessionID == "" || u.turnSequence == 0 {
+		return nil
+	}
+	changed, err := u.checkpoint.PrepareExpected(path, data, mode)
+	if err != nil {
+		return err
+	}
+	record, err := u.checkpoint.Export()
+	if err != nil {
+		return err
+	}
+	if len(record.Entries) == 0 {
+		if u.journalSlot == undoJournalPending {
+			return u.discardPending()
+		}
+		return nil
+	}
+	if !changed && !u.durable {
+		return nil
+	}
+	return u.saveJournal(record, undoJournalPending)
+}
+
+func (u *turnUndo) saveJournal(record checkpoint.Record, state string) error {
+	return u.saveJournalAt(record, state, state == undoJournalPending)
+}
+
+func (u *turnUndo) saveJournalAt(record checkpoint.Record, state string, pending bool) error {
+	if u == nil || u.sessionID == "" || u.turnSequence == 0 {
+		return nil
+	}
+	identity, err := undoWorkspaceIdentity(u.workspace)
+	if err != nil {
+		return err
+	}
+	j := undoJournal{
+		Version:      undoJournalVersion,
+		State:        state,
+		Workspace:    identity,
+		SessionID:    u.sessionID,
+		TurnSequence: u.turnSequence,
+		Checkpoint:   record,
+	}
+	return saveUndoJournal(u.workspace, u.sessionID, j, pending)
+}
+
+func (u *turnUndo) persistSealed() error {
+	if u == nil || u.checkpoint == nil || u.sessionID == "" || u.turnSequence == 0 {
+		return nil
+	}
+	record, err := u.checkpoint.Export()
+	if err != nil {
+		return err
+	}
+	if len(record.Entries) == 0 {
+		return u.discardPending()
+	}
+	if err := u.saveJournal(record, undoJournalSealed); err != nil {
+		return err
+	}
+	u.durable = true
+	u.journalSlot = undoJournalSealed
+	if err := removeUndoJournal(u.workspace, u.sessionID, true); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (u *turnUndo) persistRestored() error {
+	if u == nil || !u.durable || u.checkpoint == nil {
+		return nil
+	}
+	record, err := u.checkpoint.Export()
+	if err != nil {
+		return err
+	}
+	if len(record.Entries) == 0 {
+		return errors.New("restored undo checkpoint has no entries")
+	}
+	slot := u.journalSlot
+	if slot != undoJournalPending && slot != undoJournalSealed {
+		slot = undoJournalSealed
+	}
+	if err := u.saveJournalAt(record, undoJournalRestored, slot == undoJournalPending); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (u *turnUndo) discardPending() error {
+	if u == nil || u.sessionID == "" || u.turnSequence == 0 || u.journalSlot != undoJournalPending {
+		return nil
+	}
+	if err := removeUndoJournal(u.workspace, u.sessionID, true); err != nil {
+		return err
+	}
+	u.durable = false
+	u.journalSlot = ""
+	return nil
+}
+
+func (u *turnUndo) finalizeJournal() error {
+	if u == nil || !u.durable {
+		return nil
+	}
+	if err := removeAllUndoJournals(u.workspace, u.sessionID); err != nil {
+		return err
+	}
+	u.durable = false
+	u.journalSlot = ""
+	return nil
 }
 
 func (u *turnUndo) capture(path string) error {
@@ -126,6 +248,22 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
 	if a.latestUndo == nil {
+		workspace := a.ConfigSnapshot().Workspace
+		sessionID, generation := a.taskSessionSnapshot()
+		if sessionID != "" {
+			loaded, loadErr := loadLatestDurableUndo(workspace, sessionID, generation)
+			if loadErr != nil {
+				a.undoLoadErr = loadErr
+				return "", fmt.Errorf("undo is unavailable: %w", loadErr)
+			}
+			a.undoLoadErr = nil
+			a.latestUndo = loaded
+		}
+	}
+	if a.undoLoadErr != nil {
+		return "", fmt.Errorf("undo is unavailable: %w", a.undoLoadErr)
+	}
+	if a.latestUndo == nil {
 		return "nothing to undo", nil
 	}
 	if !a.undoBelongsToCurrentSession(a.latestUndo) {
@@ -138,6 +276,13 @@ func (a *Agent) UndoLastTurn() (string, error) {
 			restoreErr = errors.New("undo failed: workspace restoration was incomplete")
 		}
 		return "", restoreErr
+	}
+	if err := a.latestUndo.persistRestored(); err != nil {
+		stateErr := fmt.Errorf("files restored but durable undo recovery was not recorded; retry /undo: %w", err)
+		if restoreErr != nil {
+			return "", errors.Join(stateErr, restoreErr)
+		}
+		return "", stateErr
 	}
 	undoMutation := func(task *taskstate.Task) error {
 		wasDone := task.Status == taskstate.StatusDone
@@ -156,6 +301,13 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	err = a.persistUndoTaskMutation(undoMutation)
 	if err != nil && !errors.Is(err, errTaskMutationSkipped) {
 		stateErr := fmt.Errorf("files restored but durable task state was not saved; retry /undo to finish recovery: %w", err)
+		if restoreErr != nil {
+			return "", errors.Join(stateErr, restoreErr)
+		}
+		return "", stateErr
+	}
+	if err := a.latestUndo.finalizeJournal(); err != nil {
+		stateErr := fmt.Errorf("workspace and durable task state were recovered but undo cleanup was not saved; retry /undo: %w", err)
 		if restoreErr != nil {
 			return "", errors.Join(stateErr, restoreErr)
 		}
@@ -195,7 +347,7 @@ func (a *Agent) persistUndoTaskMutation(mutate func(*taskstate.Task) error) erro
 func (a *Agent) UndoAvailable() bool {
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
-	return a.latestUndo != nil
+	return a.latestUndo != nil && a.undoLoadErr == nil
 }
 
 func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
@@ -206,21 +358,35 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 	if err != nil {
 		res.UndoError = err.Error()
 		a.undoMu.Lock()
-		a.latestUndo = nil
+		if u.durable && a.undoBelongsToCurrentSession(u) {
+			a.latestUndo = u
+			res.UndoAvailable = true
+		} else {
+			a.latestUndo = nil
+		}
 		a.undoMu.Unlock()
 		return
 	}
 	res.FilesChanged = paths
 	if len(paths) == 0 {
+		if err := u.discardPending(); err != nil {
+			res.UndoError = err.Error()
+		}
 		return
 	}
-	res.UndoAvailable = true
 	a.undoMu.Lock()
 	if !a.undoBelongsToCurrentSession(u) {
 		a.undoMu.Unlock()
+		if err := u.discardPending(); err != nil {
+			res.UndoError = err.Error()
+		}
 		res.UndoAvailable = false
 		return
 	}
+	if err := u.persistSealed(); err != nil {
+		res.UndoError = fmt.Errorf("durable undo journal was not finalized; recovery remains retryable: %w", err).Error()
+	}
+	res.UndoAvailable = true
 	a.latestUndo = u
 	a.undoMu.Unlock()
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -123,6 +124,7 @@ type Agent struct {
 	taskLoadErr           error
 	undoMu                sync.Mutex
 	latestUndo            *turnUndo
+	undoLoadErr           error
 	runTool               func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
 }
 
@@ -492,6 +494,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	changed := map[string]struct{}{}
 	sessionID, sessionGeneration := a.taskSessionSnapshot()
 	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
+	turnUndo.turnSequence = turnSequence
+	regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+		return turnUndo.preparePublish(path, data, mode)
+	}
 	nativeWriteRan := false
 	mutationCount := 0
 	lastToolKind := ""

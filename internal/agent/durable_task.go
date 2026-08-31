@@ -166,9 +166,22 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	a.TaskSession = strings.TrimSpace(sessionID)
 	a.taskSessionGeneration++
 	a.latestUndo = nil
+	a.undoLoadErr = nil
 	a.task = nil
 	a.taskLoadErr = nil
-	if a.TaskStore == nil || a.TaskSession == "" {
+	if a.TaskSession == "" {
+		return nil
+	}
+	loadUndo := func() {
+		undo, loadErr := loadLatestDurableUndo(workspaceRoot, a.TaskSession, a.taskSessionGeneration)
+		if loadErr != nil {
+			a.undoLoadErr = loadErr
+			return
+		}
+		a.latestUndo = undo
+	}
+	if a.TaskStore == nil {
+		loadUndo()
 		return nil
 	}
 	task, err := a.TaskStore.Load(a.TaskSession)
@@ -193,9 +206,11 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 			}
 		}
 		a.task = task
+		loadUndo()
 		return nil
 	}
 	if errors.Is(err, taskstate.ErrNotFound) {
+		loadUndo()
 		return nil
 	}
 	a.taskLoadErr = err
