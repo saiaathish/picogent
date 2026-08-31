@@ -126,8 +126,18 @@ func TestV02ReleaseLoop(t *testing.T) {
 	}
 	for i, want := range []string{"repo_map", "read_file", "write_file", "verify"} {
 		messages := fake.Calls[i+1].Messages
-		if len(messages) == 0 || messages[len(messages)-1].Name != want {
+		got := ""
+		for j := len(messages) - 1; j >= 0; j-- {
+			if messages[j].Name != "" {
+				got = messages[j].Name
+				break
+			}
+		}
+		if got != want {
 			t.Fatalf("call %d last tool = %+v, want %s", i, messages, want)
+		}
+		if want == "write_file" && (len(messages) == 0 || !strings.Contains(messages[len(messages)-1].Content, "Outcome state: VERIFY")) {
+			t.Fatalf("call %d missing post-write outcome guidance: %+v", i, messages)
 		}
 	}
 	if !result.GoalDone || !strings.Contains(result.Text, "Changed: todo/todo.go") || !strings.Contains(result.Text, "Undo: /undo") {

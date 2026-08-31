@@ -328,6 +328,10 @@ func TestProjectHealthFocusIsSkippedWhenCoBatchedWithWrite(t *testing.T) {
 	cfg.Workspace = dir
 	cfg.Provider = config.ProviderOllama
 	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("co-batched-focus"); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "create the file"}, allowAll{}); err != nil {
 		t.Fatal(err)
@@ -335,9 +339,69 @@ func TestProjectHealthFocusIsSkippedWhenCoBatchedWithWrite(t *testing.T) {
 	if len(fake.Calls) != 2 {
 		t.Fatalf("model calls = %d, want 2", len(fake.Calls))
 	}
+	var focus string
 	for _, message := range fake.Calls[1].Messages {
 		if strings.Contains(message.Content, "Internal outcome focus:") {
-			t.Fatalf("stale focus was injected after a co-batched write: %q", message.Content)
+			focus = message.Content
+		}
+	}
+	if strings.Contains(focus, "Outcome state: DIAGNOSE") || strings.Contains(focus, "Health observation: status=ATTENTION") {
+		t.Fatalf("stale health focus was injected after a co-batched write: %q", focus)
+	}
+	for _, marker := range []string{
+		"Outcome state: VERIFY",
+		"Turn side effects data: changed_files=[\"created.txt\"] capped=false",
+		"Health observation: status=UNKNOWN",
+	} {
+		if !strings.Contains(focus, marker) {
+			t.Fatalf("post-write task-only focus missing %q: %q", marker, focus)
+		}
+	}
+}
+
+func TestDurableWriteAddsOutcomeFocusToNextRound(t *testing.T) {
+	dir := t.TempDir()
+	writeArgs, _ := json.Marshal(map[string]string{"path": "created.txt", "content": "created"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: string(writeArgs)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "the file is written"}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("write-focus"); err != nil {
+		t.Fatal(err)
+	}
+
+	history, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "create the file"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Calls) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(fake.Calls))
+	}
+	var focus string
+	for _, message := range fake.Calls[1].Messages {
+		if message.Role == "system" && strings.Contains(message.Content, "Internal outcome focus:") {
+			focus = message.Content
+			break
+		}
+	}
+	for _, marker := range []string{
+		"Outcome state: VERIFY",
+		"Completion proof ready: false",
+		"Turn side effects data: changed_files=[\"created.txt\"] capped=false",
+		"Health observation: status=UNKNOWN",
+	} {
+		if !strings.Contains(focus, marker) {
+			t.Fatalf("post-write focus missing %q: %q", marker, focus)
+		}
+	}
+	for _, message := range history {
+		if strings.Contains(message.Content, "Internal outcome focus:") {
+			t.Fatalf("durable focus leaked into returned history: %q", message.Content)
 		}
 	}
 }

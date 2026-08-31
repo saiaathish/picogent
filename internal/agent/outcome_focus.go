@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/outcome"
+	"github.com/saiaathish/picogent/internal/projecthealth"
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
@@ -20,4 +21,19 @@ func outcomeFocusForTool(task *taskstate.Task, toolName, toolOutput string) stri
 		return ""
 	}
 	return outcome.EngineInstruction(contract)
+}
+
+// outcomeFocusForTask turns the latest durable task snapshot into one bounded
+// advisory without pretending that an old project-health observation is still
+// current. The unknown health report makes that freshness boundary explicit;
+// callers can replace it with a fresh report only when the read happened after
+// the latest mutation.
+func outcomeFocusForTask(task *taskstate.Task) string {
+	if task == nil {
+		return ""
+	}
+	return outcome.EngineInstruction(outcome.Build(task, projecthealth.Report{
+		Schema: projecthealth.Schema,
+		Status: projecthealth.StateUnknown,
+	}))
 }
