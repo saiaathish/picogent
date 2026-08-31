@@ -2,6 +2,7 @@ package agent
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/taskstate"
@@ -22,8 +23,8 @@ func (a *Agent) beginDurableTurn(route taskstate.TurnRoute, ev EventHandler) (ui
 	return sequence, true
 }
 
-func (a *Agent) closeDurableTurn(sequence uint64, interrupted bool, route taskstate.TurnRoute, hypothesis, evidence string, stop taskstate.StopReason, toolRounds, mutations int, ev EventHandler) bool {
-	return a.mutateTask(ev, func(task *taskstate.Task) error {
+func (a *Agent) closeDurableTurn(sequence uint64, interrupted bool, route taskstate.TurnRoute, hypothesis, evidence string, stop taskstate.StopReason, toolRounds, mutations int, ev EventHandler) (bool, error) {
+	snapshot, err := a.mutateTaskResult(func(task *taskstate.Task) error {
 		var closed bool
 		if interrupted {
 			closed = task.InterruptTurn(sequence, route, hypothesis, evidence, stop, toolRounds, mutations)
@@ -35,6 +36,26 @@ func (a *Agent) closeDurableTurn(sequence uint64, interrupted bool, route taskst
 		}
 		return nil
 	})
+	if err != nil {
+		if errors.Is(err, errTaskMutationSkipped) {
+			return false, nil
+		}
+		var persistenceErr *taskPersistenceError
+		if errors.As(err, &persistenceErr) {
+			err = fmt.Errorf("durable task state was not saved: %w", err)
+			if ev != nil {
+				ev.OnError(err)
+			}
+			return false, err
+		}
+		a.reportTaskUpdateError(ev, err)
+		return false, nil
+	}
+	if snapshot == nil {
+		return false, nil
+	}
+	emitTaskState(ev, snapshot)
+	return true, nil
 }
 
 func durableTurnStartRoute(task *taskstate.Task, mode TaskMode) taskstate.TurnRoute {

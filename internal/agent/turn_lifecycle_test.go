@@ -196,8 +196,8 @@ func TestRunWithOptionsReturnsTurnClosePersistenceFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persisted.Status != taskstate.StatusDone {
-		t.Fatalf("persisted terminal task = %#v, want saved task completion", persisted)
+	if persisted.Status == taskstate.StatusDone || !persisted.NeedsVerification() {
+		t.Fatalf("persisted terminal task = %#v, want resumable verification state", persisted)
 	}
 	if last := persisted.LastTurn(); last == nil || last.State != taskstate.TurnActive {
 		t.Fatalf("persisted turn = %#v, want active turn for recovery", last)
