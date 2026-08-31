@@ -372,7 +372,9 @@ func runOnceContext(ctx context.Context, args []string) error {
 	// same durable execution checkpoint as TUI/GUI turns.  A stable, prompt-
 	// keyed id lets an interrupted identical invocation resume without making
 	// unrelated prompts share progress.
-	a.SetTaskSession(headlessTaskSessionID(originalPrompt))
+	if err := a.SetTaskSession(headlessTaskSessionID(originalPrompt)); err != nil {
+		return fmt.Errorf("load durable task state: %w", err)
+	}
 	input := bufio.NewReader(os.Stdin)
 	interruptInput := func() { _ = os.Stdin.Close() }
 	h := &stdioHandler{yes: *yes, in: input, out: os.Stdout, errOut: os.Stderr, interruptInput: interruptInput}
