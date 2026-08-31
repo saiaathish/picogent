@@ -305,6 +305,42 @@ type longHorizonHelperResult struct {
 	TaskRevision    uint64               `json:"task_revision"`
 }
 
+type persistedTurnSummary struct {
+	Sequence       uint64               `json:"sequence"`
+	IntentRevision uint64               `json:"intent_revision"`
+	State          taskstate.TurnState  `json:"state"`
+	Route          string               `json:"route"`
+	EvidenceState  string               `json:"evidence_state"`
+	StopReason     taskstate.StopReason `json:"stop_reason"`
+	Hypothesis     string               `json:"hypothesis"`
+}
+
+type postRestartResumeResult struct {
+	RecoveredBefore  persistedTurnSummary `json:"recovered_before"`
+	RecoveredAfter   persistedTurnSummary `json:"recovered_after"`
+	FollowUp         persistedTurnSummary `json:"follow_up"`
+	TaskRevision     uint64               `json:"task_revision"`
+	SessionMessages  int                  `json:"session_messages"`
+	ResultGoalDone   bool                 `json:"result_goal_done"`
+	CompletionReady  bool                 `json:"completion_ready"`
+	CompletionReason string               `json:"completion_reason"`
+}
+
+func summarizePersistedTurn(turn *taskstate.TurnRecord) persistedTurnSummary {
+	if turn == nil {
+		return persistedTurnSummary{}
+	}
+	return persistedTurnSummary{
+		Sequence:       turn.Sequence,
+		IntentRevision: turn.IntentRevision,
+		State:          turn.State,
+		Route:          turn.Route,
+		EvidenceState:  turn.EvidenceState,
+		StopReason:     turn.StopReason,
+		Hypothesis:     turn.Hypothesis,
+	}
+}
+
 func TestLongHorizonResumeAfterProcessExit(t *testing.T) {
 	if os.Getenv("PICOGENT_LONG_HORIZON_HELPER") == "1" {
 		longHorizonResumeHelper(t)
@@ -480,12 +516,21 @@ func TestLongHorizonResumeAfterProcessKill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var result longHorizonHelperResult
+	var result postRestartResumeResult
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.TurnState != taskstate.TurnInterrupted || result.TurnRoute != string(taskstate.TurnRouteRecover) || result.EvidenceState != "UNVERIFIED" || result.StopReason != taskstate.StopProcessRestart || result.Hypothesis == "" || result.SessionMessages != 1 || result.TaskRevision != 2 {
-		t.Fatalf("killed-process recovery result = %#v, want explicit restart recovery", result)
+	if result.RecoveredBefore.State != taskstate.TurnInterrupted || result.RecoveredBefore.Route != string(taskstate.TurnRouteRecover) || result.RecoveredBefore.EvidenceState != "UNVERIFIED" || result.RecoveredBefore.StopReason != taskstate.StopProcessRestart || result.RecoveredBefore.Hypothesis == "" {
+		t.Fatalf("killed-process recovery before follow-up = %#v, want explicit restart recovery", result.RecoveredBefore)
+	}
+	if result.RecoveredAfter != result.RecoveredBefore {
+		t.Fatalf("killed-process recovered turn changed across follow-up: before=%#v after=%#v", result.RecoveredBefore, result.RecoveredAfter)
+	}
+	if result.FollowUp.Sequence != result.RecoveredBefore.Sequence+1 || result.FollowUp.IntentRevision != result.RecoveredBefore.IntentRevision || result.FollowUp.State != taskstate.TurnCompleted || result.FollowUp.Route != string(taskstate.TurnRouteOther) || result.FollowUp.EvidenceState != "UNVERIFIED" || result.FollowUp.StopReason != taskstate.StopNone || result.FollowUp.Hypothesis == "" {
+		t.Fatalf("killed-process follow-up = %#v, recovered before = %#v; want a distinct completed turn", result.FollowUp, result.RecoveredBefore)
+	}
+	if result.SessionMessages != 3 || result.TaskRevision <= 2 || result.ResultGoalDone || result.CompletionReady {
+		t.Fatalf("killed-process follow-up result = %#v, want persisted transcript without completion claim", result)
 	}
 }
 
@@ -517,8 +562,13 @@ func longHorizonKillResumeHelper(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace = workspace
 	cfg.Provider = config.ProviderOllama
-	a := New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
-	a.TaskStore = taskstate.NewStore(os.Getenv("PICOGENT_KILL_TASK_DIR"))
+	const followUpResponse = "the follow-up turn was persisted after process restart"
+	scripted := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{
+		Role:    "assistant",
+		Content: followUpResponse,
+	}}}}
+	a := New(cfg, scripted, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.SetTaskStore(taskstate.NewStore(os.Getenv("PICOGENT_KILL_TASK_DIR")))
 	if err := a.SetTaskSession(os.Getenv("PICOGENT_KILL_SESSION")); err != nil {
 		t.Fatal(err)
 	}
@@ -526,22 +576,65 @@ func longHorizonKillResumeHelper(t *testing.T) {
 	if task == nil {
 		t.Fatal("fresh process did not load durable task")
 	}
-	last := task.LastTurn()
-	if last == nil || last.State != taskstate.TurnInterrupted {
-		t.Fatalf("fresh process recovered turn = %#v, want interrupted", last)
+	recoveredBefore := summarizePersistedTurn(task.LastTurn())
+	if recoveredBefore.State != taskstate.TurnInterrupted || recoveredBefore.Route != string(taskstate.TurnRouteRecover) || recoveredBefore.EvidenceState != "UNVERIFIED" || recoveredBefore.StopReason != taskstate.StopProcessRestart {
+		t.Fatalf("fresh process recovered turn = %#v, want explicit process-restart interruption", task.LastTurn())
 	}
 	s, err := session.Load(os.Getenv("PICOGENT_KILL_SESSION"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := longHorizonHelperResult{
-		TurnState:       last.State,
-		TurnRoute:       last.Route,
-		EvidenceState:   last.EvidenceState,
-		StopReason:      last.StopReason,
-		Hypothesis:      last.Hypothesis,
-		SessionMessages: len(s.Messages),
-		TaskRevision:    task.Revision,
+	if len(s.Messages) != 1 {
+		t.Fatalf("pre-follow-up session messages = %d, want original transcript only", len(s.Messages))
+	}
+	a.SetGoal(task.Goal)
+	next, runResult, err := a.Run(context.Background(), append([]llm.Message(nil), s.Messages...), llm.Message{
+		Role:    "user",
+		Content: "resume the terminated outcome and report the next safe step",
+	}, NopHandler{})
+	if err != nil {
+		t.Fatalf("fresh process follow-up failed: %v", err)
+	}
+	if runResult.GoalDone || runResult.Completion.Ready {
+		t.Fatalf("fresh process claimed completion from restart evidence: goal_done=%v completion=%#v", runResult.GoalDone, runResult.Completion)
+	}
+	if err := session.SaveMessages(workspace, os.Getenv("PICOGENT_KILL_SESSION"), next); err != nil {
+		t.Fatalf("save follow-up transcript: %v", err)
+	}
+	savedSession, err := session.Load(os.Getenv("PICOGENT_KILL_SESSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(savedSession.Messages) != 3 || savedSession.Messages[1].Role != "user" || savedSession.Messages[2].Role != "assistant" || savedSession.Messages[2].Content != followUpResponse {
+		t.Fatalf("follow-up transcript = %#v, want original plus one user/assistant turn", savedSession.Messages)
+	}
+	persisted, err := a.TaskStoreSnapshot().Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.Turns) < 2 {
+		t.Fatalf("persisted follow-up task turns = %#v, want recovery and follow-up", persisted.Turns)
+	}
+	recoveredAfter := summarizePersistedTurn(&persisted.Turns[len(persisted.Turns)-2])
+	followUp := summarizePersistedTurn(persisted.LastTurn())
+	if recoveredAfter != recoveredBefore {
+		t.Fatalf("recovered turn changed across follow-up: before=%#v after=%#v", recoveredBefore, recoveredAfter)
+	}
+	if followUp.Sequence != recoveredBefore.Sequence+1 || followUp.IntentRevision != recoveredBefore.IntentRevision || followUp.State != taskstate.TurnCompleted || followUp.Route != string(taskstate.TurnRouteOther) || followUp.EvidenceState != "UNVERIFIED" || followUp.StopReason != taskstate.StopNone || followUp.Hypothesis == "" {
+		t.Fatalf("follow-up turn = %#v, recovered before = %#v; want a distinct completed turn", followUp, recoveredBefore)
+	}
+	if persisted.Revision <= task.Revision || persisted.SessionID != savedSession.ID || savedSession.Workspace != workspace {
+		t.Fatalf("task/session coherence = task revision %d (before %d), task session %q, saved session=%#v", persisted.Revision, task.Revision, persisted.SessionID, savedSession)
+	}
+	result := postRestartResumeResult{
+		RecoveredBefore:  recoveredBefore,
+		RecoveredAfter:   recoveredAfter,
+		FollowUp:         followUp,
+		TaskRevision:     persisted.Revision,
+		SessionMessages:  len(savedSession.Messages),
+		ResultGoalDone:   runResult.GoalDone,
+		CompletionReady:  runResult.Completion.Ready,
+		CompletionReason: runResult.Completion.Explanation(),
 	}
 	data, err := json.Marshal(result)
 	if err != nil {
