@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/ctxmgr"
@@ -402,5 +403,159 @@ func longHorizonResumeHelper(t *testing.T) {
 	}
 	if err := os.WriteFile(os.Getenv("PICOGENT_LONG_HORIZON_RESULT"), data, 0o600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLongHorizonResumeAfterProcessKill(t *testing.T) {
+	if os.Getenv("PICOGENT_KILL_HELPER") == "1" {
+		longHorizonKillHelper(t)
+		return
+	}
+	if os.Getenv("PICOGENT_KILL_RESUME_HELPER") == "1" {
+		longHorizonKillResumeHelper(t)
+		return
+	}
+
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PICOGENT_HOME", home)
+	s := &session.Session{
+		ID:        "process-kill-session",
+		Title:     "process kill proof",
+		Workspace: workspace,
+		Messages:  []llm.Message{{Role: "user", Content: "resume after process termination"}},
+	}
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	taskDir := filepath.Join(workspace, ".picogent", "tasks")
+	readyPath := filepath.Join(root, "worker-ready")
+	worker := exec.Command(os.Args[0], "-test.run", "^TestLongHorizonResumeAfterProcessKill$", "-test.count=1")
+	worker.Env = append(os.Environ(),
+		"PICOGENT_KILL_HELPER=1",
+		"PICOGENT_KILL_WORKSPACE="+workspace,
+		"PICOGENT_KILL_TASK_DIR="+taskDir,
+		"PICOGENT_KILL_SESSION="+s.ID,
+		"PICOGENT_KILL_READY="+readyPath,
+	)
+	if err := worker.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitForMarker(t, readyPath)
+	if err := worker.Process.Kill(); err != nil {
+		t.Fatalf("kill active worker: %v", err)
+	}
+	if err := worker.Wait(); err == nil {
+		t.Fatal("killed worker exited cleanly")
+	}
+
+	resultPath := filepath.Join(root, "resume-result.json")
+	resumer := exec.Command(os.Args[0], "-test.run", "^TestLongHorizonResumeAfterProcessKill$", "-test.count=1")
+	resumer.Env = append(os.Environ(),
+		"PICOGENT_KILL_RESUME_HELPER=1",
+		"PICOGENT_KILL_WORKSPACE="+workspace,
+		"PICOGENT_KILL_TASK_DIR="+taskDir,
+		"PICOGENT_KILL_SESSION="+s.ID,
+		"PICOGENT_KILL_RESULT="+resultPath,
+	)
+	if output, err := resumer.CombinedOutput(); err != nil {
+		t.Fatalf("fresh process recovery failed: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result longHorizonHelperResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.TurnState != taskstate.TurnInterrupted || result.TurnRoute != string(taskstate.TurnRouteRecover) || result.EvidenceState != "UNVERIFIED" || result.StopReason != taskstate.StopProcessRestart || result.Hypothesis == "" || result.SessionMessages != 1 || result.TaskRevision != 2 {
+		t.Fatalf("killed-process recovery result = %#v, want explicit restart recovery", result)
+	}
+}
+
+func longHorizonKillHelper(t *testing.T) {
+	t.Helper()
+	store := taskstate.NewStore(os.Getenv("PICOGENT_KILL_TASK_DIR"))
+	task, err := taskstate.New(os.Getenv("PICOGENT_KILL_SESSION"), "resume the terminated outcome", []string{"recover", "verify"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := task.BeginTurn(taskstate.TurnRouteImplement); !ok {
+		t.Fatal("active turn did not start")
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("PICOGENT_KILL_READY"), []byte("active\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {}
+}
+
+func longHorizonKillResumeHelper(t *testing.T) {
+	t.Helper()
+	workspace := os.Getenv("PICOGENT_KILL_WORKSPACE")
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	a := New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.TaskStore = taskstate.NewStore(os.Getenv("PICOGENT_KILL_TASK_DIR"))
+	if err := a.SetTaskSession(os.Getenv("PICOGENT_KILL_SESSION")); err != nil {
+		t.Fatal(err)
+	}
+	task := a.TaskSnapshot()
+	if task == nil {
+		t.Fatal("fresh process did not load durable task")
+	}
+	last := task.LastTurn()
+	if last == nil || last.State != taskstate.TurnInterrupted {
+		t.Fatalf("fresh process recovered turn = %#v, want interrupted", last)
+	}
+	s, err := session.Load(os.Getenv("PICOGENT_KILL_SESSION"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := longHorizonHelperResult{
+		TurnState:       last.State,
+		TurnRoute:       last.Route,
+		EvidenceState:   last.EvidenceState,
+		StopReason:      last.StopReason,
+		Hypothesis:      last.Hypothesis,
+		SessionMessages: len(s.Messages),
+		TaskRevision:    task.Revision,
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("PICOGENT_KILL_RESULT"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitForMarker(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil && len(data) > 0 {
+			return
+		}
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", path)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
