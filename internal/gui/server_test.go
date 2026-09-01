@@ -1709,6 +1709,115 @@ func TestGUIStateRedactsLiveTranscriptBeforeJSON(t *testing.T) {
 	}
 }
 
+func TestGUIPendingPermissionProjectionSanitizesStateAndReconnect(t *testing.T) {
+	const secret = "gui-pending-permission-secret"
+	req := perm.Request{
+		Tool:    "mcp_github_create_issue",
+		Summary: "create issue token=" + secret,
+		Hint:    "\x1b[31mreview password=" + secret,
+	}
+	s := &server{cfg: config.Config{Workspace: t.TempDir()}, pendingPerm: req}
+
+	state := s.snapshot()
+	pending, ok := state["pending_perm"].(map[string]any)
+	if !ok {
+		t.Fatalf("pending permission projection = %#v", state["pending_perm"])
+	}
+	stateWire, err := json.Marshal(pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(stateWire), secret) || strings.Contains(string(stateWire), "\x1b") {
+		t.Fatalf("state pending permission leaked hostile text: %s", stateWire)
+	}
+	if !strings.Contains(string(stateWire), "[REDACTED]") {
+		t.Fatalf("state pending permission lost redaction marker: %s", stateWire)
+	}
+
+	reconnectWire, err := json.Marshal(sanitizeEvent(permissionEvent(req)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(reconnectWire), secret) || strings.Contains(string(reconnectWire), "\x1b") {
+		t.Fatalf("reconnect permission leaked hostile text: %s", reconnectWire)
+	}
+	if !strings.Contains(string(reconnectWire), "[REDACTED]") {
+		t.Fatalf("reconnect permission lost redaction marker: %s", reconnectWire)
+	}
+}
+
+func TestGUIEventSanitizationCoversLiveAndDiagnosticPayloads(t *testing.T) {
+	const secret = "gui-event-payload-secret"
+	cases := []event{
+		{Type: "assistant", Text: "assistant output password=" + secret},
+		{Type: "assistant_delta", Text: "delta access_token=" + secret},
+		{Type: "assistant_final", Text: "final Bearer " + secret},
+		{Type: "tool", Text: "tool output token=" + secret},
+		{Type: "test", Text: "tests", Summary: "output\napi_key=" + secret},
+		{Type: "route", Text: "route", Summary: "reason secret=" + secret},
+		{Type: "title", Text: "title password=" + secret},
+	}
+	for _, input := range cases {
+		got := sanitizeEvent(input)
+		wire, err := json.Marshal(got)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", input.Type, err)
+		}
+		if strings.Contains(string(wire), secret) || strings.Contains(string(wire), "\x1b") || strings.Contains(string(wire), "\n") {
+			t.Fatalf("event %s retained hostile text: %s", input.Type, wire)
+		}
+		if !strings.Contains(string(wire), "[REDACTED]") {
+			t.Fatalf("event %s lost redaction marker: %s", input.Type, wire)
+		}
+		if twice := sanitizeEvent(got); !reflect.DeepEqual(twice, got) {
+			t.Fatalf("event %s changed after second sanitization: first=%#v second=%#v", input.Type, got, twice)
+		}
+	}
+
+	events := make(chan event, 1)
+	s := &server{subs: []chan event{events}}
+	(&guiHandler{s: s}).OnTextFinal("live final password=" + secret)
+	got := <-events
+	if got.Type != "assistant_final" || strings.Contains(got.Text, secret) || !strings.Contains(got.Text, "[REDACTED]") {
+		t.Fatalf("live event = %#v", got)
+	}
+}
+
+func TestGUIStateTaskProjectionSanitizesDurableTextWithoutMutation(t *testing.T) {
+	const secret = "gui-task-projection-secret"
+	store := taskstate.NewStore(t.TempDir())
+	task, err := taskstate.New("session-task-projection", "ship token="+secret, []string{"implement password=" + secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.BlockedBy = "access_token=" + secret
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+	ag := &agent.Agent{TaskStore: store}
+	ag.SetTaskSession(task.SessionID)
+	s := &server{ag: ag, sessionID: task.SessionID}
+
+	state := s.snapshot()
+	got, ok := state["task"].(*taskstate.Task)
+	if !ok || got == nil {
+		t.Fatalf("state task projection = %#v", state["task"])
+	}
+	wire, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(wire), secret) || strings.Contains(string(wire), "\x1b") {
+		t.Fatalf("task projection leaked hostile text: %s", wire)
+	}
+	if !strings.Contains(string(wire), "[REDACTED]") {
+		t.Fatalf("task projection lost redaction marker: %s", wire)
+	}
+	if task.Goal != "ship token="+secret || task.Steps[0].Description != "implement password="+secret || task.BlockedBy != "access_token="+secret {
+		t.Fatalf("task source was mutated: %#v", task)
+	}
+}
+
 func TestReadFileRejectsOutsideSymlink(t *testing.T) {
 	workspace := t.TempDir()
 	outside := t.TempDir()

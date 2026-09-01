@@ -528,10 +528,20 @@ func (s *server) emit(e event) {
 	}
 }
 
-const maxGUIErrorBytes = 240
+const (
+	maxGUIErrorBytes          = 240
+	maxGUIEventTextBytes      = 8000
+	maxGUIEventSummaryBytes   = 2000
+	maxGUIEventHintBytes      = 240
+	maxGUIToolTranscriptBytes = 400
+)
 
 func guiDiagnostic(value string) string {
 	return redact.Diagnostic(value, maxGUIErrorBytes)
+}
+
+func guiEventText(value string, limit int) string {
+	return redact.Diagnostic(value, limit)
 }
 
 func writeGUIError(w http.ResponseWriter, message string, status int) {
@@ -546,8 +556,77 @@ func sanitizeEvent(e event) event {
 		e.Text = guiDiagnostic(e.Text)
 		e.Summary = guiDiagnostic(e.Summary)
 		e.Hint = guiDiagnostic(e.Hint)
+	case "assistant", "assistant_delta", "assistant_final":
+		e.Text = guiEventText(e.Text, 0)
+	case "tool":
+		e.Text = guiEventText(e.Text, maxGUIToolTranscriptBytes)
+	default:
+		e.Text = guiEventText(e.Text, maxGUIEventTextBytes)
 	}
+	if e.Type != "permission" {
+		e.Summary = guiEventText(e.Summary, maxGUIEventSummaryBytes)
+		e.Hint = guiEventText(e.Hint, maxGUIEventHintBytes)
+	}
+	e.Task = sanitizeTask(e.Task)
+	e.Completion = sanitizeCompletion(e.Completion)
 	return e
+}
+
+func sanitizeCompletion(check *taskstate.CompletionCheck) *taskstate.CompletionCheck {
+	if check == nil {
+		return nil
+	}
+	cp := *check
+	cp.MissingCriteria = append([]int(nil), check.MissingCriteria...)
+	cp.MissingRequirements = append([]taskstate.EvidenceKind(nil), check.MissingRequirements...)
+	cp.Requirements = append([]taskstate.RequirementEvidenceState(nil), check.Requirements...)
+	cp.Reason = guiEventText(check.Reason, maxGUIEventTextBytes)
+	return &cp
+}
+
+// sanitizeTask protects the GUI projection without mutating the authoritative
+// task snapshot. The task model contains bounded user, model, verifier, and
+// repository text, so a JSON round trip lets this boundary cover every nested
+// string field as the model evolves instead of maintaining a second task
+// representation here.
+func sanitizeTask(task *taskstate.Task) *taskstate.Task {
+	if task == nil {
+		return nil
+	}
+	data, err := json.Marshal(task)
+	if err != nil {
+		return nil
+	}
+	var value any
+	if err := json.Unmarshal(data, &value); err != nil {
+		return nil
+	}
+	value = sanitizeJSONValue(value)
+	data, err = json.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	var out taskstate.Task
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil
+	}
+	return &out
+}
+
+func sanitizeJSONValue(value any) any {
+	switch v := value.(type) {
+	case string:
+		return redact.Diagnostic(v, 0)
+	case []any:
+		for i := range v {
+			v[i] = sanitizeJSONValue(v[i])
+		}
+	case map[string]any:
+		for key, item := range v {
+			v[key] = sanitizeJSONValue(item)
+		}
+	}
+	return value
 }
 
 func (s *server) emitTaskSnapshot(sessionID string) {
@@ -726,13 +805,13 @@ func (s *server) snapshot() map[string]any {
 		"mcp_tools":           mcpToolCount(ag),
 		"session_id":          sessionID,
 		"undo_available":      undoAvailable,
-		"task":                task,
+		"task":                sanitizeTask(task),
 		"router":              s.routerSnapshot(),
 		"model_options":       llm.ModelChoices(llm.Ecosystem(cfg.RouterEcosystem()), cfg.FableAllowed()),
 		"slash":               slash.Catalog(cfg.Workspace),
 	}
 	if proof := taskCompletionProof(task); proof != nil {
-		out["completion"] = proof
+		out["completion"] = sanitizeCompletion(proof)
 	}
 	if store, err := learn.Load(cfg.Workspace); err == nil {
 		out["overview"] = store
@@ -757,17 +836,7 @@ func (s *server) snapshot() map[string]any {
 		out["messages"] = messagesToTranscript(hist)
 	}
 	if pend.Tool != "" {
-		kind := pend.Tool
-		if strings.HasPrefix(kind, "mcp_") || kind == "mcp_manage" {
-			kind = "mcp"
-		}
-		out["pending_perm"] = map[string]any{
-			"tool":    pend.Tool,
-			"summary": pend.Summary,
-			"hint":    pend.Hint,
-			"kind":    kind,
-			"status":  permStatus(pend),
-		}
+		out["pending_perm"] = permissionProjection(pend)
 	}
 	budget := ctxmgr.BudgetForModel(cfg.Model)
 	ctxStats := ctxmgr.StatsFor(hist, budget)
@@ -1812,7 +1881,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	pend := s.pendingPerm
 	s.mu.Unlock()
 	if pend.Tool != "" {
-		b, _ := json.Marshal(permissionEvent(pend))
+		b, _ := json.Marshal(sanitizeEvent(permissionEvent(pend)))
 		fmt.Fprintf(w, "data: %s\n\n", b)
 		fl.Flush()
 	}
@@ -2405,6 +2474,17 @@ func permissionEvent(req perm.Request) event {
 	return event{Type: "permission", Summary: req.Summary, Hint: req.Hint, Text: req.Tool, Kind: kind, Status: permStatus(req)}
 }
 
+func permissionProjection(req perm.Request) map[string]any {
+	e := sanitizeEvent(permissionEvent(req))
+	return map[string]any{
+		"tool":    e.Text,
+		"summary": e.Summary,
+		"hint":    e.Hint,
+		"kind":    e.Kind,
+		"status":  e.Status,
+	}
+}
+
 func permStatus(req perm.Request) string {
 	if req.Destructive {
 		return "destructive"
@@ -2572,7 +2652,7 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 				"id":       sess.ID,
 				"title":    sess.Title,
 				"messages": messagesToTranscript(sess.Messages),
-				"task":     task,
+				"task":     sanitizeTask(task),
 			})
 		case "delete":
 			if in.ID == "" {

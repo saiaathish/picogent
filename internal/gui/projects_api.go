@@ -31,7 +31,7 @@ func (s *server) writeProjectSwitch(w http.ResponseWriter, p projects.Project, r
 		"path":       p.Path,
 		"session_id": res.SessionID,
 		"messages":   res.Messages,
-		"task":       res.Task,
+		"task":       sanitizeTask(res.Task),
 	})
 }
 
