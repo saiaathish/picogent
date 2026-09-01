@@ -17,7 +17,15 @@ type rootParent struct {
 	root *os.Root
 }
 
-func openSecureParent(path string, _ bool) (secureParent, error) {
+func openSecureParent(path string, create bool) (secureParent, error) {
+	return openSecureParentWithDurability(path, create, false)
+}
+
+func openSecureParentDurable(path string, create bool) (secureParent, error) {
+	return openSecureParentWithDurability(path, create, true)
+}
+
+func openSecureParentWithDurability(path string, _ bool, _ bool) (secureParent, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -178,12 +186,20 @@ func (p *rootParent) replace(oldName, newName string, source *os.File) error {
 }
 
 func (p *rootParent) sync() error {
-	file, err := p.root.Open(".")
-	if err != nil {
+	err := p.syncDurable()
+	if errors.Is(err, os.ErrInvalid) {
 		return nil
 	}
+	return err
+}
+
+func (p *rootParent) syncDurable() error {
+	file, err := p.root.Open(".")
+	if err != nil {
+		return fmt.Errorf("open secure directory for sync: %w", err)
+	}
 	defer file.Close()
-	if err := file.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
+	if err := file.Sync(); err != nil {
 		return fmt.Errorf("sync secure directory: %w", err)
 	}
 	return nil

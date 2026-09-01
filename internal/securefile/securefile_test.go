@@ -37,6 +37,40 @@ func TestReadFileMissingPreservesOSNotExist(t *testing.T) {
 	}
 }
 
+func TestWriteAtomicDurableFailsBeforePublicationWhenParentSyncFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := os.WriteFile(path, []byte("before\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	syncErr := errors.New("injected parent sync failure")
+	if err := writeAtomic(path, []byte("after\n"), 0o600, true, func(secureParent) error {
+		return syncErr
+	}); !errors.Is(err, syncErr) {
+		t.Fatalf("durable write error = %v, want injected sync failure", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "before\n" {
+		t.Fatalf("durable write changed destination before preflight passed: %q", got)
+	}
+}
+
+func TestWriteAtomicDurablePublishesOnSupportedFilesystem(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	if err := WriteAtomicDurable(path, []byte("durable\n"), 0o600); err != nil {
+		t.Fatalf("WriteAtomicDurable = %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "durable\n" {
+		t.Fatalf("durable write = %q", got)
+	}
+}
+
 func TestWriteAtomicRejectsSymlinkTarget(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(t.TempDir(), "outside.yaml")

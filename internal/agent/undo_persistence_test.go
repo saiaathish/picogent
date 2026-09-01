@@ -180,6 +180,110 @@ func TestUndoConflictDoesNotInvalidateDurableEvidence(t *testing.T) {
 	}
 }
 
+func TestCachedUndoRefreshesAfterNewerDurableTurn(t *testing.T) {
+	a, store, task := newDurableUndoFixture(t, taskstate.StatusWorking)
+	oldUndo := a.latestUndo
+	oldUndo.turnSequence = task.Turns[0].Sequence
+	oldUndo.durable = true
+	oldUndo.journalSlot = undoJournalSealed
+	oldRecord, err := oldUndo.checkpoint.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := oldUndo.saveJournal(oldRecord, undoJournalSealed); err != nil {
+		t.Fatal(err)
+	}
+
+	newPath := filepath.Join(a.ConfigSnapshot().Workspace, "new.txt")
+	newCheckpoint, err := checkpoint.Capture(a.ConfigSnapshot().Workspace, []string{"new.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newPath, []byte("newer agent edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := newCheckpoint.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := current.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok {
+		t.Fatal("newer turn did not start")
+	}
+	current.RecordChanged("new.txt")
+	if !current.FinishTurn(sequence, taskstate.TurnRouteImplement, "edit the newer file", "UNVERIFIED", taskstate.StopNone, 1, 1) {
+		t.Fatal("newer turn did not finish")
+	}
+	if err := store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	newUndo := &turnUndo{
+		workspace:         a.ConfigSnapshot().Workspace,
+		checkpoint:        newCheckpoint,
+		sessionID:         task.SessionID,
+		sessionGeneration: oldUndo.sessionGeneration,
+		turnSequence:      sequence,
+		durable:           true,
+		journalSlot:       undoJournalSealed,
+	}
+	newRecord, err := newCheckpoint.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := newUndo.saveJournal(newRecord, undoJournalSealed); err != nil {
+		t.Fatal(err)
+	}
+
+	message, err := a.UndoLastTurn()
+	if err != nil || !strings.Contains(message, "removed new.txt") {
+		t.Fatalf("cached undo after newer durable turn = (%q, %v)", message, err)
+	}
+	assertUndoFileContent(t, filepath.Join(a.ConfigSnapshot().Workspace, "fixed.txt"), "after\n")
+	if _, err := os.Stat(newPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("newer turn file was not undone: %v", err)
+	}
+}
+
+func TestUndoRefreshErrorClearsAfterJournalRecovery(t *testing.T) {
+	a, _, task := newDurableUndoFixture(t, taskstate.StatusWorking)
+	undo := a.latestUndo
+	undo.turnSequence = task.Turns[0].Sequence
+	undo.durable = true
+	undo.journalSlot = undoJournalSealed
+	record, err := undo.checkpoint.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedPath, _, err := undoJournalPaths(a.ConfigSnapshot().Workspace, task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := undo.saveJournal(record, undoJournalSealed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealedPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "undo is unavailable") {
+		t.Fatalf("malformed refresh error = %v", err)
+	}
+	if a.UndoAvailable() {
+		t.Fatal("undo remained available after refresh failure")
+	}
+
+	if err := undo.saveJournal(record, undoJournalSealed); err != nil {
+		t.Fatal(err)
+	}
+	message, err := a.UndoLastTurn()
+	if err != nil || !strings.Contains(message, "restored fixed.txt") {
+		t.Fatalf("undo after journal recovery = (%q, %v)", message, err)
+	}
+}
+
 func TestUndoPreservesCompletedRestoreWarning(t *testing.T) {
 	warning := errors.New("checkpoint restored but temporary file cleanup failed")
 	result := checkpoint.RestoreResult{Restored: []string{"fixed.txt"}, Complete: true}

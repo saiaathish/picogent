@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,7 +14,9 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 func TestUndoCapturesToolThatMutatesThenReturnsError(t *testing.T) {
@@ -55,6 +58,182 @@ func TestUndoCapturesToolThatMutatesThenReturnsError(t *testing.T) {
 	}
 }
 
+func TestRejectedPublishDoesNotCreateUndo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := newUndoHookAgent(t, dir)
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("rejected-publish"); err != nil {
+		t.Fatal(err)
+	}
+	a.runTool = func(ctx context.Context, call llm.ToolCall, tool tools.Tool, c tools.Context) (string, error) {
+		if call.Name != "write_file" {
+			t.Fatalf("unexpected tool %q", call.Name)
+		}
+		if err := os.WriteFile(path, []byte("user edit"), 0o644); err != nil {
+			return "", err
+		}
+		return tool.Run(ctx, call.Arguments, c)
+	}
+
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note"}, allowUndoTest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UndoAvailable || a.UndoAvailable() {
+		t.Fatalf("rejected publish created undo state: %+v", res)
+	}
+	if msg, err := a.UndoLastTurn(); err != nil || msg != "nothing to undo" {
+		t.Fatalf("undo after rejected publish = (%q, %v)", msg, err)
+	}
+	assertUndoFileContent(t, path, "user edit")
+}
+
+func TestEditContentConflictDoesNotCreateUndo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]string{
+		"path":       "note.txt",
+		"old_string": "before",
+		"new_string": "agent edit",
+	})
+	a := newUndoHookAgent(t, dir)
+	a.SetClient(&llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "edit", Name: "edit_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "the file changed; edit was not applied"}},
+	}})
+	a.runTool = func(_ context.Context, call llm.ToolCall, _ tools.Tool, _ tools.Context) (string, error) {
+		if call.Name != "edit_file" {
+			t.Fatalf("unexpected tool %q", call.Name)
+		}
+		if err := os.WriteFile(path, []byte("newer user edit"), 0o644); err != nil {
+			return "", err
+		}
+		// The real edit tool can return this wrapped error when its compare
+		// check observes a concurrent user edit. Keep the agent-level test
+		// deterministic; the workspace package covers the filesystem race
+		// boundary itself.
+		return "", fmt.Errorf("edit became stale: %w", workspace.ErrContentConflict)
+	}
+
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "edit note"}, allowUndoTest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UndoAvailable || a.UndoAvailable() {
+		t.Fatalf("content-conflict edit created undo state: %+v", res)
+	}
+	if msg, err := a.UndoLastTurn(); err != nil || msg != "nothing to undo" {
+		t.Fatalf("undo after content conflict = (%q, %v)", msg, err)
+	}
+	assertUndoFileContent(t, path, "newer user edit")
+}
+
+func TestMixedWriteAndContentConflictDoesNotUndoNewerPath(t *testing.T) {
+	dir := t.TempDir()
+	firstPath := filepath.Join(dir, "first.txt")
+	conflictPath := filepath.Join(dir, "conflict.txt")
+	if err := os.WriteFile(firstPath, []byte("first before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conflictPath, []byte("conflict before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	firstArgs, _ := json.Marshal(map[string]string{"path": "first.txt", "content": "first agent"})
+	conflictArgs, _ := json.Marshal(map[string]string{
+		"path":       "conflict.txt",
+		"old_string": "conflict before",
+		"new_string": "conflict agent",
+	})
+	a := newUndoHookAgent(t, dir)
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("mixed-content-conflict"); err != nil {
+		t.Fatal(err)
+	}
+	a.SetClient(&llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "first", Name: "write_file", Arguments: string(firstArgs)},
+			{ID: "conflict", Name: "edit_file", Arguments: string(conflictArgs)},
+		}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}})
+	runs := 0
+	a.runTool = func(ctx context.Context, call llm.ToolCall, tool tools.Tool, c tools.Context) (string, error) {
+		runs++
+		if runs == 2 {
+			if err := os.WriteFile(conflictPath, []byte("newer user edit"), 0o644); err != nil {
+				return "", err
+			}
+			return "", fmt.Errorf("edit became stale: %w", workspace.ErrContentConflict)
+		}
+		return tool.Run(ctx, call.Arguments, c)
+	}
+
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update both files"}, allowUndoTest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.UndoAvailable || len(res.FilesChanged) != 1 || res.FilesChanged[0] != "first.txt" {
+		t.Fatalf("mixed content-conflict undo state: %+v", res)
+	}
+	if _, err := a.UndoLastTurn(); err != nil {
+		t.Fatal(err)
+	}
+	assertUndoFileContent(t, firstPath, "first before")
+	assertUndoFileContent(t, conflictPath, "newer user edit")
+}
+
+func TestRejectedLaterPublishPreservesEarlierUndo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := newUndoHookAgent(t, dir)
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("rejected-later-publish"); err != nil {
+		t.Fatal(err)
+	}
+	firstArgs, _ := json.Marshal(map[string]string{"path": "note.txt", "content": "first"})
+	secondArgs, _ := json.Marshal(map[string]string{"path": "note.txt", "content": "second"})
+	a.SetClient(&llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "1", Name: "write_file", Arguments: string(firstArgs)},
+			{ID: "2", Name: "write_file", Arguments: string(secondArgs)},
+		}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}})
+	runs := 0
+	a.runTool = func(ctx context.Context, call llm.ToolCall, tool tools.Tool, c tools.Context) (string, error) {
+		runs++
+		if runs == 2 {
+			if err := os.WriteFile(path, []byte("user edit"), 0o644); err != nil {
+				return "", err
+			}
+		}
+		return tool.Run(ctx, call.Arguments, c)
+	}
+
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note twice"}, allowUndoTest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.UndoAvailable || len(res.FilesChanged) != 1 {
+		t.Fatalf("earlier undo state was not retained: %+v", res)
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "newer changes") {
+		t.Fatalf("undo did not preserve the external edit: %v", err)
+	}
+	assertUndoFileContent(t, path, "user edit")
+}
+
 func TestSealFailureReportsUndoUnavailable(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires privileges on Windows")
@@ -82,6 +261,42 @@ func TestSealFailureReportsUndoUnavailable(t *testing.T) {
 	}
 	if !strings.Contains(res.Text, "Undo: unavailable") {
 		t.Fatalf("missing unavailable footer: %q", res.Text)
+	}
+}
+
+func TestFailedJournalPublicationDoesNotAdvertiseProcessLocalUndo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := newUndoHookAgent(t, dir)
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("failed-journal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".picogent"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".picogent", "undo"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.runTool = func(_ context.Context, _ llm.ToolCall, _ tools.Tool, _ tools.Context) (string, error) {
+		if err := os.WriteFile(path, []byte("after"), 0o644); err != nil {
+			return "", err
+		}
+		return "", errors.New("simulated tool failure after mutation")
+	}
+
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note"}, allowUndoTest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UndoAvailable || a.UndoAvailable() {
+		t.Fatalf("failed journal publication was advertised as undoable: %+v", res)
+	}
+	if res.UndoError == "" || !strings.Contains(res.UndoError, "durable undo journal") {
+		t.Fatalf("missing durable publication error: %+v", res)
 	}
 }
 

@@ -4,12 +4,14 @@ package checkpoint
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -23,6 +25,40 @@ var (
 	ErrAlreadyRestored = errors.New("checkpoint is already restored")
 	ErrConflict        = errors.New("checkpoint restore conflicts with newer changes")
 )
+
+const (
+	// RecordVersion is the serialized checkpoint format understood by this
+	// package. Unsupported versions fail closed during import.
+	RecordVersion = 1
+	// MaxRecordEntries bounds one durable undo record to the same practical
+	// path budget used by workspace observations.
+	MaxRecordEntries = 128
+	// MaxRecordFileBytes bounds the pre-turn bytes retained for one path.
+	MaxRecordFileBytes = 1 << 20
+	// MaxRecordBytes bounds the total pre-turn payload before JSON/base64
+	// serialization expands it in the journal.
+	MaxRecordBytes = 8 << 20
+)
+
+// Record is the portable, validated form of a sealed checkpoint. It omits the
+// workspace root so an importing process must explicitly bind it to the
+// current workspace before any restore can occur.
+type Record struct {
+	Version int           `json:"version"`
+	Entries []RecordEntry `json:"entries"`
+}
+
+// RecordEntry contains the pre-turn state and the post-seal fingerprint for
+// one workspace-relative regular file. Published is only used by a pending
+// record when a later same-path write was prepared but not yet published.
+type RecordEntry struct {
+	Path         string `json:"path"`
+	BeforeExists bool   `json:"before_exists"`
+	BeforeMode   uint32 `json:"before_mode,omitempty"`
+	BeforeData   []byte `json:"before_data,omitempty"`
+	Expected     string `json:"expected"`
+	Published    string `json:"published,omitempty"`
+}
 
 // Conflict identifies a path changed after the checkpoint was sealed.
 type Conflict struct {
@@ -58,12 +94,19 @@ type Checkpoint struct {
 	entries   []entry
 	sealed    bool
 	restored  bool
+
+	// restoreBeforeApply is only used by package tests to exercise an
+	// interleaving between restore preflight and publication.
+	restoreBeforeApply func(string)
 }
 
 type entry struct {
-	path     string
-	before   fileState
-	expected fingerprint
+	path         string
+	before       fileState
+	expected     fingerprint
+	expectedSet  bool
+	published    fingerprint
+	publishedSet bool
 }
 
 type fileState struct {
@@ -108,13 +151,42 @@ func (c *Checkpoint) Add(paths []string) error {
 	return c.add(paths)
 }
 
+// Drop removes a captured path that is known not to belong to this turn's
+// undo set. It is used when a native edit detects a content conflict before
+// publication: the current bytes are a newer workspace edit, not an agent
+// mutation that undo may safely replace. Paths may not be dropped after the
+// checkpoint is sealed.
+func (c *Checkpoint) Drop(path string) error {
+	if c == nil {
+		return errors.New("checkpoint is nil")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sealed {
+		return ErrAlreadySealed
+	}
+	rel, err := normalizePath(c.rootInput, c.root, path)
+	if err != nil {
+		return fmt.Errorf("checkpoint path %q: %w", path, err)
+	}
+	for i := range c.entries {
+		if pathIdentity(c.entries[i].path) != pathIdentity(rel) {
+			continue
+		}
+		copy(c.entries[i:], c.entries[i+1:])
+		c.entries = c.entries[:len(c.entries)-1]
+		return nil
+	}
+	return fmt.Errorf("checkpoint path %q was not captured", path)
+}
+
 func (c *Checkpoint) add(paths []string) error {
 	if len(paths) == 0 {
 		return errors.New("checkpoint requires at least one path")
 	}
 	seen := make(map[string]struct{}, len(c.entries)+len(paths))
 	for i := range c.entries {
-		seen[c.entries[i].path] = struct{}{}
+		seen[pathIdentity(c.entries[i].path)] = struct{}{}
 	}
 	entries := make([]entry, 0, len(paths))
 	for _, requested := range paths {
@@ -122,10 +194,11 @@ func (c *Checkpoint) add(paths []string) error {
 		if err != nil {
 			return fmt.Errorf("checkpoint path %q: %w", requested, err)
 		}
-		if _, ok := seen[rel]; ok {
+		key := pathIdentity(rel)
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		seen[rel] = struct{}{}
+		seen[key] = struct{}{}
 		state, err := readWorkspaceFile(c.root, rel)
 		if err != nil {
 			return fmt.Errorf("checkpoint path %q: %w", requested, err)
@@ -172,9 +245,226 @@ func (c *Checkpoint) Seal() error {
 	}
 	for i := range c.entries {
 		c.entries[i].expected = states[i].sum
+		c.entries[i].expectedSet = true
+		c.entries[i].published = fingerprint{}
+		c.entries[i].publishedSet = false
 	}
 	c.sealed = true
 	return nil
+}
+
+// PrepareExpected records the exact regular-file state that an imminent
+// atomic write will publish. It is used by durable undo to publish a pending
+// recovery record before the workspace rename. The checkpoint remains
+// unsealed so later tool writes can update their own expected state. Before
+// replacing an earlier expectation, it records whether that expectation was
+// actually published or whether the workspace is still at the pre-turn state.
+func (c *Checkpoint) PrepareExpected(path string, data []byte, mode fs.FileMode) (bool, error) {
+	if c == nil {
+		return false, ErrNotSealed
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sealed {
+		return false, ErrAlreadySealed
+	}
+	rel, err := normalizePath(c.rootInput, c.root, path)
+	if err != nil {
+		return false, fmt.Errorf("checkpoint path %q: %w", path, err)
+	}
+	for i := range c.entries {
+		if pathIdentity(c.entries[i].path) != pathIdentity(rel) {
+			continue
+		}
+		current, err := readWorkspaceFile(c.root, rel)
+		if err != nil {
+			return false, fmt.Errorf("inspect checkpoint path %q: %w", path, err)
+		}
+		published := c.entries[i].before.sum
+		if current.sum != c.entries[i].before.sum {
+			if !c.entries[i].expectedSet || current.sum != c.entries[i].expected {
+				return false, fmt.Errorf("%w: checkpoint path %q changed before publication", ErrConflict, path)
+			}
+			published = current.sum
+		}
+		state := fileState{exists: true, mode: restorableMode(mode), data: append([]byte(nil), data...)}
+		state.sum = fingerprintFor(state)
+		c.entries[i].published = published
+		c.entries[i].publishedSet = true
+		c.entries[i].expected = state.sum
+		c.entries[i].expectedSet = true
+		return c.entries[i].before.sum != state.sum, nil
+	}
+	return false, fmt.Errorf("checkpoint path %q was not captured", path)
+}
+
+// Export returns the changed, expected states prepared on this checkpoint.
+// It accepts a sealed checkpoint or a pending checkpoint with at least one
+// prepared write. Unprepared paths are omitted so a crash between two writes
+// can recover only the paths that were actually published or being published.
+func (c *Checkpoint) Export() (Record, error) {
+	if c == nil {
+		return Record{}, ErrNotSealed
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.sealed {
+		prepared := false
+		for _, item := range c.entries {
+			prepared = prepared || item.expectedSet
+		}
+		if !prepared {
+			return Record{}, ErrNotSealed
+		}
+	}
+	return exportEntries(c.entries)
+}
+
+func exportEntries(entries []entry) (Record, error) {
+	record := Record{Version: RecordVersion}
+	if len(entries) > MaxRecordEntries {
+		return Record{}, fmt.Errorf("checkpoint has too many entries: %d", len(entries))
+	}
+	bytes := 0
+	for _, item := range entries {
+		if !item.expectedSet || (item.before.sum == item.expected && (!item.publishedSet || item.published == item.before.sum)) {
+			continue
+		}
+		if len(item.before.data) > MaxRecordFileBytes {
+			return Record{}, fmt.Errorf("checkpoint file %q exceeds the %d-byte durable undo limit", filepath.ToSlash(item.path), MaxRecordFileBytes)
+		}
+		bytes += len(item.before.data)
+		if bytes > MaxRecordBytes {
+			return Record{}, fmt.Errorf("checkpoint exceeds the %d-byte durable undo limit", MaxRecordBytes)
+		}
+		published := ""
+		if item.publishedSet && item.published != item.before.sum {
+			published = hex.EncodeToString(item.published[:])
+		}
+		record.Entries = append(record.Entries, RecordEntry{
+			Path:         filepath.ToSlash(item.path),
+			BeforeExists: item.before.exists,
+			BeforeMode:   uint32(item.before.mode),
+			BeforeData:   append([]byte(nil), item.before.data...),
+			Expected:     hex.EncodeToString(item.expected[:]),
+			Published:    published,
+		})
+	}
+	return record, nil
+}
+
+// Import binds a validated serialized record to a current workspace. No
+// workspace file is changed during import; Restore performs the later
+// fingerprint checks before publishing any pre-turn state.
+func Import(workspace string, record Record) (*Checkpoint, error) {
+	if record.Version != RecordVersion {
+		return nil, fmt.Errorf("unsupported checkpoint record version %d", record.Version)
+	}
+	if len(record.Entries) == 0 {
+		return nil, errors.New("checkpoint record has no entries")
+	}
+	if len(record.Entries) > MaxRecordEntries {
+		return nil, fmt.Errorf("checkpoint record has too many entries: %d", len(record.Entries))
+	}
+	rootInput, root, err := resolveWorkspace(workspace)
+	if err != nil {
+		return nil, err
+	}
+	entries := make([]entry, 0, len(record.Entries))
+	seen := make(map[string]struct{}, len(record.Entries))
+	bytes := 0
+	for _, item := range record.Entries {
+		if filepath.IsAbs(item.Path) {
+			return nil, fmt.Errorf("checkpoint record path %q must be relative", item.Path)
+		}
+		rel, err := normalizePath(rootInput, root, item.Path)
+		if err != nil {
+			return nil, fmt.Errorf("checkpoint record path %q: %w", item.Path, err)
+		}
+		if _, ok := seen[pathIdentity(rel)]; ok {
+			return nil, fmt.Errorf("checkpoint record repeats path %q", item.Path)
+		}
+		seen[pathIdentity(rel)] = struct{}{}
+		if len(item.BeforeData) > MaxRecordFileBytes {
+			return nil, fmt.Errorf("checkpoint record file %q exceeds the %d-byte durable undo limit", item.Path, MaxRecordFileBytes)
+		}
+		bytes += len(item.BeforeData)
+		if bytes > MaxRecordBytes {
+			return nil, fmt.Errorf("checkpoint record exceeds the %d-byte durable undo limit", MaxRecordBytes)
+		}
+		if !item.BeforeExists && (len(item.BeforeData) != 0 || item.BeforeMode != 0) {
+			return nil, fmt.Errorf("checkpoint record absent path %q has file state", item.Path)
+		}
+		expectedBytes, err := hex.DecodeString(item.Expected)
+		if err != nil || len(expectedBytes) != sha256.Size {
+			return nil, fmt.Errorf("checkpoint record path %q has invalid expected fingerprint", item.Path)
+		}
+		var expected fingerprint
+		copy(expected[:], expectedBytes)
+		before := fileState{exists: item.BeforeExists, mode: restorableMode(fs.FileMode(item.BeforeMode)), data: append([]byte(nil), item.BeforeData...)}
+		before.sum = fingerprintFor(before)
+		published := before.sum
+		publishedSet := false
+		if item.Published != "" {
+			publishedBytes, publishedErr := hex.DecodeString(item.Published)
+			if publishedErr != nil || len(publishedBytes) != sha256.Size {
+				return nil, fmt.Errorf("checkpoint record path %q has invalid published fingerprint", item.Path)
+			}
+			copy(published[:], publishedBytes)
+			publishedSet = true
+		}
+		entries = append(entries, entry{path: rel, before: before, expected: expected, expectedSet: true, published: published, publishedSet: publishedSet})
+	}
+	return &Checkpoint{rootInput: rootInput, root: root, entries: entries, sealed: true}, nil
+}
+
+// PublishedSubset returns a checkpoint containing only entries whose current
+// workspace state matches the expected post-write fingerprint. Entries still
+// at their pre-turn state are omitted, which lets a fresh process recover a
+// crash before the final rename of a later path. For repeated writes to one
+// path, a pending record also carries the last known published fingerprint;
+// that state is accepted and becomes the subset's expected state. Any other
+// state is a conflict and returns no subset so recovery remains fail closed.
+func (c *Checkpoint) PublishedSubset() (*Checkpoint, bool, error) {
+	if c == nil {
+		return nil, false, ErrNotSealed
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.sealed {
+		return nil, false, ErrNotSealed
+	}
+	entries := make([]entry, 0, len(c.entries))
+	for i := range c.entries {
+		current, err := readWorkspaceFile(c.root, c.entries[i].path)
+		if err != nil {
+			return nil, false, err
+		}
+		if current.sum == c.entries[i].expected {
+			item := c.entries[i]
+			item.published = fingerprint{}
+			item.publishedSet = false
+			entries = append(entries, item)
+			continue
+		}
+		if current.sum == c.entries[i].before.sum {
+			continue
+		}
+		if c.entries[i].publishedSet && current.sum == c.entries[i].published {
+			item := c.entries[i]
+			item.expected = item.published
+			item.expectedSet = true
+			item.published = fingerprint{}
+			item.publishedSet = false
+			entries = append(entries, item)
+			continue
+		}
+		return nil, false, ErrConflict
+	}
+	if len(entries) == 0 {
+		return nil, false, nil
+	}
+	return &Checkpoint{rootInput: c.rootInput, root: c.root, entries: entries, sealed: true}, true, nil
 }
 
 // ChangedPaths returns paths whose sealed state differs from their captured
@@ -224,15 +514,20 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 			result.Failures = append(result.Failures, failure(c.entries[i].path, "inspect", err))
 			continue
 		}
+		// A process can die after publishing a restore for this path but before
+		// the durable journal advances from sealed to restored. Treat the exact
+		// pre-turn state as already complete so a fresh process can resume the
+		// remaining paths instead of misclassifying the restored path as a newer
+		// conflicting edit.
+		if current.sum == c.entries[i].before.sum {
+			result.Unchanged = append(result.Unchanged, filepath.ToSlash(c.entries[i].path))
+			continue
+		}
 		if current.sum != c.entries[i].expected {
 			result.Conflicts = append(result.Conflicts, Conflict{
 				Path:   filepath.ToSlash(c.entries[i].path),
 				Reason: "file changed after checkpoint was sealed",
 			})
-			continue
-		}
-		if current.sum == c.entries[i].before.sum {
-			result.Unchanged = append(result.Unchanged, filepath.ToSlash(c.entries[i].path))
 			continue
 		}
 		mutations = append(mutations, mutation{entry: &c.entries[i], after: current})
@@ -252,7 +547,7 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 	}
 
 	for i := range mutations {
-		if opErr := applyMutation(c.root, &mutations[i]); opErr != nil {
+		if opErr := applyMutation(c.root, &mutations[i], c.restoreBeforeApply); opErr != nil {
 			if errors.Is(opErr.err, ErrConflict) {
 				result.Conflicts = append(result.Conflicts, Conflict{
 					Path: filepath.ToSlash(opErr.path), Reason: opErr.err.Error(),
@@ -270,7 +565,9 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 
 	for i := range mutations {
 		path := filepath.ToSlash(mutations[i].entry.path)
-		if mutations[i].entry.before.exists {
+		if mutations[i].alreadyRestored {
+			result.Unchanged = append(result.Unchanged, path)
+		} else if mutations[i].entry.before.exists {
 			result.Restored = append(result.Restored, path)
 		} else {
 			result.Removed = append(result.Removed, path)
@@ -288,9 +585,10 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 }
 
 type mutation struct {
-	entry   *entry
-	after   fileState
-	applied bool
+	entry           *entry
+	after           fileState
+	applied         bool
+	alreadyRestored bool
 }
 
 type operationError struct {
@@ -299,24 +597,31 @@ type operationError struct {
 	err       error
 }
 
-func applyMutation(root string, m *mutation) *operationError {
+func applyMutation(root string, m *mutation, beforeWrite func(string)) *operationError {
 	current, err := readWorkspaceFile(root, m.entry.path)
 	if err != nil {
 		return &operationError{m.entry.path, "inspect", err}
+	}
+	if current.sum == m.entry.before.sum {
+		m.alreadyRestored = true
+		return nil
 	}
 	if current.sum != m.entry.expected {
 		return &operationError{m.entry.path, "conflict", ErrConflict}
 	}
 	m.after = current
-	if m.entry.before.exists {
-		if err := writeWorkspaceState(root, m.entry.path, m.entry.before); err != nil {
-			return &operationError{m.entry.path, "write", err}
-		}
-		m.applied = true
-		return nil
+	if beforeWrite != nil {
+		beforeWrite(filepath.ToSlash(m.entry.path))
 	}
-	if err := workspace.Remove(root, m.entry.path); err != nil {
-		return &operationError{m.entry.path, "remove", err}
+	if err := writeWorkspaceState(root, m.entry.path, m.after, m.entry.before); err != nil {
+		if errors.Is(err, workspace.ErrContentConflict) {
+			return &operationError{m.entry.path, "conflict", ErrConflict}
+		}
+		operation := "remove"
+		if m.entry.before.exists {
+			operation = "write"
+		}
+		return &operationError{m.entry.path, operation, err}
 	}
 	m.applied = true
 	return nil
@@ -342,7 +647,7 @@ func rollback(root string, mutations []mutation, result *RestoreResult) bool {
 			ok = false
 			continue
 		}
-		if err := writeWorkspaceState(root, m.entry.path, m.after); err != nil {
+		if err := writeWorkspaceState(root, m.entry.path, m.entry.before, m.after); err != nil {
 			result.Failures = append(result.Failures, failure(m.entry.path, "rollback restore", err))
 			ok = false
 		}
@@ -398,6 +703,13 @@ func normalizePath(rootInput, root, requested string) (string, error) {
 	return rel, nil
 }
 
+func pathIdentity(rel string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(rel)
+	}
+	return rel
+}
+
 func escapes(rel string) bool {
 	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
@@ -444,15 +756,21 @@ func readWorkspaceFile(root, rel string) (fileState, error) {
 	return readRegularFileHandle(f)
 }
 
-func writeWorkspaceState(root, rel string, state fileState) error {
+func writeWorkspaceState(root, rel string, expected, state fileState) error {
 	if !state.exists {
+		if expected.exists {
+			return workspace.RemoveIfUnchanged(root, rel, expected.data, expected.mode)
+		}
 		err := workspace.Remove(root, rel)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return err
 	}
-	return workspace.WriteAtomicWithMode(root, rel, state.data, state.mode)
+	if expected.exists {
+		return workspace.WriteAtomicIfUnchangedWithMode(root, rel, expected.data, expected.mode, state.data, state.mode)
+	}
+	return workspace.WriteAtomicIfMissingWithMode(root, rel, state.data, state.mode)
 }
 
 func readRegularFileHandle(f *os.File) (fileState, error) {
@@ -473,6 +791,20 @@ func readRegularFileHandle(f *os.File) (fileState, error) {
 }
 
 func restorableMode(mode fs.FileMode) fs.FileMode {
+	if runtime.GOOS == "windows" {
+		// Windows exposes Unix permission bits only as a writable/read-only
+		// approximation. Canonicalize that projection so a requested 0644 mode
+		// and the 0666 mode reported by os.FileInfo fingerprint identically.
+		perm := mode.Perm()
+		switch {
+		case perm == 0:
+			return 0
+		case perm&0o222 == 0:
+			return 0o444
+		default:
+			return 0o666
+		}
+	}
 	return mode.Perm() | mode&(fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)
 }
 

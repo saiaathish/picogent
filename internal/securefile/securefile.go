@@ -202,11 +202,34 @@ func RemoveFile(path string) error {
 // bytes still equal data under same-UID tampering. This is not a hostile
 // same-UID directory-tamper guarantee.
 func WriteAtomic(path string, data []byte, mode os.FileMode) error {
-	root, name, err := openParent(path, true)
+	return writeAtomic(path, data, mode, false, nil)
+}
+
+// WriteAtomicDurable publishes data only when the parent directory can be
+// synchronously flushed before and after the atomic rename. The preflight
+// flush fails before creating or replacing the destination when the platform
+// cannot provide the directory durability required by a recovery journal.
+// Callers must treat an error as publication failure; the post-rename sync can
+// still fail after the destination entry has changed, so the result is never a
+// claim that the new entry is durable.
+func WriteAtomicDurable(path string, data []byte, mode os.FileMode) error {
+	return writeAtomic(path, data, mode, true, nil)
+}
+
+func writeAtomic(path string, data []byte, mode os.FileMode, durable bool, syncParent func(secureParent) error) error {
+	root, name, err := openParentWithDurability(path, true, durable)
 	if err != nil {
 		return err
 	}
 	defer root.Close()
+	if durable {
+		if syncParent == nil {
+			syncParent = func(parent secureParent) error { return parent.syncDurable() }
+		}
+		if err := syncParent(root); err != nil {
+			return fmt.Errorf("sync parent before durable atomic publication: %w", err)
+		}
+	}
 
 	if info, statErr := root.stat(name); statErr == nil {
 		if info.kind == secureEntrySymlink {
@@ -269,9 +292,15 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
-	// Directory fsync is best-effort because it is not supported uniformly by
-	// all platforms; the destination has already been synced before publish.
-	_ = root.sync()
+	if durable {
+		if err := syncParent(root); err != nil {
+			return fmt.Errorf("sync parent after durable atomic publication: %w", err)
+		}
+	} else {
+		// Directory fsync is best-effort because it is not supported uniformly by
+		// all platforms; the destination has already been synced before publish.
+		_ = root.sync()
+	}
 	return nil
 }
 
@@ -316,9 +345,14 @@ type secureParent interface {
 	removeMatching(name string, source *os.File) error
 	replace(oldName, newName string, source *os.File) error
 	sync() error
+	syncDurable() error
 }
 
 func openParent(path string, createParent bool) (secureParent, string, error) {
+	return openParentWithDurability(path, createParent, false)
+}
+
+func openParentWithDurability(path string, createParent, durable bool) (secureParent, string, error) {
 	if strings.TrimSpace(path) == "" || strings.ContainsRune(path, 0) {
 		return nil, "", errors.New("file path is empty or contains NUL")
 	}
@@ -331,7 +365,12 @@ func openParent(path string, createParent bool) (secureParent, string, error) {
 	if name == "" || name == "." || name == ".." {
 		return nil, "", fmt.Errorf("invalid file name %q", name)
 	}
-	root, err := openSecureParent(parent, createParent)
+	var root secureParent
+	if durable {
+		root, err = openSecureParentDurable(parent, createParent)
+	} else {
+		root, err = openSecureParent(parent, createParent)
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// Preserve the os.IsNotExist behavior used by callers that treat a

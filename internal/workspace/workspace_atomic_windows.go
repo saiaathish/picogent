@@ -16,10 +16,14 @@ import (
 var workspaceTempSequence atomic.Uint64
 
 func writeAtomic(root, path string, data []byte) error {
-	return writeAtomicWithMode(root, path, data, 0, false)
+	return writeAtomicWithHook(root, path, data, 0, false, nil)
 }
 
 func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMode, setMode bool) error {
+	return writeAtomicWithHook(root, path, data, requestedMode, setMode, nil)
+}
+
+func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hook func(os.FileMode) error) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -92,6 +96,15 @@ func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMo
 	}
 	if _, err := workspaceRegularEntry(current, leaf); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("validate workspace target %q: %w", rel, err)
+	}
+	if hook != nil {
+		info, err := file.Stat()
+		if err != nil {
+			return fmt.Errorf("inspect workspace publication %q: %w", rel, err)
+		}
+		if err := hook(info.Mode()); err != nil {
+			return fmt.Errorf("prepare workspace publication %q: %w", rel, err)
+		}
 	}
 	for attempt := 0; ; attempt++ {
 		if err := renameWorkspaceHandle(windows.Handle(file.Fd()), current, leaf); err == nil {

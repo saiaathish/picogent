@@ -137,23 +137,18 @@ func TestAgentCrashAfterWriteFreshProcessRecovery(t *testing.T) {
 	}
 	assertCrashAfterWriteFile(t, filepath.Join(workspace, "note.txt"), "after\n")
 
-	if fresh.UndoAvailable() {
-		t.Fatal("fresh process unexpectedly has an in-memory undo checkpoint")
-	}
-	beforeUndo, err := os.ReadFile(filepath.Join(workspace, "note.txt"))
-	if err != nil {
-		t.Fatal(err)
+	if !fresh.UndoAvailable() {
+		t.Fatal("fresh process did not discover durable undo checkpoint")
 	}
 	undoMessage, err := fresh.UndoLastTurn()
-	if err != nil || undoMessage != "nothing to undo" {
+	if err != nil || !strings.Contains(undoMessage, "removed note.txt") {
 		t.Fatalf("fresh-process undo = (%q, %v)", undoMessage, err)
 	}
-	afterUndo, err := os.ReadFile(filepath.Join(workspace, "note.txt"))
-	if err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(filepath.Join(workspace, "note.txt")); !os.IsNotExist(err) {
+		t.Fatalf("fresh-process undo did not remove created file: %v", err)
 	}
-	if !bytes.Equal(afterUndo, beforeUndo) {
-		t.Fatalf("fresh-process undo changed modified file from %q to %q", beforeUndo, afterUndo)
+	if fresh.UndoAvailable() {
+		t.Fatal("fresh-process undo checkpoint remained available")
 	}
 
 	_, result, err := fresh.Run(context.Background(), nil, llm.Message{Role: "user", Content: "review the note workflow"}, allowAll{})

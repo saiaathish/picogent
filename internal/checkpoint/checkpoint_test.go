@@ -200,6 +200,48 @@ func TestAddCapturesMorePathsDeduplicatesAndRejectsAfterSeal(t *testing.T) {
 	assertContents(t, workspace, "b.txt", "b-before")
 }
 
+func TestWindowsCaseVariantPathsShareOneCheckpointEntry(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows filesystem paths are case-insensitive")
+	}
+	workspace := t.TempDir()
+	write(t, workspace, "Note.txt", "before", 0o644)
+	cp, err := checkpoint.Capture(workspace, []string{"Note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Add([]string{"note.txt"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := cp.Paths(); len(got) != 1 {
+		t.Fatalf("case-variant paths created duplicate entries: %v", got)
+	}
+	mode := os.FileMode(0o644)
+	if changed, err := cp.PrepareExpected("note.txt", []byte("first"), mode); err != nil || !changed {
+		t.Fatalf("prepare first = changed:%v err:%v", changed, err)
+	}
+	write(t, workspace, "NOTE.TXT", "first", mode)
+	if changed, err := cp.PrepareExpected("NOTE.TXT", []byte("second"), mode); err != nil || !changed {
+		t.Fatalf("prepare second = changed:%v err:%v", changed, err)
+	}
+	write(t, workspace, "note.txt", "second", mode)
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Entries) != 1 {
+		t.Fatalf("case-variant record entries = %d, want 1: %#v", len(record.Entries), record)
+	}
+	result, err := cp.Restore()
+	if err != nil || !result.Complete {
+		t.Fatalf("case-variant restore = %+v, err=%v", result, err)
+	}
+	assertContents(t, workspace, "Note.txt", "before")
+}
+
 func TestChangedPathsRequiresSealAndOmitsUnchanged(t *testing.T) {
 	workspace := t.TempDir()
 	write(t, workspace, "changed.txt", "before", 0o644)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -123,6 +124,7 @@ type Agent struct {
 	taskLoadErr           error
 	undoMu                sync.Mutex
 	latestUndo            *turnUndo
+	undoLoadErr           error
 	runTool               func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
 }
 
@@ -492,6 +494,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	changed := map[string]struct{}{}
 	sessionID, sessionGeneration := a.taskSessionSnapshot()
 	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
+	turnUndo.turnSequence = turnSequence
+	regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+		return turnUndo.preparePublish(path, data, mode)
+	}
 	nativeWriteRan := false
 	mutationCount := 0
 	lastToolKind := ""
@@ -822,11 +828,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		// write then records the current change sequence, while a later write still
 		// invalidates evidence that was collected before it.
 		var successfulWrites []string
+		// A content conflict invalidates the path for this turn even if the model
+		// queues another same-path call later. Keeping that path out of undo is
+		// conservative: the checkpoint cannot prove which bytes the later call
+		// was intended to supersede.
+		contentConflictPaths := map[string]string{}
 		durableTransition := false
 		for _, ex := range pending {
-			if ex.ran && (ex.call.Name == "write_file" || ex.call.Name == "edit_file") {
-				nativeWriteRan = true
-			}
 			if ex.call.Name == "verify" && ex.ran {
 				durableTransition = true
 				a.setTaskStatus(taskstate.StatusVerifying, ev)
@@ -848,6 +856,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				a.setTaskStatus(taskstate.StatusWorking, ev)
 			}
 			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
+				nativeWriteRan = true
 				durableTransition = true
 				mutationCount++
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
@@ -857,11 +866,27 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				}
 				verificationCurrent = false
 			}
+			if (ex.call.Name == "write_file" || ex.call.Name == "edit_file") && ex.ran && ex.err != nil && !turnUndo.publishRejected && !errors.Is(ex.err, workspace.ErrContentConflict) {
+				// Some integrations can mutate a file and then report an error.
+				// Keep that existing undo guarantee, but never infer a mutation
+				// from a write rejected by the pre-publication recovery hook.
+				nativeWriteRan = true
+			}
+			if (ex.call.Name == "write_file" || ex.call.Name == "edit_file") && ex.ran && errors.Is(ex.err, workspace.ErrContentConflict) {
+				if p := strings.TrimSpace(ex.req.Path); p != "" {
+					contentConflictPaths[p] = p
+				}
+			}
 			content := ex.text
 			if content == "" && ex.err != nil {
 				content = ex.err.Error()
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
+		}
+		for _, path := range contentConflictPaths {
+			if err := turnUndo.dropContentConflict(path); err != nil {
+				res.UndoError = fmt.Errorf("cannot discard conflicted undo path %s: %w", path, err).Error()
+			}
 		}
 		if durableTransition {
 			// Rebuild from the post-tool snapshot. In particular, a write or

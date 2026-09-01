@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,6 +166,15 @@ func WriteAtomic(root, path string, data []byte) error {
 	return writeAtomic(root, path, data)
 }
 
+// WriteAtomicWithPublishHook writes a complete file and invokes hook after
+// the new inode is fully written and validated but immediately before it is
+// published at path. A hook error aborts publication. This seam lets callers
+// persist recovery metadata before the workspace rename without exposing a
+// temporary pathname or weakening the normal workspace safety checks.
+func WriteAtomicWithPublishHook(root, path string, data []byte, hook func(os.FileMode) error) error {
+	return writeAtomicWithHook(root, path, data, 0, false, hook)
+}
+
 // WriteAtomicWithMode writes a complete file below root and publishes its
 // contents and permission mode as one filesystem replacement. Missing parent
 // directories are created like OpenWrite. Unlike WriteAtomic, the replacement
@@ -183,6 +193,46 @@ func WriteAtomicWithMode(root, path string, data []byte, mode os.FileMode) error
 // lookup can observe a replacement workspace root. This does not provide a
 // hostile same-UID filesystem race barrier or cross-process lock.
 func WriteAtomicIfUnchanged(root, path string, expected, data []byte) error {
+	return WriteAtomicIfUnchangedWithPublishHook(root, path, expected, data, nil)
+}
+
+// WriteAtomicIfUnchangedWithMode is the compare-before-publish edit primitive
+// with an expected mode and an explicit mode for the replacement. It performs
+// the same freshness check as WriteAtomicIfUnchanged, then reuses the atomic
+// publication path so callers that already performed a preflight check get a
+// second content-and-mode check right before the replacement is prepared.
+func WriteAtomicIfUnchangedWithMode(root, path string, expected []byte, expectedMode os.FileMode, data []byte, mode os.FileMode) error {
+	return writeAtomicIfUnchangedWithModeHook(root, path, expected, expectedMode, true, data, mode, true, nil)
+}
+
+// WriteAtomicIfMissingWithMode publishes data only while the target remains
+// absent. It is the creation-side counterpart to
+// WriteAtomicIfUnchangedWithMode and is used when undo restores a file that
+// the turn deleted.
+func WriteAtomicIfMissingWithMode(root, path string, data []byte, mode os.FileMode) error {
+	rel, err := Relative(root, path)
+	if err != nil {
+		return err
+	}
+	current, err := OpenRead(root, path)
+	if err == nil {
+		_ = current.Close()
+		return fmt.Errorf("%w: %s already exists", ErrContentConflict, rel)
+	}
+	if !isWorkspaceNotExist(err) {
+		return err
+	}
+	return writeAtomicWithMode(root, path, data, mode, true)
+}
+
+// WriteAtomicIfUnchangedWithPublishHook is the compare-before-publish edit
+// primitive with the same pre-publication recovery hook as
+// WriteAtomicWithPublishHook.
+func WriteAtomicIfUnchangedWithPublishHook(root, path string, expected, data []byte, hook func(os.FileMode) error) error {
+	return writeAtomicIfUnchangedWithModeHook(root, path, expected, 0, false, data, 0, false, hook)
+}
+
+func writeAtomicIfUnchangedWithModeHook(root, path string, expected []byte, expectedMode os.FileMode, checkMode bool, data []byte, mode os.FileMode, setMode bool, hook func(os.FileMode) error) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -194,6 +244,11 @@ func WriteAtomicIfUnchanged(root, path string, expected, data []byte) error {
 		}
 		return err
 	}
+	info, statErr := current.Stat()
+	if statErr != nil {
+		_ = current.Close()
+		return fmt.Errorf("stat workspace file %q for edit: %w", rel, statErr)
+	}
 	currentContent, readErr := io.ReadAll(io.LimitReader(current, int64(len(expected))+1))
 	closeErr := current.Close()
 	if readErr != nil {
@@ -202,10 +257,10 @@ func WriteAtomicIfUnchanged(root, path string, expected, data []byte) error {
 	if closeErr != nil {
 		return fmt.Errorf("close workspace file %q after edit check: %w", rel, closeErr)
 	}
-	if !bytes.Equal(currentContent, expected) {
+	if !bytes.Equal(currentContent, expected) || (checkMode && comparableMode(info.Mode()) != comparableMode(expectedMode)) {
 		return fmt.Errorf("%w: %s", ErrContentConflict, rel)
 	}
-	return writeAtomic(root, path, data)
+	return writeAtomicWithHook(root, path, data, mode, setMode, hook)
 }
 
 func writeWorkspaceAll(file *os.File, data []byte) error {
@@ -229,4 +284,44 @@ func writeWorkspaceAll(file *os.File, data []byte) error {
 // the descriptor-anchored root.
 func Remove(root, path string) error {
 	return remove(root, path)
+}
+
+// RemoveIfUnchanged removes a regular file only when its current content
+// still equals expected. A mismatch leaves the workspace untouched and
+// returns ErrContentConflict. Like the write compare primitive, the check and
+// pathname removal are a best-effort boundary for uncooperative same-UID
+// writers; callers should also hold their project run lock when available.
+func RemoveIfUnchanged(root, path string, expected []byte, expectedMode os.FileMode) error {
+	rel, err := Relative(root, path)
+	if err != nil {
+		return err
+	}
+	current, err := OpenRead(root, path)
+	if err != nil {
+		if isWorkspaceNotExist(err) {
+			return fmt.Errorf("%w: %s is missing", ErrContentConflict, rel)
+		}
+		return err
+	}
+	info, statErr := current.Stat()
+	if statErr != nil {
+		_ = current.Close()
+		return fmt.Errorf("stat workspace file %q for removal: %w", rel, statErr)
+	}
+	currentContent, readErr := io.ReadAll(io.LimitReader(current, int64(len(expected))+1))
+	closeErr := current.Close()
+	if readErr != nil {
+		return fmt.Errorf("read workspace file %q for removal: %w", rel, readErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close workspace file %q after removal check: %w", rel, closeErr)
+	}
+	if !bytes.Equal(currentContent, expected) || comparableMode(info.Mode()) != comparableMode(expectedMode) {
+		return fmt.Errorf("%w: %s", ErrContentConflict, rel)
+	}
+	return Remove(root, path)
+}
+
+func comparableMode(mode os.FileMode) os.FileMode {
+	return mode.Perm() | mode&(fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)
 }

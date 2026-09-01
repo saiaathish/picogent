@@ -3,6 +3,7 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -18,6 +19,10 @@ type turnUndo struct {
 	checkpoint        *checkpoint.Checkpoint
 	sessionID         string
 	sessionGeneration uint64
+	turnSequence      uint64
+	durable           bool
+	journalSlot       string
+	publishRejected   bool
 	restored          bool
 	restoreMessage    string
 	restoreErr        error
@@ -27,6 +32,137 @@ const maxUndoTaskPersistenceAttempts = 3
 
 func newTurnUndo(workspace, sessionID string, sessionGeneration uint64) *turnUndo {
 	return &turnUndo{workspace: workspace, sessionID: sessionID, sessionGeneration: sessionGeneration}
+}
+
+// preparePublish persists a recovery-pending record immediately before the
+// workspace atomic rename. The record contains only paths whose expected
+// post-write state is already known, so a crash during a multi-file turn can
+// recover the writes that actually reached publication.
+func (u *turnUndo) preparePublish(path string, data []byte, mode os.FileMode) (err error) {
+	if u == nil || u.checkpoint == nil || u.sessionID == "" || u.turnSequence == 0 {
+		return nil
+	}
+	defer func() {
+		if err != nil {
+			// Once a pre-publication hook rejects a write, the in-memory
+			// checkpoint must not be sealed from the current workspace: the
+			// current bytes may be an external edit that caused the rejection.
+			u.publishRejected = true
+		}
+	}()
+	changed, err := u.checkpoint.PrepareExpected(path, data, mode)
+	if err != nil {
+		return err
+	}
+	record, err := u.checkpoint.Export()
+	if err != nil {
+		return err
+	}
+	if len(record.Entries) == 0 {
+		if u.journalSlot == undoJournalPending {
+			return u.discardPending()
+		}
+		return nil
+	}
+	if !changed && !u.durable {
+		return nil
+	}
+	if err := u.saveJournal(record, undoJournalPending); err != nil {
+		return err
+	}
+	u.durable = true
+	u.journalSlot = undoJournalPending
+	return nil
+}
+
+func (u *turnUndo) saveJournal(record checkpoint.Record, state string) error {
+	return u.saveJournalAt(record, state, state == undoJournalPending)
+}
+
+func (u *turnUndo) saveJournalAt(record checkpoint.Record, state string, pending bool) error {
+	if u == nil || u.sessionID == "" || u.turnSequence == 0 {
+		return nil
+	}
+	identity, err := undoWorkspaceIdentity(u.workspace)
+	if err != nil {
+		return err
+	}
+	j := undoJournal{
+		Version:      undoJournalVersion,
+		State:        state,
+		Workspace:    identity,
+		SessionID:    u.sessionID,
+		TurnSequence: u.turnSequence,
+		Checkpoint:   record,
+	}
+	return saveUndoJournal(u.workspace, u.sessionID, j, pending)
+}
+
+func (u *turnUndo) persistSealed() error {
+	if u == nil || u.checkpoint == nil || u.sessionID == "" || u.turnSequence == 0 {
+		return nil
+	}
+	record, err := u.checkpoint.Export()
+	if err != nil {
+		return err
+	}
+	if len(record.Entries) == 0 {
+		return u.discardPending()
+	}
+	if err := u.saveJournal(record, undoJournalSealed); err != nil {
+		return err
+	}
+	u.durable = true
+	u.journalSlot = undoJournalSealed
+	if err := removeUndoJournal(u.workspace, u.sessionID, true); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (u *turnUndo) persistRestored() error {
+	if u == nil || !u.durable || u.checkpoint == nil {
+		return nil
+	}
+	record, err := u.checkpoint.Export()
+	if err != nil {
+		return err
+	}
+	if len(record.Entries) == 0 {
+		return errors.New("restored undo checkpoint has no entries")
+	}
+	slot := u.journalSlot
+	if slot != undoJournalPending && slot != undoJournalSealed {
+		slot = undoJournalSealed
+	}
+	if err := u.saveJournalAt(record, undoJournalRestored, slot == undoJournalPending); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (u *turnUndo) discardPending() error {
+	if u == nil || u.sessionID == "" || u.turnSequence == 0 || u.journalSlot != undoJournalPending {
+		return nil
+	}
+	if err := removeUndoJournal(u.workspace, u.sessionID, true); err != nil {
+		return err
+	}
+	u.durable = false
+	u.journalSlot = ""
+	return nil
+}
+
+func (u *turnUndo) finalizeJournal() error {
+	if u == nil || !u.durable {
+		return nil
+	}
+	if err := removeAllUndoJournals(u.workspace, u.sessionID); err != nil {
+		return err
+	}
+	u.durable = false
+	u.journalSlot = ""
+	return nil
 }
 
 func (u *turnUndo) capture(path string) error {
@@ -43,6 +179,16 @@ func (u *turnUndo) capture(path string) error {
 		return nil
 	}
 	return u.checkpoint.Add([]string{path})
+}
+
+// dropContentConflict removes a path whose native edit was rejected before
+// publication. Its live bytes belong to the newer workspace state that caused
+// the conflict, so sealing that capture would make /undo overwrite them.
+func (u *turnUndo) dropContentConflict(path string) error {
+	if u == nil || u.checkpoint == nil {
+		return nil
+	}
+	return u.checkpoint.Drop(path)
 }
 
 func (u *turnUndo) seal() ([]string, error) {
@@ -126,6 +272,34 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
 	if a.latestUndo == nil {
+		workspace := a.ConfigSnapshot().Workspace
+		sessionID, generation := a.taskSessionSnapshot()
+		if sessionID != "" {
+			loaded, loadErr := loadLatestDurableUndo(workspace, sessionID, generation)
+			if loadErr != nil {
+				a.undoLoadErr = loadErr
+				return "", fmt.Errorf("undo is unavailable: %w", loadErr)
+			}
+			if task := a.TaskSnapshot(); task != nil {
+				if validationErr := validateDurableUndoTask(loaded, task); validationErr != nil {
+					a.undoLoadErr = validationErr
+					return "", fmt.Errorf("undo is unavailable: %w", validationErr)
+				}
+			}
+			a.undoLoadErr = nil
+			a.latestUndo = loaded
+		}
+	}
+	if a.latestUndo != nil && a.latestUndo.durable {
+		if refreshErr := a.refreshDurableUndoLocked(); refreshErr != nil {
+			a.undoLoadErr = refreshErr
+			return "", fmt.Errorf("undo is unavailable: %w", refreshErr)
+		}
+	}
+	if a.undoLoadErr != nil {
+		return "", fmt.Errorf("undo is unavailable: %w", a.undoLoadErr)
+	}
+	if a.latestUndo == nil {
 		return "nothing to undo", nil
 	}
 	if !a.undoBelongsToCurrentSession(a.latestUndo) {
@@ -138,6 +312,16 @@ func (a *Agent) UndoLastTurn() (string, error) {
 			restoreErr = errors.New("undo failed: workspace restoration was incomplete")
 		}
 		return "", restoreErr
+	}
+	if err := a.latestUndo.persistRestored(); err != nil {
+		stateErr := fmt.Errorf("files restored but durable undo recovery was not recorded; retry /undo: %w", err)
+		if restoreErr != nil {
+			return "", errors.Join(stateErr, restoreErr)
+		}
+		return "", stateErr
+	}
+	if a.latestUndo.durable && a.TaskStoreSnapshot() != nil && a.TaskSnapshot() == nil {
+		return "", errors.New("files restored but durable task state is unavailable; restore task state and retry /undo")
 	}
 	undoMutation := func(task *taskstate.Task) error {
 		wasDone := task.Status == taskstate.StatusDone
@@ -156,6 +340,13 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	err = a.persistUndoTaskMutation(undoMutation)
 	if err != nil && !errors.Is(err, errTaskMutationSkipped) {
 		stateErr := fmt.Errorf("files restored but durable task state was not saved; retry /undo to finish recovery: %w", err)
+		if restoreErr != nil {
+			return "", errors.Join(stateErr, restoreErr)
+		}
+		return "", stateErr
+	}
+	if err := a.latestUndo.finalizeJournal(); err != nil {
+		stateErr := fmt.Errorf("workspace and durable task state were recovered but undo cleanup was not saved; retry /undo: %w", err)
 		if restoreErr != nil {
 			return "", errors.Join(stateErr, restoreErr)
 		}
@@ -195,33 +386,160 @@ func (a *Agent) persistUndoTaskMutation(mutate func(*taskstate.Task) error) erro
 func (a *Agent) UndoAvailable() bool {
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
-	return a.latestUndo != nil
+	return a.latestUndo != nil && a.undoLoadErr == nil
+}
+
+// refreshDurableUndoLocked re-reads the journal while the project run lock is
+// held so a cached in-process checkpoint cannot restore an older turn after a
+// different process has published a newer one. The task is refreshed from the
+// store first because the cached task snapshot may be older than that journal.
+func (a *Agent) refreshDurableUndoLocked() error {
+	if a == nil || a.latestUndo == nil || !a.latestUndo.durable {
+		return nil
+	}
+	workspace := a.ConfigSnapshot().Workspace
+	sessionID, generation := a.taskSessionSnapshot()
+	if sessionID == "" {
+		return errors.New("durable undo session is unavailable")
+	}
+	if store := a.TaskStoreSnapshot(); store != nil {
+		task, err := store.Load(sessionID)
+		switch {
+		case err == nil:
+			changed, revalidateErr := revalidatePersistedTask(workspace, task)
+			if revalidateErr != nil {
+				return fmt.Errorf("revalidate durable task for undo: %w", revalidateErr)
+			}
+			if changed {
+				if err := store.Save(task); err != nil {
+					return fmt.Errorf("persist revalidated durable task for undo: %w", err)
+				}
+			}
+			a.taskMu.Lock()
+			a.task = task
+			a.taskLoadErr = nil
+			a.taskMu.Unlock()
+		case errors.Is(err, taskstate.ErrNotFound):
+			a.taskMu.Lock()
+			a.task = nil
+			a.taskLoadErr = nil
+			a.taskMu.Unlock()
+		default:
+			return fmt.Errorf("load durable task for undo: %w", err)
+		}
+	}
+	loaded, err := loadLatestDurableUndo(workspace, sessionID, generation)
+	if err != nil {
+		return err
+	}
+	if loaded == nil {
+		a.latestUndo = nil
+		a.undoLoadErr = nil
+		return nil
+	}
+	if task := a.TaskSnapshot(); task != nil {
+		if err := validateDurableUndoTask(loaded, task); err != nil {
+			return err
+		}
+	}
+	a.latestUndo = loaded
+	a.undoLoadErr = nil
+	return nil
 }
 
 func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 	if !nativeWriteRan {
 		return
 	}
+	if u.publishRejected {
+		// The checkpoint may contain a valid earlier publication, but it is
+		// no longer safe to seal it from the live workspace after a later
+		// publication was rejected. Reload the pending journal so the
+		// in-memory undo candidate remains sealed and retains the exact
+		// pre-rejection expectation. If no durable record exists, fail closed.
+		a.undoMu.Lock()
+		defer a.undoMu.Unlock()
+		if !a.undoBelongsToCurrentSession(u) {
+			if err := u.discardPending(); err != nil {
+				res.UndoError = err.Error()
+			}
+			return
+		}
+		if !u.durable {
+			return
+		}
+		sessionID, generation := a.taskSessionSnapshot()
+		loaded, err := loadLatestDurableUndo(u.workspace, sessionID, generation)
+		if err != nil {
+			res.UndoError = fmt.Errorf("durable undo journal remains retryable after rejected publication: %w", err).Error()
+			a.undoLoadErr = err
+			a.latestUndo = nil
+			return
+		}
+		if loaded == nil {
+			res.UndoError = "durable undo journal disappeared after rejected publication"
+			a.undoLoadErr = errors.New(res.UndoError)
+			a.latestUndo = nil
+			return
+		}
+		if task := a.TaskSnapshot(); task != nil {
+			if err := validateDurableUndoTask(loaded, task); err != nil {
+				res.UndoError = fmt.Errorf("durable undo journal is unavailable after rejected publication: %w", err).Error()
+				a.undoLoadErr = err
+				a.latestUndo = nil
+				return
+			}
+		}
+		a.undoLoadErr = nil
+		a.latestUndo = loaded
+		res.UndoAvailable = true
+		return
+	}
 	paths, err := u.seal()
 	if err != nil {
 		res.UndoError = err.Error()
 		a.undoMu.Lock()
-		a.latestUndo = nil
+		if u.durable && a.undoBelongsToCurrentSession(u) {
+			a.latestUndo = u
+			res.UndoAvailable = true
+		} else {
+			a.latestUndo = nil
+		}
 		a.undoMu.Unlock()
 		return
 	}
 	res.FilesChanged = paths
 	if len(paths) == 0 {
+		if err := u.discardPending(); err != nil {
+			res.UndoError = err.Error()
+		}
 		return
 	}
-	res.UndoAvailable = true
 	a.undoMu.Lock()
 	if !a.undoBelongsToCurrentSession(u) {
 		a.undoMu.Unlock()
+		if err := u.discardPending(); err != nil {
+			res.UndoError = err.Error()
+		}
 		res.UndoAvailable = false
 		return
 	}
+	if err := u.persistSealed(); err != nil {
+		res.UndoError = fmt.Errorf("durable undo journal was not finalized; recovery remains retryable: %w", err).Error()
+		if !u.durable {
+			// A checkpoint that never reached a durable journal cannot be safely
+			// restored from this process after another process advances the turn.
+			// Fail closed instead of advertising a stale process-local candidate.
+			a.latestUndo = nil
+			a.undoLoadErr = err
+			res.UndoAvailable = false
+			a.undoMu.Unlock()
+			return
+		}
+	}
+	res.UndoAvailable = true
 	a.latestUndo = u
+	a.undoLoadErr = nil
 	a.undoMu.Unlock()
 }
 
@@ -229,7 +547,43 @@ func (a *Agent) undoBelongsToCurrentSession(u *turnUndo) bool {
 	if a == nil || u == nil {
 		return false
 	}
+	currentWorkspace, err := undoWorkspaceIdentity(a.ConfigSnapshot().Workspace)
+	if err != nil {
+		return false
+	}
+	checkpointWorkspace, err := undoWorkspaceIdentity(u.workspace)
+	if err != nil || currentWorkspace != checkpointWorkspace {
+		return false
+	}
 	a.taskMu.RLock()
 	defer a.taskMu.RUnlock()
 	return u.sessionID == a.TaskSession && u.sessionGeneration == a.taskSessionGeneration
+}
+
+// validateDurableUndoTask binds a journal to the durable turn history that
+// authorized it. A later read-only turn leaves the latest native-file undo
+// useful, but a later mutating turn supersedes it. If the referenced turn is
+// no longer present, the bounded history cannot prove that the record is
+// current, so recovery fails closed.
+func validateDurableUndoTask(u *turnUndo, task *taskstate.Task) error {
+	if u == nil || task == nil {
+		return nil
+	}
+	if task.SessionID != u.sessionID {
+		return fmt.Errorf("durable undo journal task session mismatch")
+	}
+	found := false
+	for _, turn := range task.Turns {
+		if turn.Sequence == u.turnSequence {
+			found = true
+			continue
+		}
+		if found && (turn.MutationCount > 0 || len(turn.ChangedFiles) > 0) {
+			return fmt.Errorf("durable undo journal was superseded by mutating turn %d", turn.Sequence)
+		}
+	}
+	if !found {
+		return fmt.Errorf("durable undo journal turn sequence %d is stale", u.turnSequence)
+	}
+	return nil
 }

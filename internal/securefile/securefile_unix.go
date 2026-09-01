@@ -21,6 +21,14 @@ type unixParent struct {
 }
 
 func openSecureParent(path string, create bool) (secureParent, error) {
+	return openSecureParentWithDurability(path, create, false)
+}
+
+func openSecureParentDurable(path string, create bool) (secureParent, error) {
+	return openSecureParentWithDurability(path, create, true)
+}
+
+func openSecureParentWithDurability(path string, create bool, _ bool) (secureParent, error) {
 	abs, err := secureAbsolutePath(path)
 	if err != nil {
 		return nil, err
@@ -241,8 +249,12 @@ func sameUnixFile(a, b *unix.Stat_t) bool {
 }
 
 func (p *unixParent) sync() error {
-	if err := unix.Fsync(p.fd); err != nil && !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EOPNOTSUPP) {
+	if err := p.syncDurable(); err != nil && !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EOPNOTSUPP) {
 		return err
 	}
 	return nil
+}
+
+func (p *unixParent) syncDurable() error {
+	return unix.Fsync(p.fd)
 }

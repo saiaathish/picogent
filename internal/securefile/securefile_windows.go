@@ -18,10 +18,19 @@ import (
 // OBJ_DONT_REPARSE. Child opens use RootDirectory handles, so junctions and
 // symlinks introduced after validation cannot redirect an operation.
 type windowsParent struct {
-	handle windows.Handle
+	handle        windows.Handle
+	durableHandle windows.Handle
 }
 
 func openSecureParent(path string, create bool) (secureParent, error) {
+	return openSecureParentWithDurability(path, create, false)
+}
+
+func openSecureParentDurable(path string, create bool) (secureParent, error) {
+	return openSecureParentWithDurability(path, create, true)
+}
+
+func openSecureParentWithDurability(path string, create, durableOpen bool) (secureParent, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -34,19 +43,74 @@ func openSecureParent(path string, create bool) (secureParent, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, part := range parts {
+	durable := windows.Handle(0)
+	if durableOpen && len(parts) == 0 {
+		durable, err = openWindowsRootWithAccess(rootPath, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE)
+		if err != nil {
+			_ = windows.CloseHandle(current)
+			return nil, fmt.Errorf("open durable secure root: %w", err)
+		}
+		currentInfo, currentErr := windowsFileInfo(current)
+		durableInfo, durableErr := windowsFileInfo(durable)
+		if currentErr != nil || durableErr != nil || !sameWindowsFile(&currentInfo, &durableInfo) {
+			_ = windows.CloseHandle(current)
+			_ = windows.CloseHandle(durable)
+			if currentErr != nil {
+				return nil, fmt.Errorf("inspect secure root identity: %w", currentErr)
+			}
+			if durableErr != nil {
+				return nil, fmt.Errorf("inspect durable root identity: %w", durableErr)
+			}
+			return nil, errors.New("secure root identity changed during durable open")
+		}
+	}
+	for i, part := range parts {
 		child, openErr := openWindowsDirectory(current, part, create)
-		_ = windows.CloseHandle(current)
 		if openErr != nil {
+			_ = windows.CloseHandle(current)
+			if durable != 0 {
+				_ = windows.CloseHandle(durable)
+			}
 			return nil, fmt.Errorf("open secure directory %q: %w", part, openErr)
 		}
 		if err := verifyWindowsDirectory(child); err != nil {
 			_ = windows.CloseHandle(child)
+			_ = windows.CloseHandle(current)
+			if durable != 0 {
+				_ = windows.CloseHandle(durable)
+			}
 			return nil, fmt.Errorf("secure directory %q failed validation: %w", part, err)
 		}
+		if durableOpen && i == len(parts)-1 {
+			// The final directory is opened with write access while its anchored
+			// parent is still available. Keep this second handle only for the
+			// durable directory flush; ordinary reads and writes keep using the
+			// least-privileged traversal handle above.
+			durable, err = openWindowsDirectoryWithAccess(current, part, false, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE)
+			if err != nil {
+				_ = windows.CloseHandle(child)
+				_ = windows.CloseHandle(current)
+				return nil, fmt.Errorf("open durable secure directory %q: %w", part, err)
+			}
+			currentInfo, currentErr := windowsFileInfo(child)
+			durableInfo, durableErr := windowsFileInfo(durable)
+			if currentErr != nil || durableErr != nil || !sameWindowsFile(&currentInfo, &durableInfo) {
+				_ = windows.CloseHandle(child)
+				_ = windows.CloseHandle(current)
+				_ = windows.CloseHandle(durable)
+				if currentErr != nil {
+					return nil, fmt.Errorf("inspect secure directory identity: %w", currentErr)
+				}
+				if durableErr != nil {
+					return nil, fmt.Errorf("inspect durable directory identity: %w", durableErr)
+				}
+				return nil, errors.New("secure directory identity changed during durable open")
+			}
+		}
+		_ = windows.CloseHandle(current)
 		current = child
 	}
-	return &windowsParent{handle: current}, nil
+	return &windowsParent{handle: current, durableHandle: durable}, nil
 }
 
 func ensureSecureDir(path string, _ os.FileMode) error {
@@ -72,12 +136,20 @@ func windowsPathParts(path string) (string, []string, error) {
 }
 
 func (p *windowsParent) Close() error {
-	if p == nil || p.handle == 0 || p.handle == windows.InvalidHandle {
+	if p == nil {
 		return nil
 	}
-	err := windows.CloseHandle(p.handle)
+	handle, durable := p.handle, p.durableHandle
 	p.handle = 0
-	return err
+	p.durableHandle = 0
+	var durableErr, handleErr error
+	if durable != 0 && durable != windows.InvalidHandle && durable != handle {
+		durableErr = windows.CloseHandle(durable)
+	}
+	if handle != 0 && handle != windows.InvalidHandle {
+		handleErr = windows.CloseHandle(handle)
+	}
+	return errors.Join(durableErr, handleErr)
 }
 
 func windowsEntry(h windows.Handle) (secureEntry, error) {
@@ -389,16 +461,34 @@ func renameWindowsHandle(source, parent windows.Handle, name string) error {
 
 func (p *windowsParent) sync() error { return nil }
 
+func (p *windowsParent) syncDurable() error {
+	if p == nil || p.durableHandle == 0 || p.durableHandle == windows.InvalidHandle {
+		return errors.New("invalid secure directory handle")
+	}
+	if err := windows.FlushFileBuffers(p.durableHandle); err != nil {
+		return fmt.Errorf("flush secure directory for durable sync: %w", err)
+	}
+	return nil
+}
+
 func openWindowsRoot(path string) (windows.Handle, error) {
-	return openWindowsHandle(0, ntPath(path), windows.FILE_GENERIC_READ, windows.FILE_OPEN, windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT)
+	return openWindowsRootWithAccess(path, windows.FILE_GENERIC_READ)
+}
+
+func openWindowsRootWithAccess(path string, access uint32) (windows.Handle, error) {
+	return openWindowsHandle(0, ntPath(path), access, windows.FILE_OPEN, windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT)
 }
 
 func openWindowsDirectory(parent windows.Handle, name string, create bool) (windows.Handle, error) {
+	return openWindowsDirectoryWithAccess(parent, name, create, windows.FILE_GENERIC_READ)
+}
+
+func openWindowsDirectoryWithAccess(parent windows.Handle, name string, create bool, access uint32) (windows.Handle, error) {
 	disposition := uint32(windows.FILE_OPEN)
 	if create {
 		disposition = windows.FILE_OPEN_IF
 	}
-	return openWindowsHandle(parent, name, windows.FILE_GENERIC_READ, disposition, windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT)
+	return openWindowsHandle(parent, name, access, disposition, windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT)
 }
 
 func openWindowsFile(parent windows.Handle, name string, access, disposition uint32) (windows.Handle, error) {
