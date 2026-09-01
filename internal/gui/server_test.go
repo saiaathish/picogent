@@ -1926,6 +1926,51 @@ func TestGUIHandlerDropsStaleTaskProgress(t *testing.T) {
 	}
 }
 
+func TestGUIPermissionResponseDoesNotClearReplacementRequest(t *testing.T) {
+	first := perm.Request{Tool: "write_file", Summary: "write first.txt"}
+	replacement := perm.Request{Tool: "edit_file", Summary: "edit second.txt"}
+	s := &server{
+		cfg:            config.Config{Workspace: t.TempDir()},
+		turnGen:        3,
+		pendingPerm:    first,
+		pendingPermGen: 3,
+		pendingPermID:  7,
+		permCh:         make(chan perm.Decision, 1),
+	}
+	s.beforePermissionResponseCleanup = func() {
+		s.mu.Lock()
+		s.pendingPerm = replacement
+		s.pendingPermGen = s.turnGen
+		s.pendingPermID++
+		s.mu.Unlock()
+	}
+
+	res := httptest.NewRecorder()
+	req := loopbackAPIRequest(http.MethodPost, "/api/permission", `{"allow":true}`)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "http://"+loopbackTestHost)
+	s.permission(res, req)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("permission response status = %d, want %d", res.Code, http.StatusNoContent)
+	}
+
+	s.mu.Lock()
+	got := s.pendingPerm
+	gotID := s.pendingPermID
+	s.mu.Unlock()
+	if got != replacement || gotID != 8 {
+		t.Fatalf("replacement permission = %#v (id %d), want %#v (id 8)", got, gotID, replacement)
+	}
+	select {
+	case decision := <-s.permCh:
+		if decision != perm.Allow {
+			t.Fatalf("queued decision = %s, want allow", decision)
+		}
+	default:
+		t.Fatal("permission response was not delivered to the waiting turn")
+	}
+}
+
 func TestGUIHandlerDropsStaleTurnCallbacks(t *testing.T) {
 	events := make(chan event, 8)
 	s := &server{subs: []chan event{events}, sessionID: "session-live", turnGen: 2}

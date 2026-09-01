@@ -131,6 +131,7 @@ type server struct {
 	undoStack      []extensions.UndoEntry
 	pendingPerm    perm.Request
 	pendingPermGen uint64
+	pendingPermID  uint64
 	liveTask       agent.TaskMode
 	// turnMode is a temporary scope boundary for the admitted turn. It is
 	// exposed in state while the turn runs but never replaces liveTask.
@@ -144,7 +145,10 @@ type server struct {
 	// beforeSessionClone is test-only synchronization for proving that session
 	// transitions release s.mu before waiting on the project run lock.
 	beforeSessionClone func()
-	sessionTransition  bool
+	// beforePermissionResponseCleanup is test-only synchronization for proving
+	// a response cannot clear a newer prompt in the same turn.
+	beforePermissionResponseCleanup func()
+	sessionTransition               bool
 	// openPreview is test-only injection for exercising filesystem replacement
 	// between path resolution and the descriptor-safe open.
 	openPreview func(string, string) (*os.File, error)
@@ -1822,6 +1826,7 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	permCh := s.permCh
 	tool := s.pendingPerm.Tool
 	pendingGen := s.pendingPermGen
+	pendingID := s.pendingPermID
 	turnGen := s.turnGen
 	s.mu.Unlock()
 	if permCh == nil || tool == "" {
@@ -1832,11 +1837,14 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	case permCh <- d:
 	case <-time.After(2 * time.Second):
 	}
+	if hook := s.beforePermissionResponseCleanup; hook != nil {
+		hook()
+	}
 	s.mu.Lock()
 	// Only the request that was visible when the user clicked may be cleared
-	// or promoted to Always. A reset/new turn can replace pendingPerm while the
-	// HTTP request is waiting on the old turn's channel.
-	if s.pendingPermGen != pendingGen || s.turnGen != turnGen {
+	// or promoted to Always. A reset/new turn or a subsequent prompt can replace
+	// pendingPerm while the HTTP request is waiting on the old turn's channel.
+	if s.pendingPermGen != pendingGen || s.pendingPermID != pendingID || s.turnGen != turnGen {
 		s.mu.Unlock()
 		w.WriteHeader(204)
 		return
@@ -2438,6 +2446,7 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 		return perm.Deny, context.Canceled
 	}
 	h.s.mu.Lock()
+	h.s.pendingPermID++
 	h.s.pendingPerm = req
 	h.s.pendingPermGen = h.turnGen
 	ag := h.s.ag
