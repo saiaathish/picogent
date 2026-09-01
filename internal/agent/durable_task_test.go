@@ -308,6 +308,43 @@ func TestDurableTaskPersistsExplicitPermissionDenial(t *testing.T) {
 	}
 }
 
+func TestDurableTaskPersistsDeniedSideEffectForInformationalPrompt(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	args, _ := json.Marshal(map[string]string{"path": "blocked.txt", "content": "must not be written"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "I stopped because permission was denied."}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeSafe
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeSafe, workspace, nil))
+	a.TaskStore = store
+	if err := a.SetTaskSession("permission-denied-informational"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "say hello"}, denyAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusBlocked || result.Task.BlockedBy != "permission needed" {
+		t.Fatalf("denied informational task projection = %#v", result.Task)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, "blocked.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("denied write changed the workspace: %v", statErr)
+	}
+	persisted, err := store.Load("permission-denied-informational")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != taskstate.StatusBlocked || len(persisted.Evidence) == 0 || persisted.Evidence[len(persisted.Evidence)-1].Status != "DENIED" {
+		t.Fatalf("persisted denied informational task = %#v", persisted)
+	}
+}
+
 func TestDurableTaskResumesUnverifiedWriteWithAutomaticVerification(t *testing.T) {
 	workspace := t.TempDir()
 	store := taskstate.NewStore(t.TempDir())

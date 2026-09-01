@@ -763,6 +763,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			if dec == perm.Deny {
 				taskBlocker = "permission needed"
+				a.ensureDurableTaskForBlock(durablePrompt, taskBlocker, ev)
 				ev.OnToolEnd(call, "denied by user", nil)
 				pending = append(pending, executed{call: call, req: req, text: "denied by user", permissionPrompted: prompted, permissionDecision: dec})
 				continue
