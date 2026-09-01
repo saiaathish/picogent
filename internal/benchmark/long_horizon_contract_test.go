@@ -10,7 +10,12 @@ func TestLongHorizonReportValidatesExactHeadAndMonotonicTurnIdentity(t *testing.
 	if err := report.Validate(); err != nil {
 		t.Fatalf("valid report: %v", err)
 	}
+	report.SourceHead = "abc123"
+	if err := report.Validate(); err == nil || !strings.Contains(err.Error(), "full 40-character commit SHA") {
+		t.Fatalf("abbreviated source head error=%v", err)
+	}
 
+	report = validLongHorizonReport()
 	report.Observations[1].Turn = 3
 	if err := report.Validate(); err == nil || !strings.Contains(err.Error(), "turn=3, want 2") {
 		t.Fatalf("non-monotonic turn identity error=%v", err)

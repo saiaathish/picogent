@@ -32,7 +32,7 @@ Each observation uses a fixed event vocabulary: `plan`, `mutation`,
 `verification`, `restart`, `steering`, `recovery`, and `stop`. It records
 criterion completion, the current mutation sequence, the mutation sequence
 covered by verification, evidence freshness, recovery state, the existing
-Outcome Engine stop policy (`continue`, `pause`, `recheck`, or `unknown`), and
+Outcome Engine stop policy (`CONTINUE`, `PAUSE`, `RECHECK`, or `UNKNOWN`), and
 the derived completion eligibility.
 
 ## Fail-closed invariants
@@ -43,7 +43,7 @@ the derived completion eligibility.
 - `stale`, `missing`, and `unverified` evidence can never be completion proof.
 - A pending or failed recovery can never authorize a stop.
 - Completion eligibility requires complete criteria, current evidence, a
-  completed or unnecessary recovery, and the existing `recheck` stop policy.
+  completed or unnecessary recovery, and the existing `RECHECK` stop policy.
 - A report that records invariant failures cannot also record eligible
   completion for an observation.
 

@@ -88,10 +88,10 @@ func (r RecoveryState) valid() bool {
 type StopDecision string
 
 const (
-	StopContinue StopDecision = "continue"
-	StopPause    StopDecision = "pause"
-	StopRecheck  StopDecision = "recheck"
-	StopUnknown  StopDecision = "unknown"
+	StopContinue StopDecision = "CONTINUE"
+	StopPause    StopDecision = "PAUSE"
+	StopRecheck  StopDecision = "RECHECK"
+	StopUnknown  StopDecision = "UNKNOWN"
 )
 
 func (s StopDecision) valid() bool {
