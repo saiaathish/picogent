@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -152,7 +153,7 @@ func (c *Checkpoint) add(paths []string) error {
 	}
 	seen := make(map[string]struct{}, len(c.entries)+len(paths))
 	for i := range c.entries {
-		seen[c.entries[i].path] = struct{}{}
+		seen[pathIdentity(c.entries[i].path)] = struct{}{}
 	}
 	entries := make([]entry, 0, len(paths))
 	for _, requested := range paths {
@@ -160,10 +161,11 @@ func (c *Checkpoint) add(paths []string) error {
 		if err != nil {
 			return fmt.Errorf("checkpoint path %q: %w", requested, err)
 		}
-		if _, ok := seen[rel]; ok {
+		key := pathIdentity(rel)
+		if _, ok := seen[key]; ok {
 			continue
 		}
-		seen[rel] = struct{}{}
+		seen[key] = struct{}{}
 		state, err := readWorkspaceFile(c.root, rel)
 		if err != nil {
 			return fmt.Errorf("checkpoint path %q: %w", requested, err)
@@ -238,7 +240,7 @@ func (c *Checkpoint) PrepareExpected(path string, data []byte, mode fs.FileMode)
 		return false, fmt.Errorf("checkpoint path %q: %w", path, err)
 	}
 	for i := range c.entries {
-		if c.entries[i].path != rel {
+		if pathIdentity(c.entries[i].path) != pathIdentity(rel) {
 			continue
 		}
 		current, err := readWorkspaceFile(c.root, rel)
@@ -346,10 +348,10 @@ func Import(workspace string, record Record) (*Checkpoint, error) {
 		if err != nil {
 			return nil, fmt.Errorf("checkpoint record path %q: %w", item.Path, err)
 		}
-		if _, ok := seen[rel]; ok {
+		if _, ok := seen[pathIdentity(rel)]; ok {
 			return nil, fmt.Errorf("checkpoint record repeats path %q", item.Path)
 		}
-		seen[rel] = struct{}{}
+		seen[pathIdentity(rel)] = struct{}{}
 		if len(item.BeforeData) > MaxRecordFileBytes {
 			return nil, fmt.Errorf("checkpoint record file %q exceeds the %d-byte durable undo limit", item.Path, MaxRecordFileBytes)
 		}
@@ -651,6 +653,13 @@ func normalizePath(rootInput, root, requested string) (string, error) {
 		return "", err
 	}
 	return rel, nil
+}
+
+func pathIdentity(rel string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(rel)
+	}
+	return rel
 }
 
 func escapes(rel string) bool {
