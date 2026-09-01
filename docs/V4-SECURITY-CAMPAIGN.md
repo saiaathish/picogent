@@ -78,6 +78,8 @@ remains deliberately unclaimed because POSIX has no portable
 compare-and-rename-by-inode primitive. Deterministic `securefile` tests cover
 the supported boundary: a replacement observed before publication is rejected,
 and cleanup never unlinks a replacement inode.
+The undo-specific platform research and delivery decision are recorded in
+`docs/V4-UNDO-PUBLICATION.md` and tracked by issue #274.
 
 ### Durable session history
 

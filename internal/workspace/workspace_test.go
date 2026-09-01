@@ -180,6 +180,33 @@ func TestWriteAtomicIfUnchangedRefusesStaleContent(t *testing.T) {
 	}
 }
 
+func TestWriteAtomicIfUnchangedWithModeRefusesStaleMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows exposes only a writable/read-only mode projection")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "state.txt")
+	if err := WriteAtomicWithMode(root, "state.txt", []byte("before\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	err := WriteAtomicIfUnchangedWithMode(root, "state.txt", []byte("before\n"), 0o644, []byte("after\n"), 0o644)
+	if !errors.Is(err, ErrContentConflict) {
+		t.Fatalf("stale mode edit error = %v, want ErrContentConflict", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "before\n" {
+		t.Fatalf("stale mode edit changed file to %q, %v", got, err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o640 {
+		t.Fatalf("stale mode edit changed mode to %o", got)
+	}
+}
+
 func TestWriteAtomicRejectsReadOnlyTarget(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows read-only attributes have different semantics")
