@@ -264,6 +264,87 @@ func TestDurableTaskWriteWithoutVerifierRemainsVerifying(t *testing.T) {
 	}
 }
 
+func TestDurableTaskPersistsExplicitPermissionDenial(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	args, _ := json.Marshal(map[string]string{"path": "blocked.txt", "content": "must not be written"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "I stopped because the requested permission was denied."}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeSafe
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeSafe, workspace, nil))
+	a.TaskStore = store
+	if err := a.SetTaskSession("permission-denied"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the blocked file"}, agent.NopHandler{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, "blocked.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("denied write changed the workspace: %v", statErr)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusBlocked || result.Task.BlockedBy != "permission needed" || result.Task.StopReason != taskstate.StopPermissionNeeded {
+		t.Fatalf("denied task projection = %#v (snapshot=%#v)", result.Task, a.TaskSnapshot())
+	}
+	if len(result.Task.Evidence) == 0 {
+		t.Fatal("denied permission did not persist evidence")
+	}
+	latest := result.Task.Evidence[len(result.Task.Evidence)-1]
+	if latest.Kind != taskstate.EvidenceKindApproval || latest.Status != "DENIED" || latest.Origin != taskstate.EvidenceOriginUserApproval {
+		t.Fatalf("denied permission evidence = %#v", latest)
+	}
+	persisted, err := store.Load("permission-denied")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != taskstate.StatusBlocked || len(persisted.Evidence) == 0 || persisted.Evidence[len(persisted.Evidence)-1].Status != "DENIED" {
+		t.Fatalf("persisted denied task = %#v", persisted)
+	}
+}
+
+func TestDurableTaskPersistsDeniedSideEffectForInformationalPrompt(t *testing.T) {
+	workspace := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	args, _ := json.Marshal(map[string]string{"path": "blocked.txt", "content": "must not be written"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "I stopped because permission was denied."}},
+	}}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeSafe
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeSafe, workspace, nil))
+	a.TaskStore = store
+	if err := a.SetTaskSession("permission-denied-informational"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "say hello"}, denyAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Task == nil || result.Task.Status != taskstate.StatusBlocked || result.Task.BlockedBy != "permission needed" {
+		t.Fatalf("denied informational task projection = %#v", result.Task)
+	}
+	if _, statErr := os.Stat(filepath.Join(workspace, "blocked.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("denied write changed the workspace: %v", statErr)
+	}
+	persisted, err := store.Load("permission-denied-informational")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status != taskstate.StatusBlocked || len(persisted.Evidence) == 0 || persisted.Evidence[len(persisted.Evidence)-1].Status != "DENIED" {
+		t.Fatalf("persisted denied informational task = %#v", persisted)
+	}
+}
+
 func TestDurableTaskResumesUnverifiedWriteWithAutomaticVerification(t *testing.T) {
 	workspace := t.TempDir()
 	store := taskstate.NewStore(t.TempDir())

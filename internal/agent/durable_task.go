@@ -8,6 +8,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/verify"
 )
@@ -237,6 +238,14 @@ func (a *Agent) TaskSnapshot() *taskstate.Task {
 }
 
 func (a *Agent) beginDurableTask(prompt string, ev EventHandler) (bool, error) {
+	return a.beginDurableTaskWithFallback(prompt, ev, false)
+}
+
+// beginDurableTaskWithFallback normally keeps task inference conservative, but
+// a real blocked side effect must still have a durable owner even when the
+// original user wording looked informational. The fallback is only used after
+// execution reaches that boundary.
+func (a *Agent) beginDurableTaskWithFallback(prompt string, ev EventHandler, fallback bool) (bool, error) {
 	a.taskMu.Lock()
 	if a.TaskStore == nil || a.TaskSession == "" {
 		a.taskMu.Unlock()
@@ -258,8 +267,20 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) (bool, error) {
 			return true, err
 		}
 		if !ok {
-			a.taskMu.Unlock()
-			return false, nil
+			if !fallback {
+				a.taskMu.Unlock()
+				return false, nil
+			}
+			goal := strings.TrimSpace(prompt)
+			if goal == "" {
+				goal = "complete the requested action"
+			}
+			task, err = taskstate.New(a.TaskSession, goal, []string{"resolve the permission requirement"})
+			if err != nil {
+				a.taskMu.Unlock()
+				a.reportTaskUpdateError(ev, err)
+				return true, err
+			}
 		}
 		candidate = task
 	} else {
@@ -310,6 +331,17 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) (bool, error) {
 	return false, nil
 }
 
+// ensureDurableTaskForBlock gives a denied side effect a durable blocked
+// projection without making informational prompts create tasks up front.
+func (a *Agent) ensureDurableTaskForBlock(prompt, reason string, ev EventHandler) {
+	if a.TaskSnapshot() == nil {
+		if failed, _ := a.beginDurableTaskWithFallback(prompt, ev, true); failed {
+			return
+		}
+	}
+	a.blockDurableTask(reason, ev)
+}
+
 func (a *Agent) taskPromptSuffix() string {
 	context := renderDurableTaskContext(a.TaskSnapshot())
 	return context
@@ -321,6 +353,27 @@ func (a *Agent) noteTaskChanged(path string, ev EventHandler) {
 		for current := task.Current(); current != nil && !strings.Contains(strings.ToLower(current.Description), "verif"); current = task.Current() {
 			task.Advance()
 		}
+		return nil
+	})
+}
+
+// noteTaskPermission records the effective result of a permission prompt in
+// the same durable evidence ledger as the mutation it governs. It is called
+// after the corresponding tool result is applied, so an approval for a write
+// is bound to the resulting ChangeSeq rather than becoming stale immediately
+// when the file is changed. Automatic Fast-mode and persisted always-allow
+// decisions never reach this helper because the gate reports Prompted=false.
+func (a *Agent) noteTaskPermission(req perm.Request, decision perm.Decision, ev EventHandler) {
+	status := "DENIED"
+	if decision == perm.Allow {
+		status = "APPROVED"
+	}
+	summary := strings.TrimSpace(req.Summary)
+	if summary == "" {
+		summary = "permission decision for " + strings.TrimSpace(req.Tool)
+	}
+	a.mutateTask(ev, func(task *taskstate.Task) error {
+		task.RecordApprovalEvidence(status, summary, "permission prompt")
 		return nil
 	})
 }

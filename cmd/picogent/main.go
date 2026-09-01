@@ -721,8 +721,15 @@ func (h *stdioHandler) OnNeedPermission(ctx context.Context, req perm.Request) (
 		}
 		return perm.Deny, errHeadlessPermissionDenied
 	}
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "y") {
+	answer := strings.ToLower(strings.TrimSpace(line))
+	if strings.HasPrefix(answer, "y") {
 		return perm.Allow, nil
+	}
+	if strings.HasPrefix(answer, "n") {
+		// An explicit negative answer is a normal blocked outcome. Returning an
+		// error here would make the agent exit before it can persist the denied
+		// approval evidence and blocked task projection.
+		return perm.Deny, nil
 	}
 	return perm.Deny, errHeadlessPermissionDenied
 }

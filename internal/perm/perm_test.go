@@ -2,6 +2,7 @@ package perm_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -157,6 +158,106 @@ func TestSafeBlocksWriteWithoutPrompter(t *testing.T) {
 	d, _ := g.Check(nil, perm.Request{Tool: "write_file", Path: "a.go"})
 	if d != perm.Deny {
 		t.Fatalf("expected deny, got %s", d)
+	}
+}
+
+func TestCheckWithProvenanceDistinguishesPromptedDecisions(t *testing.T) {
+	workspace := t.TempDir()
+	req := perm.Request{Tool: "write_file", Path: "note.txt"}
+
+	decision, prompted, err := perm.New(config.ModeFast, workspace, nil).CheckWithProvenance(context.Background(), req)
+	if err != nil || decision != perm.Allow || prompted {
+		t.Fatalf("Fast decision = %s, prompted=%v, err=%v; want automatic allow", decision, prompted, err)
+	}
+
+	decision, prompted, err = perm.New(config.ModeSafe, workspace, func(context.Context, perm.Request) (perm.Decision, error) {
+		return perm.Allow, nil
+	}).CheckWithProvenance(context.Background(), req)
+	if err != nil || decision != perm.Allow || !prompted {
+		t.Fatalf("prompted decision = %s, prompted=%v, err=%v; want prompted allow", decision, prompted, err)
+	}
+
+	decision, prompted, err = perm.New(config.ModeSafe, workspace, func(context.Context, perm.Request) (perm.Decision, error) {
+		return perm.Deny, nil
+	}).CheckWithProvenance(context.Background(), req)
+	if err != nil || decision != perm.Deny || !prompted {
+		t.Fatalf("prompted denial = %s, prompted=%v, err=%v; want prompted deny", decision, prompted, err)
+	}
+}
+
+func TestCheckWithProvenanceTracksAllowTurnAndReset(t *testing.T) {
+	workspace := t.TempDir()
+	calls := 0
+	gate := perm.New(config.ModeSafe, workspace, func(context.Context, perm.Request) (perm.Decision, error) {
+		calls++
+		return perm.AllowTurn, nil
+	})
+
+	first, prompted, err := gate.CheckWithProvenance(context.Background(), perm.Request{Tool: "write_file", Path: "first.txt"})
+	if err != nil || first != perm.Allow || !prompted {
+		t.Fatalf("first AllowTurn = %s, prompted=%v, err=%v; want prompted allow", first, prompted, err)
+	}
+	second, prompted, err := gate.CheckWithProvenance(context.Background(), perm.Request{Tool: "write_file", Path: "second.txt"})
+	if err != nil || second != perm.Allow || prompted {
+		t.Fatalf("second AllowTurn = %s, prompted=%v, err=%v; want automatic allow", second, prompted, err)
+	}
+	if calls != 1 {
+		t.Fatalf("AllowTurn prompt calls = %d, want 1", calls)
+	}
+
+	destructive, prompted, err := gate.CheckWithProvenance(context.Background(), perm.Request{Tool: "write_file", Path: "delete.txt", Destructive: true})
+	if err != nil || destructive != perm.Allow || !prompted {
+		t.Fatalf("destructive AllowTurn = %s, prompted=%v, err=%v; want reprompted allow", destructive, prompted, err)
+	}
+	gate.ResetTurn()
+	reset, prompted, err := gate.CheckWithProvenance(context.Background(), perm.Request{Tool: "write_file", Path: "after-reset.txt"})
+	if err != nil || reset != perm.Allow || !prompted {
+		t.Fatalf("post-reset AllowTurn = %s, prompted=%v, err=%v; want prompted allow", reset, prompted, err)
+	}
+	if calls != 3 {
+		t.Fatalf("AllowTurn prompt calls after reset = %d, want 3", calls)
+	}
+}
+
+func TestCheckWithProvenanceTracksAllowAlwaysAndRepromptsOutsideWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	calls := 0
+	gate := perm.New(config.ModeSafe, workspace, func(context.Context, perm.Request) (perm.Decision, error) {
+		calls++
+		return perm.AllowAlways, nil
+	})
+
+	first, prompted, err := gate.CheckWithProvenance(context.Background(), perm.Request{Tool: "write_file", Path: "first.txt"})
+	if err != nil || first != perm.Allow || !prompted {
+		t.Fatalf("first AllowAlways = %s, prompted=%v, err=%v; want prompted allow", first, prompted, err)
+	}
+	second, prompted, err := gate.CheckWithProvenance(context.Background(), perm.Request{Tool: "write_file", Path: "second.txt"})
+	if err != nil || second != perm.Allow || prompted {
+		t.Fatalf("second AllowAlways = %s, prompted=%v, err=%v; want persisted automatic allow", second, prompted, err)
+	}
+	if calls != 1 {
+		t.Fatalf("AllowAlways prompt calls = %d, want 1", calls)
+	}
+
+	outsideReq := perm.Request{Tool: "write_file", Path: filepath.Join(outside, "outside.txt"), OutsideWorkspace: true}
+	third, prompted, err := gate.CheckWithProvenance(context.Background(), outsideReq)
+	if err != nil || third != perm.Allow || !prompted {
+		t.Fatalf("outside AllowAlways = %s, prompted=%v, err=%v; want explicit reprompt", third, prompted, err)
+	}
+	if calls != 2 {
+		t.Fatalf("outside AllowAlways prompt calls = %d, want 2", calls)
+	}
+}
+
+func TestCheckWithProvenancePreservesPromptErrors(t *testing.T) {
+	workspace := t.TempDir()
+	wantErr := errors.New("permission prompt unavailable")
+	decision, prompted, err := perm.New(config.ModeSafe, workspace, func(context.Context, perm.Request) (perm.Decision, error) {
+		return perm.Deny, wantErr
+	}).CheckWithProvenance(context.Background(), perm.Request{Tool: "write_file", Path: "note.txt"})
+	if decision != perm.Deny || !prompted || !errors.Is(err, wantErr) {
+		t.Fatalf("prompt error result = %s, prompted=%v, err=%v; want denied prompted error", decision, prompted, err)
 	}
 }
 

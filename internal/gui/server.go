@@ -50,27 +50,28 @@ import (
 )
 
 type event struct {
-	Type       string                     `json:"type"`
-	Text       string                     `json:"text,omitempty"`
-	Summary    string                     `json:"summary,omitempty"`
-	Hint       string                     `json:"hint,omitempty"`
-	Path       string                     `json:"path,omitempty"`
-	Line       int                        `json:"line,omitempty"`
-	LineEnd    int                        `json:"line_end,omitempty"`
-	Added      int                        `json:"added,omitempty"`
-	Removed    int                        `json:"removed,omitempty"`
-	Count      int                        `json:"count,omitempty"`
-	Kind       string                     `json:"kind,omitempty"`
-	Status     string                     `json:"status,omitempty"`
-	Available  bool                       `json:"available,omitempty"`
-	Tokens     int                        `json:"tokens,omitempty"`
-	Budget     int                        `json:"budget,omitempty"`
-	Pct        float64                    `json:"pct,omitempty"`
-	Level      string                     `json:"level,omitempty"`
-	SessionID  string                     `json:"session_id,omitempty"`
-	Task       *taskstate.Task            `json:"task"`
-	Completion *taskstate.CompletionCheck `json:"completion,omitempty"`
-	turnGen    uint64                     `json:"-"`
+	Type         string                     `json:"type"`
+	Text         string                     `json:"text,omitempty"`
+	Summary      string                     `json:"summary,omitempty"`
+	Hint         string                     `json:"hint,omitempty"`
+	Path         string                     `json:"path,omitempty"`
+	Line         int                        `json:"line,omitempty"`
+	LineEnd      int                        `json:"line_end,omitempty"`
+	Added        int                        `json:"added,omitempty"`
+	Removed      int                        `json:"removed,omitempty"`
+	Count        int                        `json:"count,omitempty"`
+	Kind         string                     `json:"kind,omitempty"`
+	Status       string                     `json:"status,omitempty"`
+	Available    bool                       `json:"available,omitempty"`
+	Tokens       int                        `json:"tokens,omitempty"`
+	Budget       int                        `json:"budget,omitempty"`
+	Pct          float64                    `json:"pct,omitempty"`
+	Level        string                     `json:"level,omitempty"`
+	SessionID    string                     `json:"session_id,omitempty"`
+	PermissionID string                     `json:"permission_id,omitempty"`
+	Task         *taskstate.Task            `json:"task"`
+	Completion   *taskstate.CompletionCheck `json:"completion,omitempty"`
+	turnGen      uint64                     `json:"-"`
 }
 
 type transcriptLine struct {
@@ -131,6 +132,8 @@ type server struct {
 	undoStack      []extensions.UndoEntry
 	pendingPerm    perm.Request
 	pendingPermGen uint64
+	pendingPermID  uint64
+	pendingPermCh  chan perm.Decision
 	liveTask       agent.TaskMode
 	// turnMode is a temporary scope boundary for the admitted turn. It is
 	// exposed in state while the turn runs but never replaces liveTask.
@@ -144,7 +147,10 @@ type server struct {
 	// beforeSessionClone is test-only synchronization for proving that session
 	// transitions release s.mu before waiting on the project run lock.
 	beforeSessionClone func()
-	sessionTransition  bool
+	// beforePermissionResponseCleanup is test-only synchronization for proving
+	// a response cannot clear a newer prompt in the same turn.
+	beforePermissionResponseCleanup func()
+	sessionTransition               bool
 	// openPreview is test-only injection for exercising filesystem replacement
 	// between path resolution and the descriptor-safe open.
 	openPreview func(string, string) (*os.File, error)
@@ -750,6 +756,7 @@ func (s *server) snapshot() map[string]any {
 	sessionID := s.sessionID
 	hist := append([]llm.Message(nil), s.hist...)
 	pend := s.pendingPerm
+	pendID := s.pendingPermID
 	liveTask := s.liveTask
 	var turnMode *agent.TaskMode
 	if s.turnMode != nil {
@@ -837,7 +844,7 @@ func (s *server) snapshot() map[string]any {
 		out["messages"] = messagesToTranscript(hist)
 	}
 	if pend.Tool != "" {
-		out["pending_perm"] = permissionProjection(pend)
+		out["pending_perm"] = permissionProjectionWithID(pend, pendID)
 	}
 	budget := ctxmgr.BudgetForModel(cfg.Model)
 	ctxStats := ctxmgr.StatsFor(hist, budget)
@@ -1365,10 +1372,14 @@ func (s *server) abortTurnLocked() {
 	s.turnReads, s.turnSearches, s.turnEdits = 0, 0, 0
 	s.pendingPerm = perm.Request{}
 	s.pendingPermGen = 0
+	pendingPermCh := s.pendingPermCh
+	s.pendingPermCh = nil
 	s.turnMode = nil
-	select {
-	case s.permCh <- perm.Deny:
-	default:
+	if pendingPermCh != nil {
+		select {
+		case pendingPermCh <- perm.Deny:
+		default:
+		}
 	}
 	s.steerMu.Lock()
 	s.steerQueue = nil
@@ -1802,9 +1813,10 @@ func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Allow  bool `json:"allow"`
-		Turn   bool `json:"turn"`
-		Always bool `json:"always"`
+		Allow        bool   `json:"allow"`
+		Turn         bool   `json:"turn"`
+		Always       bool   `json:"always"`
+		PermissionID string `json:"permission_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -1818,13 +1830,19 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	} else if in.Allow {
 		d = perm.Allow
 	}
+	requestedID, err := strconv.ParseUint(strings.TrimSpace(in.PermissionID), 10, 64)
+	if err != nil || requestedID == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	s.mu.Lock()
-	permCh := s.permCh
+	permCh := s.pendingPermCh
 	tool := s.pendingPerm.Tool
 	pendingGen := s.pendingPermGen
+	pendingID := s.pendingPermID
 	turnGen := s.turnGen
 	s.mu.Unlock()
-	if permCh == nil || tool == "" {
+	if permCh == nil || tool == "" || requestedID != pendingID {
 		w.WriteHeader(204)
 		return
 	}
@@ -1832,17 +1850,21 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	case permCh <- d:
 	case <-time.After(2 * time.Second):
 	}
+	if hook := s.beforePermissionResponseCleanup; hook != nil {
+		hook()
+	}
 	s.mu.Lock()
 	// Only the request that was visible when the user clicked may be cleared
-	// or promoted to Always. A reset/new turn can replace pendingPerm while the
-	// HTTP request is waiting on the old turn's channel.
-	if s.pendingPermGen != pendingGen || s.turnGen != turnGen {
+	// or promoted to Always. A reset/new turn or a subsequent prompt can replace
+	// pendingPerm while the HTTP request is waiting on the old turn's channel.
+	if s.pendingPermGen != pendingGen || s.pendingPermID != pendingID || s.turnGen != turnGen {
 		s.mu.Unlock()
 		w.WriteHeader(204)
 		return
 	}
 	s.pendingPerm = perm.Request{}
 	s.pendingPermGen = 0
+	s.pendingPermCh = nil
 	if d == perm.AllowAlways && s.ag != nil && s.ag.Gate != nil && tool != "" {
 		s.cfg.Extensions.AlwaysAllowTools = appendUnique(s.cfg.Extensions.AlwaysAllowTools, tool)
 		s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
@@ -1880,9 +1902,10 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	fl.Flush()
 	s.mu.Lock()
 	pend := s.pendingPerm
+	pendID := s.pendingPermID
 	s.mu.Unlock()
 	if pend.Tool != "" {
-		b, _ := json.Marshal(sanitizeEvent(permissionEvent(pend)))
+		b, _ := json.Marshal(sanitizeEvent(permissionEventWithID(pend, pendID)))
 		fmt.Fprintf(w, "data: %s\n\n", b)
 		fl.Flush()
 	}
@@ -2334,10 +2357,6 @@ func (h *guiHandler) OnToolStart(call llm.ToolCall) {
 		h.s.noteTurnActivity("search")
 		h.learn.RecordSearch()
 		h.emit(event{Type: "activity", Kind: "search", Count: h.searches})
-	case "write_file", "edit_file":
-		path := parseToolPath(call.Arguments)
-		h.s.noteTurnActivity("edit")
-		h.emit(event{Type: "think", Text: "Editing " + path, Kind: "edit", Status: "start", Path: path})
 	case "bash":
 		var in struct {
 			Command string `json:"command"`
@@ -2354,6 +2373,9 @@ func (h *guiHandler) OnToolEnd(call llm.ToolCall, result string, err error) {
 	}
 	if err != nil {
 		h.emit(event{Type: "error", Text: err.Error()})
+		return
+	}
+	if (call.Name == "write_file" || call.Name == "edit_file") && suppressedMutationResult(result) {
 		return
 	}
 
@@ -2407,6 +2429,7 @@ func (h *guiHandler) recordChange(path string, added, removed int) {
 		return
 	}
 	h.edits++
+	h.s.noteTurnActivity("edit")
 	h.added += added
 	h.removed += removed
 	h.learn.RecordChange(path, added, removed)
@@ -2423,13 +2446,27 @@ func ternary(cond bool, a, b string) string {
 	return b
 }
 
+func suppressedMutationResult(result string) bool {
+	result = strings.ToLower(strings.TrimSpace(result))
+	return result == "denied by user" ||
+		strings.Contains(result, "read-only") ||
+		strings.Contains(result, "not allowed") ||
+		strings.Contains(result, "permission denied") ||
+		strings.Contains(result, "permission needed") ||
+		strings.HasPrefix(result, "blocked")
+}
+
 func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error) {
 	if !h.live() {
 		return perm.Deny, context.Canceled
 	}
 	h.s.mu.Lock()
+	h.s.pendingPermID++
+	pendingID := h.s.pendingPermID
 	h.s.pendingPerm = req
 	h.s.pendingPermGen = h.turnGen
+	responseCh := make(chan perm.Decision, 1)
+	h.s.pendingPermCh = responseCh
 	ag := h.s.ag
 	h.s.mu.Unlock()
 	if ag != nil {
@@ -2437,53 +2474,72 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 			_ = traceLog.Append("perm", req.Tool, req.Summary, nil, 0)
 		}
 	}
-	h.emit(permissionEvent(req))
-	permCh := h.permCh
-	if permCh == nil {
-		h.s.mu.Lock()
-		permCh = h.s.permCh
-		h.s.mu.Unlock()
-	}
-	if permCh == nil {
-		return perm.Deny, errors.New("permission channel unavailable")
-	}
+	h.emit(permissionEventWithID(req, pendingID))
 	select {
 	case <-ctx.Done():
 		h.s.mu.Lock()
-		if h.s.pendingPermGen == h.turnGen {
+		if h.s.pendingPermGen == h.turnGen && h.s.pendingPermID == pendingID {
 			h.s.pendingPerm = perm.Request{}
 			h.s.pendingPermGen = 0
+			h.s.pendingPermCh = nil
 		}
 		h.s.mu.Unlock()
 		return perm.Deny, ctx.Err()
-	case d := <-permCh:
-		h.s.mu.Lock()
-		if h.s.pendingPermGen == h.turnGen {
-			h.s.pendingPerm = perm.Request{}
-			h.s.pendingPermGen = 0
-		}
-		h.s.mu.Unlock()
+	case d := <-responseCh:
+		// The HTTP response handler owns cleanup and AllowAlways persistence.
+		// Clearing here races that owner: the prompt goroutine can consume the
+		// buffered decision first, causing an otherwise valid Always approval to
+		// skip persistence. Cancellation and turn aborts still clear this state
+		// through the guarded paths above and abortTurnLocked.
 		return d, nil
 	}
 }
 
 func permissionEvent(req perm.Request) event {
+	return permissionEventWithID(req, 0)
+}
+
+func permissionEventWithID(req perm.Request, id uint64) event {
 	kind := req.Tool
 	if strings.HasPrefix(kind, "mcp_") || kind == "mcp_manage" {
 		kind = "mcp"
 	}
-	return event{Type: "permission", Summary: req.Summary, Hint: req.Hint, Text: req.Tool, Kind: kind, Status: permStatus(req)}
+	return event{
+		Type:         "permission",
+		Summary:      req.Summary,
+		Hint:         req.Hint,
+		Text:         req.Tool,
+		Kind:         kind,
+		Status:       permStatus(req),
+		PermissionID: permissionIDString(id),
+	}
 }
 
 func permissionProjection(req perm.Request) map[string]any {
+	return permissionProjectionWithID(req, 0)
+}
+
+func permissionProjectionWithID(req perm.Request, id uint64) map[string]any {
 	e := sanitizeEvent(permissionEvent(req))
-	return map[string]any{
+	e.PermissionID = permissionIDString(id)
+	projection := map[string]any{
 		"tool":    e.Text,
 		"summary": e.Summary,
 		"hint":    e.Hint,
 		"kind":    e.Kind,
 		"status":  e.Status,
 	}
+	if e.PermissionID != "" {
+		projection["permission_id"] = e.PermissionID
+	}
+	return projection
+}
+
+func permissionIDString(id uint64) string {
+	if id == 0 {
+		return ""
+	}
+	return strconv.FormatUint(id, 10)
 }
 
 func permStatus(req perm.Request) string {

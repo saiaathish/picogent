@@ -520,6 +520,14 @@ func TestStdioPermissionDenialFailsClosedOnEOF(t *testing.T) {
 	}
 }
 
+func TestStdioExplicitPermissionDenialReturnsBlockedDecision(t *testing.T) {
+	h := &stdioHandler{in: bufio.NewReader(strings.NewReader("n\n"))}
+	decision, err := h.OnNeedPermission(context.Background(), perm.Request{Summary: "write file"})
+	if decision != perm.Deny || err != nil {
+		t.Fatalf("explicit permission result = %s, %v; want deny without handler error", decision, err)
+	}
+}
+
 func TestStdioYesStillBlocksRiskyActions(t *testing.T) {
 	h := &stdioHandler{yes: true, in: bufio.NewReader(strings.NewReader(""))}
 	decision, err := h.OnNeedPermission(context.Background(), perm.Request{Summary: "delete file", Destructive: true})
