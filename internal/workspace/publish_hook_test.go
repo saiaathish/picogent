@@ -3,6 +3,7 @@ package workspace_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/workspace"
@@ -17,8 +18,14 @@ func TestWriteAtomicPublishHookRunsBeforeRename(t *testing.T) {
 	called := false
 	if err := workspace.WriteAtomicWithPublishHook(root, path, []byte("after"), func(mode os.FileMode) error {
 		called = true
-		if mode.Perm() != 0o640 {
-			t.Fatalf("hook mode=%o, want 640", mode.Perm())
+		wantMode := os.FileMode(0o640)
+		if runtime.GOOS == "windows" {
+			// Windows exposes only a writable/read-only mode projection; the
+			// requested Unix permission split is not preserved by os.Chmod.
+			wantMode = 0o666
+		}
+		if mode.Perm() != wantMode.Perm() {
+			t.Fatalf("hook mode=%o, want %o", mode.Perm(), wantMode.Perm())
 		}
 		got, err := os.ReadFile(path)
 		if err != nil {

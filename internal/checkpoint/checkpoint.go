@@ -737,6 +737,20 @@ func readRegularFileHandle(f *os.File) (fileState, error) {
 }
 
 func restorableMode(mode fs.FileMode) fs.FileMode {
+	if runtime.GOOS == "windows" {
+		// Windows exposes Unix permission bits only as a writable/read-only
+		// approximation. Canonicalize that projection so a requested 0644 mode
+		// and the 0666 mode reported by os.FileInfo fingerprint identically.
+		perm := mode.Perm()
+		switch {
+		case perm == 0:
+			return 0
+		case perm&0o222 == 0:
+			return 0o444
+		default:
+			return 0o666
+		}
+	}
 	return mode.Perm() | mode&(fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)
 }
 

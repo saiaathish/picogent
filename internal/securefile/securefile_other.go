@@ -17,7 +17,15 @@ type rootParent struct {
 	root *os.Root
 }
 
-func openSecureParent(path string, _ bool) (secureParent, error) {
+func openSecureParent(path string, create bool) (secureParent, error) {
+	return openSecureParentWithDurability(path, create, false)
+}
+
+func openSecureParentDurable(path string, create bool) (secureParent, error) {
+	return openSecureParentWithDurability(path, create, true)
+}
+
+func openSecureParentWithDurability(path string, _ bool, _ bool) (secureParent, error) {
 	path, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err

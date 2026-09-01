@@ -217,7 +217,7 @@ func WriteAtomicDurable(path string, data []byte, mode os.FileMode) error {
 }
 
 func writeAtomic(path string, data []byte, mode os.FileMode, durable bool, syncParent func(secureParent) error) error {
-	root, name, err := openParent(path, true)
+	root, name, err := openParentWithDurability(path, true, durable)
 	if err != nil {
 		return err
 	}
@@ -349,6 +349,10 @@ type secureParent interface {
 }
 
 func openParent(path string, createParent bool) (secureParent, string, error) {
+	return openParentWithDurability(path, createParent, false)
+}
+
+func openParentWithDurability(path string, createParent, durable bool) (secureParent, string, error) {
 	if strings.TrimSpace(path) == "" || strings.ContainsRune(path, 0) {
 		return nil, "", errors.New("file path is empty or contains NUL")
 	}
@@ -361,7 +365,12 @@ func openParent(path string, createParent bool) (secureParent, string, error) {
 	if name == "" || name == "." || name == ".." {
 		return nil, "", fmt.Errorf("invalid file name %q", name)
 	}
-	root, err := openSecureParent(parent, createParent)
+	var root secureParent
+	if durable {
+		root, err = openSecureParentDurable(parent, createParent)
+	} else {
+		root, err = openSecureParent(parent, createParent)
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// Preserve the os.IsNotExist behavior used by callers that treat a

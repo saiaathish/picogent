@@ -21,6 +21,14 @@ type unixParent struct {
 }
 
 func openSecureParent(path string, create bool) (secureParent, error) {
+	return openSecureParentWithDurability(path, create, false)
+}
+
+func openSecureParentDurable(path string, create bool) (secureParent, error) {
+	return openSecureParentWithDurability(path, create, true)
+}
+
+func openSecureParentWithDurability(path string, create bool, _ bool) (secureParent, error) {
 	abs, err := secureAbsolutePath(path)
 	if err != nil {
 		return nil, err
