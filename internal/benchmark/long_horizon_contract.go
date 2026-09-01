@@ -224,12 +224,12 @@ func (r Report) Validate() error {
 }
 
 func validateText(name, value string, required bool) error {
+	if len(value) > MaxLongHorizonTextBytes {
+		return fmt.Errorf("%s exceeds %d bytes", name, MaxLongHorizonTextBytes)
+	}
 	value = strings.TrimSpace(value)
 	if required && value == "" {
 		return fmt.Errorf("%s is required", name)
-	}
-	if len(value) > MaxLongHorizonTextBytes {
-		return fmt.Errorf("%s exceeds %d bytes", name, MaxLongHorizonTextBytes)
 	}
 	return nil
 }

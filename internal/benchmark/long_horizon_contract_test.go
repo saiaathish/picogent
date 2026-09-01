@@ -83,6 +83,20 @@ func TestLongHorizonReportKeepsRecordedInvariantFailuresFailClosed(t *testing.T)
 	}
 }
 
+func TestLongHorizonReportBoundsRawMetadataBeforeTrimming(t *testing.T) {
+	report := validLongHorizonReport()
+	report.Command = strings.Repeat(" ", MaxLongHorizonTextBytes) + "x"
+	if err := report.Validate(); err == nil || !strings.Contains(err.Error(), "command exceeds") {
+		t.Fatalf("oversized raw command error=%v", err)
+	}
+
+	report = validLongHorizonReport()
+	report.Unverified = []string{strings.Repeat(" ", MaxLongHorizonTextBytes) + "x"}
+	if err := report.Validate(); err == nil || !strings.Contains(err.Error(), "unverified[0] exceeds") {
+		t.Fatalf("oversized raw unverified entry error=%v", err)
+	}
+}
+
 func validLongHorizonReport() Report {
 	return Report{
 		Schema:       LongHorizonSchema,
