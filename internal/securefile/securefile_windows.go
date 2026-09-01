@@ -389,6 +389,13 @@ func renameWindowsHandle(source, parent windows.Handle, name string) error {
 
 func (p *windowsParent) sync() error { return nil }
 
+func (p *windowsParent) syncDurable() error {
+	if p == nil || p.handle == 0 || p.handle == windows.InvalidHandle {
+		return errors.New("invalid secure directory handle")
+	}
+	return windows.FlushFileBuffers(p.handle)
+}
+
 func openWindowsRoot(path string) (windows.Handle, error) {
 	return openWindowsHandle(0, ntPath(path), windows.FILE_GENERIC_READ, windows.FILE_OPEN, windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT)
 }

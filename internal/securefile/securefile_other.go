@@ -178,12 +178,20 @@ func (p *rootParent) replace(oldName, newName string, source *os.File) error {
 }
 
 func (p *rootParent) sync() error {
-	file, err := p.root.Open(".")
-	if err != nil {
+	err := p.syncDurable()
+	if errors.Is(err, os.ErrInvalid) {
 		return nil
 	}
+	return err
+}
+
+func (p *rootParent) syncDurable() error {
+	file, err := p.root.Open(".")
+	if err != nil {
+		return fmt.Errorf("open secure directory for sync: %w", err)
+	}
 	defer file.Close()
-	if err := file.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
+	if err := file.Sync(); err != nil {
 		return fmt.Errorf("sync secure directory: %w", err)
 	}
 	return nil

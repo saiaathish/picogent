@@ -141,7 +141,7 @@ func saveUndoJournal(workspace, sessionID string, journal undoJournal, pending b
 	if pending {
 		path = pendingPath
 	}
-	if err := securefile.WriteAtomic(path, data, 0o600); err != nil {
+	if err := securefile.WriteAtomicDurable(path, data, 0o600); err != nil {
 		return fmt.Errorf("write undo journal: %w", err)
 	}
 	return nil
