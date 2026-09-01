@@ -318,6 +318,10 @@ func runLongHorizonOutcomeHelper(t *testing.T) {
 	if !task.RecoverActiveTurn() {
 		t.Fatal("fresh process did not recover active turn")
 	}
+	recovered := task.LastTurn()
+	if recovered == nil || recovered.State != taskstate.TurnInterrupted || recovered.Route != string(taskstate.TurnRouteRecover) {
+		t.Fatalf("recovered turn = %#v, want interrupted recover route", recovered)
+	}
 	if err := store.Save(task); err != nil {
 		t.Fatalf("save recovered outcome in fresh process: %v", err)
 	}
@@ -331,6 +335,10 @@ func runLongHorizonOutcomeHelper(t *testing.T) {
 	fixture.recordCurrentVerification(t)
 	if !task.FinishTurn(sequence, taskstate.TurnRouteVerify, "re-establish proof after process restart", "PASS", taskstate.StopNone, 1, 0) {
 		t.Fatal("post-restart verification turn did not finish")
+	}
+	verifiedTurn := task.LastTurn()
+	if verifiedTurn == nil || verifiedTurn.State != taskstate.TurnCompleted || verifiedTurn.Route != string(taskstate.TurnRouteVerify) {
+		t.Fatalf("post-restart verification turn = %#v, want completed verify route", verifiedTurn)
 	}
 	if err := store.Save(task); err != nil {
 		t.Fatalf("save post-restart verification: %v", err)
