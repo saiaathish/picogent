@@ -21,6 +21,8 @@ type windowsParent struct {
 	handle windows.Handle
 }
 
+var procReOpenFile = windows.NewLazySystemDLL("kernel32.dll").NewProc("ReOpenFile")
+
 func openSecureParent(path string, create bool) (secureParent, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -393,25 +395,37 @@ func (p *windowsParent) syncDurable() error {
 	if p == nil || p.handle == 0 || p.handle == windows.InvalidHandle {
 		return errors.New("invalid secure directory handle")
 	}
-	// The traversal handle is intentionally read-only for ordinary securefile
-	// operations. Reopen the same directory relative to that anchored handle
-	// with write access for FlushFileBuffers; never reopen the original absolute
-	// path, which would reintroduce a rename/reparse race.
-	flushHandle, err := openWindowsHandle(
-		p.handle,
-		".",
-		windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE,
-		windows.FILE_OPEN,
-		windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT,
-	)
+	// ReOpenFile upgrades access on the already anchored object without
+	// resolving the directory through its absolute path (or a relative "."
+	// name, which native NtCreateFile rejects). The original traversal handle
+	// remains the security anchor; the reopened handle is used only to flush.
+	flushHandle, err := reopenWindowsDirectory(p.handle)
 	if err != nil {
-		return fmt.Errorf("open secure directory for durable sync: %w", err)
+		return fmt.Errorf("reopen secure directory for durable sync: %w", err)
 	}
 	defer windows.CloseHandle(flushHandle)
 	if err := windows.FlushFileBuffers(flushHandle); err != nil {
 		return fmt.Errorf("flush secure directory for durable sync: %w", err)
 	}
 	return nil
+}
+
+func reopenWindowsDirectory(handle windows.Handle) (windows.Handle, error) {
+	const flags = windows.FILE_FLAG_BACKUP_SEMANTICS | windows.FILE_FLAG_OPEN_REPARSE_POINT
+	raw, _, callErr := procReOpenFile.Call(
+		uintptr(handle),
+		uintptr(windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE),
+		uintptr(windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE),
+		uintptr(flags),
+	)
+	reopened := windows.Handle(raw)
+	if reopened == windows.InvalidHandle {
+		if callErr != nil {
+			return 0, callErr
+		}
+		return 0, windows.ERROR_INVALID_HANDLE
+	}
+	return reopened, nil
 }
 
 func openWindowsRoot(path string) (windows.Handle, error) {
