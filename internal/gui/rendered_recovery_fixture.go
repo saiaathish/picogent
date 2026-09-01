@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,8 @@ type renderedRecoveryFixtureManifest struct {
 	Before       string `json:"before"`
 	AppliedSHA   string `json:"applied_sha256"`
 	Source       string `json:"source_sha"`
+	SourceOK     bool   `json:"source_sha_verified"`
+	SourceDirty  bool   `json:"source_tree_modified"`
 	Runtime      string `json:"runtime"`
 	StartedAtUTC string `json:"started_at_utc"`
 	PID          int    `json:"pid"`
@@ -128,7 +131,15 @@ func RunRenderedRecoveryFixture(ctx context.Context) error {
 
 	manifestPath := strings.TrimSpace(os.Getenv("PICOGENT_RENDERED_FIXTURE_MANIFEST"))
 	if manifestPath == "" {
-		manifestPath = filepath.Join(home, "rendered-recovery-fixture.json")
+		manifestPath = filepath.Join(home, "rendered-recovery-fixture-"+phase+".json")
+	}
+	manifestPath, err = renderedRecoveryFixtureManifestPath(home, manifestPath)
+	if err != nil {
+		return err
+	}
+	sourceSHA, sourceOK, sourceDirty, err := renderedRecoveryFixtureSource()
+	if err != nil {
+		return err
 	}
 	manifest := renderedRecoveryFixtureManifest{
 		Issue:        "291",
@@ -141,7 +152,9 @@ func RunRenderedRecoveryFixture(ctx context.Context) error {
 		ProbePath:    renderedRecoveryFixturePath,
 		Before:       "absent",
 		AppliedSHA:   renderedRecoveryFixtureContentSHA(),
-		Source:       renderedRecoveryFixtureSourceSHA(),
+		Source:       sourceSHA,
+		SourceOK:     sourceOK,
+		SourceDirty:  sourceDirty,
 		Runtime:      "go-build-tags-rendered_fixture",
 		StartedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
 		PID:          os.Getpid(),
@@ -166,24 +179,202 @@ func renderedRecoveryFixturePaths(phase string) (string, string, error) {
 			if err != nil {
 				return "", "", fmt.Errorf("create fixture home: %w", err)
 			}
+		} else {
+			var err error
+			home, err = renderedRecoveryFixtureTempPath(home, "fixture home")
+			if err != nil {
+				return "", "", err
+			}
+			if err := renderedRecoveryFixtureEmptyDirectory(home, "fixture home"); err != nil {
+				return "", "", err
+			}
 		}
 		if workspace == "" {
 			workspace = filepath.Join(home, "workspace")
+		} else {
+			var err error
+			workspace, err = renderedRecoveryFixtureContainedPath(home, workspace, "fixture workspace")
+			if err != nil {
+				return "", "", err
+			}
 		}
-		if err := os.MkdirAll(workspace, 0o700); err != nil {
-			return "", "", fmt.Errorf("create fixture workspace: %w", err)
+		if err := renderedRecoveryFixtureContainedPathCheck(home, workspace, "fixture workspace"); err != nil {
+			return "", "", err
 		}
-		if _, err := os.Stat(filepath.Join(home, "sessions", renderedRecoveryFixtureSession+".json")); err == nil {
-			return "", "", errors.New("fixture seed home already contains the fixed session; use a fresh -home")
+		if err := renderedRecoveryFixtureEmptyDirectory(workspace, "fixture workspace"); err != nil {
+			return "", "", err
+		}
+		if _, err := os.Lstat(filepath.Join(workspace, renderedRecoveryFixturePath)); err == nil {
+			return "", "", errors.New("fixture seed workspace already contains the recovery probe; use a fresh workspace")
 		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", "", fmt.Errorf("inspect fixture session: %w", err)
+			return "", "", fmt.Errorf("inspect fixture probe: %w", err)
 		}
 		return filepath.Clean(home), filepath.Clean(workspace), nil
 	}
 	if home == "" || workspace == "" {
 		return "", "", errors.New("reload requires both PICOGENT_RENDERED_FIXTURE_HOME and PICOGENT_RENDERED_FIXTURE_WORKSPACE")
 	}
+	var err error
+	home, err = renderedRecoveryFixtureTempPath(home, "fixture home")
+	if err != nil {
+		return "", "", err
+	}
+	workspace, err = renderedRecoveryFixtureContainedPath(home, workspace, "fixture workspace")
+	if err != nil {
+		return "", "", err
+	}
+	if err := renderedRecoveryFixtureDirectoryExists(home, "fixture home"); err != nil {
+		return "", "", err
+	}
+	if err := renderedRecoveryFixtureDirectoryExists(workspace, "fixture workspace"); err != nil {
+		return "", "", err
+	}
+	if _, err := os.Lstat(filepath.Join(workspace, renderedRecoveryFixturePath)); err == nil {
+		return "", "", errors.New("fixture reload requires the recovery probe to be absent after undo")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", "", fmt.Errorf("inspect fixture probe before reload: %w", err)
+	}
+	taskPath := filepath.Join(home, "tasks", projects.IDForPath(workspace), renderedRecoveryFixtureSession+".json")
+	if _, err := os.Stat(taskPath); err != nil {
+		return "", "", fmt.Errorf("reload requires durable fixture task %q: %w", taskPath, err)
+	}
 	return filepath.Clean(home), filepath.Clean(workspace), nil
+}
+
+func renderedRecoveryFixtureTempPath(raw, label string) (string, error) {
+	path, err := filepath.Abs(filepath.Clean(raw))
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", label, err)
+	}
+	tempRoot, err := renderedRecoveryFixtureResolvedPath(os.TempDir())
+	if err != nil {
+		return "", fmt.Errorf("resolve fixture temp root: %w", err)
+	}
+	resolved, err := renderedRecoveryFixtureResolvedPath(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", label, err)
+	}
+	if resolved == tempRoot || !renderedRecoveryFixtureIsWithin(tempRoot, resolved) {
+		return "", fmt.Errorf("%s must be a disposable path below %q", label, tempRoot)
+	}
+	return path, nil
+}
+
+func renderedRecoveryFixtureContainedPath(root, raw, label string) (string, error) {
+	path, err := filepath.Abs(filepath.Clean(raw))
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", label, err)
+	}
+	if err := renderedRecoveryFixtureContainedPathCheck(root, path, label); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func renderedRecoveryFixtureContainedPathCheck(root, candidate, label string) error {
+	rootResolved, err := renderedRecoveryFixtureResolvedPath(root)
+	if err != nil {
+		return fmt.Errorf("resolve fixture home for %s: %w", label, err)
+	}
+	candidateResolved, err := renderedRecoveryFixtureResolvedPath(candidate)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", label, err)
+	}
+	if candidateResolved == rootResolved || !renderedRecoveryFixtureIsWithin(rootResolved, candidateResolved) {
+		return fmt.Errorf("%s must be contained by fixture home %q", label, rootResolved)
+	}
+	return nil
+}
+
+func renderedRecoveryFixtureIsWithin(root, candidate string) bool {
+	rel, err := filepath.Rel(root, candidate)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != "."
+}
+
+func renderedRecoveryFixtureResolvedPath(path string) (string, error) {
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	current := abs
+	var suffix []string
+	for {
+		_, statErr := os.Lstat(current)
+		if statErr == nil {
+			resolved, evalErr := filepath.EvalSymlinks(current)
+			if evalErr != nil {
+				return "", evalErr
+			}
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !errors.Is(statErr, os.ErrNotExist) {
+			return "", statErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return abs, nil
+		}
+		suffix = append(suffix, filepath.Base(current))
+		current = parent
+	}
+}
+
+func renderedRecoveryFixtureEmptyDirectory(path, label string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", label, err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", label, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%s must be a real directory", label)
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", label, err)
+	}
+	if len(entries) != 0 {
+		return fmt.Errorf("%s must be empty; use a fresh disposable path", label)
+	}
+	return nil
+}
+
+func renderedRecoveryFixtureDirectoryExists(path, label string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", label, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%s must be a real directory", label)
+	}
+	return nil
+}
+
+func renderedRecoveryFixtureManifestPath(home, raw string) (string, error) {
+	path := raw
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(home, path)
+	}
+	path, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("resolve fixture manifest: %w", err)
+	}
+	if err := renderedRecoveryFixtureContainedPathCheck(home, path, "fixture manifest"); err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return "", fmt.Errorf("fixture manifest %q already exists; use a fresh path", path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("inspect fixture manifest: %w", err)
+	}
+	return path, nil
 }
 
 type renderedRecoveryFixtureProvider struct {
@@ -232,11 +423,54 @@ func renderedRecoveryFixtureContentSHA() string {
 	return hex.EncodeToString(sum[:])
 }
 
-func renderedRecoveryFixtureSourceSHA() string {
-	if source := strings.TrimSpace(os.Getenv("PICOGENT_RENDERED_FIXTURE_SOURCE_SHA")); source != "" {
-		return source
+func renderedRecoveryFixtureSource() (string, bool, bool, error) {
+	supplied := strings.TrimSpace(os.Getenv("PICOGENT_RENDERED_FIXTURE_SOURCE_SHA"))
+	buildSHA, buildModified := renderedRecoveryFixtureBuildSource()
+	if supplied != "" {
+		normalized, ok := renderedRecoveryFixtureNormalizeSHA(supplied)
+		if !ok {
+			return "", false, buildModified, errors.New("PICOGENT_RENDERED_FIXTURE_SOURCE_SHA must be a full 40-character Git SHA")
+		}
+		supplied = normalized
+		if buildSHA != "" && supplied != buildSHA {
+			return "", false, buildModified, fmt.Errorf("fixture source SHA %q does not match compiled Git revision %q", supplied, buildSHA)
+		}
 	}
-	return "UNRECORDED"
+	if supplied == "" {
+		supplied = buildSHA
+	}
+	if supplied == "" {
+		return "UNRECORDED", false, buildModified, nil
+	}
+	return supplied, buildSHA != "" && supplied == buildSHA && !buildModified, buildModified, nil
+}
+
+func renderedRecoveryFixtureBuildSource() (string, bool) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "", false
+	}
+	var revision string
+	var modified bool
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision, _ = renderedRecoveryFixtureNormalizeSHA(setting.Value)
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	return revision, modified
+}
+
+func renderedRecoveryFixtureNormalizeSHA(raw string) (string, bool) {
+	if len(raw) != 40 {
+		return "", false
+	}
+	if _, err := hex.DecodeString(raw); err != nil {
+		return "", false
+	}
+	return strings.ToLower(raw), true
 }
 
 func writeRenderedRecoveryFixtureManifest(path string, manifest renderedRecoveryFixtureManifest) error {
@@ -248,8 +482,16 @@ func writeRenderedRecoveryFixtureManifest(path string, manifest renderedRecovery
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create rendered fixture manifest directory: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("create rendered fixture manifest: %w", err)
+	}
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
 		return fmt.Errorf("write rendered fixture manifest: %w", err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close rendered fixture manifest: %w", err)
 	}
 	return nil
 }

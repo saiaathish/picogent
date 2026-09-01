@@ -10,6 +10,11 @@ evidence harness, not a second Picogent workflow and not a live-provider test.
 Use a disposable home and workspace. The seed process serves the normal
 embedded GUI with a deterministic `llm.Scripted` provider:
 
+Custom `-home` paths must be below the operating system temp directory and
+must be empty for seed; `-workspace` must be inside that home, and
+`-manifest` must be a new file inside that home. The fixture rejects existing
+seed state and never overwrites a manifest.
+
 ```sh
 PICOGENT_RENDERED_FIXTURE_SOURCE_SHA="$(git rev-parse HEAD)" \
   go run -tags rendered_fixture ./cmd/picogent-rendered-fixture
@@ -41,13 +46,16 @@ been loaded.
 
 ## Bounded evidence contract
 
-Record the manifest values, exact source SHA, runtime identity, browser session
-and tab ownership, UTC timestamps, and direct observations for each step. The
-probe content hash is included in the manifest; the expected pre- and post-undo
-state is `absent`. Any provider-quality, arbitrary hostile-writer,
-cross-platform-rendered, or unobserved field remains `UNVERIFIED`. If
-`PICOGENT_RENDERED_FIXTURE_SOURCE_SHA` is omitted, the manifest records
-`UNRECORDED` and exact-source evidence is unavailable.
+Record the manifest values, source SHA, source verification flags, runtime
+identity, browser session and tab ownership, UTC timestamps, and direct
+observations for each step. The fixture binds a supplied SHA to Go's compiled
+`vcs.revision` when available and marks a dirty build with
+`source_tree_modified:true`; `source_sha_verified:true` requires a matching
+clean compiled revision. The probe content hash is included in the manifest;
+the expected pre- and post-undo state is `absent`. Any provider-quality,
+arbitrary hostile-writer, cross-platform-rendered, or unobserved field remains
+`UNVERIFIED`. If no compiled revision or valid source SHA is available, the
+manifest records `UNRECORDED` with `source_sha_verified:false`.
 
 The fixture uses the existing `server.Handler`, `/api/permission`, `/api/chat`,
 SSE events, task store, session store, checkpoint-backed undo, and fresh
