@@ -759,7 +759,7 @@ func readWorkspaceFile(root, rel string) (fileState, error) {
 func writeWorkspaceState(root, rel string, expected, state fileState) error {
 	if !state.exists {
 		if expected.exists {
-			return workspace.RemoveIfUnchanged(root, rel, expected.data)
+			return workspace.RemoveIfUnchanged(root, rel, expected.data, expected.mode)
 		}
 		err := workspace.Remove(root, rel)
 		if errors.Is(err, fs.ErrNotExist) {
@@ -768,7 +768,7 @@ func writeWorkspaceState(root, rel string, expected, state fileState) error {
 		return err
 	}
 	if expected.exists {
-		return workspace.WriteAtomicIfUnchangedWithMode(root, rel, expected.data, state.data, state.mode)
+		return workspace.WriteAtomicIfUnchangedWithMode(root, rel, expected.data, expected.mode, state.data, state.mode)
 	}
 	return workspace.WriteAtomicWithMode(root, rel, state.data, state.mode)
 }

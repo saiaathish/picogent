@@ -828,6 +828,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		// write then records the current change sequence, while a later write still
 		// invalidates evidence that was collected before it.
 		var successfulWrites []string
+		// A content conflict invalidates the path for this turn even if the model
+		// queues another same-path call later. Keeping that path out of undo is
+		// conservative: the checkpoint cannot prove which bytes the later call
+		// was intended to supersede.
 		contentConflictPaths := map[string]string{}
 		durableTransition := false
 		for _, ex := range pending {
@@ -856,7 +860,6 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				durableTransition = true
 				mutationCount++
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
-					delete(contentConflictPaths, p)
 					changed[p] = struct{}{}
 					successfulWrites = append(successfulWrites, p)
 					a.noteTaskChanged(p, ev)
