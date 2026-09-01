@@ -90,9 +90,15 @@ func TestRenderedPermissionContractKeepsDecisionBeforeSideEffect(t *testing.T) {
 				t.Fatalf("side effect occurred before permission decision: err=%v", err)
 			}
 
-			body := `{"allow":false}`
+			s.mu.Lock()
+			permissionID := permissionIDString(s.pendingPermID)
+			s.mu.Unlock()
+			if permissionID == "" {
+				t.Fatal("permission request did not expose an ID")
+			}
+			body := `{"allow":false,"permission_id":"` + permissionID + `"}`
 			if tc.allow {
-				body = `{"allow":true}`
+				body = `{"allow":true,"permission_id":"` + permissionID + `"}`
 			}
 			req := loopbackAPIRequest(http.MethodPost, "/api/permission", body)
 			req.Header.Set("Content-Type", "application/json")
@@ -179,6 +185,16 @@ func TestRenderedPermissionPersistsDecisionAndMutation(t *testing.T) {
 			if !ok || pending["tool"] != "write_file" {
 				t.Fatalf("pending permission = %#v, want write_file", before["pending_perm"])
 			}
+			permissionID, ok := pending["permission_id"].(string)
+			if !ok || permissionID == "" {
+				t.Fatalf("pending permission id = %#v, want a non-empty string", pending["permission_id"])
+			}
+			if pending["summary"] != "write rendered-probe.txt" || pending["kind"] != "write_file" || pending["status"] != "risky" {
+				t.Fatalf("pending permission projection = %#v, want write summary/kind/risky status", pending)
+			}
+			if hint, ok := pending["hint"].(string); !ok || hint == "" {
+				t.Fatalf("pending permission hint = %#v, want non-empty safety guidance", pending["hint"])
+			}
 			if _, err := os.Stat(fixture.path); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("workspace changed before decision: %v", err)
 			}
@@ -262,17 +278,74 @@ func TestRenderedPermissionPersistsDecisionAndMutation(t *testing.T) {
 			}
 
 			events := drainRenderedEvents(fixture.events)
-			if !hasPermissionEvent(events, tc.wantDecision) {
+			permissionIndex := -1
+			changeIndex := -1
+			editActivityIndex := -1
+			evidenceIndex := -1
+			changedTaskIndex := -1
+			blockedTaskIndex := -1
+			for index, event := range events {
+				if event.SessionID != fixture.server.sessionID || event.turnGen != fixture.server.turnGen {
+					t.Fatalf("event %d crossed session/turn boundary: %#v", index, event)
+				}
+				switch event.Type {
+				case "permission":
+					if permissionIndex >= 0 {
+						t.Fatalf("duplicate permission events: %#v", eventTypes(events))
+					}
+					permissionIndex = index
+					if event.PermissionID != permissionID || event.Text != "write_file" || event.Summary != "write rendered-probe.txt" || event.Kind != "write_file" || event.Status != "risky" || event.Hint == "" {
+						t.Fatalf("permission event = %#v, want exact rendered request", event)
+					}
+				case "change":
+					if changeIndex >= 0 {
+						t.Fatalf("duplicate change events: %#v", eventTypes(events))
+					}
+					changeIndex = index
+					if event.Path != "rendered-probe.txt" || event.Status != "done" {
+						t.Fatalf("change event = %#v, want completed contained probe change", event)
+					}
+				case "activity":
+					if event.Kind == "edit" && event.Status == "" {
+						editActivityIndex = index
+					}
+				case "task_progress":
+					if event.Task == nil || event.Task.SessionID != fixture.server.sessionID {
+						t.Fatalf("task event %d has wrong task identity: %#v", index, event)
+					}
+					if renderedTaskEvidenceStatusFromTask(event.Task) == tc.wantEvidence {
+						if evidenceIndex < 0 {
+							evidenceIndex = index
+						}
+					}
+					if tc.wantFile && event.Task.ChangeSeq == tc.wantChangeSeq && containsString(event.Task.ChangedFiles, "rendered-probe.txt") {
+						changedTaskIndex = index
+					}
+					if !tc.wantFile && event.Task.Status == taskstate.StatusBlocked {
+						if event.Task.BlockedBy != "permission needed" || event.Task.ChangeSeq != 0 || len(event.Task.ChangedFiles) != 0 {
+							t.Fatalf("blocked task event = %#v, want permission blocker without mutation", event.Task)
+						}
+						blockedTaskIndex = index
+					}
+				}
+			}
+			if permissionIndex < 0 {
 				t.Fatalf("events did not include permission prompt: %#v", eventTypes(events))
 			}
-			if !tc.wantFile && hasChangeEvent(events) {
-				t.Fatalf("denied mutation was rendered as a change: %#v", eventTypes(events))
+			if evidenceIndex <= permissionIndex {
+				t.Fatalf("permission evidence was not projected after the decision: %#v", eventTypes(events))
 			}
-			if !tc.wantFile && hasMutationActivityStart(events) {
-				t.Fatalf("denied mutation was rendered as editing activity: %#v", eventTypes(events))
-			}
-			if !hasTaskProjection(events, tc.wantEvidence, tc.wantFile) {
-				t.Fatalf("events did not project permission/mutation evidence: %#v", eventTypes(events))
+			if tc.wantFile {
+				if changeIndex <= permissionIndex || editActivityIndex <= permissionIndex || changedTaskIndex <= changeIndex {
+					t.Fatalf("allow event order = permission:%d change:%d edit_activity:%d changed_task:%d events=%#v", permissionIndex, changeIndex, editActivityIndex, changedTaskIndex, eventTypes(events))
+				}
+			} else {
+				if changeIndex >= 0 || editActivityIndex >= 0 {
+					t.Fatalf("denied mutation was rendered as a change/activity: %#v", eventTypes(events))
+				}
+				if blockedTaskIndex <= evidenceIndex {
+					t.Fatalf("denied task did not end blocked after denial evidence: %#v", eventTypes(events))
+				}
 			}
 		})
 	}
@@ -455,9 +528,15 @@ func waitForRenderedPermission(t *testing.T, s *server) {
 
 func postRenderedPermission(t *testing.T, s *server, allow bool) {
 	t.Helper()
-	body := `{"allow":false}`
+	s.mu.Lock()
+	permissionID := permissionIDString(s.pendingPermID)
+	s.mu.Unlock()
+	if permissionID == "" {
+		t.Fatal("permission request did not expose an ID")
+	}
+	body := `{"allow":false,"permission_id":"` + permissionID + `"}`
 	if allow {
-		body = `{"allow":true}`
+		body = `{"allow":true,"permission_id":"` + permissionID + `"}`
 	}
 	req := loopbackAPIRequest(http.MethodPost, "/api/permission", body)
 	req.Header.Set("Content-Type", "application/json")

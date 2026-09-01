@@ -1342,6 +1342,8 @@ undoTurnBtn?.addEventListener("click", undoLastChange);
 permEl.addEventListener("click", async (e) => {
   const t = e.target.closest("[data-allow], [data-turn], [data-always]");
   if (!t) return;
+  const permissionID = permEl.dataset.permissionId || "";
+  if (!permissionID) return;
   await fetch("/api/permission", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1349,6 +1351,7 @@ permEl.addEventListener("click", async (e) => {
       allow: t.dataset.allow === "1",
       turn: t.dataset.turn === "1",
       always: t.dataset.always === "1",
+      permission_id: permissionID,
     }),
   });
   permEl.classList.remove("is-on");
@@ -2093,6 +2096,7 @@ function verificationPresentation(status) {
 }
 function showPermission(e) {
   if (!e) return;
+  permEl.dataset.permissionId = e.permission_id || "";
   permText.textContent = e.summary || e.text || "";
   if (permHint) {
     const hint = e.hint || "";

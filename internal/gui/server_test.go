@@ -1929,13 +1929,14 @@ func TestGUIHandlerDropsStaleTaskProgress(t *testing.T) {
 func TestGUIPermissionResponseDoesNotClearReplacementRequest(t *testing.T) {
 	first := perm.Request{Tool: "write_file", Summary: "write first.txt"}
 	replacement := perm.Request{Tool: "edit_file", Summary: "edit second.txt"}
+	responseCh := make(chan perm.Decision, 1)
 	s := &server{
 		cfg:            config.Config{Workspace: t.TempDir()},
 		turnGen:        3,
 		pendingPerm:    first,
 		pendingPermGen: 3,
 		pendingPermID:  7,
-		permCh:         make(chan perm.Decision, 1),
+		pendingPermCh:  responseCh,
 	}
 	s.beforePermissionResponseCleanup = func() {
 		s.mu.Lock()
@@ -1946,7 +1947,7 @@ func TestGUIPermissionResponseDoesNotClearReplacementRequest(t *testing.T) {
 	}
 
 	res := httptest.NewRecorder()
-	req := loopbackAPIRequest(http.MethodPost, "/api/permission", `{"allow":true}`)
+	req := loopbackAPIRequest(http.MethodPost, "/api/permission", `{"allow":true,"permission_id":"7"}`)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://"+loopbackTestHost)
 	s.permission(res, req)
@@ -1962,12 +1963,246 @@ func TestGUIPermissionResponseDoesNotClearReplacementRequest(t *testing.T) {
 		t.Fatalf("replacement permission = %#v (id %d), want %#v (id 8)", got, gotID, replacement)
 	}
 	select {
-	case decision := <-s.permCh:
+	case decision := <-responseCh:
 		if decision != perm.Allow {
 			t.Fatalf("queued decision = %s, want allow", decision)
 		}
 	default:
 		t.Fatal("permission response was not delivered to the waiting turn")
+	}
+}
+
+func TestGUIPermissionResponseRejectsStaleRequestID(t *testing.T) {
+	pending := perm.Request{Tool: "write_file", Summary: "write current.txt"}
+	responseCh := make(chan perm.Decision, 1)
+	s := &server{
+		cfg:            config.Config{Workspace: t.TempDir()},
+		turnGen:        4,
+		pendingPerm:    pending,
+		pendingPermGen: 4,
+		pendingPermID:  9,
+		pendingPermCh:  responseCh,
+	}
+	post := func(body string) {
+		t.Helper()
+		res := httptest.NewRecorder()
+		req := loopbackAPIRequest(http.MethodPost, "/api/permission", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://"+loopbackTestHost)
+		s.permission(res, req)
+		if res.Code != http.StatusNoContent {
+			t.Fatalf("permission response status = %d, want %d", res.Code, http.StatusNoContent)
+		}
+	}
+
+	post(`{"allow":true}`)
+	post(`{"allow":true,"permission_id":"8"}`)
+	s.mu.Lock()
+	got := s.pendingPerm
+	gotID := s.pendingPermID
+	s.mu.Unlock()
+	if got != pending || gotID != 9 {
+		t.Fatalf("stale response changed current request = %#v (id %d), want %#v (id 9)", got, gotID, pending)
+	}
+	select {
+	case decision := <-responseCh:
+		t.Fatalf("stale response was delivered as %s", decision)
+	default:
+	}
+
+	post(`{"allow":true,"permission_id":"9"}`)
+	select {
+	case decision := <-responseCh:
+		if decision != perm.Allow {
+			t.Fatalf("current response = %s, want allow", decision)
+		}
+	default:
+		t.Fatal("current response was not delivered")
+	}
+	s.mu.Lock()
+	cleared := s.pendingPerm
+	s.mu.Unlock()
+	if cleared.Tool != "" {
+		t.Fatalf("current response did not clear request: %#v", cleared)
+	}
+}
+
+func TestGUIPermissionResponseCannotCrossPromptRequests(t *testing.T) {
+	s := &server{
+		cfg:       config.Config{Workspace: t.TempDir()},
+		sessionID: "session-live",
+		turnGen:   3,
+		permCh:    make(chan perm.Decision, 1),
+	}
+	h := newGUIHandlerAtWithPerm(s, s.sessionID, s.turnGen, s.permCh)
+
+	permissionResult := func(req perm.Request) <-chan struct {
+		decision perm.Decision
+		err      error
+	} {
+		resultCh := make(chan struct {
+			decision perm.Decision
+			err      error
+		}, 1)
+		go func() {
+			decision, err := h.OnNeedPermission(context.Background(), req)
+			resultCh <- struct {
+				decision perm.Decision
+				err      error
+			}{decision: decision, err: err}
+		}()
+		return resultCh
+	}
+	currentID := func(tool string) string {
+		t.Helper()
+		deadline := time.NewTimer(time.Second)
+		defer deadline.Stop()
+		for {
+			s.mu.Lock()
+			pending := s.pendingPerm
+			id := permissionIDString(s.pendingPermID)
+			s.mu.Unlock()
+			if pending.Tool == tool && id != "" {
+				return id
+			}
+			select {
+			case <-deadline.C:
+				t.Fatalf("permission request %q was not exposed", tool)
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}
+	respond := func(id string, allow bool) {
+		t.Helper()
+		body := `{"allow":false,"permission_id":"` + id + `"}`
+		if allow {
+			body = `{"allow":true,"permission_id":"` + id + `"}`
+		}
+		res := httptest.NewRecorder()
+		req := loopbackAPIRequest(http.MethodPost, "/api/permission", body)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Origin", "http://"+loopbackTestHost)
+		s.permission(res, req)
+		if res.Code != http.StatusNoContent {
+			t.Fatalf("permission response status = %d, want %d", res.Code, http.StatusNoContent)
+		}
+	}
+
+	first := permissionResult(perm.Request{Tool: "write_file", Summary: "write first.txt"})
+	firstID := currentID("write_file")
+	respond(firstID, true)
+	select {
+	case result := <-first:
+		if result.err != nil || result.decision != perm.Allow {
+			t.Fatalf("first permission result = %#v, want allow", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first permission request did not finish")
+	}
+
+	second := permissionResult(perm.Request{Tool: "edit_file", Summary: "edit second.txt"})
+	secondID := currentID("edit_file")
+	if secondID == firstID {
+		t.Fatalf("permission IDs were reused: first=%q second=%q", firstID, secondID)
+	}
+	respond(firstID, true)
+	s.mu.Lock()
+	pending := s.pendingPerm
+	gotID := permissionIDString(s.pendingPermID)
+	s.mu.Unlock()
+	if pending.Tool != "edit_file" || gotID != secondID {
+		t.Fatalf("stale response replaced second request: pending=%#v id=%q want edit_file/%q", pending, gotID, secondID)
+	}
+	select {
+	case result := <-second:
+		t.Fatalf("stale response completed second request: %#v", result)
+	default:
+	}
+
+	respond(secondID, false)
+	select {
+	case result := <-second:
+		if result.err != nil || result.decision != perm.Deny {
+			t.Fatalf("second permission result = %#v, want deny", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("current second permission request did not finish")
+	}
+}
+
+func TestGUIHandlerPermissionCleanupDoesNotClearSameTurnReplacement(t *testing.T) {
+	first := perm.Request{Tool: "write_file", Summary: "write first.txt"}
+	replacement := perm.Request{Tool: "edit_file", Summary: "edit second.txt"}
+	s := &server{
+		cfg:       config.Config{Workspace: t.TempDir()},
+		sessionID: "session-live",
+		turnGen:   3,
+		permCh:    make(chan perm.Decision, 1),
+	}
+	h := newGUIHandlerAtWithPerm(s, s.sessionID, s.turnGen, s.permCh)
+	resultCh := make(chan struct {
+		decision perm.Decision
+		err      error
+	}, 1)
+	go func() {
+		decision, err := h.OnNeedPermission(context.Background(), first)
+		resultCh <- struct {
+			decision perm.Decision
+			err      error
+		}{decision: decision, err: err}
+	}()
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		s.mu.Lock()
+		pending := s.pendingPerm
+		pendingID := s.pendingPermID
+		s.mu.Unlock()
+		if pending == first {
+			if pendingID != 1 {
+				t.Fatalf("first permission id = %d, want 1", pendingID)
+			}
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("first permission request was not exposed")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	// Hold the server lock after delivering the first response. The old
+	// handler is then forced to wait while a same-turn replacement is installed,
+	// making the cleanup ordering deterministic.
+	s.mu.Lock()
+	firstCh := s.pendingPermCh
+	if firstCh == nil {
+		s.mu.Unlock()
+		t.Fatal("first permission response channel was not installed")
+	}
+	firstCh <- perm.Allow
+	s.pendingPerm = replacement
+	s.pendingPermGen = s.turnGen
+	s.pendingPermID++
+	s.pendingPermCh = make(chan perm.Decision, 1)
+	s.mu.Unlock()
+
+	select {
+	case result := <-resultCh:
+		if result.err != nil || result.decision != perm.Allow {
+			t.Fatalf("first permission result = %#v, want allow without error", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first permission handler did not finish")
+	}
+
+	s.mu.Lock()
+	got := s.pendingPerm
+	gotID := s.pendingPermID
+	s.mu.Unlock()
+	if got != replacement || gotID != 2 {
+		t.Fatalf("same-turn replacement = %#v (id %d), want %#v (id 2)", got, gotID, replacement)
 	}
 }
 
