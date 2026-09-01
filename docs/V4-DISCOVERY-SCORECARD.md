@@ -1,8 +1,9 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-09-01 against exact `main` head
-`a64e2da1854ff1f6905cd889cc1be27394757022` after the outcome, recovery, GUI,
-undo-publication, and lifecycle slices through PR #285 merged.
+`cfa61784d706eb090c99c2286632af266608c71a` after the outcome, recovery, GUI,
+undo-publication, lifecycle, proof-continuity, and cancellation slices through
+PRs #297, #298, #299, and #301 merged.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -256,7 +257,7 @@ tracked in issue #243.
 ## Current-head reconciliation (2026-09-01)
 
 The scorecard is now reconciled with exact `main` head
-`71c6253ee40d816c5fe5cfe596333bbbb77cc7ac`. The following bounded slices are
+`cfa61784d706eb090c99c2286632af266608c71a`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger and the completed
 continuity child lanes:
 
@@ -284,6 +285,11 @@ continuity child lanes:
 - PR #298 adds the GUI continuity regression for FIFO queued admission across
   agent rebuild and same-session reload, including durable mutation
   invalidation and fresh proof projection.
+- PR #299 reconciles this scorecard and the parent evidence ledger after the
+  continuity lanes; PR #301 adds the hosted cancellation-harness startup
+  variance guard. The benchmark comparison remains anchored to its named
+  historical v4 checkpoint, with current scripted-edit follow-up tracked in
+  issue #302.
 
 The #296 medium lane is intentionally not opened: the small contract lane and
 the GUI integration lane exposed no production behavior defect. The focused

@@ -4,6 +4,13 @@ Status: measured locally on 2026-08-31. This is a provider-independent
 regression comparison, not a live-provider quality, browser, or product-SLA
 claim.
 
+The comparison table is anchored to the historical v4 checkpoint
+`6a0126d46cbe6720fbcb54f8b30652160e8cb5`; it is not a claim about the current
+`main`. The current merged `main` head for this update is
+`cfa61784d706eb090c99c2286632af266608c71a`. Issue #302 tracks the scripted-edit
+follow-up, and `internal/benchmark/stages_test.go` provides stage controls for
+that investigation.
+
 ## Reproducibility
 
 The same benchmark commands were run three times at both exact heads, on the
@@ -72,6 +79,29 @@ model:
 | Operation | v3 time (min / median / max) | v4 time (min / median / max) | v3 B/op | v4 B/op | v3 allocs/op | v4 allocs/op |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Scripted agent edit | 577,208 / 944,291 / 1,229,584 | 6,116,333 / 7,032,417 / 11,119,916 | 128,112 / 128,592 / 131,072 | 133,160 / 133,224 / 135,512 | 1,252 / 1,253 / 1,289 | 1,378 / 1,379 / 1,413 |
+
+## Current-main stage controls
+
+At exact `main` head `cfa61784d706eb090c99c2286632af266608c71a`, the new
+provider-independent stage controls were run on the same Apple M3 arm64 host
+with Go `go1.26.6`:
+
+```sh
+go test ./internal/benchmark -run '^$' \
+  -bench '^BenchmarkScriptedAgentEditStage' -benchtime=100ms -benchmem -count=3
+```
+
+These are public-primitive attribution controls, not a replacement for the
+end-to-end scripted edit fixture. The durable task-save row is not included in
+the no-task end-to-end fixture.
+
+| Stage | Time range | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Project run lock acquire/release | 1.109–1.367 ms | 3,112–3,144 | 65 |
+| Checkpoint capture | 0.485–0.527 ms | 7,024–7,040 | 75 |
+| Checkpoint seal | 0.601–0.904 ms | 1,882–1,889 | 25 |
+| Secure workspace publication | 4.499–4.989 ms | 2,000–2,015 | 41 |
+| Durable task save | 7.434–8.181 ms | 11,452–11,552 | 152–153 |
 
 ## Interpretation
 
