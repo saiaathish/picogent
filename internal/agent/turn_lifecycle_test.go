@@ -206,7 +206,7 @@ func TestRunWithOptionsDoesNotFinalizeReplacementTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := &replacementTurnHandler{store: store}
-	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish the requested change"}, h)
+	history, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish the requested change"}, h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +218,14 @@ func TestRunWithOptionsDoesNotFinalizeReplacementTurn(t *testing.T) {
 	}
 	if result.GoalDone || result.Completion.Ready {
 		t.Fatalf("stale turn result reported completion: goalDone=%v completion=%#v", result.GoalDone, result.Completion)
+	}
+	if result.Text != "" || len(h.texts) != 0 || len(h.finalTexts) != 0 {
+		t.Fatalf("stale turn response was published: result=%q texts=%v finals=%v", result.Text, h.texts, h.finalTexts)
+	}
+	for _, message := range history {
+		if message.Role == "assistant" && strings.Contains(message.Content, "Goal complete: done") {
+			t.Fatalf("stale assistant response remained in returned history: %#v", history)
+		}
 	}
 	persisted, err := store.Load(sessionID)
 	if err != nil {
@@ -238,9 +246,19 @@ func TestRunWithOptionsDoesNotFinalizeReplacementTurn(t *testing.T) {
 
 type replacementTurnHandler struct {
 	allowAll
-	store    *taskstate.Store
-	switched bool
-	err      error
+	store      *taskstate.Store
+	switched   bool
+	err        error
+	texts      []string
+	finalTexts []string
+}
+
+func (h *replacementTurnHandler) OnText(text string) {
+	h.texts = append(h.texts, text)
+}
+
+func (h *replacementTurnHandler) OnTextFinal(text string) {
+	h.finalTexts = append(h.finalTexts, text)
 }
 
 func (h *replacementTurnHandler) OnTaskState(task *taskstate.Task) {

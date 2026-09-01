@@ -664,6 +664,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				msgs[len(msgs)-1] = msg
 			}
 			res.ToolRounds = round
+			supersededTurn := false
 			if turnSequence != 0 {
 				finalTask, completion, goalDone, closed, superseded, err := a.finishAndCloseDurableTurn(turnSequence, text, taskBlocker, taskMode, lastVerification, res.FilesChanged, completionMarker, state.Goal, opts.ScopeBoundary, res.ToolRounds, mutationCount, ev)
 				if err != nil {
@@ -689,6 +690,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 					if superseded {
 						res.Completion.Ready = false
 						res.Completion.Reason = "durable turn was superseded before it could close"
+						supersededTurn = true
 						// The old sequence is no longer active. Suppress the defer
 						// retry, which must never target the replacement turn.
 						turnClosed = true
@@ -699,7 +701,23 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
 				res.GoalDone = completionMarker && res.Completion.Ready
 			}
-			if streamed {
+			if supersededTurn {
+				// The assistant response belongs to the stale turn and must not
+				// reach a surface or the next persisted transcript. Streaming may
+				// already have shown deltas, so replace that partial bubble with an
+				// empty final value when the surface supports canonical replacement.
+				if len(msgs) > 0 && msgs[len(msgs)-1].Role == "assistant" {
+					msgs = msgs[:len(msgs)-1]
+				}
+				if streamed {
+					if finalizer, ok := ev.(FinalTextHandler); ok {
+						finalizer.OnTextFinal("")
+					} else {
+						ev.OnText("")
+					}
+				}
+				text = ""
+			} else if streamed {
 				if finalizer, ok := ev.(FinalTextHandler); ok {
 					finalizer.OnTextFinal(text)
 				} else {
