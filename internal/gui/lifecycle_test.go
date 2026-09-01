@@ -162,7 +162,7 @@ func TestGUIFreshProcessShutdownRetainsInterruptedTurn(t *testing.T) {
 	if state.SessionID == "" {
 		t.Fatal("GUI state did not include a session ID")
 	}
-	response := guiJSONRequest(t, http.MethodPost, baseURL+"/api/chat", `{"prompt":"fix the greeting"}`)
+	response := guiJSONRequest(t, http.MethodPost, guiEndpoint(baseURL, "/api/chat"), `{"prompt":"fix the greeting"}`)
 	if response.StatusCode != http.StatusAccepted {
 		t.Fatalf("GUI chat status = %d, want %d", response.StatusCode, http.StatusAccepted)
 	}
@@ -459,7 +459,7 @@ func guiProcessState(t *testing.T, baseURL string) guiProcessStateSnapshot {
 	client := &http.Client{Timeout: 2 * time.Second}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		res, err := client.Get(baseURL + "/api/state")
+		res, err := client.Get(guiEndpoint(baseURL, "/api/state"))
 		if err == nil {
 			var state guiProcessStateSnapshot
 			decodeErr := json.NewDecoder(res.Body).Decode(&state)
@@ -473,6 +473,10 @@ func guiProcessState(t *testing.T, baseURL string) guiProcessStateSnapshot {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+func guiEndpoint(baseURL, path string) string {
+	return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(path, "/")
 }
 
 func guiJSONRequest(t *testing.T, method, target, body string) *http.Response {
