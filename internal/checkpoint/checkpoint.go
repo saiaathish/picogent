@@ -48,13 +48,15 @@ type Record struct {
 }
 
 // RecordEntry contains the pre-turn state and the post-seal fingerprint for
-// one workspace-relative regular file.
+// one workspace-relative regular file. Published is only used by a pending
+// record when a later same-path write was prepared but not yet published.
 type RecordEntry struct {
 	Path         string `json:"path"`
 	BeforeExists bool   `json:"before_exists"`
 	BeforeMode   uint32 `json:"before_mode,omitempty"`
 	BeforeData   []byte `json:"before_data,omitempty"`
 	Expected     string `json:"expected"`
+	Published    string `json:"published,omitempty"`
 }
 
 // Conflict identifies a path changed after the checkpoint was sealed.
@@ -94,10 +96,12 @@ type Checkpoint struct {
 }
 
 type entry struct {
-	path        string
-	before      fileState
-	expected    fingerprint
-	expectedSet bool
+	path         string
+	before       fileState
+	expected     fingerprint
+	expectedSet  bool
+	published    fingerprint
+	publishedSet bool
 }
 
 type fileState struct {
@@ -207,6 +211,8 @@ func (c *Checkpoint) Seal() error {
 	for i := range c.entries {
 		c.entries[i].expected = states[i].sum
 		c.entries[i].expectedSet = true
+		c.entries[i].published = fingerprint{}
+		c.entries[i].publishedSet = false
 	}
 	c.sealed = true
 	return nil
@@ -215,7 +221,9 @@ func (c *Checkpoint) Seal() error {
 // PrepareExpected records the exact regular-file state that an imminent
 // atomic write will publish. It is used by durable undo to publish a pending
 // recovery record before the workspace rename. The checkpoint remains
-// unsealed so later tool writes can update their own expected state.
+// unsealed so later tool writes can update their own expected state. Before
+// replacing an earlier expectation, it records whether that expectation was
+// actually published or whether the workspace is still at the pre-turn state.
 func (c *Checkpoint) PrepareExpected(path string, data []byte, mode fs.FileMode) (bool, error) {
 	if c == nil {
 		return false, ErrNotSealed
@@ -233,8 +241,21 @@ func (c *Checkpoint) PrepareExpected(path string, data []byte, mode fs.FileMode)
 		if c.entries[i].path != rel {
 			continue
 		}
+		current, err := readWorkspaceFile(c.root, rel)
+		if err != nil {
+			return false, fmt.Errorf("inspect checkpoint path %q: %w", path, err)
+		}
+		published := c.entries[i].before.sum
+		if current.sum != c.entries[i].before.sum {
+			if !c.entries[i].expectedSet || current.sum != c.entries[i].expected {
+				return false, fmt.Errorf("%w: checkpoint path %q changed before publication", ErrConflict, path)
+			}
+			published = current.sum
+		}
 		state := fileState{exists: true, mode: restorableMode(mode), data: append([]byte(nil), data...)}
 		state.sum = fingerprintFor(state)
+		c.entries[i].published = published
+		c.entries[i].publishedSet = true
 		c.entries[i].expected = state.sum
 		c.entries[i].expectedSet = true
 		return c.entries[i].before.sum != state.sum, nil
@@ -271,7 +292,7 @@ func exportEntries(entries []entry) (Record, error) {
 	}
 	bytes := 0
 	for _, item := range entries {
-		if !item.expectedSet || item.before.sum == item.expected {
+		if !item.expectedSet || (item.before.sum == item.expected && (!item.publishedSet || item.published == item.before.sum)) {
 			continue
 		}
 		if len(item.before.data) > MaxRecordFileBytes {
@@ -281,12 +302,17 @@ func exportEntries(entries []entry) (Record, error) {
 		if bytes > MaxRecordBytes {
 			return Record{}, fmt.Errorf("checkpoint exceeds the %d-byte durable undo limit", MaxRecordBytes)
 		}
+		published := ""
+		if item.publishedSet && item.published != item.before.sum {
+			published = hex.EncodeToString(item.published[:])
+		}
 		record.Entries = append(record.Entries, RecordEntry{
 			Path:         filepath.ToSlash(item.path),
 			BeforeExists: item.before.exists,
 			BeforeMode:   uint32(item.before.mode),
 			BeforeData:   append([]byte(nil), item.before.data...),
 			Expected:     hex.EncodeToString(item.expected[:]),
+			Published:    published,
 		})
 	}
 	return record, nil
@@ -342,7 +368,17 @@ func Import(workspace string, record Record) (*Checkpoint, error) {
 		copy(expected[:], expectedBytes)
 		before := fileState{exists: item.BeforeExists, mode: restorableMode(fs.FileMode(item.BeforeMode)), data: append([]byte(nil), item.BeforeData...)}
 		before.sum = fingerprintFor(before)
-		entries = append(entries, entry{path: rel, before: before, expected: expected, expectedSet: true})
+		published := before.sum
+		publishedSet := false
+		if item.Published != "" {
+			publishedBytes, publishedErr := hex.DecodeString(item.Published)
+			if publishedErr != nil || len(publishedBytes) != sha256.Size {
+				return nil, fmt.Errorf("checkpoint record path %q has invalid published fingerprint", item.Path)
+			}
+			copy(published[:], publishedBytes)
+			publishedSet = true
+		}
+		entries = append(entries, entry{path: rel, before: before, expected: expected, expectedSet: true, published: published, publishedSet: publishedSet})
 	}
 	return &Checkpoint{rootInput: rootInput, root: root, entries: entries, sealed: true}, nil
 }
@@ -350,8 +386,10 @@ func Import(workspace string, record Record) (*Checkpoint, error) {
 // PublishedSubset returns a checkpoint containing only entries whose current
 // workspace state matches the expected post-write fingerprint. Entries still
 // at their pre-turn state are omitted, which lets a fresh process recover a
-// crash before the final rename of a later path. Any other state is a conflict
-// and returns no subset so recovery remains fail closed.
+// crash before the final rename of a later path. For repeated writes to one
+// path, a pending record also carries the last known published fingerprint;
+// that state is accepted and becomes the subset's expected state. Any other
+// state is a conflict and returns no subset so recovery remains fail closed.
 func (c *Checkpoint) PublishedSubset() (*Checkpoint, bool, error) {
 	if c == nil {
 		return nil, false, ErrNotSealed
@@ -372,6 +410,15 @@ func (c *Checkpoint) PublishedSubset() (*Checkpoint, bool, error) {
 			continue
 		}
 		if current.sum == c.entries[i].before.sum {
+			continue
+		}
+		if c.entries[i].publishedSet && current.sum == c.entries[i].published {
+			item := c.entries[i]
+			item.expected = item.published
+			item.expectedSet = true
+			item.published = fingerprint{}
+			item.publishedSet = false
+			entries = append(entries, item)
 			continue
 		}
 		return nil, false, ErrConflict

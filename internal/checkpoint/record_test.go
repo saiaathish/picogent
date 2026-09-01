@@ -68,12 +68,12 @@ func TestPublishedSubsetDropsUnpublishedPendingEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	write(t, workspace, "first.txt", "first after", 0o644)
 	mode := os.FileMode(0o644)
 	changed, err := cp.PrepareExpected("first.txt", []byte("first after"), mode)
 	if err != nil || !changed {
 		t.Fatalf("prepare first = changed:%v err:%v", changed, err)
 	}
+	write(t, workspace, "first.txt", "first after", mode)
 	record, err := cp.Export()
 	if err != nil {
 		t.Fatal(err)
@@ -97,6 +97,106 @@ func TestPublishedSubsetDropsUnpublishedPendingEntries(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(workspace, "second.txt")); err != nil || string(got) != "second before" {
 		t.Fatalf("second file = %q, err=%v", got, err)
+	}
+}
+
+func TestPublishedSubsetHandlesRepeatedWriteBeforeRename(t *testing.T) {
+	workspace := t.TempDir()
+	write(t, workspace, "state.txt", "before", 0o644)
+	cp, err := checkpoint.Capture(workspace, []string{"state.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := os.FileMode(0o644)
+	if changed, err := cp.PrepareExpected("state.txt", []byte("first"), mode); err != nil || !changed {
+		t.Fatalf("prepare first = changed:%v err:%v", changed, err)
+	}
+	write(t, workspace, "state.txt", "first", mode)
+	if changed, err := cp.PrepareExpected("state.txt", []byte("second"), mode); err != nil || !changed {
+		t.Fatalf("prepare second = changed:%v err:%v", changed, err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Entries) != 1 || record.Entries[0].Published == "" {
+		t.Fatalf("pending record did not retain the prior published state: %#v", record)
+	}
+	pending, err := checkpoint.Import(workspace, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subset, found, err := pending.PublishedSubset()
+	if err != nil || !found || subset == nil {
+		t.Fatalf("repeated-write published subset = %#v found:%v err:%v", subset, found, err)
+	}
+	if got := subset.Paths(); len(got) != 1 || got[0] != "state.txt" {
+		t.Fatalf("repeated-write published paths = %#v", got)
+	}
+	if result, err := subset.Restore(); err != nil || !result.Complete {
+		t.Fatalf("repeated-write restore = %+v, err=%v", result, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(workspace, "state.txt")); err != nil || string(got) != "before" {
+		t.Fatalf("repeated-write restored file = %q, err=%v", got, err)
+	}
+}
+
+func TestPublishedSubsetRetainsPriorPublicationWhenNextWriteReturnsToBefore(t *testing.T) {
+	workspace := t.TempDir()
+	write(t, workspace, "state.txt", "before", 0o644)
+	cp, err := checkpoint.Capture(workspace, []string{"state.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := os.FileMode(0o644)
+	if _, err := cp.PrepareExpected("state.txt", []byte("first"), mode); err != nil {
+		t.Fatal(err)
+	}
+	write(t, workspace, "state.txt", "first", mode)
+	if changed, err := cp.PrepareExpected("state.txt", []byte("before"), mode); err != nil || changed {
+		t.Fatalf("prepare return-to-before = changed:%v err:%v", changed, err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.Entries) != 1 || record.Entries[0].Published == "" {
+		t.Fatalf("prior publication was dropped when expected returned to before: %#v", record)
+	}
+	pending, err := checkpoint.Import(workspace, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subset, found, err := pending.PublishedSubset()
+	if err != nil || !found || subset == nil {
+		t.Fatalf("return-to-before published subset = %#v found:%v err:%v", subset, found, err)
+	}
+	if result, err := subset.Restore(); err != nil || !result.Complete {
+		t.Fatalf("return-to-before restore = %+v, err=%v", result, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(workspace, "state.txt")); err != nil || string(got) != "before" {
+		t.Fatalf("return-to-before restored file = %q, err=%v", got, err)
+	}
+}
+
+func TestPrepareExpectedRejectsUnexpectedSamePathState(t *testing.T) {
+	workspace := t.TempDir()
+	write(t, workspace, "state.txt", "before", 0o644)
+	cp, err := checkpoint.Capture(workspace, []string{"state.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode := os.FileMode(0o644)
+	if _, err := cp.PrepareExpected("state.txt", []byte("first"), mode); err != nil {
+		t.Fatal(err)
+	}
+	write(t, workspace, "state.txt", "first", mode)
+	write(t, workspace, "state.txt", "user edit", mode)
+	if _, err := cp.PrepareExpected("state.txt", []byte("second"), mode); !errors.Is(err, checkpoint.ErrConflict) {
+		t.Fatalf("unexpected same-path state error = %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(workspace, "state.txt")); err != nil || string(got) != "user edit" {
+		t.Fatalf("unexpected same-path state was changed = %q, err=%v", got, err)
 	}
 }
 
