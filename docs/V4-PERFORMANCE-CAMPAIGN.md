@@ -7,7 +7,7 @@ performance.
 
 The measurements below retain the exact historical heads named in each
 section. Current merged `main` is now
-`cfa61784d706eb090c99c2286632af266608c71a`; the older refresh at
+`281942c12369ce795e6f9a6dc824e3c08aede63a`; the older refresh at
 `eb824f293255d913dca894228bbd23609f37fe96` is intentionally not relabeled.
 Issue #302 tracks the current scripted-edit performance follow-up.
 
