@@ -250,3 +250,29 @@ primary chat/help/task flows remain in place, and the focused, full, race,
 vet, build, Ubuntu, Windows, macOS, security, and release-evidence checks
 passed. Executable browser-level primary event coverage remains a follow-up
 tracked in issue #243.
+
+## Current-head reconciliation (2026-09-01)
+
+The scorecard is now reconciled with exact `main` head
+`26b92f8684f87616e027a96546025f647702c740`. The following bounded slices are
+confirmed by the parent issue's current evidence ledger:
+
+- PRs #249 and #250 establish the executable cross-surface completion matrix
+  and route CLI, GUI, and TUI retirement through the shared
+  `agent.CompletionProjection` / `Result.CompletionGate`.
+- PRs #252, #254, #256, #258, and #260 cover fresh-process follow-up recovery,
+  task-progress proof, intent-change invalidation, truthful provenance, and
+  intent-verification routing.
+- PRs #262, #264, and #266 record deterministic benchmark/recovery evidence,
+  crash-after-write steering recovery, and durable Outcome Engine transition
+  guidance.
+- PRs #269, #273, #276, and #278 cover transcript redaction, durable latest-
+  turn undo, state/event redaction, and hostile HTTP/SSE wire behavior.
+- PR #279 records the portability boundary for conditional undo publication
+  and keeps the arbitrary same-UID final-path race explicitly unverified.
+
+These slices prove focused contracts and deterministic local or hosted checks;
+they do not establish live-provider quality, rendered cross-platform behavior,
+full hostile lifecycle recovery, signed release attestation, or a general
+filesystem race guarantee. Parent #246 remains open while those boundaries
+and the cross-surface lifecycle evidence in #281 remain unresolved.
