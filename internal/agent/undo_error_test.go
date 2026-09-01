@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -15,6 +16,7 @@ import (
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 func TestUndoCapturesToolThatMutatesThenReturnsError(t *testing.T) {
@@ -88,6 +90,49 @@ func TestRejectedPublishDoesNotCreateUndo(t *testing.T) {
 		t.Fatalf("undo after rejected publish = (%q, %v)", msg, err)
 	}
 	assertUndoFileContent(t, path, "user edit")
+}
+
+func TestEditContentConflictDoesNotCreateUndo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]string{
+		"path":       "note.txt",
+		"old_string": "before",
+		"new_string": "agent edit",
+	})
+	a := newUndoHookAgent(t, dir)
+	a.SetClient(&llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "edit", Name: "edit_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "the file changed; edit was not applied"}},
+	}})
+	a.runTool = func(_ context.Context, call llm.ToolCall, _ tools.Tool, _ tools.Context) (string, error) {
+		if call.Name != "edit_file" {
+			t.Fatalf("unexpected tool %q", call.Name)
+		}
+		if err := os.WriteFile(path, []byte("newer user edit"), 0o644); err != nil {
+			return "", err
+		}
+		// The real edit tool can return this wrapped error when its compare
+		// check observes a concurrent user edit. Keep the agent-level test
+		// deterministic; the workspace package covers the filesystem race
+		// boundary itself.
+		return "", fmt.Errorf("edit became stale: %w", workspace.ErrContentConflict)
+	}
+
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "edit note"}, allowUndoTest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UndoAvailable || a.UndoAvailable() {
+		t.Fatalf("content-conflict edit created undo state: %+v", res)
+	}
+	if msg, err := a.UndoLastTurn(); err != nil || msg != "nothing to undo" {
+		t.Fatalf("undo after content conflict = (%q, %v)", msg, err)
+	}
+	assertUndoFileContent(t, path, "newer user edit")
 }
 
 func TestRejectedLaterPublishPreservesEarlierUndo(t *testing.T) {

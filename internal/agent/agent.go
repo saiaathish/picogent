@@ -861,7 +861,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				}
 				verificationCurrent = false
 			}
-			if (ex.call.Name == "write_file" || ex.call.Name == "edit_file") && ex.ran && ex.err != nil && !turnUndo.publishRejected {
+			if (ex.call.Name == "write_file" || ex.call.Name == "edit_file") && ex.ran && ex.err != nil && !turnUndo.publishRejected && !errors.Is(ex.err, workspace.ErrContentConflict) {
 				// Some integrations can mutate a file and then report an error.
 				// Keep that existing undo guarantee, but never infer a mutation
 				// from a write rejected by the pre-publication recovery hook.
