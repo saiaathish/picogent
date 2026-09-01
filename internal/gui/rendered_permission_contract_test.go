@@ -80,6 +80,9 @@ func TestRenderedPermissionContractKeepsDecisionBeforeSideEffect(t *testing.T) {
 				case <-ticker.C:
 				}
 			}
+			if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("side effect occurred before permission decision: err=%v", err)
+			}
 
 			body := `{"allow":false}`
 			if tc.allow {
