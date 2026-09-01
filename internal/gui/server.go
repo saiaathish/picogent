@@ -2356,6 +2356,9 @@ func (h *guiHandler) OnToolEnd(call llm.ToolCall, result string, err error) {
 		h.emit(event{Type: "error", Text: err.Error()})
 		return
 	}
+	if (call.Name == "write_file" || call.Name == "edit_file") && suppressedMutationResult(result) {
+		return
+	}
 
 	h.s.mu.Lock()
 	ws := h.s.cfg.Workspace
@@ -2421,6 +2424,16 @@ func ternary(cond bool, a, b string) string {
 		return a
 	}
 	return b
+}
+
+func suppressedMutationResult(result string) bool {
+	result = strings.ToLower(strings.TrimSpace(result))
+	return result == "denied by user" ||
+		strings.Contains(result, "read-only") ||
+		strings.Contains(result, "not allowed") ||
+		strings.Contains(result, "permission denied") ||
+		strings.Contains(result, "permission needed") ||
+		strings.HasPrefix(result, "blocked")
 }
 
 func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (perm.Decision, error) {

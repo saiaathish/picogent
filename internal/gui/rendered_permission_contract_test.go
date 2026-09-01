@@ -262,6 +262,9 @@ func TestRenderedPermissionPersistsDecisionAndMutation(t *testing.T) {
 			if !hasPermissionEvent(events, tc.wantDecision) {
 				t.Fatalf("events did not include permission prompt: %#v", eventTypes(events))
 			}
+			if !tc.wantFile && hasChangeEvent(events) {
+				t.Fatalf("denied mutation was rendered as a change: %#v", eventTypes(events))
+			}
 			if !hasTaskProjection(events, tc.wantEvidence, tc.wantFile) {
 				t.Fatalf("events did not project permission/mutation evidence: %#v", eventTypes(events))
 			}
@@ -507,6 +510,15 @@ func hasTaskProjection(events []event, wantEvidence string, wantFile bool) bool 
 			continue
 		}
 		return true
+	}
+	return false
+}
+
+func hasChangeEvent(events []event) bool {
+	for _, e := range events {
+		if e.Type == "change" {
+			return true
+		}
 	}
 	return false
 }
