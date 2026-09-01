@@ -205,6 +205,26 @@ func WriteAtomicIfUnchangedWithMode(root, path string, expected []byte, expected
 	return writeAtomicIfUnchangedWithModeHook(root, path, expected, expectedMode, true, data, mode, true, nil)
 }
 
+// WriteAtomicIfMissingWithMode publishes data only while the target remains
+// absent. It is the creation-side counterpart to
+// WriteAtomicIfUnchangedWithMode and is used when undo restores a file that
+// the turn deleted.
+func WriteAtomicIfMissingWithMode(root, path string, data []byte, mode os.FileMode) error {
+	rel, err := Relative(root, path)
+	if err != nil {
+		return err
+	}
+	current, err := OpenRead(root, path)
+	if err == nil {
+		_ = current.Close()
+		return fmt.Errorf("%w: %s already exists", ErrContentConflict, rel)
+	}
+	if !isWorkspaceNotExist(err) {
+		return err
+	}
+	return writeAtomicWithMode(root, path, data, mode, true)
+}
+
 // WriteAtomicIfUnchangedWithPublishHook is the compare-before-publish edit
 // primitive with the same pre-publication recovery hook as
 // WriteAtomicWithPublishHook.

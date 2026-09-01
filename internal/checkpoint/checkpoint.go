@@ -770,7 +770,7 @@ func writeWorkspaceState(root, rel string, expected, state fileState) error {
 	if expected.exists {
 		return workspace.WriteAtomicIfUnchangedWithMode(root, rel, expected.data, expected.mode, state.data, state.mode)
 	}
-	return workspace.WriteAtomicWithMode(root, rel, state.data, state.mode)
+	return workspace.WriteAtomicIfMissingWithMode(root, rel, state.data, state.mode)
 }
 
 func readRegularFileHandle(f *os.File) (fileState, error) {
