@@ -2486,13 +2486,11 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 		h.s.mu.Unlock()
 		return perm.Deny, ctx.Err()
 	case d := <-responseCh:
-		h.s.mu.Lock()
-		if h.s.pendingPermGen == h.turnGen && h.s.pendingPermID == pendingID {
-			h.s.pendingPerm = perm.Request{}
-			h.s.pendingPermGen = 0
-			h.s.pendingPermCh = nil
-		}
-		h.s.mu.Unlock()
+		// The HTTP response handler owns cleanup and AllowAlways persistence.
+		// Clearing here races that owner: the prompt goroutine can consume the
+		// buffered decision first, causing an otherwise valid Always approval to
+		// skip persistence. Cancellation and turn aborts still clear this state
+		// through the guarded paths above and abortTurnLocked.
 		return d, nil
 	}
 }

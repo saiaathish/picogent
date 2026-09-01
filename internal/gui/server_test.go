@@ -2027,6 +2027,73 @@ func TestGUIPermissionResponseRejectsStaleRequestID(t *testing.T) {
 	}
 }
 
+func TestGUIPermissionResponsePersistsAlwaysAfterPromptReturns(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	gate := perm.New(config.ModeSafe, workspace, nil)
+	s := &server{
+		cfg:       cfg,
+		ag:        &agent.Agent{Gate: gate},
+		sessionID: "session-live",
+		turnGen:   1,
+	}
+	h := newGUIHandlerAtWithPerm(s, s.sessionID, s.turnGen, make(chan perm.Decision, 1), workspace)
+	req := perm.Request{Tool: "write_file", Summary: "write persistent.txt"}
+	promptDone := make(chan struct{})
+	go func() {
+		_, _ = h.OnNeedPermission(context.Background(), req)
+		close(promptDone)
+	}()
+
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	for {
+		s.mu.Lock()
+		pendingID := permissionIDString(s.pendingPermID)
+		pendingTool := s.pendingPerm.Tool
+		s.mu.Unlock()
+		if pendingTool == req.Tool && pendingID != "" {
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("permission request was not exposed")
+		case <-time.After(time.Millisecond):
+		}
+	}
+
+	// Force the prompt goroutine to finish before the HTTP handler reaches its
+	// cleanup block. The endpoint must still persist the decision that it owns.
+	s.beforePermissionResponseCleanup = func() { <-promptDone }
+	s.mu.Lock()
+	pendingID := permissionIDString(s.pendingPermID)
+	s.mu.Unlock()
+	res := httptest.NewRecorder()
+	post := loopbackAPIRequest(http.MethodPost, "/api/permission", `{"always":true,"permission_id":"`+pendingID+`"}`)
+	post.Header.Set("Content-Type", "application/json")
+	post.Header.Set("Origin", "http://"+loopbackTestHost)
+	s.permission(res, post)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("permission response status = %d, want %d", res.Code, http.StatusNoContent)
+	}
+
+	s.mu.Lock()
+	tools := append([]string(nil), s.cfg.Extensions.AlwaysAllowTools...)
+	pending := s.pendingPerm
+	s.mu.Unlock()
+	if !containsString(tools, req.Tool) {
+		t.Fatalf("persisted always-allow tools = %v, want %q", tools, req.Tool)
+	}
+	if !containsString(gate.AlwaysAllowedTools(), req.Tool) {
+		t.Fatalf("gate always-allow tools = %v, want %q", gate.AlwaysAllowedTools(), req.Tool)
+	}
+	if pending.Tool != "" {
+		t.Fatalf("pending permission remained after response: %#v", pending)
+	}
+}
+
 func TestGUIPermissionResponseCannotCrossPromptRequests(t *testing.T) {
 	s := &server{
 		cfg:       config.Config{Workspace: t.TempDir()},
