@@ -247,6 +247,43 @@ func TestCachedUndoRefreshesAfterNewerDurableTurn(t *testing.T) {
 	}
 }
 
+func TestUndoRefreshErrorClearsAfterJournalRecovery(t *testing.T) {
+	a, _, task := newDurableUndoFixture(t, taskstate.StatusWorking)
+	undo := a.latestUndo
+	undo.turnSequence = task.Turns[0].Sequence
+	undo.durable = true
+	undo.journalSlot = undoJournalSealed
+	record, err := undo.checkpoint.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedPath, _, err := undoJournalPaths(a.ConfigSnapshot().Workspace, task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := undo.saveJournal(record, undoJournalSealed); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealedPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "undo is unavailable") {
+		t.Fatalf("malformed refresh error = %v", err)
+	}
+	if a.UndoAvailable() {
+		t.Fatal("undo remained available after refresh failure")
+	}
+
+	if err := undo.saveJournal(record, undoJournalSealed); err != nil {
+		t.Fatal(err)
+	}
+	message, err := a.UndoLastTurn()
+	if err != nil || !strings.Contains(message, "restored fixed.txt") {
+		t.Fatalf("undo after journal recovery = (%q, %v)", message, err)
+	}
+}
+
 func TestUndoPreservesCompletedRestoreWarning(t *testing.T) {
 	warning := errors.New("checkpoint restored but temporary file cleanup failed")
 	result := checkpoint.RestoreResult{Restored: []string{"fixed.txt"}, Complete: true}

@@ -164,6 +164,42 @@ func TestSealFailureReportsUndoUnavailable(t *testing.T) {
 	}
 }
 
+func TestFailedJournalPublicationDoesNotAdvertiseProcessLocalUndo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := newUndoHookAgent(t, dir)
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("failed-journal"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".picogent"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".picogent", "undo"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.runTool = func(_ context.Context, _ llm.ToolCall, _ tools.Tool, _ tools.Context) (string, error) {
+		if err := os.WriteFile(path, []byte("after"), 0o644); err != nil {
+			return "", err
+		}
+		return "", errors.New("simulated tool failure after mutation")
+	}
+
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note"}, allowUndoTest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.UndoAvailable || a.UndoAvailable() {
+		t.Fatalf("failed journal publication was advertised as undoable: %+v", res)
+	}
+	if res.UndoError == "" || !strings.Contains(res.UndoError, "durable undo journal") {
+		t.Fatalf("missing durable publication error: %+v", res)
+	}
+}
+
 func newUndoHookAgent(t *testing.T, dir string) *Agent {
 	t.Helper()
 	args, _ := json.Marshal(map[string]string{"path": "note.txt", "content": "after"})

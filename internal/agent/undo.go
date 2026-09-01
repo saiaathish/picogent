@@ -424,6 +424,7 @@ func (a *Agent) refreshDurableUndoLocked() error {
 	}
 	if loaded == nil {
 		a.latestUndo = nil
+		a.undoLoadErr = nil
 		return nil
 	}
 	if task := a.TaskSnapshot(); task != nil {
@@ -432,6 +433,7 @@ func (a *Agent) refreshDurableUndoLocked() error {
 		}
 	}
 	a.latestUndo = loaded
+	a.undoLoadErr = nil
 	return nil
 }
 
@@ -514,9 +516,20 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 	}
 	if err := u.persistSealed(); err != nil {
 		res.UndoError = fmt.Errorf("durable undo journal was not finalized; recovery remains retryable: %w", err).Error()
+		if !u.durable {
+			// A checkpoint that never reached a durable journal cannot be safely
+			// restored from this process after another process advances the turn.
+			// Fail closed instead of advertising a stale process-local candidate.
+			a.latestUndo = nil
+			a.undoLoadErr = err
+			res.UndoAvailable = false
+			a.undoMu.Unlock()
+			return
+		}
 	}
 	res.UndoAvailable = true
 	a.latestUndo = u
+	a.undoLoadErr = nil
 	a.undoMu.Unlock()
 }
 
