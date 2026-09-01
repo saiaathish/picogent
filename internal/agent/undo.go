@@ -396,6 +396,15 @@ func (a *Agent) refreshDurableUndoLocked() error {
 		task, err := store.Load(sessionID)
 		switch {
 		case err == nil:
+			changed, revalidateErr := revalidatePersistedTask(workspace, task)
+			if revalidateErr != nil {
+				return fmt.Errorf("revalidate durable task for undo: %w", revalidateErr)
+			}
+			if changed {
+				if err := store.Save(task); err != nil {
+					return fmt.Errorf("persist revalidated durable task for undo: %w", err)
+				}
+			}
 			a.taskMu.Lock()
 			a.task = task
 			a.taskLoadErr = nil
