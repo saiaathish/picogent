@@ -43,6 +43,7 @@ const (
 	TriggerCancellation       Trigger = "cancellation"
 	TriggerShutdown           Trigger = "shutdown"
 	TriggerReconnect          Trigger = "reconnect"
+	TriggerProcessKill        Trigger = "process_kill"
 	TriggerTaskSaveFailure    Trigger = "task_save_failure"
 	TriggerSessionSaveFailure Trigger = "session_save_failure"
 )
@@ -50,7 +51,8 @@ const (
 func (t Trigger) Valid() bool {
 	switch t {
 	case TriggerEOF, TriggerSignal, TriggerCancellation, TriggerShutdown,
-		TriggerReconnect, TriggerTaskSaveFailure, TriggerSessionSaveFailure:
+		TriggerReconnect, TriggerProcessKill, TriggerTaskSaveFailure,
+		TriggerSessionSaveFailure:
 		return true
 	default:
 		return false
@@ -194,6 +196,17 @@ var scenarioTable = []Scenario{
 		Persisted: PersistenceExpectation{
 			MustRetainTask: true,
 			Note:           "shutdown stops new admission and waits for or durably interrupts the active turn before cleanup returns",
+		},
+		Completion:       CompletionExpectation{MustNotBeReady: true, MustNotShowMarker: true},
+		UserVisibleError: ErrorNone, FreshProcessRequired: true, Evidence: EvidenceUnverified,
+	},
+	{
+		ID: "gui-process-kill-active-turn", Surface: SurfaceGUI, Trigger: TriggerProcessKill,
+		Persisted: PersistenceExpectation{
+			TaskStatus: taskstate.StatusWorking, TurnState: taskstate.TurnInterrupted,
+			TurnRoute: string(taskstate.TurnRouteRecover), StopReason: taskstate.StopProcessRestart,
+			MustRetainTask: true, MustBeRecoverable: true,
+			Note: "an abrupt GUI process kill skips graceful cleanup; the next process recovers the durably admitted active turn",
 		},
 		Completion:       CompletionExpectation{MustNotBeReady: true, MustNotShowMarker: true},
 		UserVisibleError: ErrorNone, FreshProcessRequired: true, Evidence: EvidenceUnverified,
