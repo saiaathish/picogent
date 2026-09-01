@@ -1354,7 +1354,9 @@ permEl.addEventListener("click", async (e) => {
       permission_id: permissionID,
     }),
   });
-  permEl.classList.remove("is-on");
+  if (permEl.dataset.permissionId === permissionID) {
+    permEl.classList.remove("is-on");
+  }
 });
 
 /* ─── Extensions finder ─── */

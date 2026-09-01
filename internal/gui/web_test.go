@@ -54,7 +54,8 @@ func TestEmbeddedIndex(t *testing.T) {
 	if !strings.Contains(string(js), `fetch("/api/permission"`) ||
 		!strings.Contains(string(js), "t.dataset.allow === \"1\"") ||
 		!strings.Contains(string(js), "permission_id: permissionID") ||
-		!strings.Contains(string(js), "permEl.dataset.permissionId = e.permission_id") {
+		!strings.Contains(string(js), "permEl.dataset.permissionId = e.permission_id") ||
+		!strings.Contains(string(js), "if (permEl.dataset.permissionId === permissionID)") {
 		t.Fatal("gui permission controls are not wired to the existing permission API")
 	}
 	if strings.Contains(string(js), "/api/scope") || strings.Contains(string(js), "scope_required") || strings.Contains(string(js), "hideScopeCard") || strings.Contains(string(js), "scope_notice") {
