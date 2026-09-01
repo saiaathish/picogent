@@ -1,8 +1,8 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-09-01 against exact `main` head
-`26b92f8684f87616e027a96546025f647702c740` after the outcome, recovery, GUI,
-and undo-publication slices through PR #279 merged.
+`a64e2da1854ff1f6905cd889cc1be27394757022` after the outcome, recovery, GUI,
+undo-publication, and lifecycle slices through PR #285 merged.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -28,10 +28,10 @@ not enough to establish real runtime behavior.
 | Repair/recovery | Local checkpoint/undo conflict safety, fail-closed permissions, and durable latest-turn undo | Durable task resume, GUI steering, and crash-after-write recovery evidence | Retry taxonomy, route diversity, partial rollback reporting, and hostile external-writer behavior remain incomplete | Prompt recovery hints would duplicate a future durable recovery ledger | Test and then persist side-effect/recovery metadata; do not replace checkpoint safety prematurely |
 | Performance | Deterministic local microbenchmarks, bounded long-session persistence through 256 turns, and fresh/warm child-process RSS envelopes exist | Bounded output/context controls | Provider-token accuracy, cross-surface startup, and stable cross-platform budgets remain unmeasured | Repeated large-output scans and broad provenance passes may waste CPU | Profile retention/provenance overhead and rerun v3-v4 comparisons before claiming performance gains |
 | Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Hosted `govulncheck` now scans the dependency graph; tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Add hostile runtime evidence and preserve explicit limits around dependency reachability and path races |
-| Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, barrier-driven cancellation/save/publish stress, cooperative cross-process writers, trace lock-holder death recovery, sustained bounded trace retention, first-use lock creation recovery, and project-registry transactions | Unix/Windows lock primitives and deterministic recovery harnesses | Cross-surface event/reconnect behavior, hostile process death outside the trace lock handoff, and filesystem races lack complete stress evidence | New orchestration would add complexity before invariants are measured | Extend cross-process evidence only where it proves a user-visible recovery invariant |
+| Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, barrier-driven cancellation/save/publish stress, cooperative cross-process writers, trace lock-holder death recovery, sustained bounded trace retention, first-use lock creation recovery, project-registry transactions, and cross-surface lifecycle checkpoints | Unix/Windows lock primitives and deterministic recovery harnesses | Hostile process death outside the trace lock handoff, rendered cross-surface event ordering, and filesystem races lack complete stress evidence | New orchestration would add complexity before invariants are measured | Extend cross-process evidence only where it proves a user-visible recovery invariant |
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
-| GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, hostile wire coverage, and bounded owned-browser reconnect/recovery evidence | Lifecycle and undo wiring; one local rendered reconnect path | Live-provider behavior, permission decisions, undoable changes, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; remaining admission wrappers duplicate task/evidence routing | Add owned-browser permission, undo, full-recovery, and cross-platform evidence before release claims |
-| TUI/headless | Headless stdout/stderr, fail-closed permission behavior, resume state, and explicit cleanup/persistence errors | CLI dispatch and exit classes | Non-TTY/TUI behavior and cross-platform EOF/signal behavior remain unproven | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Add subprocess/EOF/signal evidence before changing the shared runtime boundary |
+| GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, hostile wire coverage, bounded owned-browser reconnect/recovery evidence, and HTTP-boundary shutdown/save-failure lifecycle evidence | Lifecycle and undo wiring; one local rendered reconnect path | Live-provider behavior, permission decisions, undoable changes, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; remaining admission wrappers duplicate task/evidence routing | Add owned-browser permission, undo, full-recovery, and cross-platform evidence before release claims |
+| TUI/headless | Headless stdout/stderr, fail-closed permission behavior, resume state, explicit cleanup/persistence errors, and local macOS EOF/signal/save-failure evidence | CLI dispatch and exit classes | Non-TTY/rendered TUI behavior and cross-platform EOF/signal behavior remain unproven | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Add platform-appropriate subprocess/rendered evidence before changing the shared runtime boundary |
 | Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing remains duplicated | Repeated surface/control paths and stale benchmark anchors | Remove or simplify remaining duplicate control paths only after caller/API confirmation |
 
 ## Cross-cutting scorecard
@@ -89,21 +89,23 @@ green unit tests or bounded hosted quality gates:
 - v3-versus-v4 outcome quality for vague, multi-file, debugging, refactoring,
   security, and long-horizon tasks;
 - rendered GUI setup, verification, and the bounded macOS/local-stub reconnect
-  and transcript-recovery path are recorded; live-provider behavior,
-  permission, undoable file changes, full recovery, and cross-platform rendered
-  behavior remain unverified. TUI and headless parity under EOF, signals, and
-  save failures also remain unverified;
+  and transcript-recovery path are recorded; HTTP-boundary GUI lifecycle
+  shutdown/reconnect/save-failure evidence is also recorded. Live-provider
+  behavior, permission, undoable file changes, full recovery, and cross-platform
+  rendered behavior remain unverified. Local macOS TUI/headless parity under
+  EOF, signals, and save failures is recorded; Windows and rendered behavior
+  remain unverified;
 - full restart/resume/steer behavior after process termination or changing
   goals; bounded fresh-process session attachment now records stale active-turn
   recovery with explicit route, evidence, and stop-reason metadata, and latest-
   turn undo now survives the documented post-write crash boundary;
 - hostile cancellation/process-death ordering outside the narrow trace
-  lock-holder handoff, goroutine leaks, cross-surface reconnects, and Windows
-  runtime persistence. Cooperative cancellation/save/publish and cross-process
-  writer scenarios are covered by deterministic tests; the MCP lease, TUI/CLI
-  cleanup, GUI shutdown admission, and turn-wait slices are unit- and hosted-
-  CI-covered, but none establish broader hostile process-death or rendered
-  runtime proof. The remaining cross-surface lifecycle gap is tracked in #281;
+  lock-holder handoff, goroutine leaks, rendered cross-surface reconnects, and
+  Windows runtime persistence. Cooperative cancellation/save/publish and
+  cross-process writer scenarios are covered by deterministic tests; the MCP
+  lease, TUI/CLI cleanup, GUI shutdown admission, and turn-wait slices are
+  unit-, fresh-process-, and hosted-CI-covered, but none establish broader
+  hostile process-death or rendered runtime proof;
 - provider-token accuracy, cross-platform performance budgets, first-turn
   envelopes, long-session growth beyond the bounded session record, and
   large-output CPU/allocation behavior;
@@ -254,7 +256,7 @@ tracked in issue #243.
 ## Current-head reconciliation (2026-09-01)
 
 The scorecard is now reconciled with exact `main` head
-`26b92f8684f87616e027a96546025f647702c740`. The following bounded slices are
+`a64e2da1854ff1f6905cd889cc1be27394757022`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger:
 
 - PRs #249 and #250 establish the executable cross-surface completion matrix
@@ -270,9 +272,14 @@ confirmed by the parent issue's current evidence ledger:
   turn undo, state/event redaction, and hostile HTTP/SSE wire behavior.
 - PR #279 records the portability boundary for conditional undo publication
   and keeps the arbitrary same-UID final-path race explicitly unverified.
+- PR #283 defines the cross-surface lifecycle scenario vocabulary, PR #284
+  adds headless/TUI interruption and persistence-failure evidence, and PR #285
+  adds GUI shutdown, reconnect, and persistence-failure evidence. The GUI
+  fresh-process result is local macOS HTTP-boundary evidence; rendered-browser
+  behavior and Windows child SIGINT remain explicitly unverified.
 
 These slices prove focused contracts and deterministic local or hosted checks;
 they do not establish live-provider quality, rendered cross-platform behavior,
 full hostile lifecycle recovery, signed release attestation, or a general
 filesystem race guarantee. Parent #246 remains open while those boundaries
-and the cross-surface lifecycle evidence in #281 remain unresolved.
+remain unresolved.
