@@ -408,7 +408,7 @@ func TestRenderedPermissionStateReadRaceWithDecision(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		select {
 		case <-readersDone:
-		case <-time.After(5 * time.Second):
+		case <-time.After(renderedPermissionStressTimeout):
 			t.Fatal("state reader did not finish")
 		}
 	}
@@ -417,13 +417,18 @@ func TestRenderedPermissionStateReadRaceWithDecision(t *testing.T) {
 		if run.err != nil {
 			t.Fatal(run.err)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(renderedPermissionStressTimeout):
 		t.Fatal("raced permission turn did not finish")
 	}
 	if _, err := os.Stat(fixture.path); err != nil {
 		t.Fatalf("raced allow did not publish file: %v", err)
 	}
 }
+
+// Concurrent state reads intentionally exercise filesystem-backed projections;
+// allow slower hosted runners enough time to drain the same bounded workload
+// without turning a scheduling variance into a functional failure.
+const renderedPermissionStressTimeout = 15 * time.Second
 
 const renderedPermissionProbeContent = "rendered permission probe\n"
 
