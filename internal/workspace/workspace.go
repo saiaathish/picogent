@@ -195,10 +195,23 @@ func WriteAtomicIfUnchanged(root, path string, expected, data []byte) error {
 	return WriteAtomicIfUnchangedWithPublishHook(root, path, expected, data, nil)
 }
 
+// WriteAtomicIfUnchangedWithMode is the compare-before-publish edit primitive
+// with an explicit mode for the replacement. It performs the same freshness
+// check as WriteAtomicIfUnchanged, then reuses the atomic publication path so
+// callers that already performed a preflight check get a second check right
+// before the replacement is prepared.
+func WriteAtomicIfUnchangedWithMode(root, path string, expected, data []byte, mode os.FileMode) error {
+	return writeAtomicIfUnchangedWithModeHook(root, path, expected, data, mode, true, nil)
+}
+
 // WriteAtomicIfUnchangedWithPublishHook is the compare-before-publish edit
 // primitive with the same pre-publication recovery hook as
 // WriteAtomicWithPublishHook.
 func WriteAtomicIfUnchangedWithPublishHook(root, path string, expected, data []byte, hook func(os.FileMode) error) error {
+	return writeAtomicIfUnchangedWithModeHook(root, path, expected, data, 0, false, hook)
+}
+
+func writeAtomicIfUnchangedWithModeHook(root, path string, expected, data []byte, mode os.FileMode, setMode bool, hook func(os.FileMode) error) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -221,7 +234,7 @@ func WriteAtomicIfUnchangedWithPublishHook(root, path string, expected, data []b
 	if !bytes.Equal(currentContent, expected) {
 		return fmt.Errorf("%w: %s", ErrContentConflict, rel)
 	}
-	return writeAtomicWithHook(root, path, data, 0, false, hook)
+	return writeAtomicWithHook(root, path, data, mode, setMode, hook)
 }
 
 func writeWorkspaceAll(file *os.File, data []byte) error {
@@ -245,4 +258,35 @@ func writeWorkspaceAll(file *os.File, data []byte) error {
 // the descriptor-anchored root.
 func Remove(root, path string) error {
 	return remove(root, path)
+}
+
+// RemoveIfUnchanged removes a regular file only when its current content
+// still equals expected. A mismatch leaves the workspace untouched and
+// returns ErrContentConflict. Like the write compare primitive, the check and
+// pathname removal are a best-effort boundary for uncooperative same-UID
+// writers; callers should also hold their project run lock when available.
+func RemoveIfUnchanged(root, path string, expected []byte) error {
+	rel, err := Relative(root, path)
+	if err != nil {
+		return err
+	}
+	current, err := OpenRead(root, path)
+	if err != nil {
+		if isWorkspaceNotExist(err) {
+			return fmt.Errorf("%w: %s is missing", ErrContentConflict, rel)
+		}
+		return err
+	}
+	currentContent, readErr := io.ReadAll(io.LimitReader(current, int64(len(expected))+1))
+	closeErr := current.Close()
+	if readErr != nil {
+		return fmt.Errorf("read workspace file %q for removal: %w", rel, readErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close workspace file %q after removal check: %w", rel, closeErr)
+	}
+	if !bytes.Equal(currentContent, expected) {
+		return fmt.Errorf("%w: %s", ErrContentConflict, rel)
+	}
+	return Remove(root, path)
 }

@@ -135,6 +135,61 @@ func TestEditContentConflictDoesNotCreateUndo(t *testing.T) {
 	assertUndoFileContent(t, path, "newer user edit")
 }
 
+func TestMixedWriteAndContentConflictDoesNotUndoNewerPath(t *testing.T) {
+	dir := t.TempDir()
+	firstPath := filepath.Join(dir, "first.txt")
+	conflictPath := filepath.Join(dir, "conflict.txt")
+	if err := os.WriteFile(firstPath, []byte("first before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(conflictPath, []byte("conflict before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	firstArgs, _ := json.Marshal(map[string]string{"path": "first.txt", "content": "first agent"})
+	conflictArgs, _ := json.Marshal(map[string]string{
+		"path":       "conflict.txt",
+		"old_string": "conflict before",
+		"new_string": "conflict agent",
+	})
+	a := newUndoHookAgent(t, dir)
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("mixed-content-conflict"); err != nil {
+		t.Fatal(err)
+	}
+	a.SetClient(&llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+			{ID: "first", Name: "write_file", Arguments: string(firstArgs)},
+			{ID: "conflict", Name: "edit_file", Arguments: string(conflictArgs)},
+		}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}})
+	runs := 0
+	a.runTool = func(ctx context.Context, call llm.ToolCall, tool tools.Tool, c tools.Context) (string, error) {
+		runs++
+		if runs == 2 {
+			if err := os.WriteFile(conflictPath, []byte("newer user edit"), 0o644); err != nil {
+				return "", err
+			}
+			return "", fmt.Errorf("edit became stale: %w", workspace.ErrContentConflict)
+		}
+		return tool.Run(ctx, call.Arguments, c)
+	}
+
+	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update both files"}, allowUndoTest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.UndoAvailable || len(res.FilesChanged) != 1 || res.FilesChanged[0] != "first.txt" {
+		t.Fatalf("mixed content-conflict undo state: %+v", res)
+	}
+	if _, err := a.UndoLastTurn(); err != nil {
+		t.Fatal(err)
+	}
+	assertUndoFileContent(t, firstPath, "first before")
+	assertUndoFileContent(t, conflictPath, "newer user edit")
+}
+
 func TestRejectedLaterPublishPreservesEarlierUndo(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "note.txt")

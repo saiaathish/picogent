@@ -181,6 +181,16 @@ func (u *turnUndo) capture(path string) error {
 	return u.checkpoint.Add([]string{path})
 }
 
+// dropContentConflict removes a path whose native edit was rejected before
+// publication. Its live bytes belong to the newer workspace state that caused
+// the conflict, so sealing that capture would make /undo overwrite them.
+func (u *turnUndo) dropContentConflict(path string) error {
+	if u == nil || u.checkpoint == nil {
+		return nil
+	}
+	return u.checkpoint.Drop(path)
+}
+
 func (u *turnUndo) seal() ([]string, error) {
 	if u == nil || u.checkpoint == nil {
 		return nil, errors.New("no native file changes were captured")

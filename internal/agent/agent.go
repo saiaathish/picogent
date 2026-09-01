@@ -828,6 +828,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		// write then records the current change sequence, while a later write still
 		// invalidates evidence that was collected before it.
 		var successfulWrites []string
+		contentConflictPaths := map[string]string{}
 		durableTransition := false
 		for _, ex := range pending {
 			if ex.call.Name == "verify" && ex.ran {
@@ -855,6 +856,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				durableTransition = true
 				mutationCount++
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
+					delete(contentConflictPaths, p)
 					changed[p] = struct{}{}
 					successfulWrites = append(successfulWrites, p)
 					a.noteTaskChanged(p, ev)
@@ -867,11 +869,21 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				// from a write rejected by the pre-publication recovery hook.
 				nativeWriteRan = true
 			}
+			if (ex.call.Name == "write_file" || ex.call.Name == "edit_file") && ex.ran && errors.Is(ex.err, workspace.ErrContentConflict) {
+				if p := strings.TrimSpace(ex.req.Path); p != "" {
+					contentConflictPaths[p] = p
+				}
+			}
 			content := ex.text
 			if content == "" && ex.err != nil {
 				content = ex.err.Error()
 			}
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
+		}
+		for _, path := range contentConflictPaths {
+			if err := turnUndo.dropContentConflict(path); err != nil {
+				res.UndoError = fmt.Errorf("cannot discard conflicted undo path %s: %w", path, err).Error()
+			}
 		}
 		if durableTransition {
 			// Rebuild from the post-tool snapshot. In particular, a write or

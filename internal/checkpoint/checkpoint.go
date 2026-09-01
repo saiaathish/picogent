@@ -94,6 +94,10 @@ type Checkpoint struct {
 	entries   []entry
 	sealed    bool
 	restored  bool
+
+	// restoreBeforeApply is only used by package tests to exercise an
+	// interleaving between restore preflight and publication.
+	restoreBeforeApply func(string)
 }
 
 type entry struct {
@@ -145,6 +149,35 @@ func (c *Checkpoint) Add(paths []string) error {
 		return ErrAlreadySealed
 	}
 	return c.add(paths)
+}
+
+// Drop removes a captured path that is known not to belong to this turn's
+// undo set. It is used when a native edit detects a content conflict before
+// publication: the current bytes are a newer workspace edit, not an agent
+// mutation that undo may safely replace. Paths may not be dropped after the
+// checkpoint is sealed.
+func (c *Checkpoint) Drop(path string) error {
+	if c == nil {
+		return errors.New("checkpoint is nil")
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sealed {
+		return ErrAlreadySealed
+	}
+	rel, err := normalizePath(c.rootInput, c.root, path)
+	if err != nil {
+		return fmt.Errorf("checkpoint path %q: %w", path, err)
+	}
+	for i := range c.entries {
+		if pathIdentity(c.entries[i].path) != pathIdentity(rel) {
+			continue
+		}
+		copy(c.entries[i:], c.entries[i+1:])
+		c.entries = c.entries[:len(c.entries)-1]
+		return nil
+	}
+	return fmt.Errorf("checkpoint path %q was not captured", path)
 }
 
 func (c *Checkpoint) add(paths []string) error {
@@ -481,15 +514,20 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 			result.Failures = append(result.Failures, failure(c.entries[i].path, "inspect", err))
 			continue
 		}
+		// A process can die after publishing a restore for this path but before
+		// the durable journal advances from sealed to restored. Treat the exact
+		// pre-turn state as already complete so a fresh process can resume the
+		// remaining paths instead of misclassifying the restored path as a newer
+		// conflicting edit.
+		if current.sum == c.entries[i].before.sum {
+			result.Unchanged = append(result.Unchanged, filepath.ToSlash(c.entries[i].path))
+			continue
+		}
 		if current.sum != c.entries[i].expected {
 			result.Conflicts = append(result.Conflicts, Conflict{
 				Path:   filepath.ToSlash(c.entries[i].path),
 				Reason: "file changed after checkpoint was sealed",
 			})
-			continue
-		}
-		if current.sum == c.entries[i].before.sum {
-			result.Unchanged = append(result.Unchanged, filepath.ToSlash(c.entries[i].path))
 			continue
 		}
 		mutations = append(mutations, mutation{entry: &c.entries[i], after: current})
@@ -509,7 +547,7 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 	}
 
 	for i := range mutations {
-		if opErr := applyMutation(c.root, &mutations[i]); opErr != nil {
+		if opErr := applyMutation(c.root, &mutations[i], c.restoreBeforeApply); opErr != nil {
 			if errors.Is(opErr.err, ErrConflict) {
 				result.Conflicts = append(result.Conflicts, Conflict{
 					Path: filepath.ToSlash(opErr.path), Reason: opErr.err.Error(),
@@ -527,7 +565,9 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 
 	for i := range mutations {
 		path := filepath.ToSlash(mutations[i].entry.path)
-		if mutations[i].entry.before.exists {
+		if mutations[i].alreadyRestored {
+			result.Unchanged = append(result.Unchanged, path)
+		} else if mutations[i].entry.before.exists {
 			result.Restored = append(result.Restored, path)
 		} else {
 			result.Removed = append(result.Removed, path)
@@ -545,9 +585,10 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 }
 
 type mutation struct {
-	entry   *entry
-	after   fileState
-	applied bool
+	entry           *entry
+	after           fileState
+	applied         bool
+	alreadyRestored bool
 }
 
 type operationError struct {
@@ -556,24 +597,31 @@ type operationError struct {
 	err       error
 }
 
-func applyMutation(root string, m *mutation) *operationError {
+func applyMutation(root string, m *mutation, beforeWrite func(string)) *operationError {
 	current, err := readWorkspaceFile(root, m.entry.path)
 	if err != nil {
 		return &operationError{m.entry.path, "inspect", err}
+	}
+	if current.sum == m.entry.before.sum {
+		m.alreadyRestored = true
+		return nil
 	}
 	if current.sum != m.entry.expected {
 		return &operationError{m.entry.path, "conflict", ErrConflict}
 	}
 	m.after = current
-	if m.entry.before.exists {
-		if err := writeWorkspaceState(root, m.entry.path, m.entry.before); err != nil {
-			return &operationError{m.entry.path, "write", err}
-		}
-		m.applied = true
-		return nil
+	if beforeWrite != nil {
+		beforeWrite(filepath.ToSlash(m.entry.path))
 	}
-	if err := workspace.Remove(root, m.entry.path); err != nil {
-		return &operationError{m.entry.path, "remove", err}
+	if err := writeWorkspaceState(root, m.entry.path, m.after, m.entry.before); err != nil {
+		if errors.Is(err, workspace.ErrContentConflict) {
+			return &operationError{m.entry.path, "conflict", ErrConflict}
+		}
+		operation := "remove"
+		if m.entry.before.exists {
+			operation = "write"
+		}
+		return &operationError{m.entry.path, operation, err}
 	}
 	m.applied = true
 	return nil
@@ -599,7 +647,7 @@ func rollback(root string, mutations []mutation, result *RestoreResult) bool {
 			ok = false
 			continue
 		}
-		if err := writeWorkspaceState(root, m.entry.path, m.after); err != nil {
+		if err := writeWorkspaceState(root, m.entry.path, m.entry.before, m.after); err != nil {
 			result.Failures = append(result.Failures, failure(m.entry.path, "rollback restore", err))
 			ok = false
 		}
@@ -708,13 +756,19 @@ func readWorkspaceFile(root, rel string) (fileState, error) {
 	return readRegularFileHandle(f)
 }
 
-func writeWorkspaceState(root, rel string, state fileState) error {
+func writeWorkspaceState(root, rel string, expected, state fileState) error {
 	if !state.exists {
+		if expected.exists {
+			return workspace.RemoveIfUnchanged(root, rel, expected.data)
+		}
 		err := workspace.Remove(root, rel)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return err
+	}
+	if expected.exists {
+		return workspace.WriteAtomicIfUnchangedWithMode(root, rel, expected.data, state.data, state.mode)
 	}
 	return workspace.WriteAtomicWithMode(root, rel, state.data, state.mode)
 }

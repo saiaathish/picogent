@@ -100,6 +100,49 @@ func TestPublishedSubsetDropsUnpublishedPendingEntries(t *testing.T) {
 	}
 }
 
+func TestImportedRestoreResumesAfterEarlierPathWasAlreadyRestored(t *testing.T) {
+	workspace := t.TempDir()
+	write(t, workspace, "first.txt", "first before", 0o644)
+	write(t, workspace, "second.txt", "second before", 0o644)
+	cp, err := checkpoint.Capture(workspace, []string{"first.txt", "second.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, workspace, "first.txt", "first after", 0o644)
+	write(t, workspace, "second.txt", "second after", 0o644)
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a process dying after the first atomic restore and before the
+	// durable undo journal can advance from sealed to restored.
+	write(t, workspace, "first.txt", "first before", 0o644)
+	restarted, err := checkpoint.Import(workspace, record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := restarted.Restore()
+	if err != nil || !result.Complete {
+		t.Fatalf("resumed restore = %+v, err=%v", result, err)
+	}
+	if len(result.Unchanged) != 1 || result.Unchanged[0] != "first.txt" {
+		t.Fatalf("already-restored paths = %#v", result.Unchanged)
+	}
+	if len(result.Restored) != 1 || result.Restored[0] != "second.txt" {
+		t.Fatalf("resumed restored paths = %#v", result.Restored)
+	}
+	if got, err := os.ReadFile(filepath.Join(workspace, "first.txt")); err != nil || string(got) != "first before" {
+		t.Fatalf("first file = %q, err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(workspace, "second.txt")); err != nil || string(got) != "second before" {
+		t.Fatalf("second file = %q, err=%v", got, err)
+	}
+}
+
 func TestPublishedSubsetHandlesRepeatedWriteBeforeRename(t *testing.T) {
 	workspace := t.TempDir()
 	write(t, workspace, "state.txt", "before", 0o644)
