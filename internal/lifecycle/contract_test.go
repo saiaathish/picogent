@@ -14,14 +14,33 @@ func TestScenarioTableIsCompleteAndFailClosed(t *testing.T) {
 	if err := ValidateScenarioTable(scenarios); err != nil {
 		t.Fatal(err)
 	}
-	if len(scenarios) != 10 {
-		t.Fatalf("scenario count = %d, want 10", len(scenarios))
+	if len(scenarios) != 11 {
+		t.Fatalf("scenario count = %d, want 11", len(scenarios))
 	}
 
 	copyOfTable := Scenarios()
 	copyOfTable[0].ID = "mutated-copy"
 	if Scenarios()[0].ID == "mutated-copy" {
 		t.Fatal("Scenarios returned the mutable canonical table")
+	}
+}
+
+func TestGUIProcessKillScenarioRequiresFreshProcessRecovery(t *testing.T) {
+	scenario := scenarioByID(t, "gui-process-kill-active-turn")
+	if scenario.Trigger != TriggerProcessKill || scenario.Surface != SurfaceGUI {
+		t.Fatalf("process-kill scenario = %#v, want GUI process-kill row", scenario)
+	}
+	if !scenario.FreshProcessRequired || scenario.Evidence != EvidenceUnverified {
+		t.Fatalf("process-kill evidence boundary = %#v, want fresh-process UNVERIFIED", scenario)
+	}
+	persisted := scenario.Persisted
+	if persisted.TaskStatus != taskstate.StatusWorking || persisted.TurnState != taskstate.TurnInterrupted ||
+		persisted.TurnRoute != string(taskstate.TurnRouteRecover) || persisted.StopReason != taskstate.StopProcessRestart ||
+		!persisted.MustRetainTask || !persisted.MustBeRecoverable {
+		t.Fatalf("process-kill persistence contract = %#v, want recoverable interrupted turn", persisted)
+	}
+	if !scenario.Completion.MustNotBeReady || !scenario.Completion.MustNotShowMarker {
+		t.Fatalf("process-kill completion contract = %#v, want fail-closed", scenario.Completion)
 	}
 }
 
