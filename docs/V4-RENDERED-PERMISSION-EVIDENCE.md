@@ -44,7 +44,7 @@ below are the required fields, not permission to omit unknown observations:
   "request": {
     "tool": "write_file",
     "relative_path": "rendered-probe.txt",
-    "expected_bytes": 27
+    "expected_bytes": 26
   },
   "decision": "deny|allow",
   "workspace": {
@@ -75,24 +75,33 @@ provider fixture is never evidence of live-provider quality.
 ## Candidate local rendered observation
 
 On 2026-09-01, a disposable task-owned BrowserOS tab used Safe mode, a local
-OpenAI-compatible provider stub, and a contained probe file. The exact source
-SHA of the GUI binary was not recorded, so this is candidate runtime evidence,
-not a clean-head release result.
+OpenAI-compatible provider stub, and a contained probe file. The run used
+source commit `f4408d29215b030be8e1aee824c9b582e62dacc6` and a darwin/arm64
+binary with SHA-256
+`48c150b78fa13cef0ca2cda6451891a80abe8c5e0e50c4824637f1260362a125`.
+The host was macOS `26.5.2` arm64 with Go `1.26.6`.
 
 | Case | Direct observation | Status |
 | --- | --- | --- |
 | Permission before mutation | The rendered page showed the Safe-mode permission controls for `write_file` before the probe write. | `CONFIRMED` |
 | Deny | Denying the request left `rendered-probe.txt` absent. | `CONFIRMED` |
-| Allow | Allowing the request produced `rendered-probe.txt` with exactly `rendered permission probe\n` (27 bytes). | `CONFIRMED` |
-| Rendered mutation projection | The page represented the mutation as `Edited 1 file`. | `CONFIRMED` |
-| Verification | The page reported `verify INCONCLUSIVE ... reason=no test runner found`; no verification `PASS` was claimed. | `CONFIRMED` |
-| Undo | The durable workspace contained a sealed undo journal, but the rendered state reported `undo_available=false`, exposed a disabled Undo control, and returned no task projection. The undo mutation was not exercised. | `UNVERIFIED` |
+| Allow | Allowing the request produced `rendered-probe.txt` with exactly `rendered permission probe\n` (26 bytes); SHA-256 `7b02c0bed9730491ac50ec7c8d7a73191cf8eea733755ac866a5c9492fa726ea`. | `CONFIRMED` |
+| Rendered mutation projection | The completed page reported `The requested file change is complete. Changed: rendered-probe.txt`. The persisted task projection recorded `change_seq=1` and `changed_files=["rendered-probe.txt"]`. | `CONFIRMED` |
+| Verification | The approved Safe-mode verification ran and reported `verify INCONCLUSIVE duration=1ms reason=no test runner found`; no verification `PASS` was claimed. The persisted task remained `blocked` with `blocked_by=verification inconclusive`. | `CONFIRMED` |
+| Task JSON | The allow task JSON recorded `status=blocked`, `change_seq=1`, the changed file, two `APPROVED` user-approval evidence records, and `INCONCLUSIVE` verification evidence. An idle `/api/state` read after the completed page returned `task=null` and `completion=null`; this is recorded rather than treated as durable rendered completion proof. | `CONFIRMED` |
+| Undo | The durable workspace contained a sealed undo journal. During the completed turn the page reported `Undo is available for the latest change`, but a later idle rendered state exposed a disabled Undo control and the undo mutation was not exercised. | `UNVERIFIED` |
 | Restart recovery | No direct post-mutation restart-and-reload observation was captured. | `UNVERIFIED` |
 
+The deny task JSON recorded `status=blocked`, `blocked_by=permission needed`,
+`change_seq=null`, `changed_files=null`, and a `DENIED` approval for
+`write rendered-probe.txt`; the contained deny workspace kept the probe absent
+and the rendered deny state showed no changed-file activity. The allow and deny
+observations are direct fixture evidence, not live-provider quality evidence.
 The undo mismatch is intentionally retained as evidence for the M/L follow-up,
 not papered over by treating a journal file as equivalent to a user-visible
 undo action. Live-provider behavior, cross-platform rendered behavior,
-arbitrary hostile filesystem races, and release readiness remain `UNVERIFIED`.
+arbitrary hostile filesystem races, restart recovery, and release readiness
+remain `UNVERIFIED`.
 
 ## Validation
 
@@ -118,3 +127,12 @@ git diff --check
 The test proves the decision ordering and contained side-effect behavior at the
 existing API boundary. It does not replace the BrowserOS observation required
 by the medium lane or the undo/restart proof required by the large lane.
+
+The follow-up correction at `f4408d2` suppresses denied write activity from the
+GUI projection. Focused validation after that fix passed:
+
+```text
+go test ./internal/gui -run 'TestRenderedPermission|TestPermission' -count=1
+go test -race ./internal/gui -run 'TestRenderedPermission|TestPermission' -count=1
+git diff --check
+```
