@@ -208,6 +208,275 @@ func TestGUIFreshProcessShutdownRetainsInterruptedTurn(t *testing.T) {
 	}
 }
 
+func TestGUIFreshProcessKillRecoversInterruptedTurn(t *testing.T) {
+	if os.Getenv("PICOGENT_GUI_PROCESS_KILL_GUI_HELPER") == "1" {
+		if err := Run(); err != nil {
+			t.Fatalf("GUI kill helper returned error: %v", err)
+		}
+		return
+	}
+	if os.Getenv("PICOGENT_GUI_PROCESS_KILL_RESUME_HELPER") == "1" {
+		guiProcessKillResumeHelper(t)
+		return
+	}
+
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	workspace, err = filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_PROVIDER", "")
+	t.Setenv("PICOGENT_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("PICOGENT_BASE_URL", "")
+	t.Setenv("PICOGENT_ROUTER", "0")
+	t.Setenv("PICOGENT_MODE", "")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startedOnce.Do(func() { close(started) })
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		provider.Close()
+	})
+
+	cfg := config.Default()
+	cfg.SetupComplete = true
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOpenAI
+	cfg.APIKey = "test-key"
+	cfg.BaseURL = provider.URL
+	cfg.Model = "gui-process-kill-test-model"
+	cfg.Router.Enabled = false
+	cfg.Router.UseLLMAdvisor = false
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestGUIFreshProcessKillRecoversInterruptedTurn$", "-test.count=1")
+	cmd.Dir = workspace
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	cmd.Env = append(os.Environ(),
+		"PICOGENT_GUI_PROCESS_KILL_GUI_HELPER=1",
+		"PICOGENT_HOME="+home,
+		"PICOGENT_NO_BROWSER=1",
+		"PICOGENT_GUI_ADDR=127.0.0.1:0",
+		"PICOGENT_PROVIDER=",
+		"PICOGENT_API_KEY=",
+		"OPENAI_API_KEY=",
+		"PICOGENT_BASE_URL=",
+		"PICOGENT_ROUTER=0",
+		"PICOGENT_MODE=",
+	)
+	var childOutput strings.Builder
+	urlCh := make(chan string, 1)
+	stdoutDone := make(chan struct{})
+	go func() {
+		defer close(stdoutDone)
+		scanner := bufio.NewScanner(stdout)
+		found := false
+		for scanner.Scan() {
+			line := scanner.Text()
+			childOutput.WriteString(line)
+			childOutput.WriteByte('\n')
+			if !found && strings.HasPrefix(line, "picogent gui ") {
+				found = true
+				urlCh <- strings.TrimSpace(strings.TrimPrefix(line, "picogent gui "))
+			}
+		}
+		if !found {
+			urlCh <- ""
+		}
+	}()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	wait := make(chan error, 1)
+	childDone := make(chan struct{})
+	go func() {
+		wait <- cmd.Wait()
+		close(childDone)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-childDone:
+		default:
+			_ = cmd.Process.Kill()
+			<-wait
+		}
+		<-stdoutDone
+	})
+
+	var baseURL string
+	select {
+	case baseURL = <-urlCh:
+		if baseURL == "" {
+			t.Fatalf("GUI kill child exited before announcing listener; stdout=%q stderr=%q", childOutput.String(), stderr.String())
+		}
+	case <-time.After(15 * time.Second):
+		_ = cmd.Process.Kill()
+		<-wait
+		t.Fatalf("GUI kill child did not announce listener; stdout=%q stderr=%q", childOutput.String(), stderr.String())
+	}
+
+	initial := guiProcessState(t, baseURL)
+	if initial.SessionID == "" {
+		t.Fatal("GUI state did not include a session ID")
+	}
+	response := guiJSONRequest(t, http.MethodPost, guiEndpoint(baseURL, "/api/chat"), `{"prompt":"fix the greeting"}`)
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("GUI chat status = %d, want %d", response.StatusCode, http.StatusAccepted)
+	}
+	response.Body.Close()
+
+	select {
+	case <-started:
+	case <-time.After(15 * time.Second):
+		_ = cmd.Process.Kill()
+		<-wait
+		t.Fatalf("GUI kill child did not reach provider barrier; stdout=%q stderr=%q", childOutput.String(), stderr.String())
+	}
+	active := guiProcessStateUntilActive(t, baseURL)
+	if active.SessionID != initial.SessionID {
+		t.Fatalf("GUI active state session = %q, want %q", active.SessionID, initial.SessionID)
+	}
+	if active.Completion == nil || active.Completion.Ready {
+		t.Fatalf("GUI active completion = %#v, want fail-closed projection", active.Completion)
+	}
+
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill active GUI child: %v", err)
+	}
+	if err := <-wait; err == nil {
+		t.Fatal("killed GUI child exited cleanly")
+	}
+	<-stdoutDone
+
+	taskDir := filepath.Join(home, "tasks", projects.IDForPath(workspace))
+	resultPath := filepath.Join(root, "resume-result.json")
+	resumer := exec.Command(os.Args[0], "-test.run", "^TestGUIFreshProcessKillRecoversInterruptedTurn$", "-test.count=1")
+	resumer.Dir = workspace
+	resumer.Env = append(os.Environ(),
+		"PICOGENT_GUI_PROCESS_KILL_RESUME_HELPER=1",
+		"PICOGENT_HOME="+home,
+		"PICOGENT_GUI_PROCESS_KILL_WORKSPACE="+workspace,
+		"PICOGENT_GUI_PROCESS_KILL_TASK_DIR="+taskDir,
+		"PICOGENT_GUI_PROCESS_KILL_SESSION="+initial.SessionID,
+		"PICOGENT_GUI_PROCESS_KILL_RESULT="+resultPath,
+	)
+	if output, err := resumer.CombinedOutput(); err != nil {
+		t.Fatalf("fresh GUI process recovery failed: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result guiProcessKillRecoveryResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != initial.SessionID || result.TaskStatus != taskstate.StatusWorking || result.TurnState != taskstate.TurnInterrupted || result.TurnRoute != string(taskstate.TurnRouteRecover) || result.EvidenceState != "UNVERIFIED" || result.StopReason != taskstate.StopProcessRestart || strings.TrimSpace(result.Hypothesis) == "" {
+		t.Fatalf("fresh GUI process recovery = %#v, want recoverable interrupted turn", result)
+	}
+	if result.Completion.Ready || strings.TrimSpace(result.Completion.Reason) == "" {
+		t.Fatalf("fresh GUI completion = %#v, want fail-closed proof", result.Completion)
+	}
+
+	store := taskstate.NewStore(taskDir)
+	task, err := store.Load(initial.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := task.LastTurn()
+	if last == nil || last.State != taskstate.TurnInterrupted || last.Route != string(taskstate.TurnRouteRecover) || last.StopReason != taskstate.StopProcessRestart {
+		t.Fatalf("persisted GUI recovery = %#v, want process-restart interruption", last)
+	}
+	scenario := guiLifecycleScenario(t, "gui-process-kill-active-turn")
+	observation := lifecycle.Observe(
+		scenario.ID, scenario.Surface, scenario.Trigger, task,
+		lifecycle.CompletionProjection{Required: true, Ready: result.Completion.Ready}, nil,
+	)
+	if violations := scenario.Check(observation); len(violations) != 0 {
+		t.Fatalf("fresh GUI process-kill observation violations = %v", violations)
+	}
+}
+
+type guiProcessKillRecoveryResult struct {
+	SessionID     string                    `json:"session_id"`
+	TaskStatus    taskstate.Status          `json:"task_status"`
+	TaskRevision  uint64                    `json:"task_revision"`
+	TurnSequence  uint64                    `json:"turn_sequence"`
+	TurnState     taskstate.TurnState       `json:"turn_state"`
+	TurnRoute     string                    `json:"turn_route"`
+	EvidenceState string                    `json:"evidence_state"`
+	StopReason    taskstate.StopReason      `json:"stop_reason"`
+	Hypothesis    string                    `json:"hypothesis"`
+	Completion    taskstate.CompletionCheck `json:"completion"`
+}
+
+func guiProcessKillResumeHelper(t *testing.T) {
+	t.Helper()
+	workspace := os.Getenv("PICOGENT_GUI_PROCESS_KILL_WORKSPACE")
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	defer ag.Close()
+	ag.SetTaskStore(taskstate.NewStore(os.Getenv("PICOGENT_GUI_PROCESS_KILL_TASK_DIR")))
+	sessionID := os.Getenv("PICOGENT_GUI_PROCESS_KILL_SESSION")
+	if err := ag.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	task := ag.TaskSnapshot()
+	if task == nil {
+		t.Fatal("fresh GUI process did not load durable task")
+	}
+	last := task.LastTurn()
+	if last == nil || last.State != taskstate.TurnInterrupted || last.Route != string(taskstate.TurnRouteRecover) || last.EvidenceState != "UNVERIFIED" || last.StopReason != taskstate.StopProcessRestart || strings.TrimSpace(last.Hypothesis) == "" {
+		t.Fatalf("fresh GUI process recovered turn = %#v, want process-restart recovery", last)
+	}
+	proof := agent.CompletionProof(task)
+	result := guiProcessKillRecoveryResult{
+		SessionID:     task.SessionID,
+		TaskStatus:    task.Status,
+		TaskRevision:  task.Revision,
+		TurnSequence:  last.Sequence,
+		TurnState:     last.State,
+		TurnRoute:     last.Route,
+		EvidenceState: last.EvidenceState,
+		StopReason:    last.StopReason,
+		Hypothesis:    last.Hypothesis,
+		Completion:    proof,
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("PICOGENT_GUI_PROCESS_KILL_RESULT"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGUIReconnectKeepsCurrentTaskProjection(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()
@@ -451,7 +720,10 @@ func (h *guiTaskSaveFailureHandler) OnTaskState(task *taskstate.Task) {
 }
 
 type guiProcessStateSnapshot struct {
-	SessionID string `json:"session_id"`
+	SessionID  string                     `json:"session_id"`
+	Busy       bool                       `json:"busy"`
+	Task       *taskstate.Task            `json:"task"`
+	Completion *taskstate.CompletionCheck `json:"completion"`
 }
 
 func guiProcessState(t *testing.T, baseURL string) guiProcessStateSnapshot {
@@ -470,6 +742,30 @@ func guiProcessState(t *testing.T, baseURL string) guiProcessStateSnapshot {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("GUI state did not become available: err=%v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func guiProcessStateUntilActive(t *testing.T, baseURL string) guiProcessStateSnapshot {
+	t.Helper()
+	client := &http.Client{Timeout: 2 * time.Second}
+	deadline := time.Now().Add(5 * time.Second)
+	var latest guiProcessStateSnapshot
+	for {
+		res, err := client.Get(guiEndpoint(baseURL, "/api/state"))
+		if err == nil {
+			decodeErr := json.NewDecoder(res.Body).Decode(&latest)
+			res.Body.Close()
+			if res.StatusCode == http.StatusOK && decodeErr == nil && latest.Task != nil {
+				last := latest.Task.LastTurn()
+				if latest.Task.Status == taskstate.StatusWorking && last != nil && last.State == taskstate.TurnActive {
+					return latest
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GUI state did not expose a durable active turn: err=%v state=%#v", err, latest)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
