@@ -1,8 +1,9 @@
 # v4 long-horizon outcome evidence
 
-Status: S-lane contract, introduced on the `codex/v4-long-horizon-outcome-s`
-branch. This document defines the measurement boundary; it does not claim
-long-horizon product success, live-provider quality, or release readiness.
+Status: S-lane contract merged via PR #307; the provider-independent M-lane
+fixture is delivered in PR #308 on `codex/v4-long-horizon-outcome-m`. This
+document defines the measurement boundary; it does not claim long-horizon
+product success, live-provider quality, or release readiness.
 
 ## Purpose
 
@@ -50,6 +51,46 @@ the derived completion eligibility.
 The validator checks report shape and internal consistency only. The
 production taskstate, verification, permission, and recovery contracts remain
 authoritative for real behavior.
+
+## M-lane validation
+
+`TestLongHorizonOutcome` drives the existing durable contracts through a
+deterministic eight-turn scenario: admission and planning, two mutation and
+verification cycles, intent steering, an active-turn fresh-process recovery,
+and a final verification. The fixture persists task state before the child
+process boundary, requires a fresh workspace observation before persisted
+proof can authorize completion, and records the existing Outcome Engine stop
+policy at each observation.
+
+The observed local report is bounded to:
+
+| Metric | Observation |
+| --- | ---: |
+| Logical turns | 8 |
+| Useful-progress observations | 6 |
+| Stale-proof observations | 3 |
+| Eligible stops | 3 |
+| Fresh-process reloads | 2 |
+| Recovery events | 1 |
+| Retained task turns / evidence entries | 8 / 8 |
+
+Run the M-lane fixture and its package checks from the exact source head:
+
+```sh
+go test -v ./internal/benchmark -run '^TestLongHorizonOutcome$' -count=1
+go test -race ./internal/benchmark -run '^TestLongHorizonOutcome$' -count=10
+go test ./internal/benchmark -count=1
+```
+
+The test log emits `source_head`, host, Go version, command, per-turn
+observations, and explicit `UNVERIFIED` fields. The source SHA is intentionally
+read at runtime rather than copied into this document, so every report remains
+attached to the exact tree it measured.
+
+The fixture does not measure live-provider quality, arbitrary crash windows,
+rendered GUI/TUI behavior, or release readiness. Its fresh-process boundary is
+a deterministic child test process and should not be interpreted as broad
+runtime chaos coverage.
 
 ## S-lane validation
 
