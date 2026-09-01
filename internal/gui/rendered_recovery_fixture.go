@@ -141,6 +141,7 @@ func RunRenderedRecoveryFixture(ctx context.Context) error {
 		ProbePath:    renderedRecoveryFixturePath,
 		Before:       "absent",
 		AppliedSHA:   renderedRecoveryFixtureContentSHA(),
+		Source:       renderedRecoveryFixtureSourceSHA(),
 		Runtime:      "go-build-tags-rendered_fixture",
 		StartedAtUTC: time.Now().UTC().Format(time.RFC3339Nano),
 		PID:          os.Getpid(),
@@ -229,6 +230,13 @@ func renderedRecoveryFixtureClient(phase string) llm.Client {
 func renderedRecoveryFixtureContentSHA() string {
 	sum := sha256.Sum256([]byte(renderedRecoveryFixtureContent))
 	return hex.EncodeToString(sum[:])
+}
+
+func renderedRecoveryFixtureSourceSHA() string {
+	if source := strings.TrimSpace(os.Getenv("PICOGENT_RENDERED_FIXTURE_SOURCE_SHA")); source != "" {
+		return source
+	}
+	return "UNRECORDED"
 }
 
 func writeRenderedRecoveryFixtureManifest(path string, manifest renderedRecoveryFixtureManifest) error {

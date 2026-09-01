@@ -11,7 +11,8 @@ Use a disposable home and workspace. The seed process serves the normal
 embedded GUI with a deterministic `llm.Scripted` provider:
 
 ```sh
-go run -tags rendered_fixture ./cmd/picogent-rendered-fixture
+PICOGENT_RENDERED_FIXTURE_SOURCE_SHA="$(git rev-parse HEAD)" \
+  go run -tags rendered_fixture ./cmd/picogent-rendered-fixture
 ```
 
 The command prints a task-owned local URL, workspace, fixed session ID, and a
@@ -28,7 +29,8 @@ JSON manifest path. In an owned browser tab:
 6. stop the seed process and start the reload phase with the printed paths:
 
 ```sh
-go run -tags rendered_fixture ./cmd/picogent-rendered-fixture \
+PICOGENT_RENDERED_FIXTURE_SOURCE_SHA="$(git rev-parse HEAD)" \
+  go run -tags rendered_fixture ./cmd/picogent-rendered-fixture \
   -phase reload -home '<fixture home>' -workspace '<fixture workspace>'
 ```
 
@@ -43,7 +45,9 @@ Record the manifest values, exact source SHA, runtime identity, browser session
 and tab ownership, UTC timestamps, and direct observations for each step. The
 probe content hash is included in the manifest; the expected pre- and post-undo
 state is `absent`. Any provider-quality, arbitrary hostile-writer,
-cross-platform-rendered, or unobserved field remains `UNVERIFIED`.
+cross-platform-rendered, or unobserved field remains `UNVERIFIED`. If
+`PICOGENT_RENDERED_FIXTURE_SOURCE_SHA` is omitted, the manifest records
+`UNRECORDED` and exact-source evidence is unavailable.
 
 The fixture uses the existing `server.Handler`, `/api/permission`, `/api/chat`,
 SSE events, task store, session store, checkpoint-backed undo, and fresh
