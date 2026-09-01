@@ -406,7 +406,10 @@ func (c *Checkpoint) PublishedSubset() (*Checkpoint, bool, error) {
 			return nil, false, err
 		}
 		if current.sum == c.entries[i].expected {
-			entries = append(entries, c.entries[i])
+			item := c.entries[i]
+			item.published = fingerprint{}
+			item.publishedSet = false
+			entries = append(entries, item)
 			continue
 		}
 		if current.sum == c.entries[i].before.sum {
