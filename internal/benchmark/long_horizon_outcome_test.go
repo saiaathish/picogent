@@ -324,7 +324,7 @@ func runLongHorizonOutcomeHelper(t *testing.T) {
 	fixture := &longHorizonOutcomeFixture{workspace: workspaceRoot, store: store, task: task}
 	restartObservation := longHorizonOutcomeObservation(task, 7, []benchmark.ScenarioEvent{benchmark.EventRestart, benchmark.EventRecovery}, benchmark.RecoveryComplete)
 
-	sequence, ok := task.BeginTurn(taskstate.TurnRouteRecover)
+	sequence, ok := task.BeginTurn(taskstate.TurnRouteVerify)
 	if !ok {
 		t.Fatal("post-restart recovery turn did not start")
 	}
