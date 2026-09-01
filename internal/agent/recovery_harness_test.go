@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +19,15 @@ import (
 	"github.com/saiaathish/picogent/internal/tools"
 )
 
+const (
+	// Windows hosted runners can spend several seconds starting the first
+	// provider call while other packages are still competing for filesystem and
+	// process resources. Keep the barrier bounded, but do not make five seconds
+	// a product or test-environment requirement.
+	cancellationBarrierTimeout = 30 * time.Second
+	cancellationFinishTimeout  = 15 * time.Second
+)
+
 // cancelAfterDurableWriteClient makes the provider boundary explicit: the
 // write response is released first, then the next model call waits for the
 // caller to cancel the turn. This keeps the cancellation point deterministic.
@@ -25,12 +35,12 @@ type cancelAfterDurableWriteClient struct {
 	args          string
 	secondStarted chan struct{}
 	startedOnce   sync.Once
-	call          int
+	calls         atomic.Int32
 }
 
 func (c *cancelAfterDurableWriteClient) Chat(ctx context.Context, _ llm.ChatRequest) (llm.ChatResponse, error) {
-	c.call++
-	if c.call == 1 {
+	call := c.calls.Add(1)
+	if call == 1 {
 		return toolResponse("write", "write_file", json.RawMessage(c.args)), nil
 	}
 	c.startedOnce.Do(func() { close(c.secondStarted) })
@@ -112,16 +122,16 @@ func runDurableTaskCancellationProbe(t *testing.T, sessionID string) {
 
 	select {
 	case <-client.secondStarted:
-	case <-time.After(5 * time.Second):
-		t.Fatal("provider did not reach the cancellation barrier")
+	case <-time.After(cancellationBarrierTimeout):
+		t.Fatalf("provider did not reach the cancellation barrier within %s (provider calls=%d)", cancellationBarrierTimeout, client.calls.Load())
 	}
 	cancel()
 
 	var run runResult
 	select {
 	case run = <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("canceled durable run did not finish")
+	case <-time.After(cancellationFinishTimeout):
+		t.Fatalf("canceled durable run did not finish within %s (provider calls=%d)", cancellationFinishTimeout, client.calls.Load())
 	}
 	if run.err == nil || !strings.Contains(strings.ToLower(run.err.Error()), "context canceled") {
 		t.Fatalf("canceled run error = %v", run.err)
