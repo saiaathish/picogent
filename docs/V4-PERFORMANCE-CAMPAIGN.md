@@ -5,6 +5,12 @@ refreshes captured on 2026-08-30. This document records deterministic local
 controls; it does not claim live-provider quality or end-to-end product
 performance.
 
+The measurements below retain the exact historical heads named in each
+section. Current merged `main` is now
+`281942c12369ce795e6f9a6dc824e3c08aede63a`; the older refresh at
+`eb824f293255d913dca894228bbd23609f37fe96` is intentionally not relabeled.
+Issue #302 tracks the current scripted-edit performance follow-up.
+
 ## Comparison
 
 - Host: Apple M3 arm64 macOS
@@ -101,9 +107,9 @@ Context-heavy work remains approximately flat with overlapping ranges. Other
 v4 additions have measurable cost, especially provenance capture; that cost is
 recorded rather than hidden. No broad claim that v4 is faster is justified.
 
-## Current-head microbenchmark refresh
+## Historical current-head microbenchmark refresh
 
-The focused benchmark subset was rerun on the exact merged v4 head
+The focused benchmark subset was rerun on the exact historical merged v4 head
 `eb824f293255d913dca894228bbd23609f37fe96` on an Apple M3 arm64 Mac with Go
 `go1.26.6`. It used the same `-benchtime=100ms -benchmem -count=3` settings as
 the comparison above. The v3 values remain the clean-baseline measurements

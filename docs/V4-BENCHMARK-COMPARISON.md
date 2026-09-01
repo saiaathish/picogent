@@ -4,6 +4,13 @@ Status: measured locally on 2026-08-31. This is a provider-independent
 regression comparison, not a live-provider quality, browser, or product-SLA
 claim.
 
+The comparison table is anchored to the historical v4 checkpoint
+`6a0126d46cbe6720fbcb54f8b30652160e8cb5`; it is not a claim about the current
+`main`. The current merged `main` head for this update is
+`281942c12369ce795e6f9a6dc824e3c08aede63a`. Issue #302 tracks the scripted-edit
+follow-up, and `internal/benchmark/stages_test.go` provides stage controls for
+that investigation.
+
 ## Reproducibility
 
 The same benchmark commands were run three times at both exact heads, on the
@@ -72,6 +79,35 @@ model:
 | Operation | v3 time (min / median / max) | v4 time (min / median / max) | v3 B/op | v4 B/op | v3 allocs/op | v4 allocs/op |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Scripted agent edit | 577,208 / 944,291 / 1,229,584 | 6,116,333 / 7,032,417 / 11,119,916 | 128,112 / 128,592 / 131,072 | 133,160 / 133,224 / 135,512 | 1,252 / 1,253 / 1,289 | 1,378 / 1,379 / 1,413 |
+
+## Current-main stage controls
+
+At exact `main` head `281942c12369ce795e6f9a6dc824e3c08aede63a`, the new
+provider-independent stage controls were run on the same Apple M3 arm64 host
+with Go `go1.26.6`:
+
+```sh
+go test ./internal/benchmark -run '^$' \
+  -bench '^BenchmarkScriptedAgentEditStage' -benchtime=100ms -benchmem -count=3
+```
+
+The first five rows are standalone primitive attribution controls. The final
+row is a production-shaped durable turn: it runs `Agent.Run` with workspace-
+local task storage, the real pre-publication undo hook, durable mutation and
+turn persistence, and the normal turn close. It is still not a replacement for
+the end-to-end scripted edit fixture or a live-provider measurement.
+
+| Stage | Time range | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Project run lock acquire/release | 1.273–1.320 ms | 2,984–3,016 | 63 |
+| Checkpoint capture | 0.599–0.623 ms | 6,376–6,392 | 70 |
+| Checkpoint seal | 0.560–0.576 ms | 1,828–1,830 | 24 |
+| Secure workspace publication | 4.108–5.084 ms | 1,956–1,959 | 40 |
+| Durable task save | 7.501–7.671 ms | 11,216–11,240 | 148 |
+| Production-shaped durable scripted turn | 55.822–58.548 ms | 351,048–377,840 | 3,206–3,231 |
+
+The durable scripted-turn row reports `2.000 model-calls/op`; the primitive
+controls do not call a model.
 
 ## Interpretation
 
