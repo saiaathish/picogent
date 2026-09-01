@@ -664,13 +664,60 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				msgs[len(msgs)-1] = msg
 			}
 			res.ToolRounds = round
-			if err := a.finishDurableTask(text, taskBlocker, ev); err != nil {
+			supersededTurn := false
+			if turnSequence != 0 {
+				finalTask, completion, goalDone, closed, superseded, err := a.finishAndCloseDurableTurn(turnSequence, text, taskBlocker, taskMode, lastVerification, res.FilesChanged, completionMarker, state.Goal, opts.ScopeBoundary, res.ToolRounds, mutationCount, ev)
+				if err != nil {
+					res.Task = a.TaskSnapshot()
+					res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
+					res.GoalDone = false
+					return msgs, res, err
+				}
+				if closed {
+					res.Task = finalTask
+					res.Completion = completion
+					res.GoalDone = goalDone
+				} else {
+					// A stale sequence was rejected against a newer durable task.
+					// Never replay this turn's terminal result through the generic
+					// finish path: that could mark the replacement task done.
+					res.Task = finalTask
+					if res.Task == nil {
+						res.Task = a.TaskSnapshot()
+					}
+					res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
+					res.GoalDone = false
+					if superseded {
+						res.Completion.Ready = false
+						res.Completion.Reason = "durable turn was superseded before it could close"
+						supersededTurn = true
+						// The old sequence is no longer active. Suppress the defer
+						// retry, which must never target the replacement turn.
+						turnClosed = true
+					}
+				}
+			} else {
 				res.Task = a.TaskSnapshot()
 				res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
-				res.GoalDone = false
-				return msgs, res, err
+				res.GoalDone = completionMarker && res.Completion.Ready
 			}
-			if streamed {
+			if supersededTurn {
+				// The assistant response belongs to the stale turn and must not
+				// reach a surface or the next persisted transcript. Streaming may
+				// already have shown deltas, so replace that partial bubble with an
+				// empty final value when the surface supports canonical replacement.
+				if len(msgs) > 0 && msgs[len(msgs)-1].Role == "assistant" {
+					msgs = msgs[:len(msgs)-1]
+				}
+				if streamed {
+					if finalizer, ok := ev.(FinalTextHandler); ok {
+						finalizer.OnTextFinal("")
+					} else {
+						ev.OnText("")
+					}
+				}
+				text = ""
+			} else if streamed {
 				if finalizer, ok := ev.(FinalTextHandler); ok {
 					finalizer.OnTextFinal(text)
 				} else {
@@ -683,16 +730,6 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				ev.OnText(text)
 			}
 			res.Text = text
-			res.Task = a.TaskSnapshot()
-			res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
-			res.GoalDone = completionMarker && res.Completion.Ready
-			stop := taskstate.StopNone
-			if res.GoalDone || (res.Task != nil && res.Task.Status == taskstate.StatusDone) {
-				stop = taskstate.StopGoalComplete
-			} else if res.Task != nil && res.Task.Status == taskstate.StatusBlocked {
-				stop = res.Task.StopReason
-			}
-			closeTurnFor(false, res.GoalDone, stop)
 			if turnCloseErr != nil {
 				res.GoalDone = false
 				res.Completion.Ready = false

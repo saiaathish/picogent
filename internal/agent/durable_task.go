@@ -567,40 +567,44 @@ func (a *Agent) blockDurableTask(reason string, ev EventHandler) {
 	})
 }
 
-func (a *Agent) finishDurableTask(text, blocker string, ev EventHandler) error {
-	snapshot, err := a.mutateTaskResult(func(task *taskstate.Task) error {
-		if blocker != "" {
-			task.Block(blocker)
-		} else if task.Status == taskstate.StatusBlocked {
-			// Preserve the specific blocker recorded earlier in the turn.
-		} else if task.ConsecutiveVerificationFailures() > 0 {
-			status := verificationStatus(task.Verification[len(task.Verification)-1].Summary)
-			if status == "INCONCLUSIVE" || status == "SKIPPED" {
-				if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
-					return err
-				}
-			} else if task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {
-				task.Block("verification repeatedly failed")
-			} else if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+func applyDurableTaskFinish(task *taskstate.Task, text, blocker string) error {
+	if blocker != "" {
+		task.Block(blocker)
+	} else if task.Status == taskstate.StatusBlocked {
+		// Preserve the specific blocker recorded earlier in the turn.
+	} else if task.ConsecutiveVerificationFailures() > 0 {
+		status := verificationStatus(task.Verification[len(task.Verification)-1].Summary)
+		if status == "INCONCLUSIVE" || status == "SKIPPED" {
+			if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
+				return err
+			}
+		} else if task.ConsecutiveVerificationFailures() >= taskstate.DefaultPolicy().MaxVerificationFailures {
+			task.Block("verification repeatedly failed")
+		} else if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+			return err
+		}
+	} else {
+		low := strings.ToLower(text)
+		if strings.Contains(low, "blocked:") || strings.Contains(low, "permission needed") {
+			task.Block("agent reported a blocker")
+		} else if task.NeedsVerification() {
+			if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
 				return err
 			}
 		} else {
-			low := strings.ToLower(text)
-			if strings.Contains(low, "blocked:") || strings.Contains(low, "permission needed") {
-				task.Block("agent reported a blocker")
-			} else if task.NeedsVerification() {
-				if err := task.SetStatus(taskstate.StatusVerifying); err != nil {
-					return err
-				}
-			} else {
-				for task.Advance() {
-				}
-				if err := task.SetStatus(taskstate.StatusDone); err != nil {
-					return err
-				}
+			for task.Advance() {
+			}
+			if err := task.SetStatus(taskstate.StatusDone); err != nil {
+				return err
 			}
 		}
-		return nil
+	}
+	return nil
+}
+
+func (a *Agent) finishDurableTask(text, blocker string, ev EventHandler) error {
+	snapshot, err := a.mutateTaskResult(func(task *taskstate.Task) error {
+		return applyDurableTaskFinish(task, text, blocker)
 	})
 	if err != nil {
 		if errors.Is(err, errTaskMutationSkipped) {

@@ -706,12 +706,12 @@ type guiTaskSaveFailureHandler struct {
 }
 
 func (h *guiTaskSaveFailureHandler) OnTaskState(task *taskstate.Task) {
-	if h.switched || task == nil || task.Status != taskstate.StatusDone {
+	if h.switched || task == nil {
 		h.guiHandler.OnTaskState(task)
 		return
 	}
 	last := task.LastTurn()
-	if last == nil || last.State != taskstate.TurnActive {
+	if last == nil || last.State != taskstate.TurnActive || len(task.ChangedFiles) == 0 {
 		h.guiHandler.OnTaskState(task)
 		return
 	}
