@@ -38,6 +38,7 @@ func TestLongHorizonCompletionEligibilityFailsClosedForStaleProof(t *testing.T) 
 		{name: "unverified evidence", edit: func(observation *TurnObservation) { observation.Evidence = EvidenceUnverified }},
 		{name: "pending recovery", edit: func(observation *TurnObservation) { observation.Recovery = RecoveryPending }},
 		{name: "unknown stop", edit: func(observation *TurnObservation) { observation.Stop = StopUnknown }},
+		{name: "pause decision", edit: func(observation *TurnObservation) { observation.Stop = StopPause }},
 		{name: "continue decision", edit: func(observation *TurnObservation) { observation.Stop = StopContinue }},
 	}
 	for _, tc := range cases {
@@ -100,7 +101,7 @@ func validLongHorizonReport() Report {
 			VerifiedMutationSeq: 0,
 			Evidence:            EvidenceCurrent,
 			Recovery:            RecoveryNotRequired,
-			Stop:                StopEligible,
+			Stop:                StopRecheck,
 			CompletionEligible:  true,
 		}, {
 			Turn:                2,

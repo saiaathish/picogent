@@ -82,19 +82,21 @@ func (r RecoveryState) valid() bool {
 	}
 }
 
-// StopDecision is the observed stop recommendation for one durable turn.
-// Eligible is deliberately stricter than merely having completed criteria.
+// StopDecision is the observed Outcome Engine stop policy for one durable
+// turn. Completion eligibility remains a separate claim derived from the
+// authoritative criterion/evidence state.
 type StopDecision string
 
 const (
 	StopContinue StopDecision = "continue"
-	StopEligible StopDecision = "eligible"
+	StopPause    StopDecision = "pause"
+	StopRecheck  StopDecision = "recheck"
 	StopUnknown  StopDecision = "unknown"
 )
 
 func (s StopDecision) valid() bool {
 	switch s {
-	case StopContinue, StopEligible, StopUnknown:
+	case StopContinue, StopPause, StopRecheck, StopUnknown:
 		return true
 	default:
 		return false
@@ -122,7 +124,7 @@ type TurnObservation struct {
 // gate; it only says when an observation is internally consistent enough to
 // record an eligible stop decision.
 func (o TurnObservation) CanStop() bool {
-	if !o.CriteriaComplete || o.Evidence != EvidenceCurrent || o.VerifiedMutationSeq != o.MutationSeq || o.Stop != StopEligible {
+	if !o.CriteriaComplete || o.Evidence != EvidenceCurrent || o.VerifiedMutationSeq != o.MutationSeq || o.Stop != StopRecheck {
 		return false
 	}
 	return o.Recovery == RecoveryNotRequired || o.Recovery == RecoveryComplete
