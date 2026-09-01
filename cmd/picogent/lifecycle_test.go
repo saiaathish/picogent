@@ -198,11 +198,11 @@ type headlessTaskSaveFailureHandler struct {
 }
 
 func (h *headlessTaskSaveFailureHandler) OnTaskState(task *taskstate.Task) {
-	if h.switched || task == nil || task.Status != taskstate.StatusDone {
+	if h.switched || task == nil {
 		return
 	}
 	last := task.LastTurn()
-	if last == nil || last.State != taskstate.TurnActive {
+	if last == nil || last.State != taskstate.TurnActive || len(task.ChangedFiles) == 0 {
 		return
 	}
 	h.switched = true

@@ -68,11 +68,11 @@ type turnCloseFailureHandler struct {
 }
 
 func (h *turnCloseFailureHandler) OnTaskState(task *taskstate.Task) {
-	if h.switched || task == nil || task.Status != taskstate.StatusDone {
+	if h.switched || task == nil {
 		return
 	}
 	last := task.LastTurn()
-	if last == nil || last.State != taskstate.TurnActive {
+	if last == nil || last.State != taskstate.TurnActive || len(task.ChangedFiles) == 0 {
 		return
 	}
 	h.switched = true
@@ -162,6 +162,105 @@ func TestRunWithOptionsPersistsActiveTurnBeforeProviderAndClosesCompleted(t *tes
 	if result.Task.LastTurn() == nil || result.Task.LastTurn().State != taskstate.TurnCompleted {
 		t.Fatalf("result did not include closed turn = %#v", result.Task)
 	}
+}
+
+func TestRunWithOptionsDoesNotFinalizeReplacementTurn(t *testing.T) {
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "turn-replacement"
+	args, err := json.Marshal(map[string]string{"path": "done.txt", "content": "completed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := taskstate.New(sessionID, "finish the requested change", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	client := &durableTurnProbeClient{
+		store:     store,
+		sessionID: sessionID,
+		responses: []llm.ChatResponse{
+			toolResponse("write", "write_file", json.RawMessage(args)),
+			{Message: llm.Message{Role: "assistant", Content: "Goal complete: done"}},
+		},
+		observed: make(chan *taskstate.TurnRecord, 1),
+	}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		VerifyTargets: func(context.Context, []string) (string, error) {
+			return "verify PASS\nrequested checks passed", nil
+		},
+	})
+	a := agent.New(cfg, client, reg, perm.New(config.ModeFast, workspace, nil))
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	h := &replacementTurnHandler{store: store}
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish the requested change"}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.err != nil {
+		t.Fatal(h.err)
+	}
+	if !h.switched {
+		t.Fatal("test did not replace the active turn")
+	}
+	if result.GoalDone || result.Completion.Ready {
+		t.Fatalf("stale turn result reported completion: goalDone=%v completion=%#v", result.GoalDone, result.Completion)
+	}
+	persisted, err := store.Load(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status == taskstate.StatusDone {
+		t.Fatalf("stale turn finalized replacement task: %#v", persisted)
+	}
+	if len(persisted.Turns) < 2 {
+		t.Fatalf("replacement task turns = %#v, want superseded and replacement records", persisted.Turns)
+	}
+	previous := persisted.Turns[len(persisted.Turns)-2]
+	latest := persisted.LastTurn()
+	if previous.State != taskstate.TurnInterrupted || latest == nil || latest.Sequence <= previous.Sequence || latest.State != taskstate.TurnActive {
+		t.Fatalf("replacement turn history = %#v, want interrupted old and active newer turn", persisted.Turns)
+	}
+}
+
+type replacementTurnHandler struct {
+	allowAll
+	store    *taskstate.Store
+	switched bool
+	err      error
+}
+
+func (h *replacementTurnHandler) OnTaskState(task *taskstate.Task) {
+	if h.switched || task == nil {
+		return
+	}
+	last := task.LastTurn()
+	if last == nil || last.State != taskstate.TurnActive || len(task.ChangedFiles) == 0 {
+		return
+	}
+	current, err := h.store.Load(task.SessionID)
+	if err == nil {
+		if _, ok := current.BeginTurn(taskstate.TurnRouteImplement); !ok {
+			err = errors.New("replacement turn could not be started")
+		} else {
+			err = h.store.Save(current)
+		}
+	}
+	h.err = err
+	h.switched = true
 }
 
 func TestRunWithOptionsReturnsTurnClosePersistenceFailure(t *testing.T) {
