@@ -21,6 +21,11 @@ func TestEmbeddedIndex(t *testing.T) {
 	if !strings.Contains(string(b), `id="recent-recovery"`) || !strings.Contains(string(b), `id="open-chats"`) || !strings.Contains(string(b), `id="undo-turn"`) {
 		t.Fatal("index missing visible recovery controls")
 	}
+	if !strings.Contains(string(b), `id="perm"`) ||
+		!strings.Contains(string(b), `data-allow="0"`) ||
+		!strings.Contains(string(b), `data-allow="1"`) {
+		t.Fatal("index missing rendered Safe-mode allow/deny controls")
+	}
 	if strings.Contains(string(b), "scope-card") {
 		t.Fatal("index still contains the blocking scope picker")
 	}
@@ -45,6 +50,10 @@ func TestEmbeddedIndex(t *testing.T) {
 	}
 	if !strings.Contains(string(js), "function renderRecentSessions()") || !strings.Contains(string(js), "setUndoAvailable(true)") || !strings.Contains(string(js), `prompt: "/undo"`) {
 		t.Fatal("gui recovery controls are not wired to session resume and undo")
+	}
+	if !strings.Contains(string(js), `fetch("/api/permission"`) ||
+		!strings.Contains(string(js), "t.dataset.allow === \"1\"") {
+		t.Fatal("gui permission controls are not wired to the existing permission API")
 	}
 	if strings.Contains(string(js), "/api/scope") || strings.Contains(string(js), "scope_required") || strings.Contains(string(js), "hideScopeCard") || strings.Contains(string(js), "scope_notice") {
 		t.Fatal("gui still contains blocking or duplicate client-side scope handling")
