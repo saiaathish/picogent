@@ -393,7 +393,25 @@ func (p *windowsParent) syncDurable() error {
 	if p == nil || p.handle == 0 || p.handle == windows.InvalidHandle {
 		return errors.New("invalid secure directory handle")
 	}
-	return windows.FlushFileBuffers(p.handle)
+	// The traversal handle is intentionally read-only for ordinary securefile
+	// operations. Reopen the same directory relative to that anchored handle
+	// with write access for FlushFileBuffers; never reopen the original absolute
+	// path, which would reintroduce a rename/reparse race.
+	flushHandle, err := openWindowsHandle(
+		p.handle,
+		".",
+		windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE,
+		windows.FILE_OPEN,
+		windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT,
+	)
+	if err != nil {
+		return fmt.Errorf("open secure directory for durable sync: %w", err)
+	}
+	defer windows.CloseHandle(flushHandle)
+	if err := windows.FlushFileBuffers(flushHandle); err != nil {
+		return fmt.Errorf("flush secure directory for durable sync: %w", err)
+	}
+	return nil
 }
 
 func openWindowsRoot(path string) (windows.Handle, error) {
