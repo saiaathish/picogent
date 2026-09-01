@@ -98,11 +98,21 @@ arbitrary hostile filesystem races, and release readiness remain `UNVERIFIED`.
 
 The S-lane checkpoint was validated on branch
 `codex/v4-rendered-permission-contract` at source commit
-`7d4e405`. The focused and full GUI package command passed:
+`e85e8d8`. The focused GUI package command passed after the
+no-side-effect assertion was added:
 
 ```text
 go test ./internal/gui -count=1
 ok  github.com/saiaathish/picogent/internal/gui  15.529s
+```
+
+Fresh local validation at `e85e8d8` also passed:
+
+```text
+go test ./... -count=1
+go test -race ./internal/gui -count=1
+go vet ./...
+git diff --check
 ```
 
 The test proves the decision ordering and contained side-effect behavior at the
