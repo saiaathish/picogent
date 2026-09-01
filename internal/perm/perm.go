@@ -143,7 +143,22 @@ func (g *Gate) AlwaysAllowedTools() []string {
 	return out
 }
 
+// Check evaluates one permission request and returns the effective decision.
+// Callers that need to distinguish an automatic policy decision from a
+// decision obtained through the configured prompt can use
+// CheckWithProvenance.
 func (g *Gate) Check(ctx context.Context, req Request) (Decision, error) {
+	decision, _, err := g.CheckWithProvenance(ctx, req)
+	return decision, err
+}
+
+// CheckWithProvenance evaluates one permission request and reports whether a
+// prompt was actually invoked. The effective decision still normalizes
+// AllowTurn and AllowAlways to Allow, preserving the original Check contract.
+// Prompted is deliberately runtime-only metadata: it lets an execution loop
+// record explicit user decisions without treating Fast-mode or persisted
+// always-allow policy as a fresh approval.
+func (g *Gate) CheckWithProvenance(ctx context.Context, req Request) (decision Decision, prompted bool, err error) {
 	// Take one coherent decision snapshot, then invoke Prompt after releasing
 	// the lock. GUI approval can update persisted always-allow state while a
 	// request is waiting, and callbacks must remain free to re-enter Gate.
@@ -157,32 +172,32 @@ func (g *Gate) Check(ctx context.Context, req Request) (Decision, error) {
 	// A tool-wide approval must not silently extend to destructive or
 	// out-of-workspace targets. Those always need a decision for this call.
 	if alwaysAllowed && !req.Destructive && !req.OutsideWorkspace {
-		return Allow, nil
+		return Allow, false, nil
 	}
 	if autoAllow(mode, req) {
-		return Allow, nil
+		return Allow, false, nil
 	}
 	if allowTurn && !req.Destructive && !req.OutsideWorkspace {
-		return Allow, nil
+		return Allow, false, nil
 	}
 	if prompt == nil {
-		return Deny, nil
+		return Deny, false, nil
 	}
 	d, err := prompt(ctx, req)
 	if err != nil {
-		return Deny, err
+		return Deny, true, err
 	}
 	if d == AllowTurn {
 		g.mu.Lock()
 		g.allowTurn = true
 		g.mu.Unlock()
-		return Allow, nil
+		return Allow, true, nil
 	}
 	if d == AllowAlways {
 		g.AddAlwaysAllowed(req.Tool)
-		return Allow, nil
+		return Allow, true, nil
 	}
-	return d, nil
+	return d, true, nil
 }
 
 func autoAllow(mode config.Mode, req Request) bool {

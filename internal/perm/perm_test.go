@@ -160,6 +160,30 @@ func TestSafeBlocksWriteWithoutPrompter(t *testing.T) {
 	}
 }
 
+func TestCheckWithProvenanceDistinguishesPromptedDecisions(t *testing.T) {
+	workspace := t.TempDir()
+	req := perm.Request{Tool: "write_file", Path: "note.txt"}
+
+	decision, prompted, err := perm.New(config.ModeFast, workspace, nil).CheckWithProvenance(context.Background(), req)
+	if err != nil || decision != perm.Allow || prompted {
+		t.Fatalf("Fast decision = %s, prompted=%v, err=%v; want automatic allow", decision, prompted, err)
+	}
+
+	decision, prompted, err = perm.New(config.ModeSafe, workspace, func(context.Context, perm.Request) (perm.Decision, error) {
+		return perm.Allow, nil
+	}).CheckWithProvenance(context.Background(), req)
+	if err != nil || decision != perm.Allow || !prompted {
+		t.Fatalf("prompted decision = %s, prompted=%v, err=%v; want prompted allow", decision, prompted, err)
+	}
+
+	decision, prompted, err = perm.New(config.ModeSafe, workspace, func(context.Context, perm.Request) (perm.Decision, error) {
+		return perm.Deny, nil
+	}).CheckWithProvenance(context.Background(), req)
+	if err != nil || decision != perm.Deny || !prompted {
+		t.Fatalf("prompted denial = %s, prompted=%v, err=%v; want prompted deny", decision, prompted, err)
+	}
+}
+
 func TestClassifyPathResolvesOutsideSymlinkBeforeFastApproval(t *testing.T) {
 	workspace := t.TempDir()
 	outside := t.TempDir()

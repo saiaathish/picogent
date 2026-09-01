@@ -8,6 +8,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/verify"
 )
@@ -321,6 +322,27 @@ func (a *Agent) noteTaskChanged(path string, ev EventHandler) {
 		for current := task.Current(); current != nil && !strings.Contains(strings.ToLower(current.Description), "verif"); current = task.Current() {
 			task.Advance()
 		}
+		return nil
+	})
+}
+
+// noteTaskPermission records the effective result of a permission prompt in
+// the same durable evidence ledger as the mutation it governs. It is called
+// after the corresponding tool result is applied, so an approval for a write
+// is bound to the resulting ChangeSeq rather than becoming stale immediately
+// when the file is changed. Automatic Fast-mode and persisted always-allow
+// decisions never reach this helper because the gate reports Prompted=false.
+func (a *Agent) noteTaskPermission(req perm.Request, decision perm.Decision, ev EventHandler) {
+	status := "DENIED"
+	if decision == perm.Allow {
+		status = "APPROVED"
+	}
+	summary := strings.TrimSpace(req.Summary)
+	if summary == "" {
+		summary = "permission decision for " + strings.TrimSpace(req.Tool)
+	}
+	a.mutateTask(ev, func(task *taskstate.Task) error {
+		task.RecordApprovalEvidence(status, summary, "permission prompt")
 		return nil
 	})
 }

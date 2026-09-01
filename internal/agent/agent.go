@@ -719,6 +719,8 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			observation         *workspace.Observation
 			observationUsable   bool
 			observationReason   string
+			permissionPrompted  bool
+			permissionDecision  perm.Decision
 		}
 		var pending []executed
 
@@ -748,7 +750,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			req := tool.Permission(call.Arguments, regCtx)
 			req.Hint = perm.EnrichHint(req, call.Arguments)
-			dec, err := gate.Check(ctx, req)
+			dec, prompted, err := gate.CheckWithProvenance(ctx, req)
 			if err != nil {
 				ev.OnToolEnd(call, "", err)
 				res.FilesChanged = sortedChanged(changed)
@@ -762,7 +764,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			if dec == perm.Deny {
 				taskBlocker = "permission needed"
 				ev.OnToolEnd(call, "denied by user", nil)
-				pending = append(pending, executed{call: call, req: req, text: "denied by user"})
+				pending = append(pending, executed{call: call, req: req, text: "denied by user", permissionPrompted: prompted, permissionDecision: dec})
 				continue
 			}
 			if call.Name == "write_file" || call.Name == "edit_file" {
@@ -774,7 +776,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 					continue
 				}
 			}
-			pending = append(pending, executed{call: call, req: req})
+			pending = append(pending, executed{call: call, req: req, permissionPrompted: prompted, permissionDecision: dec})
 		}
 
 		for i := range pending {
@@ -877,6 +879,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 					contentConflictPaths[p] = p
 				}
 			}
+			if ex.permissionPrompted {
+				a.noteTaskPermission(ex.req, ex.permissionDecision, ev)
+			}
 			content := ex.text
 			if content == "" && ex.err != nil {
 				content = ex.err.Error()
@@ -958,7 +963,10 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	ev.OnToolStart(call)
 	req := tool.Permission(call.Arguments, regCtx)
 	req.Hint = perm.EnrichHint(req, call.Arguments)
-	dec, err := gate.Check(ctx, req)
+	dec, prompted, err := gate.CheckWithProvenance(ctx, req)
+	if prompted && err == nil {
+		a.noteTaskPermission(req, dec, ev)
+	}
 	if err != nil || dec == perm.Deny {
 		msg := "verify skipped"
 		if err != nil {
