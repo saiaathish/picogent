@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -236,7 +237,7 @@ func writeAtomicIfUnchangedWithModeHook(root, path string, expected []byte, expe
 	if closeErr != nil {
 		return fmt.Errorf("close workspace file %q after edit check: %w", rel, closeErr)
 	}
-	if !bytes.Equal(currentContent, expected) || (checkMode && info.Mode().Perm() != expectedMode.Perm()) {
+	if !bytes.Equal(currentContent, expected) || (checkMode && comparableMode(info.Mode()) != comparableMode(expectedMode)) {
 		return fmt.Errorf("%w: %s", ErrContentConflict, rel)
 	}
 	return writeAtomicWithHook(root, path, data, mode, setMode, hook)
@@ -295,8 +296,12 @@ func RemoveIfUnchanged(root, path string, expected []byte, expectedMode os.FileM
 	if closeErr != nil {
 		return fmt.Errorf("close workspace file %q after removal check: %w", rel, closeErr)
 	}
-	if !bytes.Equal(currentContent, expected) || info.Mode().Perm() != expectedMode.Perm() {
+	if !bytes.Equal(currentContent, expected) || comparableMode(info.Mode()) != comparableMode(expectedMode) {
 		return fmt.Errorf("%w: %s", ErrContentConflict, rel)
 	}
 	return Remove(root, path)
+}
+
+func comparableMode(mode os.FileMode) os.FileMode {
+	return mode.Perm() | mode&(fs.ModeSetuid|fs.ModeSetgid|fs.ModeSticky)
 }
