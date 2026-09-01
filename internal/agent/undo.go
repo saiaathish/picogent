@@ -22,6 +22,7 @@ type turnUndo struct {
 	turnSequence      uint64
 	durable           bool
 	journalSlot       string
+	publishRejected   bool
 	restored          bool
 	restoreMessage    string
 	restoreErr        error
@@ -37,10 +38,18 @@ func newTurnUndo(workspace, sessionID string, sessionGeneration uint64) *turnUnd
 // workspace atomic rename. The record contains only paths whose expected
 // post-write state is already known, so a crash during a multi-file turn can
 // recover the writes that actually reached publication.
-func (u *turnUndo) preparePublish(path string, data []byte, mode os.FileMode) error {
+func (u *turnUndo) preparePublish(path string, data []byte, mode os.FileMode) (err error) {
 	if u == nil || u.checkpoint == nil || u.sessionID == "" || u.turnSequence == 0 {
 		return nil
 	}
+	defer func() {
+		if err != nil {
+			// Once a pre-publication hook rejects a write, the in-memory
+			// checkpoint must not be sealed from the current workspace: the
+			// current bytes may be an external edit that caused the rejection.
+			u.publishRejected = true
+		}
+	}()
 	changed, err := u.checkpoint.PrepareExpected(path, data, mode)
 	if err != nil {
 		return err
@@ -271,6 +280,12 @@ func (a *Agent) UndoLastTurn() (string, error) {
 			a.latestUndo = loaded
 		}
 	}
+	if a.latestUndo != nil && a.latestUndo.durable {
+		if refreshErr := a.refreshDurableUndoLocked(); refreshErr != nil {
+			a.undoLoadErr = refreshErr
+			return "", fmt.Errorf("undo is unavailable: %w", refreshErr)
+		}
+	}
 	if a.undoLoadErr != nil {
 		return "", fmt.Errorf("undo is unavailable: %w", a.undoLoadErr)
 	}
@@ -364,8 +379,99 @@ func (a *Agent) UndoAvailable() bool {
 	return a.latestUndo != nil && a.undoLoadErr == nil
 }
 
+// refreshDurableUndoLocked re-reads the journal while the project run lock is
+// held so a cached in-process checkpoint cannot restore an older turn after a
+// different process has published a newer one. The task is refreshed from the
+// store first because the cached task snapshot may be older than that journal.
+func (a *Agent) refreshDurableUndoLocked() error {
+	if a == nil || a.latestUndo == nil || !a.latestUndo.durable {
+		return nil
+	}
+	workspace := a.ConfigSnapshot().Workspace
+	sessionID, generation := a.taskSessionSnapshot()
+	if sessionID == "" {
+		return errors.New("durable undo session is unavailable")
+	}
+	if store := a.TaskStoreSnapshot(); store != nil {
+		task, err := store.Load(sessionID)
+		switch {
+		case err == nil:
+			a.taskMu.Lock()
+			a.task = task
+			a.taskLoadErr = nil
+			a.taskMu.Unlock()
+		case errors.Is(err, taskstate.ErrNotFound):
+			a.taskMu.Lock()
+			a.task = nil
+			a.taskLoadErr = nil
+			a.taskMu.Unlock()
+		default:
+			return fmt.Errorf("load durable task for undo: %w", err)
+		}
+	}
+	loaded, err := loadLatestDurableUndo(workspace, sessionID, generation)
+	if err != nil {
+		return err
+	}
+	if loaded == nil {
+		a.latestUndo = nil
+		return nil
+	}
+	if task := a.TaskSnapshot(); task != nil {
+		if err := validateDurableUndoTask(loaded, task); err != nil {
+			return err
+		}
+	}
+	a.latestUndo = loaded
+	return nil
+}
+
 func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 	if !nativeWriteRan {
+		return
+	}
+	if u.publishRejected {
+		// The checkpoint may contain a valid earlier publication, but it is
+		// no longer safe to seal it from the live workspace after a later
+		// publication was rejected. Reload the pending journal so the
+		// in-memory undo candidate remains sealed and retains the exact
+		// pre-rejection expectation. If no durable record exists, fail closed.
+		a.undoMu.Lock()
+		defer a.undoMu.Unlock()
+		if !a.undoBelongsToCurrentSession(u) {
+			if err := u.discardPending(); err != nil {
+				res.UndoError = err.Error()
+			}
+			return
+		}
+		if !u.durable {
+			return
+		}
+		sessionID, generation := a.taskSessionSnapshot()
+		loaded, err := loadLatestDurableUndo(u.workspace, sessionID, generation)
+		if err != nil {
+			res.UndoError = fmt.Errorf("durable undo journal remains retryable after rejected publication: %w", err).Error()
+			a.undoLoadErr = err
+			a.latestUndo = nil
+			return
+		}
+		if loaded == nil {
+			res.UndoError = "durable undo journal disappeared after rejected publication"
+			a.undoLoadErr = errors.New(res.UndoError)
+			a.latestUndo = nil
+			return
+		}
+		if task := a.TaskSnapshot(); task != nil {
+			if err := validateDurableUndoTask(loaded, task); err != nil {
+				res.UndoError = fmt.Errorf("durable undo journal is unavailable after rejected publication: %w", err).Error()
+				a.undoLoadErr = err
+				a.latestUndo = nil
+				return
+			}
+		}
+		a.undoLoadErr = nil
+		a.latestUndo = loaded
+		res.UndoAvailable = true
 		return
 	}
 	paths, err := u.seal()

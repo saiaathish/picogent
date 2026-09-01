@@ -830,9 +830,6 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		var successfulWrites []string
 		durableTransition := false
 		for _, ex := range pending {
-			if ex.ran && (ex.call.Name == "write_file" || ex.call.Name == "edit_file") {
-				nativeWriteRan = true
-			}
 			if ex.call.Name == "verify" && ex.ran {
 				durableTransition = true
 				a.setTaskStatus(taskstate.StatusVerifying, ev)
@@ -854,6 +851,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				a.setTaskStatus(taskstate.StatusWorking, ev)
 			}
 			if toolWriteSucceeded(ex.call.Name, ex.req.Path, ex.text, ex.err) {
+				nativeWriteRan = true
 				durableTransition = true
 				mutationCount++
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
@@ -862,6 +860,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 					a.noteTaskChanged(p, ev)
 				}
 				verificationCurrent = false
+			}
+			if (ex.call.Name == "write_file" || ex.call.Name == "edit_file") && ex.ran && ex.err != nil && !turnUndo.publishRejected {
+				// Some integrations can mutate a file and then report an error.
+				// Keep that existing undo guarantee, but never infer a mutation
+				// from a write rejected by the pre-publication recovery hook.
+				nativeWriteRan = true
 			}
 			content := ex.text
 			if content == "" && ex.err != nil {
