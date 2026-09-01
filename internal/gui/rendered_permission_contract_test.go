@@ -247,6 +247,9 @@ func TestRenderedPermissionPersistsDecisionAndMutation(t *testing.T) {
 			if got, ok := after["undo_available"].(bool); !ok || got != tc.wantUndo {
 				t.Fatalf("rendered undo_available = %#v, want %v", after["undo_available"], tc.wantUndo)
 			}
+			if status := fixture.server.buildAgentStatus(); status.Edits != tc.wantChangeSeq {
+				t.Fatalf("server edit count = %d, want %d", status.Edits, tc.wantChangeSeq)
+			}
 			stateTask, ok := after["task"].(map[string]any)
 			if !ok {
 				t.Fatalf("rendered task projection = %#v", after["task"])
@@ -264,6 +267,9 @@ func TestRenderedPermissionPersistsDecisionAndMutation(t *testing.T) {
 			}
 			if !tc.wantFile && hasChangeEvent(events) {
 				t.Fatalf("denied mutation was rendered as a change: %#v", eventTypes(events))
+			}
+			if !tc.wantFile && hasMutationActivityStart(events) {
+				t.Fatalf("denied mutation was rendered as editing activity: %#v", eventTypes(events))
 			}
 			if !hasTaskProjection(events, tc.wantEvidence, tc.wantFile) {
 				t.Fatalf("events did not project permission/mutation evidence: %#v", eventTypes(events))
@@ -517,6 +523,15 @@ func hasTaskProjection(events []event, wantEvidence string, wantFile bool) bool 
 func hasChangeEvent(events []event) bool {
 	for _, e := range events {
 		if e.Type == "change" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMutationActivityStart(events []event) bool {
+	for _, e := range events {
+		if e.Type == "think" && e.Kind == "edit" && e.Status == "start" {
 			return true
 		}
 	}

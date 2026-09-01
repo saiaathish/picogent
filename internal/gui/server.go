@@ -2334,10 +2334,6 @@ func (h *guiHandler) OnToolStart(call llm.ToolCall) {
 		h.s.noteTurnActivity("search")
 		h.learn.RecordSearch()
 		h.emit(event{Type: "activity", Kind: "search", Count: h.searches})
-	case "write_file", "edit_file":
-		path := parseToolPath(call.Arguments)
-		h.s.noteTurnActivity("edit")
-		h.emit(event{Type: "think", Text: "Editing " + path, Kind: "edit", Status: "start", Path: path})
 	case "bash":
 		var in struct {
 			Command string `json:"command"`
@@ -2410,6 +2406,7 @@ func (h *guiHandler) recordChange(path string, added, removed int) {
 		return
 	}
 	h.edits++
+	h.s.noteTurnActivity("edit")
 	h.added += added
 	h.removed += removed
 	h.learn.RecordChange(path, added, removed)
