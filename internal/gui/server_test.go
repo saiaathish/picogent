@@ -98,6 +98,44 @@ func TestGUIRebuildAgentPreservesRuntimeAlwaysAllowedTools(t *testing.T) {
 	t.Fatalf("rebuilt agent lost runtime approval: %v", got)
 }
 
+func TestGUIRebuildAgentPreservesDurableTaskSession(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	const sessionID = "rebuild-task-session"
+	store := taskstate.NewStore(t.TempDir())
+	task, err := taskstate.New(sessionID, "preserve the durable task", []string{"keep the task attached"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = workspace
+	old := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeSafe, workspace, nil))
+	defer old.Close()
+	old.SetTaskStore(store)
+	if err := old.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	s := &server{cfg: cfg, ag: old, sessionID: sessionID}
+
+	if err := s.rebuildAgent(); err != nil {
+		t.Fatal(err)
+	}
+	s.mu.Lock()
+	rebuilt := s.ag
+	s.mu.Unlock()
+	defer rebuilt.Close()
+	if rebuilt.TaskSession != sessionID {
+		t.Fatalf("rebuilt task session = %q, want %q", rebuilt.TaskSession, sessionID)
+	}
+	if got := rebuilt.TaskSnapshot(); got == nil || got.SessionID != sessionID || got.Goal != task.Goal {
+		t.Fatalf("rebuilt durable task = %#v, want session %q and goal %q", got, sessionID, task.Goal)
+	}
+}
+
 func TestTaskProgressClearEventKeepsNullTaskEnvelope(t *testing.T) {
 	raw, err := json.Marshal(event{Type: "task_progress", SessionID: "session-current"})
 	if err != nil {

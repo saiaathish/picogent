@@ -2,12 +2,15 @@ package gui
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/extensions"
+	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
 func (s *server) extensionsAPI(w http.ResponseWriter, r *http.Request) {
@@ -298,11 +301,20 @@ func (s *server) extensionsAuthDone(w http.ResponseWriter, id string) {
 func (s *server) rebuildAgent() error {
 	s.mu.Lock()
 	cfg := s.cfg
+	sessionID := s.sessionID
+	src := s.ag
 	var inheritedAlwaysAllowed []string
-	if s.ag != nil && s.ag.Gate != nil {
-		inheritedAlwaysAllowed = s.ag.Gate.AlwaysAllowedTools()
+	if src != nil && src.Gate != nil {
+		inheritedAlwaysAllowed = src.Gate.AlwaysAllowedTools()
 	}
 	s.mu.Unlock()
+
+	var runtime agent.RuntimeState
+	var taskStoreSnapshot *taskstate.Store
+	if src != nil {
+		runtime = src.RuntimeSnapshot()
+		taskStoreSnapshot = src.TaskStoreSnapshot()
+	}
 	a, err := app.Build(cfg)
 	if err != nil {
 		return err
@@ -313,6 +325,27 @@ func (s *server) rebuildAgent() error {
 	}
 	if a.Gate != nil {
 		a.Gate.SetAlwaysAllowed(allowed)
+	}
+	if src != nil {
+		// Rebuilding the provider/tool registry must not detach the live task
+		// contract. In particular, cleanup after a turn used to replace the
+		// agent with an empty TaskSession, hiding both the durable task and the
+		// checkpoint-backed undo action from the GUI until the next turn.
+		if taskStoreSnapshot != nil {
+			a.SetTaskStore(taskStoreSnapshot)
+		}
+		a.SetProjectRules(runtime.ProjectRules)
+		a.SetSkillRules(runtime.SkillRules)
+		a.SetMemory(runtime.Memory)
+		a.SetGoalState(runtime.Goal, runtime.GoalRevision)
+		a.SetTrace(runtime.Trace)
+		a.SetTaskMode(runtime.TaskMode)
+		if sessionID != "" {
+			if err := a.SetTaskSession(sessionID); err != nil {
+				a.Close()
+				return fmt.Errorf("restore durable task session %q after agent rebuild: %w", sessionID, err)
+			}
+		}
 	}
 	s.mu.Lock()
 	s.ag = a
