@@ -567,6 +567,7 @@ func sanitizeEvent(e event) event {
 		e.Summary = guiEventText(e.Summary, maxGUIEventSummaryBytes)
 		e.Hint = guiEventText(e.Hint, maxGUIEventHintBytes)
 	}
+	e.Path = guiEventText(e.Path, maxGUIEventTextBytes)
 	e.Task = sanitizeTask(e.Task)
 	e.Completion = sanitizeCompletion(e.Completion)
 	return e

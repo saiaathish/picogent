@@ -1753,7 +1753,7 @@ func TestGUIEventSanitizationCoversLiveAndDiagnosticPayloads(t *testing.T) {
 		{Type: "assistant_delta", Text: "delta access_token=" + secret},
 		{Type: "assistant_final", Text: "final Bearer " + secret},
 		{Type: "tool", Text: "tool output token=" + secret},
-		{Type: "test", Text: "tests", Summary: "output\napi_key=" + secret},
+		{Type: "test", Text: "tests", Summary: "output\napi_key=" + secret, Path: "changed\naccess_token=" + secret},
 		{Type: "route", Text: "route", Summary: "reason secret=" + secret},
 		{Type: "title", Text: "title password=" + secret},
 	}
@@ -1765,6 +1765,11 @@ func TestGUIEventSanitizationCoversLiveAndDiagnosticPayloads(t *testing.T) {
 		}
 		if strings.Contains(string(wire), secret) || strings.Contains(string(wire), "\x1b") || strings.Contains(string(wire), "\n") {
 			t.Fatalf("event %s retained hostile text: %s", input.Type, wire)
+		}
+		for _, field := range []string{got.Text, got.Summary, got.Hint, got.Path} {
+			if strings.Contains(field, secret) || strings.ContainsAny(field, "\x1b\n\r") {
+				t.Fatalf("event %s retained hostile field text: %#v", input.Type, got)
+			}
 		}
 		if !strings.Contains(string(wire), "[REDACTED]") {
 			t.Fatalf("event %s lost redaction marker: %s", input.Type, wire)
