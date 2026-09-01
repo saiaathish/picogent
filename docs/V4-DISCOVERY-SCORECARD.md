@@ -256,8 +256,9 @@ tracked in issue #243.
 ## Current-head reconciliation (2026-09-01)
 
 The scorecard is now reconciled with exact `main` head
-`a64e2da1854ff1f6905cd889cc1be27394757022`. The following bounded slices are
-confirmed by the parent issue's current evidence ledger:
+`71c6253ee40d816c5fe5cfe596333bbbb77cc7ac`. The following bounded slices are
+confirmed by the parent issue's current evidence ledger and the completed
+continuity child lanes:
 
 - PRs #249 and #250 establish the executable cross-surface completion matrix
   and route CLI, GUI, and TUI retirement through the shared
@@ -277,6 +278,19 @@ confirmed by the parent issue's current evidence ledger:
   adds GUI shutdown, reconnect, and persistence-failure evidence. The GUI
   fresh-process result is local macOS HTTP-boundary evidence; rendered-browser
   behavior and Windows child SIGINT remain explicitly unverified.
+- PR #297 adds the deterministic taskstate continuity matrix for queued and
+  resumed turns, including revision chronology, stale-proof rejection, and
+  fresh criterion-bound rebinding.
+- PR #298 adds the GUI continuity regression for FIFO queued admission across
+  agent rebuild and same-session reload, including durable mutation
+  invalidation and fresh proof projection.
+
+The #296 medium lane is intentionally not opened: the small contract lane and
+the GUI integration lane exposed no production behavior defect. The focused
+post-merge race suite passed on the exact head with
+`go test -race ./internal/taskstate ./internal/agent ./internal/session ./internal/gui -count=1`.
+Any future production seam should be tracked as its own issue-linked medium
+lane rather than adding a speculative correction to #296.
 
 These slices prove focused contracts and deterministic local or hosted checks;
 they do not establish live-provider quality, rendered cross-platform behavior,
