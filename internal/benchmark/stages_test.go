@@ -87,10 +87,30 @@ func BenchmarkScriptedAgentEditStageCheckpointSeal(b *testing.B) {
 }
 
 // BenchmarkScriptedAgentEditStageWorkspacePublish measures the secure atomic
-// publication used by the write_file tool with an empty publication hook. It
-// is a standalone non-durable-turn primitive control; the production-shaped
-// durable path is measured by BenchmarkScriptedAgentEditStageDurableTurn.
+// publication used by the write_file tool in a non-durable turn. The
+// production-shaped durable path is measured by
+// BenchmarkScriptedAgentEditStageDurableTurn.
 func BenchmarkScriptedAgentEditStageWorkspacePublish(b *testing.B) {
+	root := b.TempDir()
+	path := filepath.Join(root, "note.txt")
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		if err := os.WriteFile(path, benchmarkStageBefore, 0o644); err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+		if err := workspace.WriteAtomic(root, path, benchmarkStageAfter); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// BenchmarkScriptedAgentEditStageWorkspacePublishWithHook is a comparison
+// control for the durable publication-hook boundary. It keeps the callback
+// empty so the control measures the hook-only cost without journaling.
+func BenchmarkScriptedAgentEditStageWorkspacePublishWithHook(b *testing.B) {
 	root := b.TempDir()
 	path := filepath.Join(root, "note.txt")
 	b.ReportAllocs()

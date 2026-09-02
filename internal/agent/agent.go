@@ -495,8 +495,15 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	sessionID, sessionGeneration := a.taskSessionSnapshot()
 	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
 	turnUndo.turnSequence = turnSequence
-	regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
-		return turnUndo.preparePublish(path, data, mode)
+	// Non-durable turns cannot publish a recovery journal. Leave the hook nil
+	// for them so atomic workspace writes do not perform the hook-only temporary
+	// file stat and callback dispatch. Durable turns retain the pre-publication
+	// journal boundary unchanged.
+	regCtx.BeforeWorkspacePublish = nil
+	if sessionID != "" && turnSequence != 0 {
+		regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+			return turnUndo.preparePublish(path, data, mode)
+		}
 	}
 	nativeWriteRan := false
 	mutationCount := 0
