@@ -1,10 +1,11 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-09-02 against the exact audited `main` head
-`3900ce229440bd1ece64c9d2cf15960aa471bdcd` after the outcome, recovery, GUI,
+`a3c4ccf1a20add17724243521f088e1c4ec11ab2` after the outcome, recovery, GUI,
 undo-publication, lifecycle, proof-continuity, cancellation, and hosted
-attestation slices through PRs #297, #298, #299, #301, #303, #318, and #320
-merged. The independent release-evidence audit is recorded in PR #322.
+attestation slices through PRs #297, #298, #299, #301, #303, #318, #320,
+#343 merged. The current independent release-evidence refresh is tracked in
+issue #344.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -263,7 +264,7 @@ tracked in issue #243.
 ## Current-head reconciliation (2026-09-02)
 
 The scorecard is now reconciled with the exact audited `main` head
-`3900ce229440bd1ece64c9d2cf15960aa471bdcd`. The following bounded slices are
+`a3c4ccf1a20add17724243521f088e1c4ec11ab2`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger and the completed
 continuity child lanes:
 
@@ -304,6 +305,15 @@ continuity child lanes:
   SHA `3900ce229440bd1ece64c9d2cf15960aa471bdcd`. PR #322 records the fresh
   independent artifact recheck and preserves the `UNVERIFIED` manifest,
   SBOM, production-release, and runtime boundaries.
+- PR #343 adds the TUI process-kill fixture and reconciles bounded crash-
+  recovery evidence across the existing headless, GUI, and TUI seams.
+- Issue #344 refreshes the independent release audit at exact `main` SHA
+  `a3c4ccf1a20add17724243521f088e1c4ec11ab2` using post-merge run
+  `33683301465`. The hosted gate ledger and both Sigstore subjects verify, but
+  the signed manifest is `INCONCLUSIVE` because its bounded broader check was
+  killed and targeted coverage was skipped. SBOM, production-release,
+  moving-action-pin, live-provider, rendered-platform, hostile-runtime, and
+  release-authorization claims remain outside the evidence.
 
 The #296 medium lane is intentionally not opened: the small contract lane and
 the GUI integration lane exposed no production behavior defect. The focused
