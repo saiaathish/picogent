@@ -14,6 +14,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Pull-request gates must test the source commit recorded by the
+          # release ledger, not GitHub's synthetic merge ref.
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
@@ -79,6 +84,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Keep the security result bound to the same source tree as the
+          # release ledger and the platform test matrix.
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
@@ -99,19 +109,29 @@ jobs:
         with:
           # pull_request.sha is GitHub's synthetic merge ref; use the source
           # commit so the evidence describes the reviewed tree exactly.
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
+      - name: Validate release evidence layout
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence
+        run: |
+          go run ./cmd/release-evidence-layout \
+            --workspace "$GITHUB_WORKSPACE" \
+            --evidence-dir "$ARTIFACT_DIR"
+          mkdir -p "$ARTIFACT_DIR"
       - name: Write release gate ledger
         env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence
           EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
           TEST_RESULT: ${{ needs.test.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
         run: |
-          mkdir -p artifacts
+          mkdir -p "$ARTIFACT_DIR"
           python3 - <<'PY'
           import json
           import os
@@ -137,32 +157,35 @@ jobs:
                   record("security", os.environ["SECURITY_RESULT"], "ubuntu-latest", "go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -show verbose ./..."),
               ],
           }
-          with open("artifacts/release-gates.json", "w", encoding="utf-8") as handle:
+          with open(os.path.join(os.environ["ARTIFACT_DIR"], "release-gates.json"), "w", encoding="utf-8") as handle:
               json.dump(ledger, handle, indent=2)
               handle.write("\n")
           PY
       - name: Validate release gate ledger
         env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence
           EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           go run ./cmd/release-gates \
-            --ledger artifacts/release-gates.json \
+            --ledger "$ARTIFACT_DIR/release-gates.json" \
             --expected-sha "$EXPECTED_SHA" \
             --event "$EVENT_NAME" \
             --required test,security
       - name: Generate verification manifest
         env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence
           EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
         run: |
-          mkdir -p artifacts
+          mkdir -p "$ARTIFACT_DIR"
           go run ./cmd/verify-manifest \
             --workspace . \
             --expected-sha "$EXPECTED_SHA" \
-            > artifacts/verification-manifest.json
+            > "$ARTIFACT_DIR/verification-manifest.json"
       - name: Prepare release attestation predicate
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
         env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence
           EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           EVENT_NAME: ${{ github.event_name }}
           REPOSITORY: ${{ github.repository }}
@@ -175,6 +198,11 @@ jobs:
           import hashlib
           import json
           import os
+
+          artifact_dir = os.environ["ARTIFACT_DIR"]
+
+          def artifact(name):
+              return os.path.join(artifact_dir, name)
 
           def digest(path):
               hasher = hashlib.sha256()
@@ -191,57 +219,59 @@ jobs:
               "event": os.environ["EVENT_NAME"],
               "workflow": os.environ["WORKFLOW_REF"],
               "run_id": int(os.environ["RUN_ID"]),
-              "release_gates_sha256": digest("artifacts/release-gates.json"),
-              "verification_manifest_sha256": digest("artifacts/verification-manifest.json"),
+              "release_gates_sha256": digest(artifact("release-gates.json")),
+              "verification_manifest_sha256": digest(artifact("verification-manifest.json")),
               "signer": os.environ["WORKFLOW_REF"],
               "issued_at": issued.isoformat().replace("+00:00", "Z"),
               "expires_at": (issued + datetime.timedelta(days=7)).isoformat().replace("+00:00", "Z"),
           }
-          with open("artifacts/release-attestation-predicate.json", "w", encoding="utf-8") as handle:
+          with open(artifact("release-attestation-predicate.json"), "w", encoding="utf-8") as handle:
               json.dump(predicate, handle, indent=2, sort_keys=True)
               handle.write("\n")
           PY
-          sha256sum artifacts/release-gates.json artifacts/verification-manifest.json > artifacts/release-evidence.sha256
+          sha256sum "$ARTIFACT_DIR/release-gates.json" "$ARTIFACT_DIR/verification-manifest.json" > "$ARTIFACT_DIR/release-evidence.sha256"
       - name: Publish signed release-evidence attestation
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
-          subject-checksums: artifacts/release-evidence.sha256
+          subject-checksums: ${{ runner.temp }}/picogent-release-evidence/release-evidence.sha256
           predicate-type: https://github.com/saiaathishkarthik/picogent/attestation/release-evidence/v1
-          predicate-path: artifacts/release-attestation-predicate.json
+          predicate-path: ${{ runner.temp }}/picogent-release-evidence/release-attestation-predicate.json
       - name: Verify release-gates attestation
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
         env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence
           GH_TOKEN: ${{ github.token }}
           PREDICATE_TYPE: https://github.com/saiaathishkarthik/picogent/attestation/release-evidence/v1
           SIGNER_WORKFLOW: ${{ github.workflow_ref }}
         run: |
-          gh attestation verify artifacts/release-gates.json \
+          gh attestation verify "$ARTIFACT_DIR/release-gates.json" \
             --repo "$GITHUB_REPOSITORY" \
             --predicate-type "$PREDICATE_TYPE" \
             --signer-workflow "$SIGNER_WORKFLOW" \
             --format=json \
-            > artifacts/release-gates-attestation.json
+            > "$ARTIFACT_DIR/release-gates-attestation.json"
       - name: Verify verification-manifest attestation
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
         env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence
           GH_TOKEN: ${{ github.token }}
           PREDICATE_TYPE: https://github.com/saiaathishkarthik/picogent/attestation/release-evidence/v1
           SIGNER_WORKFLOW: ${{ github.workflow_ref }}
         run: |
-          gh attestation verify artifacts/verification-manifest.json \
+          gh attestation verify "$ARTIFACT_DIR/verification-manifest.json" \
             --repo "$GITHUB_REPOSITORY" \
             --predicate-type "$PREDICATE_TYPE" \
             --signer-workflow "$SIGNER_WORKFLOW" \
             --format=json \
-            > artifacts/verification-manifest-attestation.json
+            > "$ARTIFACT_DIR/verification-manifest-attestation.json"
       - name: Upload verification manifest
         uses: actions/upload-artifact@v4
         with:
           name: verification-manifest-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           path: |
-            artifacts/verification-manifest.json
-            artifacts/release-gates.json
+            ${{ runner.temp }}/picogent-release-evidence/verification-manifest.json
+            ${{ runner.temp }}/picogent-release-evidence/release-gates.json
           if-no-files-found: error
       - name: Upload release attestation evidence
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -249,8 +279,8 @@ jobs:
         with:
           name: release-attestation-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           path: |
-            artifacts/release-attestation-predicate.json
-            artifacts/release-evidence.sha256
-            artifacts/release-gates-attestation.json
-            artifacts/verification-manifest-attestation.json
+            ${{ runner.temp }}/picogent-release-evidence/release-attestation-predicate.json
+            ${{ runner.temp }}/picogent-release-evidence/release-evidence.sha256
+            ${{ runner.temp }}/picogent-release-evidence/release-gates-attestation.json
+            ${{ runner.temp }}/picogent-release-evidence/verification-manifest-attestation.json
           if-no-files-found: error

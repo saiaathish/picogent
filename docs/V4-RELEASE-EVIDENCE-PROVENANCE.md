@@ -1,8 +1,8 @@
 # V4 release-evidence provenance boundary
 
-Status: the S-lane contract for issue #328, under parent issues #316 and
-#246. This document defines an evidence boundary; it does not authorize a
-release.
+Status: the S-lane contract and M-lane workflow implementation candidate for
+issue #328, under parent issues #316 and #246. This document defines an
+evidence boundary; it does not authorize a release.
 
 ## Problem
 
@@ -37,6 +37,20 @@ against an uncooperative same-UID writer, symlink/TOCTOU races, or a clean
 production release. The workflow must still fail closed on directory creation,
 write, digest, upload, or attestation errors.
 
+## M-lane workflow implementation
+
+`.github/workflows/ci.yml` sets one step-scoped `ARTIFACT_DIR` under
+`${{ runner.temp }}`, validates it before creating the directory, and routes
+the release ledger, verification manifest, predicate, checksum list,
+attestation verifier output, and both uploads through that directory. The
+source checkout remains unchanged when `verify-manifest` captures provenance.
+
+`internal/verify/release_evidence_workflow_test.go` keeps the workflow wiring
+bounded: it requires the validator to precede manifest generation, requires
+the external artifact root and action inputs, and rejects checkout-relative
+`artifacts/` paths. This is a regression guard for the repository workflow,
+not hosted evidence.
+
 ## Evidence states
 
 - `CLEAN` is valid only when `verify-manifest` observes an empty Git status
@@ -57,6 +71,14 @@ go test ./internal/verify -run '^TestValidateReleaseEvidenceDirectory$' -count=1
 ```
 
 The M lane must wire this contract into `.github/workflows/ci.yml` and move
-all release-evidence outputs to the runner-temporary directory. A passing
-local contract test is not hosted provenance evidence; the L lane requires a
-fresh exact-main workflow run and independent artifact inspection.
+all release-evidence outputs to the runner-temporary directory. The M-lane
+candidate validation is:
+
+```sh
+go test ./cmd/release-evidence-layout ./internal/verify -count=1
+go vet ./...
+go build ./...
+```
+
+A passing local contract test is not hosted provenance evidence; the L lane
+requires a fresh exact-main workflow run and independent artifact inspection.
