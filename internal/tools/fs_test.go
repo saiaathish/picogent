@@ -44,6 +44,57 @@ func TestFilesystemWritesHonorCanceledContext(t *testing.T) {
 	}
 }
 
+func TestFilesystemWritesInvokeConfiguredPublishHook(t *testing.T) {
+	workspace := t.TempDir()
+	canonicalWorkspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	var hookPath string
+	var hookData string
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		BeforeWorkspacePublish: func(path string, data []byte, mode os.FileMode) error {
+			calls.Add(1)
+			hookPath = path
+			hookData = string(data)
+			if mode.Perm() == 0 {
+				t.Fatalf("publish hook received empty mode")
+			}
+			return nil
+		},
+	})
+
+	write, ok := reg.Get("write_file")
+	if !ok {
+		t.Fatal("write_file tool is unavailable")
+	}
+	if _, err := write.Run(context.Background(), `{"path":"note.txt","content":"after"}`, reg.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("publish hook calls after write = %d, want 1", calls.Load())
+	}
+	if hookPath != filepath.Join(canonicalWorkspace, "note.txt") || hookData != "after" {
+		t.Fatalf("publish hook arguments = path %q data %q", hookPath, hookData)
+	}
+
+	edit, ok := reg.Get("edit_file")
+	if !ok {
+		t.Fatal("edit_file tool is unavailable")
+	}
+	if _, err := edit.Run(context.Background(), `{"path":"note.txt","old_string":"after","new_string":"final"}`, reg.Ctx); err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("publish hook calls after edit = %d, want 2", calls.Load())
+	}
+	if hookData != "final" {
+		t.Fatalf("edit publish hook data = %q, want final", hookData)
+	}
+}
+
 func TestEditRequiresUniqueString(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "a.txt")

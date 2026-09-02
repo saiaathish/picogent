@@ -134,11 +134,11 @@ func (writeFile) Run(ctx context.Context, args string, c Context) (string, error
 		}
 	}
 	data := []byte(in.Content)
-	hook := func(mode os.FileMode) error {
-		if c.BeforeWorkspacePublish == nil {
-			return nil
+	var hook func(os.FileMode) error
+	if c.BeforeWorkspacePublish != nil {
+		hook = func(mode os.FileMode) error {
+			return c.BeforeWorkspacePublish(abs, data, mode)
 		}
-		return c.BeforeWorkspacePublish(abs, data, mode)
 	}
 	if err := workspace.WriteAtomicWithPublishHook(ws, abs, data, hook); err != nil {
 		return "", err
@@ -226,11 +226,11 @@ func (editFile) Run(ctx context.Context, args string, c Context) (string, error)
 		}
 	}
 	newData := []byte(updated)
-	hook := func(mode os.FileMode) error {
-		if c.BeforeWorkspacePublish == nil {
-			return nil
+	var hook func(os.FileMode) error
+	if c.BeforeWorkspacePublish != nil {
+		hook = func(mode os.FileMode) error {
+			return c.BeforeWorkspacePublish(abs, newData, mode)
 		}
-		return c.BeforeWorkspacePublish(abs, newData, mode)
 	}
 	if err := workspace.WriteAtomicIfUnchangedWithPublishHook(ws, abs, data, newData, hook); err != nil {
 		return "", err
