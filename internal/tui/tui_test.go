@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/goal"
@@ -695,8 +696,8 @@ func TestHelpExposesRecoveryControls(t *testing.T) {
 		t.Fatal("help did not add a system line")
 	}
 	help := m.lines[len(m.lines)-1].Text
-	if !strings.Contains(help, tuiRecoveryHelp) {
-		t.Fatalf("help = %q, want recovery controls %q", help, tuiRecoveryHelp)
+	if !strings.Contains(help, "/undo") || !strings.Contains(help, "/resume") {
+		t.Fatalf("help = %q, want independent /undo and /resume controls", help)
 	}
 }
 
@@ -710,14 +711,40 @@ func TestIdleFooterExposesRecoveryControlsAndBusyFooterKeepsStopGuidance(t *test
 	}
 	m.width, m.height = 100, 30
 	view := m.View()
-	if !strings.Contains(view, tuiRecoveryHelp) {
-		t.Fatalf("idle footer = %q, want recovery controls %q", view, tuiRecoveryHelp)
+	if !strings.Contains(view, "/undo") || !strings.Contains(view, "/resume") {
+		t.Fatalf("idle footer = %q, want independent /undo and /resume controls", view)
 	}
 
 	m.busy = true
 	busyView := m.View()
-	if !strings.Contains(busyView, "working…  ctrl-c stops this turn") {
+	if !strings.Contains(busyView, tuiBusyHelp) {
 		t.Fatalf("busy footer = %q, want stop guidance", busyView)
+	}
+}
+
+func TestTUIHelpFooterFitsNarrowWidths(t *testing.T) {
+	tests := []struct {
+		width int
+		idle  string
+		busy  string
+	}{
+		{width: 80, idle: "enter send · ctrl-c stop/quit · /help · " + tuiRecoveryHelp, busy: tuiBusyHelp},
+		{width: 40, idle: tuiRecoveryHelpCompact, busy: tuiBusyHelp},
+		{width: 20, idle: tuiRecoveryHelpMinimal, busy: tuiBusyHelpCompact},
+		{width: 8, idle: tuiRecoveryHelpSingle, busy: tuiBusyHelpMinimal},
+		{width: 4, idle: "", busy: tuiBusyHelpSingle},
+		{width: 0, idle: "", busy: ""},
+	}
+	for _, test := range tests {
+		if got := tuiHelpFooter(test.width, false); got != test.idle {
+			t.Errorf("idle width %d footer = %q, want %q", test.width, got, test.idle)
+		}
+		if got := tuiHelpFooter(test.width, true); got != test.busy {
+			t.Errorf("busy width %d footer = %q, want %q", test.width, got, test.busy)
+		}
+		if lipgloss.Width(test.idle) > test.width || lipgloss.Width(test.busy) > test.width {
+			t.Errorf("width %d expected footer exceeds width: idle=%q busy=%q", test.width, test.idle, test.busy)
+		}
 	}
 }
 

@@ -54,7 +54,16 @@ var (
 	inputBox   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(paper).Padding(0, 1)
 )
 
-const tuiRecoveryHelp = "/undo last turn · /resume recover"
+const (
+	tuiRecoveryHelp        = "/undo last turn · /resume recover"
+	tuiRecoveryHelpCompact = "/help · /undo · /resume"
+	tuiRecoveryHelpMinimal = "/undo /resume"
+	tuiRecoveryHelpSingle  = "/undo"
+	tuiBusyHelp            = "working…  ctrl-c stops this turn"
+	tuiBusyHelpCompact     = "ctrl-c stop"
+	tuiBusyHelpMinimal     = "ctrl-c"
+	tuiBusyHelpSingle      = "stop"
+)
 
 type logLine struct{ Kind, Text string }
 
@@ -1041,10 +1050,7 @@ func (m *model) View() string {
 		}
 		permBox = permStyle.Width(max(m.width-4, 20)).Render(body + "?\n\n  [Y]  Yes      [N]  No      [A]  This turn      [L]  Always")
 	}
-	help := "enter send · ctrl-c stop/quit · /help · " + tuiRecoveryHelp
-	if m.busy {
-		help = "working…  ctrl-c stops this turn"
-	}
+	help := tuiHelpFooter(m.width, m.busy)
 	box := inputBox.Width(max(m.width-2, 20)).Render(m.ta.View())
 	sections := []string{head, ws}
 	if taskProgress != "" {
@@ -1100,6 +1106,24 @@ func clip(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func tuiHelpFooter(width int, busy bool) string {
+	candidates := []string{
+		"enter send · ctrl-c stop/quit · /help · " + tuiRecoveryHelp,
+		tuiRecoveryHelpCompact,
+		tuiRecoveryHelpMinimal,
+		tuiRecoveryHelpSingle,
+	}
+	if busy {
+		candidates = []string{tuiBusyHelp, tuiBusyHelpCompact, tuiBusyHelpMinimal, tuiBusyHelpSingle}
+	}
+	for _, candidate := range candidates {
+		if lipgloss.Width(candidate) <= width {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func max(a, b int) int {
