@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -547,13 +548,23 @@ func longHorizonKillHelper(t *testing.T) {
 	if _, ok := task.BeginTurn(taskstate.TurnRouteImplement); !ok {
 		t.Fatal("active turn did not start")
 	}
+	// Hold the project run lock across durable task admission. The fresh
+	// resumer must cross this same process boundary before it can recover the
+	// task through SetTaskSession.
+	releaseRun, err := store.AcquireRunLock()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := store.Save(task); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(os.Getenv("PICOGENT_KILL_READY"), []byte("active\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	select {}
+	for {
+		runtime.KeepAlive(releaseRun)
+		time.Sleep(time.Hour)
+	}
 }
 
 func longHorizonKillResumeHelper(t *testing.T) {
