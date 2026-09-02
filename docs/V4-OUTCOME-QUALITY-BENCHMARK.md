@@ -90,6 +90,32 @@ existing deterministic provider stubs and taskstate/verification seams, but it
 must not create a second planner, durable store, report authority, daemon,
 watcher, or user-facing workflow.
 
+## M-lane scripted execution
+
+The conditional M lane is implemented by
+`internal/benchmark/OutcomeQualityAgentExecutor`. It runs the real
+`agent.Agent` loop with `llm.Scripted`, `tools.Registry`, `perm.Gate`, an
+external `taskstate.Store`, and the existing workspace-bound verification
+callback. Every observation gets a fresh ephemeral fixture workspace and the
+same bounded prompt/file input; the task store and fixture are removed after
+the observation.
+
+The scripted flow reads the fixture, applies the expected deterministic
+change, runs targeted verification, and emits a completion marker. The
+executor derives correctness from final fixture bytes and changed paths, and
+accepts success only when the shared durable completion proof and current
+workspace-bound verification both agree. It also records scripted token
+usage, model/tool calls, permission prompts, changed lines, repairs, and
+retained context growth. This proves local control-flow and measurement
+plumbing only; it is not live-provider, real-repository, rendered UI, or
+general autonomous-coding evidence.
+
+The focused full-matrix check is:
+
+```sh
+go test ./internal/benchmark -run '^TestRunOutcomeQualityMatrixWithScriptedAgent$' -count=1
+```
+
 ## Evidence limits
 
 This contract alone does not establish:
