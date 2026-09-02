@@ -46,6 +46,26 @@ store a private key, resolve GitHub or Sigstore trust, generate an SBOM, or
 claim supply-chain or release readiness. Those are conditional follow-up
 lanes under issue #316 and remain `UNVERIFIED` until directly observed.
 
+## Hosted M lane design
+
+The hosted publication lane uses GitHub's `actions/attest@v4` with a full
+commit pin, OIDC signing, and a custom predicate type:
+
+```text
+https://github.com/saiaathishkarthik/picogent/attestation/release-evidence/v1
+```
+
+The predicate repeats the S-lane identity fields and computes the two artifact
+digests from the files that are passed to the attestation action. The action
+creates a Sigstore-backed in-toto attestation; it is not the local Ed25519
+envelope format. `gh attestation verify` must validate each subject with the
+repository, predicate type, and exact signer workflow.
+
+Attestation publication is intentionally skipped for fork pull requests,
+where the workflow cannot safely receive write-capable attestation
+permissions. Those runs still execute the ordinary gate and manifest checks,
+but their hosted attestation state remains `UNVERIFIED`.
+
 ## Local validation
 
 ```sh
