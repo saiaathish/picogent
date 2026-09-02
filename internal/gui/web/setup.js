@@ -63,9 +63,6 @@ function showStage(n) {
   const onLast = current === TOTAL - 1;
   nextBtn.textContent = onLast ? "Start chatting" : "Next";
   nextBtn.disabled = !canAdvance(status, current);
-  if (current === 1 && !toolsReady(status)) {
-    autoInstallIfNeeded();
-  }
 }
 
 let modelOptionsCache = [];
@@ -147,24 +144,32 @@ async function refresh() {
 
 let installStarted = false;
 
-async function autoInstallIfNeeded() {
-  if (installStarted || toolsReady(status)) return;
-  const missing = (status.components || []).some((c) => !c.ok && c.can_fix);
-  if (missing) await install();
-}
-
 async function install() {
+  if (installStarted) return;
   installStarted = true;
   installBtn.disabled = true;
   installBtn.textContent = "Installing…";
   logEl.hidden = false;
   logEl.textContent = "Running install commands…";
-  const res = await fetch("/api/setup/install", { method: "POST" });
-  const data = await res.json();
-  logEl.textContent = data.log || data.error || "";
-  if (data.status) paint(data.status);
-  else await refresh();
-  installStarted = false;
+  try {
+    const res = await fetch("/api/setup/install", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Couldn't install missing pieces");
+    logEl.textContent = data.log || data.error || "";
+    if (data.status) paint(data.status);
+    else await refresh();
+  } catch (err) {
+    const message = err && typeof err.message === "string" && err.message
+      ? err.message
+      : "Couldn't install missing pieces";
+    logEl.textContent = message;
+    showError(message);
+  } finally {
+    installStarted = false;
+    const ready = toolsReady(status);
+    installBtn.disabled = !!status.busy || ready;
+    installBtn.textContent = ready ? "All tools ready" : status.busy ? "Installing…" : "Install missing pieces";
+  }
 }
 
 function canReach(st, n) {
