@@ -115,6 +115,95 @@ func TestStoreRunLockSerializesFreshProcess(t *testing.T) {
 	}
 }
 
+func TestStoreRunLockReleasedAfterAbruptOwnerDeath(t *testing.T) {
+	if runtime.GOOS == "plan9" || runtime.GOOS == "wasip1" {
+		t.Skip("securefile has no cross-process locking primitive on this platform")
+	}
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "crash-owner-ready")
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestStoreRunLockCrashHelper$", "-test.count=1")
+	cmd.Env = append(os.Environ(),
+		"PICOGENT_TASKSTATE_RUN_LOCK_CRASH_HELPER=1",
+		"PICOGENT_TASKSTATE_RUN_LOCK_DIR="+dir,
+		"PICOGENT_TASKSTATE_RUN_LOCK_CRASH_READY="+ready,
+	)
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	}()
+
+	waitForTaskstateFile(t, ready)
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill run-lock owner: %v", err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("abrupt run-lock owner exited successfully")
+	}
+	cmd.Process = nil
+
+	started := filepath.Join(dir, "post-crash-started")
+	acquired := filepath.Join(dir, "post-crash-acquired")
+	released := filepath.Join(dir, "post-crash-released")
+	contender := exec.Command(os.Args[0], "-test.run", "^TestStoreRunLockHelper$", "-test.count=1")
+	contender.Env = append(os.Environ(),
+		"PICOGENT_TASKSTATE_RUN_LOCK_HELPER=1",
+		"PICOGENT_TASKSTATE_RUN_LOCK_DIR="+dir,
+		"PICOGENT_TASKSTATE_RUN_LOCK_STARTED="+started,
+		"PICOGENT_TASKSTATE_RUN_LOCK_ACQUIRED="+acquired,
+		"PICOGENT_TASKSTATE_RUN_LOCK_RELEASED="+released,
+	)
+	var contenderOutput bytes.Buffer
+	contender.Stdout = &contenderOutput
+	contender.Stderr = &contenderOutput
+	if err := contender.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if contender.Process != nil {
+			_ = contender.Process.Kill()
+			_ = contender.Wait()
+		}
+	}()
+
+	waitForTaskstateFile(t, started)
+	waitForTaskstateFile(t, acquired)
+	if err := os.WriteFile(released, []byte("release\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := contender.Wait(); err != nil {
+		t.Fatalf("post-crash run-lock contender failed: %v\n%s\nowner output: %s", err, contenderOutput.String(), output.String())
+	}
+	contender.Process = nil
+}
+
+func TestStoreRunLockCrashHelper(t *testing.T) {
+	if os.Getenv("PICOGENT_TASKSTATE_RUN_LOCK_CRASH_HELPER") != "1" {
+		return
+	}
+	dir := os.Getenv("PICOGENT_TASKSTATE_RUN_LOCK_DIR")
+	ready := os.Getenv("PICOGENT_TASKSTATE_RUN_LOCK_CRASH_READY")
+	store := NewStore(dir)
+	release, err := store.AcquireRunLock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ready, []byte("owner\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		runtime.KeepAlive(release)
+		time.Sleep(time.Hour)
+	}
+}
+
 func TestStoreRunLockHelper(t *testing.T) {
 	if os.Getenv("PICOGENT_TASKSTATE_RUN_LOCK_HELPER") != "1" {
 		return
