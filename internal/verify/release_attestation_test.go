@@ -229,6 +229,109 @@ func TestDecodeReleaseAttestationRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestValidateReleaseAttestationRejectsMalformedFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*ReleaseAttestation, *ReleaseAttestationExpectation)
+		want   string
+	}{
+		{
+			name: "negative run ID",
+			mutate: func(attestation *ReleaseAttestation, _ *ReleaseAttestationExpectation) {
+				attestation.Payload.RunID = -1
+			},
+			want: "run ID must be positive",
+		},
+		{
+			name: "missing signer",
+			mutate: func(attestation *ReleaseAttestation, _ *ReleaseAttestationExpectation) {
+				attestation.Payload.Signer = ""
+			},
+			want: "attestation signer is required",
+		},
+		{
+			name: "uppercase digest",
+			mutate: func(attestation *ReleaseAttestation, _ *ReleaseAttestationExpectation) {
+				attestation.Payload.ReleaseGatesSHA256 = strings.Repeat("A", 64)
+			},
+			want: "release gates digest is not SHA-256",
+		},
+		{
+			name: "short digest",
+			mutate: func(attestation *ReleaseAttestation, _ *ReleaseAttestationExpectation) {
+				attestation.Payload.VerificationManifestSHA256 = "abcd"
+			},
+			want: "verification manifest digest is not SHA-256",
+		},
+		{
+			name: "repository whitespace",
+			mutate: func(attestation *ReleaseAttestation, _ *ReleaseAttestationExpectation) {
+				attestation.Payload.Repository = " other/picogent"
+			},
+			want: "attestation repository has surrounding whitespace",
+		},
+		{
+			name: "noncanonical public key",
+			mutate: func(attestation *ReleaseAttestation, _ *ReleaseAttestationExpectation) {
+				attestation.PublicKey = strings.TrimRight(attestation.PublicKey, "=")
+			},
+			want: "public key is not canonical base64",
+		},
+		{
+			name: "noncanonical signature",
+			mutate: func(attestation *ReleaseAttestation, _ *ReleaseAttestationExpectation) {
+				attestation.Signature += "\n"
+			},
+			want: "signature has invalid length or encoding",
+		},
+		{
+			name: "missing trusted key",
+			mutate: func(_ *ReleaseAttestation, expected *ReleaseAttestationExpectation) {
+				expected.PublicKey = ""
+			},
+			want: "expected public key is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attestation, expected, _, now := releaseAttestationFixture(t)
+			tt.mutate(&attestation, &expected)
+			if err := ValidateReleaseAttestation(attestation, expected, now); err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("ValidateReleaseAttestation() error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestDecodeReleaseAttestationRejectsNestedUnknownFields(t *testing.T) {
+	attestation, _, _, _ := releaseAttestationFixture(t)
+	data, err := json.Marshal(attestation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(envelope["payload"], &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["unexpected"] = json.RawMessage(`true`)
+	envelope["payload"], err = json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeReleaseAttestation(data); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("DecodeReleaseAttestation() error = %v, want nested unknown-field rejection", err)
+	}
+}
+
 func TestValidateReleaseAttestationRejectsUntrustedKey(t *testing.T) {
 	attestation, expected, _, now := releaseAttestationFixture(t)
 	_, otherPrivateKey, err := ed25519.GenerateKey(rand.Reader)
