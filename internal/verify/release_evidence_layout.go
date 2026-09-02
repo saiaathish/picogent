@@ -14,8 +14,12 @@ import (
 // writers or symlink races. The workflow owns the temporary directory and
 // should still fail closed when it cannot create or write it.
 func ValidateReleaseEvidenceDirectory(workspace, evidenceDir string) error {
-	workspace = strings.TrimSpace(workspace)
-	evidenceDir = strings.TrimSpace(evidenceDir)
+	if workspace != strings.TrimSpace(workspace) {
+		return fmt.Errorf("release evidence workspace must not have surrounding whitespace")
+	}
+	if evidenceDir != strings.TrimSpace(evidenceDir) {
+		return fmt.Errorf("release evidence directory must not have surrounding whitespace")
+	}
 	if workspace == "" {
 		return fmt.Errorf("release evidence workspace is required")
 	}

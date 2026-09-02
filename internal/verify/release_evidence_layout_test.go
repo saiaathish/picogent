@@ -22,6 +22,8 @@ func TestValidateReleaseEvidenceDirectory(t *testing.T) {
 		{name: "nested directory", workspace: workspace, evidence: filepath.Join(workspace, "artifacts"), wantSubstr: "inside workspace"},
 		{name: "relative evidence", workspace: workspace, evidence: "artifacts", wantSubstr: "must be absolute"},
 		{name: "relative workspace", workspace: "workspace", evidence: outside, wantSubstr: "workspace must be absolute"},
+		{name: "workspace surrounding whitespace", workspace: " " + workspace, evidence: outside, wantSubstr: "workspace must not have surrounding whitespace"},
+		{name: "evidence surrounding whitespace", workspace: workspace, evidence: outside + " ", wantSubstr: "directory must not have surrounding whitespace"},
 		{name: "missing evidence", workspace: workspace, wantSubstr: "directory is required"},
 	}
 
