@@ -61,6 +61,10 @@ func TestGUIFreshProcessShutdownRetainsInterruptedTurn(t *testing.T) {
 
 	started := make(chan struct{})
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseProvider := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
 	var startedOnce sync.Once
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startedOnce.Do(func() { close(started) })
@@ -70,7 +74,7 @@ func TestGUIFreshProcessShutdownRetainsInterruptedTurn(t *testing.T) {
 		}
 	}))
 	t.Cleanup(func() {
-		close(release)
+		releaseProvider()
 		provider.Close()
 	})
 
@@ -136,25 +140,20 @@ func TestGUIFreshProcessShutdownRetainsInterruptedTurn(t *testing.T) {
 		wait <- cmd.Wait()
 		close(childDone)
 	}()
-	t.Cleanup(func() {
-		select {
-		case <-childDone:
-		default:
-			_ = cmd.Process.Kill()
-			<-wait
-		}
-		<-stdoutDone
-	})
+	cleanupChild := func() {
+		cleanupGUIChild(t, cmd, wait, childDone, stdoutDone, releaseProvider, "GUI shutdown child")
+	}
+	t.Cleanup(cleanupChild)
 
 	var baseURL string
 	select {
 	case baseURL = <-urlCh:
 		if baseURL == "" {
+			cleanupChild()
 			t.Fatalf("GUI child exited before announcing listener; stdout=%q stderr=%q", childOutput.String(), stderr.String())
 		}
 	case <-time.After(15 * time.Second):
-		_ = cmd.Process.Kill()
-		<-wait
+		cleanupChild()
 		t.Fatalf("GUI child did not announce listener; stdout=%q stderr=%q", childOutput.String(), stderr.String())
 	}
 
@@ -171,27 +170,26 @@ func TestGUIFreshProcessShutdownRetainsInterruptedTurn(t *testing.T) {
 	select {
 	case <-started:
 	case <-time.After(15 * time.Second):
-		_ = cmd.Process.Kill()
-		<-wait
+		cleanupChild()
 		t.Fatalf("GUI child did not reach provider barrier; stdout=%q stderr=%q", childOutput.String(), stderr.String())
 	}
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
-		_ = cmd.Process.Kill()
-		<-wait
+		cleanupChild()
 		t.Fatalf("interrupt GUI child: %v", err)
 	}
-	select {
-	case err := <-wait:
-		if err != nil {
-			<-stdoutDone
-			t.Fatalf("GUI child failed after shutdown: %v\nstdout=%q\nstderr=%q", err, childOutput.String(), stderr.String())
-		}
-	case <-time.After(15 * time.Second):
-		_ = cmd.Process.Kill()
-		<-wait
+	if err, ok := waitGUIChildFor(wait, 15*time.Second); !ok {
+		cleanupChild()
 		t.Fatalf("GUI child did not finish shutdown; stdout=%q stderr=%q", childOutput.String(), stderr.String())
+	} else if err != nil {
+		if !waitGUIChannelFor(stdoutDone, guiChildCleanupTimeout) {
+			cleanupChild()
+		}
+		t.Fatalf("GUI child failed after shutdown: %v\nstdout=%q\nstderr=%q", err, childOutput.String(), stderr.String())
 	}
-	<-stdoutDone
+	if !waitGUIChannelFor(stdoutDone, 15*time.Second) {
+		cleanupChild()
+		t.Fatalf("GUI child stdout reader did not finish; stdout=%q stderr=%q", childOutput.String(), stderr.String())
+	}
 
 	store := taskstate.NewStore(filepath.Join(home, "tasks", projects.IDForPath(workspace)))
 	task, err := store.Load(state.SessionID)
@@ -242,6 +240,10 @@ func TestGUIFreshProcessKillRecoversInterruptedTurn(t *testing.T) {
 
 	started := make(chan struct{})
 	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseProvider := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
 	var startedOnce sync.Once
 	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		startedOnce.Do(func() { close(started) })
@@ -251,7 +253,7 @@ func TestGUIFreshProcessKillRecoversInterruptedTurn(t *testing.T) {
 		}
 	}))
 	t.Cleanup(func() {
-		close(release)
+		releaseProvider()
 		provider.Close()
 	})
 
@@ -317,25 +319,20 @@ func TestGUIFreshProcessKillRecoversInterruptedTurn(t *testing.T) {
 		wait <- cmd.Wait()
 		close(childDone)
 	}()
-	t.Cleanup(func() {
-		select {
-		case <-childDone:
-		default:
-			_ = cmd.Process.Kill()
-			<-wait
-		}
-		<-stdoutDone
-	})
+	cleanupChild := func() {
+		cleanupGUIChild(t, cmd, wait, childDone, stdoutDone, releaseProvider, "GUI process-kill child")
+	}
+	t.Cleanup(cleanupChild)
 
 	var baseURL string
 	select {
 	case baseURL = <-urlCh:
 		if baseURL == "" {
+			cleanupChild()
 			t.Fatalf("GUI kill child exited before announcing listener; stdout=%q stderr=%q", childOutput.String(), stderr.String())
 		}
 	case <-time.After(15 * time.Second):
-		_ = cmd.Process.Kill()
-		<-wait
+		cleanupChild()
 		t.Fatalf("GUI kill child did not announce listener; stdout=%q stderr=%q", childOutput.String(), stderr.String())
 	}
 
@@ -352,8 +349,7 @@ func TestGUIFreshProcessKillRecoversInterruptedTurn(t *testing.T) {
 	select {
 	case <-started:
 	case <-time.After(15 * time.Second):
-		_ = cmd.Process.Kill()
-		<-wait
+		cleanupChild()
 		t.Fatalf("GUI kill child did not reach provider barrier; stdout=%q stderr=%q", childOutput.String(), stderr.String())
 	}
 	active := guiProcessStateUntilActive(t, baseURL)
@@ -365,12 +361,19 @@ func TestGUIFreshProcessKillRecoversInterruptedTurn(t *testing.T) {
 	}
 
 	if err := cmd.Process.Kill(); err != nil {
+		cleanupChild()
 		t.Fatalf("kill active GUI child: %v", err)
 	}
-	if err := <-wait; err == nil {
+	if err, ok := waitGUIChildFor(wait, guiChildCleanupTimeout); !ok {
+		cleanupChild()
+		t.Fatalf("killed GUI child did not exit within %s", guiChildCleanupTimeout)
+	} else if err == nil {
 		t.Fatal("killed GUI child exited cleanly")
 	}
-	<-stdoutDone
+	if !waitGUIChannelFor(stdoutDone, 15*time.Second) {
+		cleanupChild()
+		t.Fatal("killed GUI child stdout reader did not finish")
+	}
 
 	taskDir := filepath.Join(home, "tasks", projects.IDForPath(workspace))
 	resultPath := filepath.Join(root, "resume-result.json")
