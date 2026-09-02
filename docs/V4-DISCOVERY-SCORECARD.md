@@ -1,11 +1,12 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-09-02 against the exact audited `main` head
-`a3c4ccf1a20add17724243521f088e1c4ec11ab2` after the outcome, recovery, GUI,
-undo-publication, lifecycle, proof-continuity, cancellation, and hosted
-attestation slices through PRs #297, #298, #299, #301, #303, #318, #320,
-#343 merged. The current independent release-evidence refresh is tracked in
-issue #344.
+`81b5efeddddbe59f9dd832b961ccf770e176a984` after the outcome, recovery, GUI,
+undo-publication, lifecycle, proof-continuity, cancellation, hosted
+attestation, and TUI recovery slices through PRs #297, #298, #299, #301,
+#303, #318, #320, #343, #347, and #349 merged. The independent
+release-evidence audit in issue #344 remains historical; its unverified
+boundaries are preserved below.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -264,7 +265,7 @@ tracked in issue #243.
 ## Current-head reconciliation (2026-09-02)
 
 The scorecard is now reconciled with the exact audited `main` head
-`a3c4ccf1a20add17724243521f088e1c4ec11ab2`. The following bounded slices are
+`81b5efeddddbe59f9dd832b961ccf770e176a984`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger and the completed
 continuity child lanes:
 
@@ -307,7 +308,17 @@ continuity child lanes:
   SBOM, production-release, and runtime boundaries.
 - PR #343 adds the TUI process-kill fixture and reconciles bounded crash-
   recovery evidence across the existing headless, GUI, and TUI seams.
-- Issue #344 refreshes the independent release audit at exact `main` SHA
+- PR #347 exposes the existing recovery controls independently in TUI help and
+  its wide footer. Its source head is `043af13516db7983e1e120418f0af746a1b49d41`
+  and its merge commit is `a2c305da7be0d132abc410d6499f3643f3afd63c`; the
+  post-merge main run `33687818060` passed all hosted gates.
+- PR #349 keeps those recovery controls complete on narrow terminals by
+  selecting whole width-fitting candidates rather than emitting partial
+  commands. Its source head is `f5e924f45e7800c5b8c96c84c6fd97f565107519`,
+  its merge commit is `81b5efeddddbe59f9dd832b961ccf770e176a984`, and its
+  post-merge main run `33691443732` passed Ubuntu, Windows, macOS, security,
+  and release-evidence.
+- Issue #344 records the independent release audit at the prior `main` SHA
   `a3c4ccf1a20add17724243521f088e1c4ec11ab2` using post-merge run
   `33683301465`. The hosted gate ledger and both Sigstore subjects verify, but
   the signed manifest is `INCONCLUSIVE` because its bounded broader check was
