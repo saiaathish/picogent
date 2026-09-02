@@ -63,9 +63,6 @@ function showStage(n) {
   const onLast = current === TOTAL - 1;
   nextBtn.textContent = onLast ? "Start chatting" : "Next";
   nextBtn.disabled = !canAdvance(status, current);
-  if (current === 1 && !toolsReady(status)) {
-    autoInstallIfNeeded();
-  }
 }
 
 let modelOptionsCache = [];
@@ -146,12 +143,6 @@ async function refresh() {
 }
 
 let installStarted = false;
-
-async function autoInstallIfNeeded() {
-  if (installStarted || toolsReady(status)) return;
-  const missing = (status.components || []).some((c) => !c.ok && c.can_fix);
-  if (missing) await install();
-}
 
 async function install() {
   installStarted = true;
