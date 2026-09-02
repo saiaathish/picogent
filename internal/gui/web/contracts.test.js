@@ -195,3 +195,20 @@ test("failed setup installation restores the explicit action", async () => {
   assert.equal(installButton.textContent, "Install missing pieces");
   assert.equal(harness.elements.get("stage-err").textContent, "network down");
 });
+
+test("malformed setup installation restores the explicit action", async () => {
+  const harness = setupHarness(() => ({
+    ok: true,
+    json: async () => {
+      throw new Error("invalid install response");
+    },
+  }));
+  await settleSetup();
+
+  const installButton = harness.elements.get("install");
+  await installButton.onclick();
+
+  assert.equal(installButton.disabled, false);
+  assert.equal(installButton.textContent, "Install missing pieces");
+  assert.equal(harness.elements.get("stage-err").textContent, "invalid install response");
+});
