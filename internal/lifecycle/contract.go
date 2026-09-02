@@ -183,6 +183,17 @@ var scenarioTable = []Scenario{
 		UserVisibleError: ErrorCanceled, FreshProcessRequired: true, Evidence: EvidenceUnverified,
 	},
 	{
+		ID: "tui-process-kill-active-turn", Surface: SurfaceTUI, Trigger: TriggerProcessKill,
+		Persisted: PersistenceExpectation{
+			TaskStatus: taskstate.StatusWorking, TurnState: taskstate.TurnInterrupted,
+			TurnRoute: string(taskstate.TurnRouteRecover), StopReason: taskstate.StopProcessRestart,
+			MustRetainTask: true, MustBeRecoverable: true,
+			Note: "an abrupt TUI process kill skips graceful cleanup; the next model recovers the durably admitted active turn",
+		},
+		Completion:       CompletionExpectation{MustNotBeReady: true, MustNotShowMarker: true},
+		UserVisibleError: ErrorNone, FreshProcessRequired: true, Evidence: EvidenceUnverified,
+	},
+	{
 		ID: "tui-session-save-failure", Surface: SurfaceTUI, Trigger: TriggerSessionSaveFailure,
 		Persisted: PersistenceExpectation{
 			MustRetainTask: true, MustBeRecoverable: true,

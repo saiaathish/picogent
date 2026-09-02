@@ -14,8 +14,8 @@ func TestScenarioTableIsCompleteAndFailClosed(t *testing.T) {
 	if err := ValidateScenarioTable(scenarios); err != nil {
 		t.Fatal(err)
 	}
-	if len(scenarios) != 11 {
-		t.Fatalf("scenario count = %d, want 11", len(scenarios))
+	if len(scenarios) != 12 {
+		t.Fatalf("scenario count = %d, want 12", len(scenarios))
 	}
 
 	copyOfTable := Scenarios()
@@ -41,6 +41,25 @@ func TestGUIProcessKillScenarioRequiresFreshProcessRecovery(t *testing.T) {
 	}
 	if !scenario.Completion.MustNotBeReady || !scenario.Completion.MustNotShowMarker {
 		t.Fatalf("process-kill completion contract = %#v, want fail-closed", scenario.Completion)
+	}
+}
+
+func TestTUIProcessKillScenarioRequiresFreshProcessRecovery(t *testing.T) {
+	scenario := scenarioByID(t, "tui-process-kill-active-turn")
+	if scenario.Trigger != TriggerProcessKill || scenario.Surface != SurfaceTUI {
+		t.Fatalf("process-kill scenario = %#v, want TUI process-kill row", scenario)
+	}
+	if !scenario.FreshProcessRequired || scenario.Evidence != EvidenceUnverified {
+		t.Fatalf("TUI process-kill evidence boundary = %#v, want fresh-process UNVERIFIED", scenario)
+	}
+	persisted := scenario.Persisted
+	if persisted.TaskStatus != taskstate.StatusWorking || persisted.TurnState != taskstate.TurnInterrupted ||
+		persisted.TurnRoute != string(taskstate.TurnRouteRecover) || persisted.StopReason != taskstate.StopProcessRestart ||
+		!persisted.MustRetainTask || !persisted.MustBeRecoverable {
+		t.Fatalf("TUI process-kill persistence contract = %#v, want recoverable interrupted turn", persisted)
+	}
+	if !scenario.Completion.MustNotBeReady || !scenario.Completion.MustNotShowMarker {
+		t.Fatalf("TUI process-kill completion contract = %#v, want fail-closed", scenario.Completion)
 	}
 }
 
