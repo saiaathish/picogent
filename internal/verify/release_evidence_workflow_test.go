@@ -20,6 +20,7 @@ func TestReleaseEvidenceWorkflowUsesExternalArtifactDirectory(t *testing.T) {
 		t.Fatalf("read release workflow: %v", err)
 	}
 	workflow := string(data)
+	const canonicalPredicateType = "https://github.com/saiaathish/picogent/attestation/release-evidence/v1"
 
 	checkoutRef := "ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
 	checkoutRepository := "repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}"
@@ -61,6 +62,12 @@ func TestReleaseEvidenceWorkflowUsesExternalArtifactDirectory(t *testing.T) {
 	}
 	if strings.Contains(workflow, "artifacts/") {
 		t.Fatal("release workflow still contains a checkout-relative artifacts/ path")
+	}
+	if got := strings.Count(workflow, canonicalPredicateType); got != 3 {
+		t.Fatalf("release workflow must use the canonical predicate type at all three attestation call sites, got %d", got)
+	}
+	if strings.Contains(workflow, "saiaathishkarthik") {
+		t.Fatal("release workflow contains the stale predicate namespace owner")
 	}
 
 	validation := strings.Index(workflow, "go run ./cmd/release-evidence-layout")
