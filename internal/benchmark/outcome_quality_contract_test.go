@@ -88,8 +88,13 @@ func TestOutcomeQualityReportRequiresTwoRunsAndCompleteCoverage(t *testing.T) {
 
 	report.Status = OutcomeReportInconclusive
 	report.Unverified = nil
-	if err := report.Validate(); err == nil || !strings.Contains(err.Error(), "inconclusive partial report") {
+	if err := report.Validate(); err == nil || !strings.Contains(err.Error(), "inconclusive report") {
 		t.Fatalf("unexplained inconclusive report error=%v", err)
+	}
+
+	report.Status = OutcomeReportUnverified
+	if err := report.Validate(); err == nil || !strings.Contains(err.Error(), "unverified report") {
+		t.Fatalf("unexplained unverified report error=%v", err)
 	}
 }
 

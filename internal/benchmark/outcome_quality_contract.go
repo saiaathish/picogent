@@ -323,6 +323,12 @@ func (r OutcomeQualityReport) Validate() error {
 	if err := validateTextList("unverified", r.Unverified, MaxOutcomeQualityUnverified); err != nil {
 		return err
 	}
+	if r.Status == OutcomeReportUnverified && len(r.Unverified) == 0 {
+		return fmt.Errorf("unverified report must record an unverified reason")
+	}
+	if r.Status == OutcomeReportInconclusive && len(r.Unverified) == 0 && len(r.InvariantFailures) == 0 {
+		return fmt.Errorf("inconclusive report must record an unverified reason or invariant failure")
+	}
 
 	expected := len(r.Scenarios) * 2 * r.Policy.Repetitions
 	if expected > MaxOutcomeQualityObservations {
@@ -333,12 +339,6 @@ func (r OutcomeQualityReport) Validate() error {
 	}
 	if r.Status == OutcomeReportComplete && len(r.Observations) != expected {
 		return fmt.Errorf("complete report has %d observations, want %d", len(r.Observations), expected)
-	}
-	if len(r.Observations) < expected && r.Status == OutcomeReportUnverified && len(r.Unverified) == 0 {
-		return fmt.Errorf("unverified partial report must record an unverified reason")
-	}
-	if len(r.Observations) < expected && r.Status == OutcomeReportInconclusive && len(r.Unverified) == 0 && len(r.InvariantFailures) == 0 {
-		return fmt.Errorf("inconclusive partial report must record an unverified reason or invariant failure")
 	}
 	if r.Status == OutcomeReportComplete && len(r.Observations) == 0 {
 		return fmt.Errorf("complete report must contain observations")
