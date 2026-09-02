@@ -54,7 +54,11 @@ var (
 	inputBox   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(paper).Padding(0, 1)
 )
 
-const tuiRecoveryHelp = "/undo last turn · /resume recover"
+const (
+	tuiRecoveryHelp        = "/undo last turn · /resume recover"
+	tuiRecoveryHelpCompact = "/help · /undo · /resume"
+	tuiRecoveryHelpMinimal = "/undo /resume"
+)
 
 type logLine struct{ Kind, Text string }
 
@@ -1041,10 +1045,7 @@ func (m *model) View() string {
 		}
 		permBox = permStyle.Width(max(m.width-4, 20)).Render(body + "?\n\n  [Y]  Yes      [N]  No      [A]  This turn      [L]  Always")
 	}
-	help := "enter send · ctrl-c stop/quit · /help · " + tuiRecoveryHelp
-	if m.busy {
-		help = "working…  ctrl-c stops this turn"
-	}
+	help := tuiHelpFooter(m.width, m.busy)
 	box := inputBox.Width(max(m.width-2, 20)).Render(m.ta.View())
 	sections := []string{head, ws}
 	if taskProgress != "" {
@@ -1100,6 +1101,39 @@ func clip(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func tuiHelpFooter(width int, busy bool) string {
+	if busy {
+		return "working…  ctrl-c stops this turn"
+	}
+	for _, candidate := range []string{
+		"enter send · ctrl-c stop/quit · /help · " + tuiRecoveryHelp,
+		tuiRecoveryHelpCompact,
+		tuiRecoveryHelpMinimal,
+	} {
+		if lipgloss.Width(candidate) <= width {
+			return candidate
+		}
+	}
+	return clipDisplayWidth(tuiRecoveryHelpMinimal, width)
+}
+
+func clipDisplayWidth(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	var clipped strings.Builder
+	used := 0
+	for _, r := range s {
+		cellWidth := lipgloss.Width(string(r))
+		if used+cellWidth > width {
+			break
+		}
+		clipped.WriteRune(r)
+		used += cellWidth
+	}
+	return clipped.String()
 }
 
 func max(a, b int) int {

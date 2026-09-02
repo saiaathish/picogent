@@ -12,6 +12,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/goal"
@@ -695,8 +696,8 @@ func TestHelpExposesRecoveryControls(t *testing.T) {
 		t.Fatal("help did not add a system line")
 	}
 	help := m.lines[len(m.lines)-1].Text
-	if !strings.Contains(help, tuiRecoveryHelp) {
-		t.Fatalf("help = %q, want recovery controls %q", help, tuiRecoveryHelp)
+	if !strings.Contains(help, "/undo") || !strings.Contains(help, "/resume") {
+		t.Fatalf("help = %q, want independent /undo and /resume controls", help)
 	}
 }
 
@@ -710,14 +711,30 @@ func TestIdleFooterExposesRecoveryControlsAndBusyFooterKeepsStopGuidance(t *test
 	}
 	m.width, m.height = 100, 30
 	view := m.View()
-	if !strings.Contains(view, tuiRecoveryHelp) {
-		t.Fatalf("idle footer = %q, want recovery controls %q", view, tuiRecoveryHelp)
+	if !strings.Contains(view, "/undo") || !strings.Contains(view, "/resume") {
+		t.Fatalf("idle footer = %q, want independent /undo and /resume controls", view)
 	}
 
 	m.busy = true
 	busyView := m.View()
 	if !strings.Contains(busyView, "working…  ctrl-c stops this turn") {
 		t.Fatalf("busy footer = %q, want stop guidance", busyView)
+	}
+}
+
+func TestTUIHelpFooterFitsNarrowWidths(t *testing.T) {
+	for _, width := range []int{80, 40, 20, 8, 0} {
+		got := tuiHelpFooter(width, false)
+		if lipgloss.Width(got) > width {
+			t.Fatalf("width %d footer %q has display width %d", width, got, lipgloss.Width(got))
+		}
+		if width >= lipgloss.Width(tuiRecoveryHelpMinimal) && (!strings.Contains(got, "/undo") || !strings.Contains(got, "/resume")) {
+			t.Fatalf("width %d footer = %q, want both recovery controls", width, got)
+		}
+	}
+
+	if got := tuiHelpFooter(20, true); got != "working…  ctrl-c stops this turn" {
+		t.Fatalf("busy footer = %q, want existing stop guidance", got)
 	}
 }
 
