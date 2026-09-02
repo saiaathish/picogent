@@ -1,13 +1,11 @@
 # Deterministic v3/v4 benchmark comparison
 
-Status: measured locally on 2026-08-31. This is a provider-independent
+Status: measured locally on 2026-09-02. This is a provider-independent
 regression comparison, not a live-provider quality, browser, or product-SLA
 claim.
 
-The comparison table is anchored to the historical v4 checkpoint
-`6a0126d46cbe6720fbcb54f8b30652160e8cb5`; it is not a claim about the current
-`main`. The current merged `main` head for this update is
-`281942c12369ce795e6f9a6dc824e3c08aede63a`. Issue #302 tracks the scripted-edit
+The comparison table is anchored to the current merged `main` head
+`275afdb8bdb727ce7a67d37a0b4570eea595f125`. Issue #302 tracks the scripted-edit
 follow-up, and `internal/benchmark/stages_test.go` provides stage controls for
 that investigation.
 
@@ -17,7 +15,7 @@ The same benchmark commands were run three times at both exact heads, on the
 same Apple M3 arm64 Mac with Go `go1.26.6`:
 
 - v3 baseline: `a07943b31044049afb0142f39198244cd3c75218`
-- v4 checkpoint: `6a0126d46cbe6720fbcb54f8b30652160e8cb5`
+- v4 candidate: `275afdb8bdb727ce7a67d37a0b4570eea595f125`
 
 Deterministic benchmark group:
 
@@ -27,7 +25,7 @@ go test ./internal/benchmark -run '^$' \
   -benchtime=100ms -benchmem -count=3
 ```
 
-Scripted edit checkpoint:
+Scripted edit benchmark:
 
 ```sh
 go test ./internal/benchmark -run '^$' \
@@ -42,13 +40,13 @@ minimum/maximum from the three runs. Times are `ns/op`; allocation columns are
 
 | Operation | v3 time (min / median / max) | v4 time (min / median / max) | v3 B/op | v4 B/op | v3 allocs/op | v4 allocs/op |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Context manage, working set | 45,825 / 45,895 / 45,919 | 34,636 / 35,001 / 83,580 | 105,068 / 105,069 / 105,070 | 67,458 / 67,461 / 67,461 | 243 | 185 |
-| Context manage, context-heavy | 2,353,805 / 2,371,696 / 2,371,784 | 2,223,283 / 2,244,877 / 2,259,434 | 485,925 / 486,404 / 487,850 | 485,837 / 486,674 / 487,810 | 658 / 659 / 662 | 658 / 660 / 662 |
-| Repo-map inspect | 23,797,767 / 24,943,925 / 26,309,700 | 20,738,383 / 22,070,717 / 22,154,317 | 43,531 / 45,360 / 45,488 | 119,049 / 119,195 / 119,899 | 304 / 305 / 305 | 342 / 343 / 345 |
-| Repo-map format | 2,968 / 3,013 / 3,092 | 29,547 / 29,608 / 29,661 | 2,370 | 2,639 / 2,639 / 2,674 | 12 | 20 |
-| Session metadata list, 60 records | 8,784,321 / 9,687,413 / 14,034,917 | 41,935,778 / 42,492,500 / 45,649,806 | 189,936 / 189,998 / 190,016 | 240,341 / 252,826 / 253,029 | 1,962 | 3,130 / 3,131 / 3,131 |
-| Verification plan | 1,852 / 1,869 / 1,882 | 1,878 / 1,883 / 1,887 | 896 / 912 / 912 | 896 / 912 / 912 | 15 | 15 |
-| Verification evidence | 3,189 / 3,192 / 3,195 | 3,257 / 3,285 / 3,354 | 1,792 | 1,792 | 1 | 1 |
+| Context manage, working set | 44,203 / 44,309 / 44,485 | 37,365 / 37,545 / 37,781 | 105,065 / 105,067 / 105,068 | 67,460 / 67,464 / 67,466 | 243 | 185 |
+| Context manage, context-heavy | 2,272,981 / 2,279,984 / 2,286,312 | 2,298,962 / 2,330,979 / 2,331,057 | 485,490 / 485,913 / 486,840 | 485,467 / 486,404 / 486,886 | 658 / 658 / 660 | 658 / 659 / 660 |
+| Repo-map inspect | 22,564,575 / 22,712,867 / 24,842,950 | 18,370,188 / 18,996,340 / 21,045,910 | 50,169 / 50,179 / 54,483 | 121,102 / 123,745 / 124,706 | 255 / 256 / 260 | 297 / 298 / 299 |
+| Repo-map format | 2,779 / 2,781 / 2,782 | 28,883 / 29,062 / 29,125 | 2,370 | 2,542 / 2,551 / 2,552 | 12 | 20 |
+| Session metadata list, 60 records | 5,514,927 / 5,891,787 / 6,209,627 | 30,808,229 / 32,921,448 / 34,540,156 | 183,200 / 183,200 / 183,206 | 231,396 / 231,420 / 231,424 | 1,962 | 3,069 / 3,069 / 3,069 |
+| Verification plan | 1,987 / 2,054 / 2,065 | 1,933 / 1,944 / 1,992 | 864 | 864 | 15 | 15 |
+| Verification evidence | 3,495 / 3,498 / 3,609 | 3,436 / 3,438 / 3,447 | 1,792 | 1,792 | 1 | 1 |
 
 ## Changed benchmark shape
 
@@ -58,19 +56,19 @@ fixtures, so those rows are not a strict one-to-one comparison with the v3
 
 | Operation | v3 time (min / median / max) | v4 time (min / median / max) | v3 B/op | v4 B/op | v3 allocs/op | v4 allocs/op |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Session load | 290,224 / 291,331 / 316,807 | — | 3,512 | — | 37 | — |
-| Session load, canonical | — | 1,377,795 / 1,399,341 / 1,507,897 | — | 6,280 / 6,280 / 6,755 | — | 94 |
-| Session load, legacy-history | — | 3,925,110 / 3,953,906 / 3,983,201 | — | 2,466,630 / 2,468,743 / 2,469,742 | — | 1,602 / 1,603 / 1,604 |
+| Session load | 185,411 / 188,009 / 217,628 | — | 3,336 / 3,368 / 3,368 | — | 37 | — |
+| Session load, canonical | — | 1,015,687 / 1,065,275 / 1,290,865 | — | 6,040 / 6,410 / 6,780 | — | 92 |
+| Session load, legacy-history | — | 3,973,399 / 4,030,560 / 4,272,300 | — | 2,455,952 / 2,463,143 / 2,463,411 | — | 1,599 / 1,599 / 1,600 |
 
 V4 also measures new operations with no v3 counterpart:
 
 | Operation | v4 time (min / median / max) | v4 B/op | v4 allocs/op |
 | --- | ---: | ---: | ---: |
-| Repo-map capture | 20,869,867 / 21,145,333 / 21,780,283 | 114,729 / 115,953 / 118,617 | 347 / 347 / 350 |
-| Repo-map snapshot format | 48,736 / 48,842 / 49,135 | 4,042 / 4,043 / 4,043 | 22 |
-| Verification manifest | 4,742 / 4,769 / 4,814 | 3,669 / 3,669 / 3,670 | 7 |
+| Repo-map capture | 18,257,340 / 20,019,639 / 21,044,425 | 118,851 / 119,754 / 123,561 | 302 / 304 / 304 |
+| Repo-map snapshot format | 46,649 / 46,750 / 46,825 | 3,912 / 3,913 / 3,913 | 22 |
+| Verification manifest | 4,862 / 4,887 / 4,897 | 3,668 / 3,669 / 3,669 | 7 |
 
-## Scripted edit checkpoint
+## Scripted edit benchmark
 
 This fixture performs one deterministic edit turn per repetition and reports
 the model-call count supplied by the test double. It does not measure a live
@@ -78,11 +76,11 @@ model:
 
 | Operation | v3 time (min / median / max) | v4 time (min / median / max) | v3 B/op | v4 B/op | v3 allocs/op | v4 allocs/op |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Scripted agent edit | 577,208 / 944,291 / 1,229,584 | 6,116,333 / 7,032,417 / 11,119,916 | 128,112 / 128,592 / 131,072 | 133,160 / 133,224 / 135,512 | 1,252 / 1,253 / 1,289 | 1,378 / 1,379 / 1,413 |
+| Scripted agent edit | 551,042 / 589,875 / 1,155,500 | 7,371,376 / 7,559,750 / 9,845,291 | 113,328 / 113,920 / 116,288 | 125,376 / 125,632 / 127,936 | 1,114 / 1,116 / 1,151 | 1,316 / 1,316 / 1,351 |
 
 ## Current-main stage controls
 
-At exact `main` head `281942c12369ce795e6f9a6dc824e3c08aede63a`, the new
+At exact `main` head `275afdb8bdb727ce7a67d37a0b4570eea595f125`, the new
 provider-independent stage controls were run on the same Apple M3 arm64 host
 with Go `go1.26.6`:
 
@@ -99,26 +97,27 @@ the end-to-end scripted edit fixture or a live-provider measurement.
 
 | Stage | Time range | B/op | allocs/op |
 | --- | ---: | ---: | ---: |
-| Project run lock acquire/release | 1.273–1.320 ms | 2,984–3,016 | 63 |
-| Checkpoint capture | 0.599–0.623 ms | 6,376–6,392 | 70 |
-| Checkpoint seal | 0.560–0.576 ms | 1,828–1,830 | 24 |
-| Secure workspace publication | 4.108–5.084 ms | 1,956–1,959 | 40 |
-| Durable task save | 7.501–7.671 ms | 11,216–11,240 | 148 |
-| Production-shaped durable scripted turn | 55.822–58.548 ms | 351,048–377,840 | 3,206–3,231 |
+| Project run lock acquire/release | 1.310–1.357 ms | 2,984–3,016 | 63 |
+| Checkpoint capture | 0.616–0.620 ms | 6,376–6,392 | 70 |
+| Checkpoint seal | 0.554–0.567 ms | 1,828–1,830 | 24 |
+| Secure workspace publication | 3.391–4.523 ms | 1,736–1,759 | 39 |
+| Secure workspace publication with undo hook | 4.001–4.524 ms | 1,960–1,976 | 40–41 |
+| Durable task save | 5.327–5.760 ms | 11,193–11,208 | 148 |
+| Production-shaped durable scripted turn | 39.544–41.968 ms | 333,376–347,333 | 3,004–3,014 |
 
 The durable scripted-turn row reports `2.000 model-calls/op`; the primitive
 controls do not call a model.
 
 ## Interpretation
 
-- Context management improved in the working-set fixture and was modestly
-  faster in the context-heavy fixture, with fewer working-set allocations.
+- Context management improved in the working-set fixture at the median, with
+  fewer bytes and allocations; the context-heavy fixture was modestly slower.
 - Repo-map inspection was faster at the median, but its bytes and allocation
   counts increased. Repo-map formatting and session metadata listing were
   materially slower in this run.
-- The scripted edit checkpoint was materially slower in v4. That is a local
-  regression signal to profile; it is not evidence that live-provider quality
-  regressed.
+- The current scripted-edit fixture is materially slower in v4 (about 12.8x at
+  the median), with higher bytes and allocations. This is a local regression
+  signal to profile; it is not evidence that live-provider quality regressed.
 - Verification plan/evidence remained close to the v3 baseline. The v4-only
   manifest path adds measurable work that has no v3 counterpart.
 
