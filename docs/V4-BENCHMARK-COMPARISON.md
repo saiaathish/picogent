@@ -4,15 +4,17 @@ Status: measured locally on 2026-09-02. This is a provider-independent
 regression comparison, not a live-provider quality, browser, or product-SLA
 claim.
 
-The comparison table is anchored to the current merged `main` head
-`275afdb8bdb727ce7a67d37a0b4570eea595f125`. Issue #302 tracks the scripted-edit
-follow-up, and `internal/benchmark/stages_test.go` provides stage controls for
-that investigation.
+The v3/v4 comparison table below is anchored to the pre-measurement merged v4
+head `275afdb8bdb727ce7a67d37a0b4570eea595f125`. The current merged `main`
+head is `c6d87bf5b38e6afb1322e6982d3033357df59819`; PR #332 added a
+same-iteration causal control for the scripted-edit follow-up tracked by #302.
+`internal/benchmark/stages_test.go` provides both the standalone and composite
+controls.
 
 ## Reproducibility
 
-The same benchmark commands were run three times at both exact heads, on the
-same Apple M3 arm64 Mac with Go `go1.26.6`:
+The comparison commands were run three times at both exact heads, on the same
+Apple M3 arm64 Mac with Go `go1.26.6`:
 
 - v3 baseline: `a07943b31044049afb0142f39198244cd3c75218`
 - v4 candidate: `275afdb8bdb727ce7a67d37a0b4570eea595f125`
@@ -80,8 +82,8 @@ model:
 
 ## Current-main stage controls
 
-At exact `main` head `275afdb8bdb727ce7a67d37a0b4570eea595f125`, the new
-provider-independent stage controls were run on the same Apple M3 arm64 host
+At exact current `main` head `c6d87bf5b38e6afb1322e6982d3033357df59819`, the
+provider-independent stage controls were rerun on the same Apple M3 arm64 host
 with Go `go1.26.6`:
 
 ```sh
@@ -89,24 +91,45 @@ go test ./internal/benchmark -run '^$' \
   -bench '^BenchmarkScriptedAgentEditStage' -benchtime=100ms -benchmem -count=3
 ```
 
-The first five rows are standalone primitive attribution controls. The final
-row is a production-shaped durable turn: it runs `Agent.Run` with workspace-
-local task storage, the real pre-publication undo hook, durable mutation and
-turn persistence, and the normal turn close. It is still not a replacement for
-the end-to-end scripted edit fixture or a live-provider measurement.
+The standalone primitive rows are attribution controls. The composite row runs
+the project lock, checkpoint capture, secure publication, and checkpoint seal
+on the same iteration as an additive non-durable safety subtotal. The durable
+row is a production-shaped turn: it runs `Agent.Run` with workspace-local task
+storage, the real pre-publication undo hook, durable mutation and turn
+persistence, and the normal turn close. These remain controls, not a
+replacement for a live-provider measurement.
 
 | Stage | Time range | B/op | allocs/op |
 | --- | ---: | ---: | ---: |
-| Project run lock acquire/release | 1.310–1.357 ms | 2,984–3,016 | 63 |
-| Checkpoint capture | 0.616–0.620 ms | 6,376–6,392 | 70 |
-| Checkpoint seal | 0.554–0.567 ms | 1,828–1,830 | 24 |
-| Secure workspace publication | 3.391–4.523 ms | 1,736–1,759 | 39 |
-| Secure workspace publication with undo hook | 4.001–4.524 ms | 1,960–1,976 | 40–41 |
-| Durable task save | 5.327–5.760 ms | 11,193–11,208 | 148 |
-| Production-shaped durable scripted turn | 39.544–41.968 ms | 333,376–347,333 | 3,004–3,014 |
+| Project run lock acquire/release | 1.190–1.330 ms | 2,984–3,016 | 63 |
+| Checkpoint capture | 0.612–0.640 ms | 6,392 | 70 |
+| Checkpoint seal | 0.550–0.560 ms | 1,829–1,830 | 24 |
+| Secure workspace publication | 3.861–4.122 ms | 1,736–1,749 | 39 |
+| Secure workspace publication with undo hook | 3.949–4.707 ms | 1,973–1,991 | 40 |
+| Non-durable composite safety subtotal | 6.093–6.941 ms | 13,025–13,083 | 197–198 |
+| Durable task save | 5.698–5.831 ms | 11,212–11,281 | 148–149 |
+| Production-shaped durable scripted turn | 40.913–41.905 ms | 319,690–349,482 | 3,002–3,020 |
 
-The durable scripted-turn row reports `2.000 model-calls/op`; the primitive
-controls do not call a model.
+The durable scripted-turn row reports `2.000 model-calls/op`; the primitive and
+composite controls do not call a model.
+
+## Current-main causal scripted-edit follow-up
+
+At the same exact merged `main` head `c6d87bf5b38e6afb1322e6982d3033357df59819`,
+the full non-durable scripted-edit fixture and its same-iteration composite
+control were run three times with `-benchtime=100ms -benchmem -count=3`:
+
+| Operation | Time (min / median / max) | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Full `Agent.Run` scripted edit | 6,075,236 / 6,816,022 / 7,002,236 ns/op | 125,346–125,674 | 1,312 |
+| Same-iteration composite safety subtotal | 6,305,433 / 6,723,530 / 6,917,500 ns/op | 13,058–13,091 | 197–198 |
+
+The full fixture reports `2.000 model-calls/op`. The composite phase ranges on
+this run were run-lock `1.286–1.368 ms`, capture `0.671–0.693 ms`, secure
+publication `3.524–3.950 ms`, and seal/changed-path `0.824–0.907 ms`. The
+subtotal accounts for essentially all of this provider-independent local
+fixture's wall time; this does not establish a live-provider regression,
+product SLA, or release authorization.
 
 ## Interpretation
 
@@ -115,9 +138,11 @@ controls do not call a model.
 - Repo-map inspection was faster at the median, but its bytes and allocation
   counts increased. Repo-map formatting and session metadata listing were
   materially slower in this run.
-- The current scripted-edit fixture is materially slower in v4 (about 12.8x at
-  the median), with higher bytes and allocations. This is a local regression
-  signal to profile; it is not evidence that live-provider quality regressed.
+- The pre-#332 scripted-edit comparison remains materially slower in v4 (about
+  12.8x at the median), with higher bytes and allocations. The current-main
+  composite control shows that the existing safety boundaries account for
+  essentially all of this provider-independent fixture; this is not evidence
+  that live-provider quality regressed.
 - Verification plan/evidence remained close to the v3 baseline. The v4-only
   manifest path adds measurable work that has no v3 counterpart.
 
