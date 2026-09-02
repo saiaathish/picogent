@@ -187,6 +187,13 @@ func TestOutcomeQualityReportBoundsMetricsAndMetadata(t *testing.T) {
 			want: "shared benchmark budget",
 		},
 		{
+			name: "latency exceeds shared timeout",
+			edit: func(report *OutcomeQualityReport) {
+				report.Observations[0].Metrics.LatencyMillis = report.Policy.TimeoutMillis + 1
+			},
+			want: "shared timeout",
+		},
+		{
 			name: "too many observation notes",
 			edit: func(report *OutcomeQualityReport) { report.Observations[0].Unverified = make([]string, 9) },
 			want: "unverified=",

@@ -450,6 +450,9 @@ func validateOutcomeQualityMetrics(metrics OutcomeQualityMetrics, policy Outcome
 	if metrics.LatencyMillis < 0 || metrics.LatencyMillis > MaxOutcomeQualityLatencyMillis {
 		return fmt.Errorf("observation %d latency_millis=%d outside 0..%d", index, metrics.LatencyMillis, MaxOutcomeQualityLatencyMillis)
 	}
+	if metrics.LatencyMillis > policy.TimeoutMillis {
+		return fmt.Errorf("observation %d latency_millis=%d exceeds shared timeout_millis=%d", index, metrics.LatencyMillis, policy.TimeoutMillis)
+	}
 	if metrics.ContextGrowthBytes < 0 || metrics.ContextGrowthBytes > MaxOutcomeQualityContextGrowth {
 		return fmt.Errorf("observation %d context_growth_bytes=%d outside 0..%d", index, metrics.ContextGrowthBytes, MaxOutcomeQualityContextGrowth)
 	}
