@@ -1,9 +1,10 @@
 # v4 long-horizon outcome evidence
 
 Status: S-lane contract merged via PR #307; the provider-independent M-lane
-fixture is delivered in PR #308 on `codex/v4-long-horizon-outcome-m`. This
-document defines the measurement boundary; it does not claim long-horizon
-product success, live-provider quality, or release readiness.
+fixture is delivered in PR #308 on `codex/v4-long-horizon-outcome-m`; adapter
+projection coverage is tracked by PR #310 for issue #309. This document
+defines the measurement boundary; it does not claim long-horizon product
+success, live-provider quality, or release readiness.
 
 ## Purpose
 
@@ -91,6 +92,43 @@ The fixture does not measure live-provider quality, arbitrary crash windows,
 rendered GUI/TUI behavior, or release readiness. Its fresh-process boundary is
 a deterministic child test process and should not be interpreted as broad
 runtime chaos coverage.
+
+## Adapter projection validation
+
+The adapter slice uses one test-only fixture built from the existing
+`taskstate` and `workspace` contracts. It sends the same four boundaries to the
+headless completion gate, GUI task-progress event/JSON boundary, and TUI
+task-progress message/model/render boundary:
+
+| Boundary | Direct observation |
+| --- | --- |
+| incomplete | no current criterion proof; completion remains pending |
+| stale-proof | a passing criterion record is invalidated by a later mutation |
+| recovery-pending | stale prior proof plus interrupted/recover turn provenance; conservative routing remains required |
+| current-proof | current criterion proof is ready and the Outcome Engine stop policy is `RECHECK` |
+
+The same slice also persists a workspace-bound passing record, reloads it from
+`taskstate.Store`, observes that each surface remains fail-closed without a
+fresh live observation, and then observes readiness after
+`ReestablishWorkspaceVerification` is given the matching workspace snapshot.
+The headless test additionally attaches a task through production
+`Agent.SetTaskSession` and asserts the persisted active turn becomes an
+interrupted `recover` turn with `StopProcessRestart` metadata and
+`TurnContract.NeedsRecovery()` true.
+
+Run the focused adapter checks from the exact source head:
+
+```sh
+go test ./internal/agent -run 'TestHeadlessCompletionGateProjectsLongHorizonStates|TestHeadlessCompletionProjectionReloadRequiresFreshWorkspaceEvidence|TestSetTaskSessionRecoversInterruptedOutcomeTurn' -count=1
+go test ./internal/gui -run 'TestGUIProjectsLongHorizonOutcomeStates|TestGUIReloadProjectionRequiresFreshWorkspaceEvidence' -count=1
+go test ./internal/tui -run 'TestTUIProjectsLongHorizonOutcomeStates|TestTUIReloadProjectionRequiresFreshWorkspaceEvidence' -count=1
+```
+
+These checks directly observe in-process adapter seams and serialized GUI
+task-progress data. They do not prove a launched GUI browser, an interactive
+terminal session, arbitrary crash timing, live-provider behavior, or
+cross-platform runtime behavior; those remain `UNVERIFIED` until their
+respective evidence is collected.
 
 ## S-lane validation
 
