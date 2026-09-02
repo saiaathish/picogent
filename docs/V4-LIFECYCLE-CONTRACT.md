@@ -5,9 +5,9 @@ the `internal/lifecycle` package. The 2026-09-01 entry-point checkpoint adds
 local macOS fresh-process coverage for headless, TUI, and GUI interruption,
 plus headless/TUI/GUI persistence-failure coverage. Hosted Windows signal
 behavior and all rendered GUI/TUI evidence remain `UNVERIFIED` until they are
-observed at their actual boundaries. The contract now also names abrupt TUI
-process-kill recovery; its direct fixture is tracked separately and remains
-`UNVERIFIED` until that evidence lands.
+observed at their actual boundaries. The abrupt TUI process-kill fixture now
+has a local macOS pass; Windows console-signal behavior and rendered terminal
+behavior remain `UNVERIFIED`.
 
 The existing `taskstate` model and `outcome.TurnContract` remain authoritative.
 `internal/lifecycle` is a test/evidence vocabulary only: it names the matrix,
@@ -23,7 +23,7 @@ failure cannot be presented as verified completion.
 | `headless-task-save-failure` | headless | terminal durable-task save fails | last checkpoint remains working/active and resumable | no marker; not ready; fail-closed | task persistence | required; fresh-process `UNVERIFIED` |
 | `tui-eof-clean-exit` | TUI | EOF/quit before a turn is admitted | existing session/task snapshot retained | no marker; not ready; fail-closed | none | not required, `UNVERIFIED` |
 | `tui-signal-active-turn` | TUI | Ctrl-C/owning-context cancellation | working task; interrupted/recover turn; canceled stop | no marker; not ready; fail-closed | canceled | required, local macOS pass; Windows `UNVERIFIED` |
-| `tui-process-kill-active-turn` | TUI | TUI process is killed during an active turn | fresh process recovers the durably admitted turn as interrupted/recover | no marker; not ready; fail-closed | none | required, `UNVERIFIED` pending direct fixture |
+| `tui-process-kill-active-turn` | TUI | TUI process is killed during an active turn | fresh process recovers the durably admitted turn as interrupted/recover | no marker; not ready; fail-closed | none | required, local macOS pass; Windows `UNVERIFIED` |
 | `tui-session-save-failure` | TUI | session save fails during completion/cleanup | durable task remains resumable; session error is visible | no marker; not ready; fail-closed | session persistence | not required, local deterministic pass |
 | `gui-shutdown-active-turn` | GUI | server context shutdown during an active turn | no new admission; turn finishes durably or is interrupted before cleanup returns | no completion from shutdown alone | none | required, local macOS pass; Windows `UNVERIFIED` |
 | `gui-process-kill-active-turn` | GUI | GUI process is killed during an active turn | fresh process recovers the durably admitted turn as interrupted/recover | no marker; not ready; fail-closed | none | required, `UNVERIFIED` |
@@ -57,10 +57,14 @@ session save failures emit persistence errors while retaining a fail-closed,
 recoverable task. These tests exercise the GUI server and event handler
 directly; they do not claim rendered-browser behavior.
 
-The `tui-process-kill-active-turn` row is a contract requirement only at this
-checkpoint. The existing TUI signal test does not substitute for an abrupt
-owner-death boundary; the direct child-kill and fresh-model observation is
-tracked by [#338](https://github.com/saiaathish/picogent/issues/338).
+The `tui-process-kill-active-turn` fixture seeds a durable session, starts the
+real TUI model against a loopback provider, waits for the persisted active
+turn, and kills the child with the native process-kill boundary. A fresh
+`app.LoadContext` plus `newModel` then recovers the same session as an
+interrupted/recovery turn with `process_restart` metadata and a fail-closed
+completion proof. This is the direct M-lane evidence in [#340](https://github.com/saiaathish/picogent/issues/340);
+it does not claim rendered terminal behavior, Windows console-control
+semantics, arbitrary crash windows, or live-provider quality.
 
 Windows hosted SIGINT behavior is intentionally not claimed here: the current
 child-process boundary does not provide a stable `os.Interrupt` delivery
