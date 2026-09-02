@@ -74,6 +74,38 @@ func TestWritesFileThenStops(t *testing.T) {
 	}
 }
 
+func TestNonDurableRunDoesNotInstallPublicationHook(t *testing.T) {
+	dir := t.TempDir()
+	args, _ := json.Marshal(map[string]string{"path": "hello.txt", "content": "picogent"})
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "1", Name: "write_file", Arguments: string(args)}}}},
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	publishCalls := 0
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: dir,
+		BeforeWorkspacePublish: func(string, []byte, os.FileMode) error {
+			publishCalls++
+			return nil
+		},
+	})
+	cfg := config.Default()
+	cfg.Workspace = dir
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, dir, nil))
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "create hello.txt"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if publishCalls != 0 {
+		t.Fatalf("non-durable publication hook calls = %d, want 0", publishCalls)
+	}
+	if !result.UndoAvailable {
+		t.Fatal("non-durable write lost process-local undo")
+	}
+}
+
 func TestScopedTaskModeIsPerTurn(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Default()
