@@ -1,9 +1,10 @@
 # Picogent v4 discovery scorecard
 
-Status: refreshed on 2026-09-01 against exact `main` head
-`281942c12369ce795e6f9a6dc824e3c08aede63a` after the outcome, recovery, GUI,
-undo-publication, lifecycle, proof-continuity, and cancellation slices through
-PRs #297, #298, #299, #301, and #303 merged.
+Status: refreshed on 2026-09-02 against the exact audited `main` head
+`3900ce229440bd1ece64c9d2cf15960aa471bdcd` after the outcome, recovery, GUI,
+undo-publication, lifecycle, proof-continuity, cancellation, and hosted
+attestation slices through PRs #297, #298, #299, #301, #303, #318, and #320
+merged. The independent release-evidence audit is recorded in PR #322.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -113,9 +114,11 @@ green unit tests or bounded hosted quality gates:
 - symlink-swap/TOCTOU, child-environment secret leakage, git hook/textconv
   execution, MCP prompt injection, installer safety, and dependency/SBOM
   evidence beyond the hosted vulnerability reachability scan;
-- hostile/deep security scanning and signed release attestation. Hosted
-  `govulncheck` now passes on the dependency graph, but it is not a substitute
-  for those runtime and supply-chain audits.
+- independent release audit, SBOM/production-binary signing, and hostile/deep
+  security scanning. Hosted release attestations are now directly observed for
+  the bounded gate and manifest subjects, but the verification manifest remains
+  `UNVERIFIED`; hosted `govulncheck` is not a substitute for those runtime and
+  supply-chain audits.
 
 ## Deletion queue
 
@@ -143,7 +146,10 @@ The hosted `release-evidence` job now validates a bounded `test`/`security`
 gate ledger against the exact candidate SHA before uploading evidence. This
 closes the missing-job/failed-job artifact path; it does not turn the advisory
 verification manifest into a release approval or cover live-provider,
-hostile-runtime, or signed-attestation claims.
+hostile-runtime, SBOM, or production-release claims. PR #320 now publishes and
+verifies a GitHub/Sigstore attestation for the two exact JSON subjects; the
+independent audit in PR #322 records the observed provenance and keeps the
+remaining release boundaries explicit.
 
 The restart-recovery slice adds an explicit `process_restart` stop reason and
 uses the project-locked `Agent.SetTaskSession` boundary to close a stale active
@@ -254,10 +260,10 @@ vet, build, Ubuntu, Windows, macOS, security, and release-evidence checks
 passed. Executable browser-level primary event coverage remains a follow-up
 tracked in issue #243.
 
-## Current-head reconciliation (2026-09-01)
+## Current-head reconciliation (2026-09-02)
 
-The scorecard is now reconciled with exact `main` head
-`281942c12369ce795e6f9a6dc824e3c08aede63a`. The following bounded slices are
+The scorecard is now reconciled with the exact audited `main` head
+`3900ce229440bd1ece64c9d2cf15960aa471bdcd`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger and the completed
 continuity child lanes:
 
@@ -291,6 +297,13 @@ continuity child lanes:
   historical v4 checkpoint. PR #303 adds standalone attribution controls and a
   production-shaped durable scripted-turn control; current optimization work
   remains tracked in issue #302.
+- PR #318 adds the bounded local Ed25519 release-attestation contract with
+  fail-closed malformed and absent-evidence semantics. PR #320 adds the
+  hosted GitHub/Sigstore publication and exact-subject verification path;
+  post-merge run `33581839408` directly exposes both attestations for merge
+  SHA `3900ce229440bd1ece64c9d2cf15960aa471bdcd`. PR #322 records the fresh
+  independent artifact recheck and preserves the `UNVERIFIED` manifest,
+  SBOM, production-release, and runtime boundaries.
 
 The #296 medium lane is intentionally not opened: the small contract lane and
 the GUI integration lane exposed no production behavior defect. The focused
@@ -301,6 +314,8 @@ lane rather than adding a speculative correction to #296.
 
 These slices prove focused contracts and deterministic local or hosted checks;
 they do not establish live-provider quality, rendered cross-platform behavior,
-full hostile lifecycle recovery, signed release attestation, or a general
-filesystem race guarantee. Parent #246 remains open while those boundaries
-remain unresolved.
+full hostile lifecycle recovery, SBOM or production-release readiness, or a
+general filesystem race guarantee. The hosted attestation itself is confirmed
+for the bounded evidence subjects, while the independent audit remains
+`INCONCLUSIVE` for release authorization. Parent #246 remains open while those
+boundaries remain unresolved.
