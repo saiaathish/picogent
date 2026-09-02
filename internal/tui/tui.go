@@ -58,6 +58,11 @@ const (
 	tuiRecoveryHelp        = "/undo last turn · /resume recover"
 	tuiRecoveryHelpCompact = "/help · /undo · /resume"
 	tuiRecoveryHelpMinimal = "/undo /resume"
+	tuiRecoveryHelpSingle  = "/undo"
+	tuiBusyHelp            = "working…  ctrl-c stops this turn"
+	tuiBusyHelpCompact     = "ctrl-c stop"
+	tuiBusyHelpMinimal     = "ctrl-c"
+	tuiBusyHelpSingle      = "stop"
 )
 
 type logLine struct{ Kind, Text string }
@@ -1104,36 +1109,21 @@ func clip(s string, n int) string {
 }
 
 func tuiHelpFooter(width int, busy bool) string {
-	if busy {
-		return "working…  ctrl-c stops this turn"
-	}
-	for _, candidate := range []string{
+	candidates := []string{
 		"enter send · ctrl-c stop/quit · /help · " + tuiRecoveryHelp,
 		tuiRecoveryHelpCompact,
 		tuiRecoveryHelpMinimal,
-	} {
+		tuiRecoveryHelpSingle,
+	}
+	if busy {
+		candidates = []string{tuiBusyHelp, tuiBusyHelpCompact, tuiBusyHelpMinimal, tuiBusyHelpSingle}
+	}
+	for _, candidate := range candidates {
 		if lipgloss.Width(candidate) <= width {
 			return candidate
 		}
 	}
-	return clipDisplayWidth(tuiRecoveryHelpMinimal, width)
-}
-
-func clipDisplayWidth(s string, width int) string {
-	if width <= 0 {
-		return ""
-	}
-	var clipped strings.Builder
-	used := 0
-	for _, r := range s {
-		cellWidth := lipgloss.Width(string(r))
-		if used+cellWidth > width {
-			break
-		}
-		clipped.WriteRune(r)
-		used += cellWidth
-	}
-	return clipped.String()
+	return ""
 }
 
 func max(a, b int) int {

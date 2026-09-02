@@ -717,24 +717,34 @@ func TestIdleFooterExposesRecoveryControlsAndBusyFooterKeepsStopGuidance(t *test
 
 	m.busy = true
 	busyView := m.View()
-	if !strings.Contains(busyView, "working…  ctrl-c stops this turn") {
+	if !strings.Contains(busyView, tuiBusyHelp) {
 		t.Fatalf("busy footer = %q, want stop guidance", busyView)
 	}
 }
 
 func TestTUIHelpFooterFitsNarrowWidths(t *testing.T) {
-	for _, width := range []int{80, 40, 20, 8, 0} {
-		got := tuiHelpFooter(width, false)
-		if lipgloss.Width(got) > width {
-			t.Fatalf("width %d footer %q has display width %d", width, got, lipgloss.Width(got))
-		}
-		if width >= lipgloss.Width(tuiRecoveryHelpMinimal) && (!strings.Contains(got, "/undo") || !strings.Contains(got, "/resume")) {
-			t.Fatalf("width %d footer = %q, want both recovery controls", width, got)
-		}
+	tests := []struct {
+		width int
+		idle  string
+		busy  string
+	}{
+		{width: 80, idle: "enter send · ctrl-c stop/quit · /help · " + tuiRecoveryHelp, busy: tuiBusyHelp},
+		{width: 40, idle: tuiRecoveryHelpCompact, busy: tuiBusyHelp},
+		{width: 20, idle: tuiRecoveryHelpMinimal, busy: tuiBusyHelpCompact},
+		{width: 8, idle: tuiRecoveryHelpSingle, busy: tuiBusyHelpMinimal},
+		{width: 4, idle: "", busy: tuiBusyHelpSingle},
+		{width: 0, idle: "", busy: ""},
 	}
-
-	if got := tuiHelpFooter(20, true); got != "working…  ctrl-c stops this turn" {
-		t.Fatalf("busy footer = %q, want existing stop guidance", got)
+	for _, test := range tests {
+		if got := tuiHelpFooter(test.width, false); got != test.idle {
+			t.Errorf("idle width %d footer = %q, want %q", test.width, got, test.idle)
+		}
+		if got := tuiHelpFooter(test.width, true); got != test.busy {
+			t.Errorf("busy width %d footer = %q, want %q", test.width, got, test.busy)
+		}
+		if lipgloss.Width(test.idle) > test.width || lipgloss.Width(test.busy) > test.width {
+			t.Errorf("width %d expected footer exceeds width: idle=%q busy=%q", test.width, test.idle, test.busy)
+		}
 	}
 }
 
