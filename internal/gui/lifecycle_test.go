@@ -726,6 +726,73 @@ type guiProcessStateSnapshot struct {
 	Completion *taskstate.CompletionCheck `json:"completion"`
 }
 
+const guiChildCleanupTimeout = 5 * time.Second
+
+func waitGUIChildFor(wait <-chan error, timeout time.Duration) (error, bool) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-wait:
+		return err, true
+	case <-timer.C:
+		return nil, false
+	}
+}
+
+func waitGUIChannelFor(done <-chan struct{}, timeout time.Duration) bool {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+		return true
+	case <-timer.C:
+		return false
+	}
+}
+
+func guiChildExited(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
+	}
+}
+
+// cleanupGUIChild is deliberately bounded. The lifecycle fixtures exercise a
+// real child process and an intentionally blocked provider; an unbounded
+// cleanup wait can otherwise turn one runner-sensitive teardown into the
+// workflow's global ten-minute timeout and hide the useful failure.
+func cleanupGUIChild(t *testing.T, cmd *exec.Cmd, wait <-chan error, childDone, stdoutDone <-chan struct{}, release func(), label string) {
+	t.Helper()
+	if release != nil {
+		release()
+	}
+	if !guiChildExited(childDone) && cmd != nil && cmd.Process != nil {
+		_ = cmd.Process.Kill()
+	}
+	if !guiChildExited(childDone) {
+		if _, ok := waitGUIChildFor(wait, guiChildCleanupTimeout); !ok {
+			t.Errorf("%s did not exit within %s after forced cleanup", label, guiChildCleanupTimeout)
+			return
+		}
+	}
+	if !waitGUIChannelFor(stdoutDone, guiChildCleanupTimeout) {
+		t.Errorf("%s stdout reader did not finish within %s", label, guiChildCleanupTimeout)
+	}
+}
+
+func TestGUIChildWaitIsBounded(t *testing.T) {
+	wait := make(chan error)
+	started := time.Now()
+	if _, ok := waitGUIChildFor(wait, 20*time.Millisecond); ok {
+		t.Fatal("GUI child wait unexpectedly completed")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("GUI child wait took %s, want a bounded timeout", elapsed)
+	}
+}
+
 func guiProcessState(t *testing.T, baseURL string) guiProcessStateSnapshot {
 	t.Helper()
 	client := &http.Client{Timeout: 2 * time.Second}
