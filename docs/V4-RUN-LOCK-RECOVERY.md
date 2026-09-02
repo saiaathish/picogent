@@ -27,6 +27,24 @@ The contention control and abrupt-owner test both passed locally on the
 `d2362be` source checkpoint. The test uses readiness markers and a bounded
 poll, rather than assuming that a fixed sleep establishes process ownership.
 
+## M-lane composition
+
+The existing `internal/agent/long_horizon_test.go` process-kill fixture was
+extended at test checkpoint `758b8bc` so the killed worker holds the project
+run lock while it durably admits the active turn. After the parent waits for
+that worker to exit, the existing fresh-process `SetTaskSession` and follow-up
+`Run` path must acquire the same lock before recovering the task. The fixture
+then verifies the interrupted `recover` turn, `process_restart` metadata,
+retained follow-up turn, and fail-closed completion projection.
+
+```text
+go test ./internal/agent -run '^TestLongHorizonResumeAfterProcessKill$' -count=1 -v
+```
+
+The integrated test passed locally in `0.12s`. This composes the S-lane lock
+handoff with an existing durable recovery scenario; it does not turn either
+fixture into arbitrary crash-window or product-quality evidence.
+
 ## Evidence boundary
 
 This S lane proves only that a fresh process is not stranded by an abruptly
