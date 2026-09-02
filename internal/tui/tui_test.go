@@ -686,6 +686,41 @@ func TestTemporaryScopeModeVisibleInHeader(t *testing.T) {
 	}
 }
 
+func TestHelpExposesRecoveryControls(t *testing.T) {
+	m := &model{ag: &agent.Agent{}, vp: viewport.New(80, 20)}
+	if cmd := m.slash("/help"); cmd != nil {
+		t.Fatalf("help command = %T, want no async command", cmd)
+	}
+	if len(m.lines) == 0 {
+		t.Fatal("help did not add a system line")
+	}
+	help := m.lines[len(m.lines)-1].Text
+	if !strings.Contains(help, tuiRecoveryHelp) {
+		t.Fatalf("help = %q, want recovery controls %q", help, tuiRecoveryHelp)
+	}
+}
+
+func TestIdleFooterExposesRecoveryControlsAndBusyFooterKeepsStopGuidance(t *testing.T) {
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Workspace = t.TempDir()
+	m, err := newModel(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.width, m.height = 100, 30
+	view := m.View()
+	if !strings.Contains(view, tuiRecoveryHelp) {
+		t.Fatalf("idle footer = %q, want recovery controls %q", view, tuiRecoveryHelp)
+	}
+
+	m.busy = true
+	busyView := m.View()
+	if !strings.Contains(busyView, "working…  ctrl-c stops this turn") {
+		t.Fatalf("busy footer = %q, want stop guidance", busyView)
+	}
+}
+
 func TestStaleCanceledTurnEventsCannotMutateCurrentTurn(t *testing.T) {
 	currentTask := &taskstate.Task{
 		SessionID: "session-new",

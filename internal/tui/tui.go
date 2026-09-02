@@ -54,6 +54,8 @@ var (
 	inputBox   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(paper).Padding(0, 1)
 )
 
+const tuiRecoveryHelp = "/undo last turn · /resume recover"
+
 type logLine struct{ Kind, Text string }
 
 type permAskMsg struct {
@@ -821,7 +823,7 @@ func (m *model) slash(line string) tea.Cmd {
 		m.stop()
 		return tea.Quit
 	case "/help":
-		help := "Type what you want. Safe asks before edits.\nOptional: /commit /review /clear /quit"
+		help := "Type what you want. Safe asks before edits.\nOptional: " + tuiRecoveryHelp + " · /commit /review /clear /quit"
 		if m.ag.Tools != nil && m.ag.Tools.HasMCP() {
 			if mcp := m.ag.Tools.MCPManagerSnapshot(); mcp != nil {
 				help += fmt.Sprintf("\nConnected: %d MCP tools.", len(mcp.Tools()))
@@ -1039,7 +1041,7 @@ func (m *model) View() string {
 		}
 		permBox = permStyle.Width(max(m.width-4, 20)).Render(body + "?\n\n  [Y]  Yes      [N]  No      [A]  This turn      [L]  Always")
 	}
-	help := "enter send · ctrl-c stop/quit · /help"
+	help := "enter send · ctrl-c stop/quit · /help · " + tuiRecoveryHelp
 	if m.busy {
 		help = "working…  ctrl-c stops this turn"
 	}
