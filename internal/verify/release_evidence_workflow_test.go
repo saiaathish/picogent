@@ -21,6 +21,31 @@ func TestReleaseEvidenceWorkflowUsesExternalArtifactDirectory(t *testing.T) {
 	}
 	workflow := string(data)
 
+	checkoutRef := "ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}"
+	checkoutRepository := "repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}"
+	jobs := []string{"test", "security", "release-evidence"}
+	for _, job := range jobs {
+		start := strings.Index(workflow, "\n  "+job+":")
+		if start < 0 {
+			t.Fatalf("release workflow is missing %s job", job)
+		}
+		section := workflow[start:]
+		for _, nextJob := range jobs {
+			if nextJob == job {
+				continue
+			}
+			if next := strings.Index(workflow[start+1:], "\n  "+nextJob+":"); next >= 0 && next+1 < len(section) {
+				section = section[:next+1]
+			}
+		}
+		if !strings.Contains(section, checkoutRef) {
+			t.Errorf("%s job must checkout the exact pull-request source ref", job)
+		}
+		if !strings.Contains(section, checkoutRepository) {
+			t.Errorf("%s job must checkout the pull-request source repository", job)
+		}
+	}
+
 	for _, required := range []string{
 		"ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence",
 		"go run ./cmd/release-evidence-layout",
