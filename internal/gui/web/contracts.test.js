@@ -181,3 +181,17 @@ test("setup only installs after an explicit button action", async () => {
   await installButton.onclick();
   assert.deepEqual(harness.calls.map((call) => call.url), ["/api/setup", "/api/setup/install"]);
 });
+
+test("failed setup installation restores the explicit action", async () => {
+  const harness = setupHarness(() => {
+    throw new Error("network down");
+  });
+  await settleSetup();
+
+  const installButton = harness.elements.get("install");
+  await installButton.onclick();
+
+  assert.equal(installButton.disabled, false);
+  assert.equal(installButton.textContent, "Install missing pieces");
+  assert.equal(harness.elements.get("stage-err").textContent, "network down");
+});
