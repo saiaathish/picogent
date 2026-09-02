@@ -235,14 +235,14 @@ jobs:
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-checksums: ${{ runner.temp }}/picogent-release-evidence/release-evidence.sha256
-          predicate-type: https://github.com/saiaathishkarthik/picogent/attestation/release-evidence/v1
+          predicate-type: https://github.com/saiaathish/picogent/attestation/release-evidence/v1
           predicate-path: ${{ runner.temp }}/picogent-release-evidence/release-attestation-predicate.json
       - name: Verify release-gates attestation
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence
           GH_TOKEN: ${{ github.token }}
-          PREDICATE_TYPE: https://github.com/saiaathishkarthik/picogent/attestation/release-evidence/v1
+          PREDICATE_TYPE: https://github.com/saiaathish/picogent/attestation/release-evidence/v1
           SIGNER_WORKFLOW: ${{ github.workflow_ref }}
         run: |
           gh attestation verify "$ARTIFACT_DIR/release-gates.json" \
@@ -256,7 +256,7 @@ jobs:
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence
           GH_TOKEN: ${{ github.token }}
-          PREDICATE_TYPE: https://github.com/saiaathishkarthik/picogent/attestation/release-evidence/v1
+          PREDICATE_TYPE: https://github.com/saiaathish/picogent/attestation/release-evidence/v1
           SIGNER_WORKFLOW: ${{ github.workflow_ref }}
         run: |
           gh attestation verify "$ARTIFACT_DIR/verification-manifest.json" \

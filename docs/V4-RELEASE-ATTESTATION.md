@@ -52,8 +52,13 @@ The hosted publication lane uses GitHub's `actions/attest@v4` with a full
 commit pin, OIDC signing, and a custom predicate type:
 
 ```text
-https://github.com/saiaathishkarthik/picogent/attestation/release-evidence/v1
+https://github.com/saiaathish/picogent/attestation/release-evidence/v1
 ```
+
+The predicate namespace must match the canonical repository identity
+`saiaathish/picogent`. Historical audit artifacts may contain the previous
+namespace because they record what an earlier workflow run actually emitted;
+those observations are not rewritten retroactively.
 
 The predicate repeats the S-lane identity fields and computes the two artifact
 digests from the files that are passed to the attestation action. The action
