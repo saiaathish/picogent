@@ -39,7 +39,7 @@ write, digest, upload, or attestation errors.
 
 ## M-lane workflow implementation
 
-`.github/workflows/ci.yml` sets one job-scoped `ARTIFACT_DIR` under
+`.github/workflows/ci.yml` sets one step-scoped `ARTIFACT_DIR` under
 `${{ runner.temp }}`, validates it before creating the directory, and routes
 the release ledger, verification manifest, predicate, checksum list,
 attestation verifier output, and both uploads through that directory. The
