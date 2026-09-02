@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/checkpoint"
@@ -125,6 +126,79 @@ func BenchmarkScriptedAgentEditStageWorkspacePublishWithHook(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+}
+
+// BenchmarkScriptedAgentEditStageNonDurableComposite measures the project
+// run-lock and native-edit safety operations in one non-durable turn-shaped
+// operation. It intentionally excludes model/context work and UndoLastTurn,
+// matching BenchmarkScriptedAgentEdit's boundary while making the causal
+// control-flow subtotal visible. The individual phase metrics are measured on
+// the same iterations, so they can be compared with the composite rather than
+// summed from independently warmed benchmarks.
+func BenchmarkScriptedAgentEditStageNonDurableComposite(b *testing.B) {
+	root := b.TempDir()
+	path := filepath.Join(root, "note.txt")
+	store := taskstate.WorkspaceStore(root)
+
+	var runLockNanos int64
+	var captureNanos int64
+	var publishNanos int64
+	var sealNanos int64
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		if err := os.WriteFile(path, benchmarkStageBefore, 0o644); err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+
+		started := time.Now()
+		release, err := store.AcquireRunLock()
+		runLockNanos += time.Since(started).Nanoseconds()
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		started = time.Now()
+		cp, err := checkpoint.Capture(root, []string{"note.txt"})
+		captureNanos += time.Since(started).Nanoseconds()
+		if err != nil {
+			b.Fatal(err)
+		}
+
+		started = time.Now()
+		if err := workspace.WriteAtomic(root, path, benchmarkStageAfter); err != nil {
+			b.Fatal(err)
+		}
+		publishNanos += time.Since(started).Nanoseconds()
+
+		started = time.Now()
+		if err := cp.Seal(); err != nil {
+			b.Fatal(err)
+		}
+		changed, err := cp.ChangedPaths()
+		sealNanos += time.Since(started).Nanoseconds()
+		if err != nil {
+			b.Fatal(err)
+		}
+		if len(changed) != 1 || changed[0] != "note.txt" {
+			b.Fatalf("changed paths = %#v, want [note.txt]", changed)
+		}
+
+		started = time.Now()
+		if err := release(); err != nil {
+			b.Fatal(err)
+		}
+		runLockNanos += time.Since(started).Nanoseconds()
+	}
+	b.StopTimer()
+	denominator := float64(b.N)
+	b.ReportMetric(float64(runLockNanos)/denominator, "run-lock-ns/op")
+	b.ReportMetric(float64(captureNanos)/denominator, "capture-ns/op")
+	b.ReportMetric(float64(publishNanos)/denominator, "publish-ns/op")
+	b.ReportMetric(float64(sealNanos)/denominator, "seal-ns/op")
+	b.ReportMetric(float64(runLockNanos+captureNanos+publishNanos+sealNanos)/denominator, "safety-ns/op")
 }
 
 // BenchmarkScriptedAgentEditStageTaskStateSave measures one task-state file
