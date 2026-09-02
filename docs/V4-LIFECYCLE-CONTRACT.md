@@ -3,11 +3,14 @@
 Status: the scenario contract and deterministic observation helper landed in
 the `internal/lifecycle` package. The 2026-09-01 entry-point checkpoint adds
 local macOS fresh-process coverage for headless, TUI, and GUI interruption,
-plus headless/TUI/GUI persistence-failure coverage. Hosted Windows signal
-behavior and all rendered GUI/TUI evidence remain `UNVERIFIED` until they are
-observed at their actual boundaries. The abrupt TUI process-kill fixture now
-has a local macOS pass; Windows console-signal behavior and rendered terminal
-behavior remain `UNVERIFIED`.
+plus headless/TUI/GUI persistence-failure coverage. The conditional L
+reconciliation reruns the headless, agent, GUI, and TUI process-boundary
+fixtures at exact source head `f29fa074c468b96badc2f951a76f1f1a90c78b1f` and
+records the result in [V4-CROSS-SURFACE-CRASH-RECOVERY.md](V4-CROSS-SURFACE-CRASH-RECOVERY.md).
+Hosted Windows signal behavior and all rendered GUI/TUI evidence remain
+`UNVERIFIED` until they are observed at their actual boundaries. Windows
+console-signal behavior, rendered terminal behavior, and the other explicit
+limits in the reconciliation record remain `UNVERIFIED`.
 
 The existing `taskstate` model and `outcome.TurnContract` remain authoritative.
 `internal/lifecycle` is a test/evidence vocabulary only: it names the matrix,
@@ -26,7 +29,7 @@ failure cannot be presented as verified completion.
 | `tui-process-kill-active-turn` | TUI | TUI process is killed during an active turn | fresh process recovers the durably admitted turn as interrupted/recover | no marker; not ready; fail-closed | none | required, local macOS pass; Windows `UNVERIFIED` |
 | `tui-session-save-failure` | TUI | session save fails during completion/cleanup | durable task remains resumable; session error is visible | no marker; not ready; fail-closed | session persistence | not required, local deterministic pass |
 | `gui-shutdown-active-turn` | GUI | server context shutdown during an active turn | no new admission; turn finishes durably or is interrupted before cleanup returns | no completion from shutdown alone | none | required, local macOS pass; Windows `UNVERIFIED` |
-| `gui-process-kill-active-turn` | GUI | GUI process is killed during an active turn | fresh process recovers the durably admitted turn as interrupted/recover | no marker; not ready; fail-closed | none | required, `UNVERIFIED` |
+| `gui-process-kill-active-turn` | GUI | GUI process is killed during an active turn | fresh process recovers the durably admitted turn as interrupted/recover | no marker; not ready; fail-closed | none | required, local macOS pass; Windows `UNVERIFIED` |
 | `gui-reconnect-active-turn` | GUI | SSE reconnect while a turn is active | current session/turn remains authoritative; stale transcript is not grafted | projection follows current durable task only | none | not required, local deterministic pass |
 | `gui-task-save-failure` | GUI | terminal durable-task save fails | prior checkpoint remains working/active and recoverable | no marker; not ready; fail-closed | task persistence | not required, local deterministic pass |
 | `gui-session-save-failure` | GUI | session save fails during reset/follow-up | current durable task is retained; session error is visible | no marker; not ready; fail-closed | session persistence | not required, local deterministic pass |
@@ -55,7 +58,9 @@ leaves an interrupted/recovery turn in the task store. Reconnect adopts the
 current session/task generation and rejects stale callbacks. Durable task and
 session save failures emit persistence errors while retaining a fail-closed,
 recoverable task. These tests exercise the GUI server and event handler
-directly; they do not claim rendered-browser behavior.
+directly; they do not claim rendered-browser behavior. The exact-head GUI
+process-kill fixture adds the native owner-death boundary and fresh
+server-state recovery.
 
 The `tui-process-kill-active-turn` fixture seeds a durable session, starts the
 real TUI model against a loopback provider, waits for the persisted active
@@ -72,6 +77,12 @@ contract on Windows. The Windows lifecycle row stays `UNVERIFIED` until a
 platform-appropriate console-control test or direct runtime observation is
 recorded.
 
+The cross-surface reconciliation also reruns the existing headless signal and
+agent process-kill fixtures at the same exact head. Together with the GUI and
+TUI results, the focused fixtures, full suite, race suite, `go vet ./...`, and
+`git diff --check` are recorded in
+[V4-CROSS-SURFACE-CRASH-RECOVERY.md](V4-CROSS-SURFACE-CRASH-RECOVERY.md).
+
 ## Invariants
 
 - An interrupted turn is never rendered as complete and routes to recovery.
@@ -85,5 +96,6 @@ recorded.
 Cross-surface crash-recovery follow-up is tracked in [#338](https://github.com/saiaathish/picogent/issues/338)
 under [#311](https://github.com/saiaathish/picogent/issues/311) and parent
 [#246](https://github.com/saiaathish/picogent/issues/246): the S contract row
-is #339, the direct TUI fixture is #340, and the conditional evidence
-reconciliation remains a later L checkpoint.
+is #339, the direct TUI fixture is #340, and the conditional L evidence
+reconciliation is recorded in the cross-surface evidence document and its
+issue-linked PR.
