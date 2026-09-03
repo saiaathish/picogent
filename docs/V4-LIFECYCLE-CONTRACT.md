@@ -7,10 +7,12 @@ plus headless/TUI/GUI persistence-failure coverage. The conditional L
 reconciliation reruns the headless, agent, GUI, and TUI process-boundary
 fixtures at exact source head `f29fa074c468b96badc2f951a76f1f1a90c78b1f` and
 records the result in [V4-CROSS-SURFACE-CRASH-RECOVERY.md](V4-CROSS-SURFACE-CRASH-RECOVERY.md).
-Hosted Windows signal behavior and all rendered GUI/TUI evidence remain
-`UNVERIFIED` until they are observed at their actual boundaries. Windows
-console-signal behavior, rendered terminal behavior, and the other explicit
-limits in the reconciliation record remain `UNVERIFIED`.
+The follow-up Windows console-control checkpoints add hosted evidence for the
+existing headless and TUI signal fixtures. Windows GUI signal behavior and all
+rendered GUI/TUI evidence remain `UNVERIFIED` until they are observed at their
+actual boundaries. Arbitrary crash timing, hostile writers, live-provider
+quality, and the other explicit limits in the reconciliation record remain
+`UNVERIFIED`.
 
 The existing `taskstate` model and `outcome.TurnContract` remain authoritative.
 `internal/lifecycle` is a test/evidence vocabulary only: it names the matrix,
@@ -22,10 +24,10 @@ failure cannot be presented as verified completion.
 | ID | Surface | Trigger | Persisted task/turn result | Completion projection | User-visible error class | Fresh-process evidence |
 | --- | --- | --- | --- | --- | --- | --- |
 | `headless-eof-permission` | headless | stdin EOF during Safe permission | no turn admitted; prior durable state unchanged | no marker; not ready; fail-closed | permission | required, `UNVERIFIED` |
-| `headless-signal-active-turn` | headless | SIGINT/SIGTERM during an active turn | working task; interrupted/recover turn; canceled stop | no marker; not ready; fail-closed | canceled | required, local macOS pass; Windows `UNVERIFIED` |
+| `headless-signal-active-turn` | headless | SIGINT/SIGTERM during an active turn | working task; interrupted/recover turn; canceled stop | no marker; not ready; fail-closed | canceled | required, local macOS pass; hosted Windows console-control pass in [PR #377](https://github.com/saiaathish/picogent/pull/377) |
 | `headless-task-save-failure` | headless | terminal durable-task save fails | last checkpoint remains working/active and resumable | no marker; not ready; fail-closed | task persistence | required; fresh-process `UNVERIFIED` |
 | `tui-eof-clean-exit` | TUI | EOF/quit before a turn is admitted | existing session/task snapshot retained | no marker; not ready; fail-closed | none | not required, `UNVERIFIED` |
-| `tui-signal-active-turn` | TUI | Ctrl-C/owning-context cancellation | working task; interrupted/recover turn; canceled stop | no marker; not ready; fail-closed | canceled | required, local macOS pass; Windows `UNVERIFIED` |
+| `tui-signal-active-turn` | TUI | Ctrl-C/owning-context cancellation | working task; interrupted/recover turn; canceled stop | no marker; not ready; fail-closed | canceled | required, local macOS pass; hosted Windows console-control pass in [PR #379](https://github.com/saiaathish/picogent/pull/379) |
 | `tui-process-kill-active-turn` | TUI | TUI process is killed during an active turn | fresh process recovers the durably admitted turn as interrupted/recover | no marker; not ready; fail-closed | none | required, local macOS pass; Windows `UNVERIFIED` |
 | `tui-session-save-failure` | TUI | session save fails during completion/cleanup | durable task remains resumable; session error is visible | no marker; not ready; fail-closed | session persistence | not required, local deterministic pass |
 | `gui-shutdown-active-turn` | GUI | server context shutdown during an active turn | no new admission; turn finishes durably or is interrupted before cleanup returns | no completion from shutdown alone | none | required, local macOS pass; Windows `UNVERIFIED` |
@@ -71,17 +73,42 @@ completion proof. This is the direct M-lane evidence in [#340](https://github.co
 it does not claim rendered terminal behavior, Windows console-control
 semantics, arbitrary crash windows, or live-provider quality.
 
-Windows hosted SIGINT behavior is intentionally not claimed here: the current
-child-process boundary does not provide a stable `os.Interrupt` delivery
-contract on Windows. The Windows lifecycle row stays `UNVERIFIED` until a
-platform-appropriate console-control test or direct runtime observation is
-recorded.
+The signal fixtures use a platform-appropriate child boundary. Unix retains
+`cmd.Process.Signal(os.Interrupt)`; Windows creates a new process group and
+delivers `CTRL_BREAK_EVENT`, which Go's signal package receives as
+`os.Interrupt`. `TestHeadlessFreshProcessSignalRetainsInterruptedTurn` asserts
+the canceled headless child exits with code 130 and leaves an interrupted,
+recoverable turn. `TestTUIFreshProcessSignalRetainsInterruptedTurn` observes
+the same interrupted/recovery contract through the real TUI model. The hosted
+Windows test jobs passed these fixtures at their actual platform boundary; the
+provenance is recorded below.
+
+This resolves the Windows console-control gap for these provider-independent
+headless and TUI fixtures only. GUI Windows signal behavior, rendered terminal
+behavior, direct TUI process-kill behavior on Windows, arbitrary crash windows,
+and live-provider quality remain `UNVERIFIED`.
 
 The cross-surface reconciliation also reruns the existing headless signal and
 agent process-kill fixtures at the same exact head. Together with the GUI and
 TUI results, the focused fixtures, full suite, race suite, `go vet ./...`, and
 `git diff --check` are recorded in
 [V4-CROSS-SURFACE-CRASH-RECOVERY.md](V4-CROSS-SURFACE-CRASH-RECOVERY.md).
+
+## Windows console-control provenance
+
+The hosted Windows evidence is tied to the existing signal fixtures rather than
+to production signal plumbing:
+
+| Surface | Fixture | Source head | PR checks | Merge | Post-merge main |
+| --- | --- | --- | --- | --- | --- |
+| headless | `TestHeadlessFreshProcessSignalRetainsInterruptedTurn` | `3923f3251a7b93725cc485e6c60f495c60871bd2` | [33721809935](https://github.com/saiaathish/picogent/actions/runs/33721809935), all five gates PASS | `c5c5cf6d27ad275c0f4f0c00ff0817fe36eeea2c` | [33722260694](https://github.com/saiaathish/picogent/actions/runs/33722260694), all five gates PASS |
+| TUI | `TestTUIFreshProcessSignalRetainsInterruptedTurn` | `6ef0d37bd63f3462fa54542ca30fe633224a2925` | [33723897413](https://github.com/saiaathish/picogent/actions/runs/33723897413), all five gates PASS | `09fe4b41de4d03dffeb1e69708ae5fd7f45ee412` | [33724323436](https://github.com/saiaathish/picogent/actions/runs/33724323436), all five gates PASS |
+
+The Windows test helper uses `CREATE_NEW_PROCESS_GROUP` and
+`GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid)`. The record proves signal
+delivery and the existing fail-closed cancellation/recovery projection at the
+headless and TUI test seams. It is not evidence for GUI signal delivery,
+rendered behavior, or a general Windows crash guarantee.
 
 ## Invariants
 
