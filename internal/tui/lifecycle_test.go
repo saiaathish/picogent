@@ -330,10 +330,6 @@ func TestTUIFreshProcessSignalRetainsInterruptedTurn(t *testing.T) {
 		tuiSignalHelper(t)
 		return
 	}
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows hosted runners do not provide a stable child SIGINT boundary; the limitation is recorded in the lifecycle contract")
-	}
-
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	workspace := filepath.Join(root, "workspace")
@@ -394,6 +390,9 @@ func TestTUIFreshProcessSignalRetainsInterruptedTurn(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if err := prepareSignalChild(cmd); err != nil {
+		t.Fatalf("prepare TUI signal child: %v", err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -406,10 +405,10 @@ func TestTUIFreshProcessSignalRetainsInterruptedTurn(t *testing.T) {
 		<-wait
 		t.Fatalf("TUI child did not reach provider barrier\nstdout=%q\nstderr=%q", stdout.String(), stderr.String())
 	}
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+	if err := sendInterruptToChild(cmd); err != nil {
 		_ = cmd.Process.Kill()
 		<-wait
-		t.Fatalf("interrupt TUI child: %v", err)
+		t.Fatalf("interrupt TUI child with platform console signal: %v", err)
 	}
 	select {
 	case err := <-wait:
