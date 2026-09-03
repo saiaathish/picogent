@@ -1,13 +1,13 @@
 # Picogent v4 discovery scorecard
 
-Status: refreshed on 2026-09-02 against the exact audited `main` head
-`41b95d6f37efc5f25e881a9da10ee0909dfa389a` after the outcome, recovery, GUI,
+Status: refreshed on 2026-09-03 against the exact `main` merge
+`27fb38b20aec428ab53912a7e4fec4fd82a2985e` after the outcome, recovery, GUI,
 undo-publication, lifecycle, proof-continuity, cancellation, hosted
-attestation, TUI recovery, setup, and restore-inspection slices through PRs
-#297, #298, #299, #301, #303, #318, #320, #343, #347, #349, #351, #353,
-#355, #357, and #359 merged. The independent release-evidence reconciliation
-is tracked in issue #356; prior audit observations and their unverified
-boundaries are preserved below.
+attestation, TUI recovery, setup, restore-inspection, and workflow action-pin
+slices through PRs #297, #298, #299, #301, #303, #318, #320, #343, #347,
+#349, #351, #353, #355, #357, #359, and #363 merged. The independent
+release-evidence reconciliation is tracked in issue #356; prior audit
+observations and their unverified boundaries are preserved below.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -121,7 +121,10 @@ green unit tests or bounded hosted quality gates:
   security scanning. Hosted release attestations are now directly observed for
   the bounded gate and manifest subjects, but the verification manifest remains
   `UNVERIFIED`; hosted `govulncheck` is not a substitute for those runtime and
-  supply-chain audits.
+  supply-chain audits. Current CI workflow action references are pinned to
+  verified immutable release commits by PR #363, which narrows action-drift
+  risk without establishing any of the release, runtime, or signing claims
+  above.
 
 ## Deletion queue
 
@@ -263,12 +266,13 @@ vet, build, Ubuntu, Windows, macOS, security, and release-evidence checks
 passed. Executable browser-level primary event coverage remains a follow-up
 tracked in issue #243.
 
-## Current-head reconciliation (2026-09-02)
+## Current-head reconciliation (2026-09-03)
 
 The scorecard is now reconciled with the exact audited `main` head
-`41b95d6f37efc5f25e881a9da10ee0909dfa389a`. The following bounded slices are
+`27fb38b20aec428ab53912a7e4fec4fd82a2985e`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger and the completed
-continuity child lanes:
+continuity child lanes. The action-pin entry at the end is current-main
+evidence; older audit entries retain the limits that applied at their heads:
 
 - PRs #249 and #250 establish the executable cross-surface completion matrix
   and route CLI, GUI, and TUI retirement through the shared
@@ -324,8 +328,9 @@ continuity child lanes:
   `33683301465`. The hosted gate ledger and both Sigstore subjects verify, but
   the signed manifest is `INCONCLUSIVE` because its bounded broader check was
   killed and targeted coverage was skipped. SBOM, production-release,
-  moving-action-pin, live-provider, rendered-platform, hostile-runtime, and
-  release-authorization claims remain outside the evidence.
+  live-provider, rendered-platform, hostile-runtime, and release-authorization
+  claims remain outside the evidence; moving action pins were also unverified
+  at that historical head.
 - PR #355 closes the bounded GUI fresh-process teardown issue #354. Its source
   head is `8a3a347ea111818c164b2eac4782d9c861a84c15`, its merge commit is
   `92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2`, and post-merge run
@@ -338,8 +343,9 @@ continuity child lanes:
   `33697379530`. The hosted gate ledger and both Sigstore subjects verify; the
   manifest's broader check passed 42 tests, while targeted coverage was
   skipped and coverage remained `UNVERIFIED`. SBOM, production-release,
-  moving-action-pin, live-provider, rendered-platform, hostile-runtime, and
-  release-authorization claims remain outside the evidence.
+  live-provider, rendered-platform, hostile-runtime, and release-authorization
+  claims remain outside the evidence; moving action pins were also unverified
+  at that historical head.
 - Issue #358 is closed by PR #359, which reuses restore preflight state to
   avoid a duplicate inspection while retaining the final secure
   compare-before-publish and conflict checks. Its source head is
@@ -349,6 +355,21 @@ continuity child lanes:
   allocations decreased from 100 to 77 per operation; wall-clock change is
   inconclusive under filesystem variance. This remains bounded local control
   evidence, not a broad performance or release-readiness claim.
+- Issue #362 is closed by PR #363. Its source head is
+  `3b649cd9bd9bf1a2e884421a1b8f4c5133870ea2`, its merge commit is
+  `27fb38b20aec428ab53912a7e4fec4fd82a2985e`, its PR checks passed in run
+  `33704387165`, and post-merge `main` checks passed in run `33704880172`.
+  Every hosted action reference in `.github/workflows/ci.yml` now uses a
+  40-character immutable commit SHA mapped to a verified release tag:
+  `actions/checkout` `v4.4.0` →
+  `11d5960a326750d5838078e36cf38b85af677262`, `actions/setup-go` `v5.6.0` →
+  `40f1582b2485089dde7abd97c1529aa768e1baff`, `actions/setup-node` `v4.4.0`
+  → `49933ea5288caeca8642d1e84afbd3f7d6820020`, and
+  `actions/upload-artifact` `v4.6.2` →
+  `ea165f8d65b6e75b540449e92b4886f43607fa02`; the existing `actions/attest`
+  SHA pin is unchanged. This closes the moving-action-pin gap for the current
+  CI workflow only; SBOM, production signing, live-provider, rendered-platform,
+  hostile-runtime, and release-authorization claims remain unverified.
 
 The #296 medium lane is intentionally not opened: the small contract lane and
 the GUI integration lane exposed no production behavior defect. The focused
