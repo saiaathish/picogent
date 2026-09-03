@@ -238,7 +238,7 @@ func Manage(ctx context.Context, client llm.Client, model string, msgs []llm.Mes
 	// Under auto-compact threshold: optional light window if the transcript is long.
 	if st.Pct < SoftTrimPct {
 		if len(out) > 24 {
-			out = TruncateTail(out, 18)
+			out = ValueAwareWindow(out, 18)
 			st = StatsFor(out, budget)
 			st.Compacted = true
 			if method == "" {
@@ -252,7 +252,7 @@ func Manage(ctx context.Context, client llm.Client, model string, msgs []llm.Mes
 
 	if st.Pct < AutoCompactPct {
 		if len(out) > KeepAfterCompact+1 {
-			out = TruncateTail(out, KeepAfterCompact)
+			out = ValueAwareWindow(out, KeepAfterCompact)
 			st = StatsFor(out, budget)
 			st.Compacted = true
 			st.Method = "window+soft"
@@ -262,7 +262,7 @@ func Manage(ctx context.Context, client llm.Client, model string, msgs []llm.Mes
 
 	// Tier 2: sliding window + tool trim near hard pressure
 	if len(out) > KeepAfterCompact+1 {
-		out = TruncateTail(out, KeepAfterCompact)
+		out = ValueAwareWindow(out, KeepAfterCompact)
 		st = StatsFor(out, budget)
 		st.Compacted = true
 		st.Method = "window"
