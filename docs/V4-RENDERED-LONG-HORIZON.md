@@ -94,13 +94,18 @@ rendered task state, and missing progress. They are deterministic in-process
 contract tests; they do not claim a launched browser or a completed rendered
 multi-turn run.
 
-## Remaining lanes
+## Medium fixture lane
 
-The conditional medium lane may extend the existing build-tagged rendered
-fixture only after this contract is accepted. It must use the normal GUI
-`/api/chat`, `/api/state`, permission, SSE, and reload boundaries and record
-bounded observations for mutation, verification, steering, recovery, and stop
-eligibility.
+The task-owned medium fixture is implemented in
+[#368](https://github.com/saiaathish/picogent/issues/368). It extends the
+existing build-tagged rendered fixture with a deterministic multi-turn flow
+over the normal GUI `/api/chat`, `/api/state`, permission, SSE, and reload
+boundaries. Its integration test records bounded observations for mutation,
+verification, steering, recovery, and stop eligibility, while keeping direct
+browser DOM and live-provider behavior `UNVERIFIED`. Operator instructions
+are in `docs/V4-RENDERED-LONG-HORIZON-FIXTURE.md`.
+
+## Remaining lane
 
 The conditional large lane may record direct owned-browser observations only
 after the medium fixture produces stable evidence. Live-provider quality,
