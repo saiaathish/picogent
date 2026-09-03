@@ -166,6 +166,28 @@ func TestBuildExposesCriterionEvidenceAndOptionalCriteriaDoNotBlock(t *testing.T
 	}
 }
 
+func TestBuildVerifyingStatusKeepsVerificationStopPrecedenceWhenCompletionIsReady(t *testing.T) {
+	task, err := taskstate.New("verifying-stop-precedence", "recheck the outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []taskstate.Criterion{{Description: "required proof", Required: true}}
+	task.RecordCriterionVerification(0, "PASS", "required proof passed", "verify")
+	// Keep a same-generation aggregate disagreement present so this also
+	// exercises the route that explicit verification must preempt.
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+	task.Status = taskstate.StatusVerifying
+
+	contract := Build(task, projecthealth.Report{Schema: projecthealth.Schema})
+	if !contract.CompletionReady || contract.Next.Kind != KindVerify {
+		t.Fatalf("verifying task routing = completion=%v next=%#v", contract.CompletionReady, contract.Next)
+	}
+	if contract.Stop.Policy != StopContinue || contract.Stop.EvidenceState != "NEEDS_VERIFICATION" {
+		t.Fatalf("verifying task stop precedence = %#v", contract.Stop)
+	}
+}
+
 func TestBuildFallbackStepsAreRequiredCriteria(t *testing.T) {
 	task, err := taskstate.New("fallback-criteria", "complete the work", []string{"one", "two"})
 	if err != nil {

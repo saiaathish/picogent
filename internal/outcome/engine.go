@@ -402,6 +402,9 @@ func stopFor(task *taskstate.Task, decision Decision, completion CompletionCheck
 	if decision.Kind == KindContradiction {
 		return StopDecision{Policy: StopRecheck, EvidenceState: string(ContradictionConfirmed), Reason: contradictionReason}
 	}
+	if decision.Kind == KindVerify {
+		return StopDecision{Policy: StopContinue, EvidenceState: "NEEDS_VERIFICATION", Reason: "the latest mutation lacks passing evidence"}
+	}
 	if completion.Ready && decision.Kind != KindBlocked && decision.Kind != KindHealthFinding {
 		return StopDecision{Policy: StopRecheck, EvidenceState: "PASS", Reason: "the durable completion predicate is satisfied; recheck live state before stopping"}
 	}
