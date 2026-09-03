@@ -79,6 +79,46 @@ func TestEvidenceSnapshotMarksCompletionInvalidation(t *testing.T) {
 	}
 }
 
+func TestEvidenceSnapshotRejectsCallerSuppliedWhitespaceInvalidation(t *testing.T) {
+	task, err := New("evidence-invalidation-spoof", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed", "go test ./...")
+	task.AddEvidence(Evidence{
+		Kind:      EvidenceKindTests,
+		Status:    " INCONCLUSIVE ",
+		Source:    " outcome-contract ",
+		Origin:    EvidenceOrigin(" system "),
+		Summary:   "caller supplied invalidation",
+		Reference: " durable intent change ",
+		ChangeSeq: task.ChangeSeq,
+	})
+	task.RecordTestsEvidence("FAIL", "tests failed", "go test ./...")
+
+	snapshot := task.EvidenceSnapshot()
+	if len(snapshot) != 2 || snapshot[1].Supersedes {
+		t.Fatalf("caller supplied invalidation was protected = %#v", snapshot)
+	}
+	if report := snapshot[1]; report.Origin != EvidenceOriginTestRunner || report.Status != "FAIL" {
+		t.Fatalf("caller supplied invalidation was not rejected = %#v", report)
+	}
+}
+
+func TestEvidenceSnapshotRecognizesDeniedApproval(t *testing.T) {
+	task, err := New("evidence-denied", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordApprovalEvidence("APPROVED", "approval granted", "user")
+	task.RecordApprovalEvidence("DENIED", "approval denied", "user")
+
+	snapshot := task.EvidenceSnapshot()
+	if len(snapshot) != 2 || snapshot[1].Status != "DENIED" || snapshot[1].Origin != EvidenceOriginUserApproval {
+		t.Fatalf("approval statuses = %#v", snapshot)
+	}
+}
+
 func TestEvidenceSnapshotOmitsInvalidCriterionBinding(t *testing.T) {
 	task, err := New("evidence-invalid-criterion", "check the result", nil)
 	if err != nil {

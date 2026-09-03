@@ -275,7 +275,7 @@ func TestInvalidateWorkspaceEvidenceInvalidatesCurrentRequiredQualityEvidence(t 
 	}
 	for _, kind := range wantKinds {
 		status, current, origin := task.RequirementEvidenceState(kind)
-		if status != "INCONCLUSIVE" || current || origin != EvidenceOriginSystem {
+		if status != "INCONCLUSIVE" || current || origin != EvidenceOriginVerifier {
 			t.Fatalf("invalidated %s evidence = status=%q current=%v origin=%q", kind, status, current, origin)
 		}
 	}

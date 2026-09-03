@@ -3,6 +3,7 @@ package outcome
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/taskstate"
@@ -14,6 +15,8 @@ const (
 	ContradictionSchema     = "picogent.outcome-contradiction.v1"
 	MaxContradictionBytes   = 4096
 	maxContradictionSignals = 8
+	contradictionAction     = "diagnose the conflicting evidence and recheck the requested outcome"
+	contradictionReason     = "current trusted evidence contains a contradiction; diagnose and recheck before continuing"
 )
 
 // ContradictionState describes whether comparable current evidence disagrees.
@@ -55,6 +58,10 @@ type ContradictionSignal struct {
 	// records; a caller-made report must remain advisory even when its visible
 	// labels look valid.
 	runtimeTrusted bool
+	// runtimeKey detects mutation of the exported categorical fields after a
+	// trusted signal was derived. The key is runtime-only and is intentionally
+	// not accepted from JSON or generic callers.
+	runtimeKey string
 }
 
 // ContradictionReport is a bounded derived view over one task snapshot.
@@ -63,6 +70,13 @@ type ContradictionReport struct {
 	State     ContradictionState    `json:"state"`
 	Signals   []ContradictionSignal `json:"signals,omitempty"`
 	Truncated bool                  `json:"signals_truncated,omitempty"`
+
+	// runtimeConfirmed preserves a confirmed boundary that falls beyond the
+	// bounded signal list. It is intentionally not serialized, and runtimeKey
+	// invalidates it if a caller mutates the visible report fields.
+	runtimeConfirmed               bool
+	runtimeConfirmedAffectsOutcome bool
+	runtimeKey                     string
 }
 
 type contradictionBoundary struct {
@@ -111,7 +125,19 @@ func DetectContradictions(task *taskstate.Task) ContradictionReport {
 			changeSeq:      evidence.ChangeSeq,
 		}
 		if evidence.Supersedes {
-			groups[key] = contradictionBoundaryState{}
+			if key.criterionIndex >= 0 {
+				// A criterion-bound invalidation supersedes every proof kind for
+				// that criterion. The existing taskstate marker is emitted as a
+				// verification record even when the invalidated PASS came from the
+				// typed tests producer.
+				for boundary := range groups {
+					if boundary.criterionIndex == key.criterionIndex && boundary.changeSeq == key.changeSeq {
+						delete(groups, boundary)
+					}
+				}
+			} else {
+				groups[key] = contradictionBoundaryState{}
+			}
 			continue
 		}
 		state := groups[key]
@@ -141,6 +167,30 @@ func DetectContradictions(task *taskstate.Task) ContradictionReport {
 		}
 		return keys[i].changeSeq < keys[j].changeSeq
 	})
+	confirmedAny := false
+	confirmedAffectsOutcome := false
+	for _, key := range keys {
+		state := groups[key]
+		if trustedContradictionEvidence(key.kind, state.positive) && trustedContradictionEvidence(key.kind, state.negative) {
+			confirmedAny = true
+			if key.criterionIndex < 0 {
+				if requiredContradictionKind(task, key.kind) {
+					confirmedAffectsOutcome = true
+					break
+				}
+				continue
+			}
+			for _, index := range task.RequiredCriterionIndices() {
+				if index == key.criterionIndex {
+					confirmedAffectsOutcome = true
+					break
+				}
+			}
+			if confirmedAffectsOutcome {
+				break
+			}
+		}
+	}
 
 	for _, key := range keys {
 		state := groups[key]
@@ -149,7 +199,7 @@ func DetectContradictions(task *taskstate.Task) ContradictionReport {
 		if confirmed {
 			signalState = ContradictionConfirmed
 		}
-		report.Signals = append(report.Signals, ContradictionSignal{
+		signal := ContradictionSignal{
 			Scope:          contradictionScopeFor(key.kind, key.criterionIndex),
 			Kind:           key.kind,
 			CriterionIndex: key.criterionIndex,
@@ -160,7 +210,11 @@ func DetectContradictions(task *taskstate.Task) ContradictionReport {
 			NegativeOrigin: safeContradictionOrigin(key.kind, state.negative),
 			State:          signalState,
 			runtimeTrusted: confirmed,
-		})
+		}
+		if confirmed {
+			signal.runtimeKey = contradictionSignalRuntimeKey(signal)
+		}
+		report.Signals = append(report.Signals, signal)
 		if confirmed {
 			report.State = ContradictionConfirmed
 		} else if report.State == ContradictionNone {
@@ -173,7 +227,35 @@ func DetectContradictions(task *taskstate.Task) ContradictionReport {
 			break
 		}
 	}
+	if confirmedAny {
+		report.State = ContradictionConfirmed
+	} else if len(report.Signals) > 0 {
+		report.State = ContradictionAdvisory
+	}
+	report.runtimeConfirmed = confirmedAny
+	report.runtimeConfirmedAffectsOutcome = confirmedAffectsOutcome
+	report.runtimeKey = contradictionReportRuntimeKey(report)
 	return boundContradictionReport(report)
+}
+
+func requiredContradictionKind(task *taskstate.Task, kind taskstate.EvidenceKind) bool {
+	if task == nil {
+		return false
+	}
+	kind, ok := canonicalContradictionKind(kind)
+	if !ok {
+		return false
+	}
+	for _, required := range task.RequiredEvidenceKinds() {
+		required, ok := canonicalContradictionKind(required)
+		if !ok {
+			continue
+		}
+		if required == kind || (required == taskstate.EvidenceKindTests && kind == taskstate.EvidenceKindVerification) {
+			return true
+		}
+	}
+	return false
 }
 
 // FormatContradictions returns bounded JSON for diagnostics and future
@@ -192,10 +274,15 @@ func FormatContradictions(report ContradictionReport) string {
 		report.Signals = report.Signals[:len(report.Signals)-1]
 		report.Truncated = true
 		report.State = contradictionStateForSignals(report.Signals)
+		if report.runtimeConfirmed {
+			report.State = ContradictionConfirmed
+		}
 	}
 }
 
 func boundContradictionReport(report ContradictionReport) ContradictionReport {
+	runtimeConfirmed := report.runtimeConfirmed && report.runtimeKey != "" && report.runtimeKey == contradictionReportRuntimeKey(report)
+	runtimeConfirmedAffectsOutcome := runtimeConfirmed && report.runtimeConfirmedAffectsOutcome
 	report.Schema = ContradictionSchema
 	if len(report.Signals) > maxContradictionSignals {
 		report.Signals = append([]ContradictionSignal(nil), report.Signals[:maxContradictionSignals]...)
@@ -205,6 +292,7 @@ func boundContradictionReport(report ContradictionReport) ContradictionReport {
 	}
 	valid := report.Signals[:0]
 	for _, signal := range report.Signals {
+		runtimeTrusted := signal.runtimeTrusted && signal.runtimeKey != "" && signal.runtimeKey == contradictionSignalRuntimeKey(signal)
 		kind, ok := canonicalContradictionKind(signal.Kind)
 		if !ok || contradictionPolarityFor(signal.PositiveStatus) != polarityPositive || contradictionPolarityFor(signal.NegativeStatus) != polarityNegative {
 			continue
@@ -221,7 +309,12 @@ func boundContradictionReport(report ContradictionReport) ContradictionReport {
 		signal.NegativeStatus = canonicalNegativeStatus(signal.NegativeStatus)
 		signal.PositiveOrigin = safeContradictionOriginString(kind, signal.PositiveOrigin)
 		signal.NegativeOrigin = safeContradictionOriginString(kind, signal.NegativeOrigin)
-		if signal.State == ContradictionConfirmed && (!signal.runtimeTrusted || signal.PositiveOrigin == "untrusted" || signal.NegativeOrigin == "untrusted") {
+		runtimeTrusted = runtimeTrusted && signal.runtimeKey == contradictionSignalRuntimeKey(signal)
+		signal.runtimeTrusted = runtimeTrusted
+		if !runtimeTrusted {
+			signal.runtimeKey = ""
+		}
+		if signal.State == ContradictionConfirmed && (!runtimeTrusted || signal.PositiveOrigin == "untrusted" || signal.NegativeOrigin == "untrusted") {
 			signal.State = ContradictionAdvisory
 		} else if signal.State != ContradictionConfirmed {
 			signal.State = ContradictionAdvisory
@@ -229,8 +322,139 @@ func boundContradictionReport(report ContradictionReport) ContradictionReport {
 		valid = append(valid, signal)
 	}
 	report.Signals = valid
-	report.State = contradictionStateForSignals(report.Signals)
+	if runtimeConfirmed {
+		report.State = ContradictionConfirmed
+	} else {
+		report.State = contradictionStateForSignals(report.Signals)
+	}
+	report.runtimeConfirmed = runtimeConfirmed
+	report.runtimeConfirmedAffectsOutcome = runtimeConfirmedAffectsOutcome
+	report.runtimeKey = ""
+	if runtimeConfirmed {
+		report.runtimeKey = contradictionReportRuntimeKey(report)
+	}
 	return report
+}
+
+func trustedContradictionReport(report ContradictionReport) bool {
+	return report.State == ContradictionConfirmed &&
+		report.runtimeConfirmed &&
+		report.runtimeKey != "" &&
+		report.runtimeKey == contradictionReportRuntimeKey(report)
+}
+
+func trustedContradictionReportAffectsOutcome(report ContradictionReport) bool {
+	return trustedContradictionReport(report) && report.runtimeConfirmedAffectsOutcome
+}
+
+// reconcileContradictionReports is the boundary between the engine's two
+// projections. A valid engine build supplies the same current report twice;
+// a caller or reloaded contract may supply divergent reports. Divergence is
+// retained only as bounded advisory categorical data, and both projections
+// receive that same downgraded value so routing cannot read the stronger one.
+func reconcileContradictionReports(left, right ContradictionReport) ContradictionReport {
+	left = boundContradictionReport(left)
+	right = boundContradictionReport(right)
+	if sameVisibleContradictionReport(left, right) {
+		return left
+	}
+
+	merged := ContradictionReport{Schema: ContradictionSchema}
+	seen := make(map[string]struct{})
+	appendSignals := func(report ContradictionReport) {
+		for _, signal := range report.Signals {
+			signal.State = ContradictionAdvisory
+			signal.runtimeTrusted = false
+			signal.runtimeKey = ""
+			key := contradictionSignalVisibleKey(signal)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			if len(merged.Signals) >= maxContradictionSignals {
+				merged.Truncated = true
+				continue
+			}
+			merged.Signals = append(merged.Signals, signal)
+		}
+	}
+	appendSignals(left)
+	appendSignals(right)
+	merged.Truncated = merged.Truncated || left.Truncated || right.Truncated
+	if len(merged.Signals) > 0 {
+		merged.State = ContradictionAdvisory
+	}
+	return boundContradictionReport(merged)
+}
+
+func sameVisibleContradictionReport(left, right ContradictionReport) bool {
+	if left.Schema != right.Schema || left.State != right.State || left.Truncated != right.Truncated || len(left.Signals) != len(right.Signals) {
+		return false
+	}
+	for index := range left.Signals {
+		if contradictionSignalVisibleKey(left.Signals[index]) != contradictionSignalVisibleKey(right.Signals[index]) || left.Signals[index].State != right.Signals[index].State {
+			return false
+		}
+	}
+	return true
+}
+
+func contradictionSignalVisibleKey(signal ContradictionSignal) string {
+	return strings.Join([]string{
+		string(signal.Scope),
+		string(signal.Kind),
+		strconv.Itoa(signal.CriterionIndex),
+		strconv.Itoa(signal.ChangeSeq),
+		signal.PositiveStatus,
+		signal.NegativeStatus,
+		signal.PositiveOrigin,
+		signal.NegativeOrigin,
+	}, "\x00")
+}
+
+func contradictionReportRuntimeKey(report ContradictionReport) string {
+	parts := []string{
+		string(report.State),
+		strconv.FormatBool(report.Truncated),
+		strconv.FormatBool(report.runtimeConfirmedAffectsOutcome),
+		strconv.Itoa(len(report.Signals)),
+	}
+	for _, signal := range report.Signals {
+		parts = append(parts,
+			string(signal.Scope),
+			string(signal.Kind),
+			strconv.Itoa(signal.CriterionIndex),
+			strconv.Itoa(signal.ChangeSeq),
+			signal.PositiveStatus,
+			signal.NegativeStatus,
+			signal.PositiveOrigin,
+			signal.NegativeOrigin,
+			string(signal.State),
+			strconv.FormatBool(signal.runtimeTrusted),
+			signal.runtimeKey,
+		)
+	}
+	return strings.Join(parts, "\x00")
+}
+
+// contradictionSignalRuntimeKey is an opaque runtime witness for the
+// categorical fields that establish trust. It deliberately keeps raw integer
+// values so an invalid caller mutation cannot normalize into a trusted
+// boundary during formatting.
+func contradictionSignalRuntimeKey(signal ContradictionSignal) string {
+	kind, ok := canonicalContradictionKind(signal.Kind)
+	if !ok {
+		return ""
+	}
+	return strings.Join([]string{
+		string(kind),
+		strconv.Itoa(signal.CriterionIndex),
+		strconv.Itoa(signal.ChangeSeq),
+		canonicalPositiveStatus(signal.PositiveStatus),
+		canonicalNegativeStatus(signal.NegativeStatus),
+		safeContradictionOriginString(kind, signal.PositiveOrigin),
+		safeContradictionOriginString(kind, signal.NegativeOrigin),
+	}, "\x00")
 }
 
 func contradictionStateForSignals(signals []ContradictionSignal) ContradictionState {
@@ -270,7 +494,7 @@ func contradictionPolarityFor(status string) contradictionPolarity {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
 	case "PASS", "APPROVED", "CONFIRMED":
 		return polarityPositive
-	case "FAIL", "INCONCLUSIVE", "SKIPPED":
+	case "FAIL", "INCONCLUSIVE", "SKIPPED", "DENIED":
 		return polarityNegative
 	default:
 		return polarityNone
@@ -294,6 +518,8 @@ func canonicalNegativeStatus(status string) string {
 		return "INCONCLUSIVE"
 	case "SKIPPED":
 		return "SKIPPED"
+	case "DENIED":
+		return "DENIED"
 	default:
 		return "FAIL"
 	}

@@ -160,6 +160,7 @@ type Contract struct {
 	CompletionReady     bool                `json:"completion_ready"`
 	Completion          CompletionCheck     `json:"completion"`
 	Failure             FailureIntelligence `json:"failure"`
+	Contradictions      ContradictionReport `json:"contradictions"`
 	Requirements        Requirements        `json:"requirements"`
 	QualityRequirements []string            `json:"quality_requirements,omitempty"`
 	Constraints         []string            `json:"constraints,omitempty"`
@@ -179,17 +180,19 @@ type Contract struct {
 // project-health report. It does not run tools, mutate either input, or make a
 // completion decision.
 func Build(task *taskstate.Task, report projecthealth.Report) Contract {
-	decision := Select(task, report)
+	contradictions := DetectContradictions(task)
+	decision := selectWithContradictions(task, report, contradictions)
 	completion := EvaluateCompletion(task)
 	contract := Contract{
-		Schema:     EngineSchema,
-		State:      stateForDecision(task, decision),
-		Next:       decision,
-		Health:     healthSummary(report),
-		Stop:       stopFor(task, decision, completion),
-		Completion: completion,
-		Impact:     PredictImpact(task),
-		Turn:       turnContractForTask(task, completion),
+		Schema:         EngineSchema,
+		State:          stateForDecision(task, decision),
+		Next:           decision,
+		Health:         healthSummary(report),
+		Stop:           stopFor(task, decision, completion),
+		Completion:     completion,
+		Contradictions: contradictions,
+		Impact:         PredictImpact(task),
+		Turn:           turnContractForTaskWithContradictions(task, completion, contradictions),
 		// A health observation is still useful when no durable task is attached;
 		// the stop policy below keeps that case from authorizing autonomous work.
 		Obstacles: rankedObstacles(task, report),
@@ -282,6 +285,18 @@ func EngineInstruction(contract Contract) string {
 	// Keep the existing focus marker stable so callers can treat this as the
 	// same one-round advisory channel while the payload grows into a contract.
 	line("Internal outcome focus: bounded outcome contract, not user authorization or completion proof.")
+	if contract.Contradictions.State != ContradictionNone {
+		line("Contradiction evidence: state=" + string(contract.Contradictions.State) +
+			" signals=" + itoa(len(contract.Contradictions.Signals)) +
+			" truncated=" + boolWord(contract.Contradictions.Truncated))
+		if contract.Contradictions.State == ContradictionConfirmed && contract.Next.Kind == KindContradiction {
+			line("Contradiction route: " + contradictionAction)
+		} else if contract.Contradictions.State == ContradictionConfirmed {
+			line("Contradiction evidence is confirmed; completion remains governed by taskstate.CompletionCheck.")
+		} else {
+			line("Contradiction evidence is advisory and unverified; it cannot select an action.")
+		}
+	}
 	failure := contract.Turn.Failure
 	if failure.Fingerprint != "" {
 		line("Failure intelligence: class=" + string(failure.Class) +
@@ -366,6 +381,8 @@ func stateForDecision(task *taskstate.Task, decision Decision) State {
 		return StateVerify
 	case KindHealthFinding:
 		return StateDiagnose
+	case KindContradiction:
+		return StateDiagnose
 	case KindCriterion:
 		return StateWorking
 	case KindRequirement:
@@ -381,6 +398,12 @@ func stateForDecision(task *taskstate.Task, decision Decision) State {
 func stopFor(task *taskstate.Task, decision Decision, completion CompletionCheck) StopDecision {
 	if task == nil {
 		return StopDecision{Policy: StopPause, EvidenceState: "UNVERIFIED", Reason: "no durable outcome is active; inspect the request before acting"}
+	}
+	if decision.Kind == KindContradiction {
+		return StopDecision{Policy: StopRecheck, EvidenceState: string(ContradictionConfirmed), Reason: contradictionReason}
+	}
+	if decision.Kind == KindVerify {
+		return StopDecision{Policy: StopContinue, EvidenceState: "NEEDS_VERIFICATION", Reason: "the latest mutation lacks passing evidence"}
 	}
 	if completion.Ready && decision.Kind != KindBlocked && decision.Kind != KindHealthFinding {
 		return StopDecision{Policy: StopRecheck, EvidenceState: "PASS", Reason: "the durable completion predicate is satisfied; recheck live state before stopping"}
@@ -716,6 +739,8 @@ func boundContract(contract Contract) Contract {
 	contract.Outcome = compactContractString(redact.Text(contract.Outcome), maxContractString)
 	contract.IntentClass = compactContractString(contract.IntentClass, 64)
 	contract.Turn = boundTurnContract(contract.Turn)
+	contract.Contradictions = reconcileContradictionReports(contract.Contradictions, contract.Turn.Contradictions)
+	contract.Turn.Contradictions = contract.Contradictions
 	contract.Failure = boundFailureIntelligence(contract.Failure)
 	if contract.Failure.Fingerprint == "" {
 		contract.Failure = contract.Turn.Failure
@@ -797,7 +822,7 @@ func boundContract(contract Contract) Contract {
 		contract.Health.DirtyPaths = 0
 	}
 	contract.Impact = boundImpact(contract.Impact)
-	contract.Next = boundedDecision(contract.Next)
+	contract.Next = boundDecisionForReport(contract.Next, contract.Contradictions)
 	if contract.Next.Kind == "" {
 		contract.Next = Decision{
 			Schema:        Schema,
@@ -807,11 +832,16 @@ func boundContract(contract Contract) Contract {
 			Action:        "inspect the affected surface and choose the next safe action",
 			Reason:        "no valid next focus was available",
 		}
-		contract.Next = boundedDecision(contract.Next)
+		contract.Next = boundDecisionForReport(contract.Next, contract.Contradictions)
 	}
 	contract.Stop.Policy = normalizeStopPolicy(contract.Stop.Policy)
 	contract.Stop.EvidenceState = normalizeStopEvidence(contract.Stop.EvidenceState)
 	contract.Stop.Reason = fixedStopReason(contract.Stop.Policy, contract.Stop.Reason)
+	if !trustedContradictionReportAffectsOutcome(contract.Contradictions) &&
+		(contract.Stop.EvidenceState == string(ContradictionConfirmed) || contract.Stop.Reason == contradictionReason) {
+		contract.Stop.EvidenceState = "UNVERIFIED"
+		contract.Stop.Reason = fixedStopReason(contract.Stop.Policy, "")
+	}
 	return contract
 }
 
@@ -835,7 +865,7 @@ func normalizeStopPolicy(policy StopPolicy) StopPolicy {
 
 func normalizeStopEvidence(value string) string {
 	switch value {
-	case "PASS", "FAIL", "INCONCLUSIVE", "SKIPPED", "PROGRESS_ONLY", "BLOCKED", "NEEDS_VERIFICATION", "NEEDS_EVIDENCE", "ATTENTION", "UNKNOWN", "UNVERIFIED":
+	case "PASS", "FAIL", "INCONCLUSIVE", "SKIPPED", "PROGRESS_ONLY", "BLOCKED", "NEEDS_VERIFICATION", "NEEDS_EVIDENCE", "ATTENTION", "UNKNOWN", "UNVERIFIED", "CONFIRMED":
 		return value
 	default:
 		return "UNVERIFIED"
@@ -878,6 +908,7 @@ func fixedStopReason(policy StopPolicy, reason string) string {
 		"the durable completion predicate is satisfied; recheck live state before stopping",
 		"durable progress is complete but the requested outcome still needs a fresh recheck",
 		"the task is marked done without current completion proof; recheck live evidence",
+		contradictionReason,
 		"the requested outcome is not proven by the available observation":
 		return reason
 	}

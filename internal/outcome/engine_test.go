@@ -161,8 +161,30 @@ func TestBuildExposesCriterionEvidenceAndOptionalCriteriaDoNotBlock(t *testing.T
 	if !contract.CompletionReady || !contract.Evidence.Current {
 		t.Fatalf("all required criteria passed but contract is not ready: %#v", contract)
 	}
-	if contract.Stop.Policy != StopRecheck || contract.Stop.EvidenceState != "PASS" {
+	if contract.Next.Kind != KindContradiction || contract.Stop.Policy != StopRecheck || contract.Stop.EvidenceState != string(ContradictionConfirmed) {
 		t.Fatalf("ready stop decision = %#v", contract.Stop)
+	}
+}
+
+func TestBuildVerifyingStatusKeepsVerificationStopPrecedenceWhenCompletionIsReady(t *testing.T) {
+	task, err := taskstate.New("verifying-stop-precedence", "recheck the outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []taskstate.Criterion{{Description: "required proof", Required: true}}
+	task.RecordCriterionVerification(0, "PASS", "required proof passed", "verify")
+	// Keep a same-generation aggregate disagreement present so this also
+	// exercises the route that explicit verification must preempt.
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+	task.Status = taskstate.StatusVerifying
+
+	contract := Build(task, projecthealth.Report{Schema: projecthealth.Schema})
+	if !contract.CompletionReady || contract.Next.Kind != KindVerify {
+		t.Fatalf("verifying task routing = completion=%v next=%#v", contract.CompletionReady, contract.Next)
+	}
+	if contract.Stop.Policy != StopContinue || contract.Stop.EvidenceState != "NEEDS_VERIFICATION" {
+		t.Fatalf("verifying task stop precedence = %#v", contract.Stop)
 	}
 }
 
@@ -361,6 +383,73 @@ func TestBuildUsesOneSharedTurnContractForEngineAndRouter(t *testing.T) {
 		if !strings.Contains(instruction, marker) {
 			t.Fatalf("engine instruction omitted shared turn marker %q: %s", marker, instruction)
 		}
+	}
+}
+
+func TestBoundContractReconcilesContradictionProjectionsConservatively(t *testing.T) {
+	task, err := taskstate.New("projection-reconcile", "recheck the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+	trusted := DetectContradictions(task)
+	var reloaded ContradictionReport
+	data, err := json.Marshal(trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &reloaded); err != nil {
+		t.Fatal(err)
+	}
+	contract := boundContract(Contract{
+		Schema:         EngineSchema,
+		Contradictions: trusted,
+		Turn:           TurnContract{Contradictions: reloaded},
+		Next:           contradictionDecision(trusted),
+	})
+	if !reflect.DeepEqual(contract.Contradictions, contract.Turn.Contradictions) {
+		t.Fatalf("contradiction projections diverged after binding: top=%#v nested=%#v", contract.Contradictions, contract.Turn.Contradictions)
+	}
+	if contract.Contradictions.State != ContradictionAdvisory || contract.Next.Kind == KindContradiction {
+		t.Fatalf("mismatched/reloaded contradiction was not downgraded: report=%#v next=%#v", contract.Contradictions, contract.Next)
+	}
+}
+
+func TestBoundContractDowngradesStaleContradictionStop(t *testing.T) {
+	task, err := taskstate.New("stale-contradiction-stop", "recheck the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Intent = &taskstate.IntentContract{Outcome: task.Goal, NeedsTests: true}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+	trusted := DetectContradictions(task)
+	var reloaded ContradictionReport
+	data, err := json.Marshal(trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &reloaded); err != nil {
+		t.Fatal(err)
+	}
+
+	contract := boundContract(Contract{
+		Schema:         EngineSchema,
+		Contradictions: trusted,
+		Turn:           TurnContract{Contradictions: reloaded},
+		Next:           contradictionDecision(trusted),
+		Stop: StopDecision{
+			Policy:        StopRecheck,
+			EvidenceState: string(ContradictionConfirmed),
+			Reason:        contradictionReason,
+		},
+	})
+	if contract.Stop.Policy != StopRecheck || contract.Stop.EvidenceState == string(ContradictionConfirmed) || contract.Stop.Reason == contradictionReason {
+		t.Fatalf("stale confirmed stop survived projection downgrade = %#v", contract.Stop)
+	}
+	if contract.Stop.EvidenceState != "UNVERIFIED" || contract.Stop.Reason != "recheck live evidence before stopping" {
+		t.Fatalf("stale stop was not downgraded to a generic recheck = %#v", contract.Stop)
 	}
 }
 

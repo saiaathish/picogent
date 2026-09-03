@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/saiaathish/picogent/internal/projecthealth"
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
@@ -60,6 +61,60 @@ func TestDetectContradictionsSeparatesCriteriaAndOrdersSignals(t *testing.T) {
 	}
 }
 
+func TestDetectContradictionsRetainsConfirmedRoutingWhenSignalsAreTruncated(t *testing.T) {
+	task, err := taskstate.New("contradiction-cap", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = make([]taskstate.Criterion, maxContradictionSignals+1)
+	for index := range task.DefinitionOfDone {
+		task.DefinitionOfDone[index] = taskstate.Criterion{Description: "criterion", Required: true}
+	}
+	for index := 0; index < maxContradictionSignals; index++ {
+		task.AddEvidenceForCriterion(index, taskstate.Evidence{
+			Kind:      taskstate.EvidenceKindTests,
+			Status:    "PASS",
+			Origin:    taskstate.EvidenceOriginTestRunner,
+			Summary:   "advisory pass",
+			Reference: "test runner",
+			ChangeSeq: task.ChangeSeq,
+		})
+		task.AddEvidenceForCriterion(index, taskstate.Evidence{
+			Kind:      taskstate.EvidenceKindTests,
+			Status:    "FAIL",
+			Origin:    taskstate.EvidenceOriginModel,
+			Summary:   "advisory failure",
+			Reference: "model",
+			ChangeSeq: task.ChangeSeq,
+		})
+	}
+	// Build the final trusted pair separately, then append it to this synthetic
+	// over-capacity ledger. The detector must preserve its authority even when a
+	// persisted or forward-compatible caller presents more evidence than the
+	// normal task mutation helper retains.
+	trustedTask, err := taskstate.New("trusted-contradiction-cap", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustedTask.DefinitionOfDone = []taskstate.Criterion{{Description: "trusted", Required: true}}
+	trustedTask.RecordCriterionTestsEvidence(0, "PASS", "trusted pass", "test runner")
+	trustedTask.RecordCriterionTestsEvidence(0, "FAIL", "trusted failure", "test runner")
+	index := maxContradictionSignals
+	positive := trustedTask.Evidence[0]
+	negative := trustedTask.Evidence[1]
+	positive.CriterionIndex = &index
+	negative.CriterionIndex = &index
+	task.Evidence = append(task.Evidence, positive, negative)
+
+	report := DetectContradictions(task)
+	if report.State != ContradictionConfirmed || len(report.Signals) != maxContradictionSignals || !report.Truncated {
+		t.Fatalf("truncated contradiction report = %#v", report)
+	}
+	if decision := Select(task, projecthealth.Report{Schema: projecthealth.Schema}); decision.Kind != KindContradiction {
+		t.Fatalf("hidden confirmed contradiction lost routing = %#v", decision)
+	}
+}
+
 func TestDetectContradictionsKeepsUntrustedRecordsAdvisory(t *testing.T) {
 	task, err := taskstate.New("contradiction-advisory", "check the result", nil)
 	if err != nil {
@@ -81,6 +136,82 @@ func TestDetectContradictionsKeepsUntrustedRecordsAdvisory(t *testing.T) {
 	}
 	if report.Signals[0].NegativeOrigin != "untrusted" {
 		t.Fatalf("untrusted origin crossed boundary = %#v", report.Signals[0])
+	}
+}
+
+func TestDetectContradictionsProtectsRuntimeTrustFromSignalMutation(t *testing.T) {
+	task, err := taskstate.New("contradiction-signal-mutation", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+
+	report := DetectContradictions(task)
+	if report.State != ContradictionConfirmed || len(report.Signals) != 1 {
+		t.Fatalf("confirmed report = %#v", report)
+	}
+	report.Signals[0].PositiveStatus = "APPROVED"
+	report.Signals[0].PositiveOrigin = string(taskstate.EvidenceOriginUser)
+	formatted := FormatContradictions(report)
+	var decoded ContradictionReport
+	if err := json.Unmarshal([]byte(formatted), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.State != ContradictionAdvisory || decoded.Signals[0].State != ContradictionAdvisory {
+		t.Fatalf("mutated trusted signal remained confirmed = %#v", decoded)
+	}
+}
+
+func TestDetectContradictionsRecognizesDeniedApproval(t *testing.T) {
+	task, err := taskstate.New("contradiction-approval", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordApprovalEvidence("APPROVED", "approval granted", "user")
+	task.RecordApprovalEvidence("DENIED", "approval denied", "user")
+
+	report := DetectContradictions(task)
+	if report.State != ContradictionConfirmed || len(report.Signals) != 1 {
+		t.Fatalf("approval contradiction = %#v", report)
+	}
+	if report.Signals[0].NegativeStatus != "DENIED" || report.Signals[0].Scope != ContradictionScopeRequirement {
+		t.Fatalf("approval contradiction signal = %#v", report.Signals[0])
+	}
+}
+
+func TestDetectContradictionsResetsAllInvalidatedRequirementAliases(t *testing.T) {
+	task, err := taskstate.New("contradiction-alias-invalidation", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Intent = &taskstate.IntentContract{Outcome: task.Goal, NeedsTests: true}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.AddVerification("go test ./...", true, "verification passed")
+	if !task.InvalidateWorkspaceEvidence("workspace restored") {
+		t.Fatal("workspace evidence was not invalidated")
+	}
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+
+	if report := DetectContradictions(task); report.State != ContradictionNone || len(report.Signals) != 0 {
+		t.Fatalf("invalidated tests alias became a contradiction = %#v", report)
+	}
+}
+
+func TestDetectContradictionsResetsInvalidatedCriterionTestEvidence(t *testing.T) {
+	task, err := taskstate.New("criterion-test-invalidation", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []taskstate.Criterion{{Description: "required test proof", Required: true}}
+	task.RecordCriterionTestsEvidence(0, "PASS", "tests passed", "test runner")
+	if !task.InvalidateWorkspaceEvidence("workspace restored") {
+		t.Fatal("workspace evidence was not invalidated")
+	}
+	task.RecordCriterionTestsEvidence(0, "FAIL", "tests failed after restore", "test runner")
+
+	if report := DetectContradictions(task); report.State != ContradictionNone || len(report.Signals) != 0 {
+		t.Fatalf("invalidated criterion test evidence became a contradiction = %#v", report)
 	}
 }
 

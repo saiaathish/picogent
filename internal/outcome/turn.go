@@ -31,6 +31,7 @@ type TurnContract struct {
 	Attempts                     int                 `json:"attempts,omitempty"`
 	ConsecutiveVerificationFails int                 `json:"consecutive_verification_fails,omitempty"`
 	CompletionReady              bool                `json:"completion_ready"`
+	Contradictions               ContradictionReport `json:"contradictions"`
 	StopReason                   string              `json:"stop_reason,omitempty"`
 	TurnSequence                 uint64              `json:"turn_sequence,omitempty"`
 	LastTurnIntentRevision       uint64              `json:"last_turn_intent_revision,omitempty"`
@@ -52,15 +53,20 @@ type TurnContract struct {
 // predicate that controls task retirement.
 func TurnContractForTask(task *taskstate.Task) TurnContract {
 	if task == nil {
-		return boundTurnContract(turnContractForTask(nil, CompletionCheck{}))
+		return boundTurnContract(turnContractForTaskWithContradictions(nil, CompletionCheck{}, DetectContradictions(nil)))
 	}
-	return boundTurnContract(turnContractForTask(task, task.CompletionCheck()))
+	return boundTurnContract(turnContractForTaskWithContradictions(task, task.CompletionCheck(), DetectContradictions(task)))
 }
 
 func turnContractForTask(task *taskstate.Task, completion CompletionCheck) TurnContract {
+	return turnContractForTaskWithContradictions(task, completion, DetectContradictions(task))
+}
+
+func turnContractForTaskWithContradictions(task *taskstate.Task, completion CompletionCheck, contradictions ContradictionReport) TurnContract {
 	result := TurnContract{
 		CriterionIndex:    -1,
 		CriterionEvidence: "UNVERIFIED",
+		Contradictions:    contradictions,
 	}
 	if task == nil {
 		return result
@@ -113,6 +119,9 @@ func turnContractForTask(task *taskstate.Task, completion CompletionCheck) TurnC
 // NeedsRecovery reports whether the shared durable projection contains a
 // bounded signal that should make the next model route more conservative.
 func (c TurnContract) NeedsRecovery() bool {
+	if c.Contradictions.State == ContradictionConfirmed {
+		return true
+	}
 	if strings.EqualFold(strings.TrimSpace(c.LastTurnState), string(taskstate.TurnInterrupted)) || strings.EqualFold(strings.TrimSpace(c.LastRoute), string(taskstate.TurnRouteRecover)) {
 		return true
 	}
@@ -155,6 +164,7 @@ func boundTurnContract(contract TurnContract) TurnContract {
 	contract.LastTurnMutations = clampTurnContractCount(contract.LastTurnMutations, maxTurnContractMutations)
 	contract.LastTurnChangedFiles, contract.LastTurnChangedFilesCapped = boundTurnChangedFiles(contract.LastTurnChangedFiles, contract.LastTurnChangedFilesCapped)
 	contract.Failure = boundFailureIntelligence(contract.Failure)
+	contract.Contradictions = boundContradictionReport(contract.Contradictions)
 	return contract
 }
 

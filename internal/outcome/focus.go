@@ -10,6 +10,7 @@ package outcome
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/projecthealth"
@@ -28,6 +29,7 @@ type Kind string
 const (
 	KindBlocked       Kind = "BLOCKED"
 	KindVerify        Kind = "VERIFY"
+	KindContradiction Kind = "CONTRADICTION"
 	KindHealthFinding Kind = "HEALTH_FINDING"
 	KindCriterion     Kind = "CRITERION"
 	KindRequirement   Kind = "REQUIREMENT"
@@ -48,6 +50,13 @@ type Decision struct {
 	Action          string                 `json:"action"`
 	Reason          string                 `json:"reason"`
 	Priority        int                    `json:"-"`
+
+	// runtimeTrusted and runtimeKey are deliberately not serialized. A
+	// contradiction route is executable guidance, so it must carry a witness
+	// from the current in-process detector rather than merely a caller-shaped
+	// CONFIRMED label.
+	runtimeTrusted bool
+	runtimeKey     string
 }
 
 // Select chooses the next safe focus from the current task and one bounded
@@ -55,6 +64,10 @@ type Decision struct {
 // over advisory prioritization. A malformed or hostile finding cannot supply
 // an instruction: only known finding IDs map to fixed actions.
 func Select(task *taskstate.Task, report projecthealth.Report) Decision {
+	return selectWithContradictions(task, report, DetectContradictions(task))
+}
+
+func selectWithContradictions(task *taskstate.Task, report projecthealth.Report, contradictions ContradictionReport) Decision {
 	decision := Decision{
 		Schema:        Schema,
 		Kind:          KindInspect,
@@ -77,21 +90,17 @@ func Select(task *taskstate.Task, report projecthealth.Report) Decision {
 				Priority:      100,
 			}
 		}
-		if task.NeedsVerification() {
-			action := "run the narrowest relevant verification for the latest changes"
-			if task.ChangedFilesCapped {
-				action = "run broader workspace verification for the latest changes"
-			}
-			return Decision{
-				Schema:        Schema,
-				Kind:          KindVerify,
-				EvidenceState: "NEEDS_VERIFICATION",
-				Confidence:    "high",
-				Action:        action,
-				Reason:        "the latest mutation is not covered by passing evidence",
-				Priority:      99,
-			}
+		if task.Status == taskstate.StatusVerifying || task.NeedsVerification() {
+			return verificationDecision(task)
 		}
+	}
+
+	// A confirmed contradiction is stronger than ordinary prioritization, but
+	// an explicit blocker or fresh mutation verification still owns the first
+	// safe step. The contradiction route uses only fixed text; the bounded
+	// report carries the categorical boundary for diagnosis.
+	if confirmedContradictionAffectsOutcome(task, contradictions) {
+		return contradictionDecision(contradictions)
 	}
 
 	if finding, ok := topFinding(task, report); ok {
@@ -153,6 +162,84 @@ func Select(task *taskstate.Task, report projecthealth.Report) Decision {
 		}
 	}
 
+	return decision
+}
+
+func verificationDecision(task *taskstate.Task) Decision {
+	action := "run the narrowest relevant verification for the latest changes"
+	if task != nil && task.ChangedFilesCapped {
+		action = "run broader workspace verification for the latest changes"
+	}
+	return Decision{
+		Schema:        Schema,
+		Kind:          KindVerify,
+		EvidenceState: "NEEDS_VERIFICATION",
+		Confidence:    "high",
+		Action:        action,
+		Reason:        "the latest mutation is not covered by passing evidence",
+		Priority:      99,
+	}
+}
+
+const contradictionUntrustedReason = "contradiction evidence was not re-established in this runtime"
+
+func contradictionDecision(report ContradictionReport) Decision {
+	decision := Decision{
+		Schema:         Schema,
+		Kind:           KindContradiction,
+		CriterionIndex: -1,
+		EvidenceState:  string(ContradictionConfirmed),
+		Confidence:     "high",
+		Action:         contradictionAction,
+		Reason:         contradictionReason,
+		Priority:       98,
+	}
+	if trustedContradictionReportAffectsOutcome(report) {
+		decision.runtimeTrusted = true
+		decision.runtimeKey = contradictionDecisionRuntimeKey(decision, report.runtimeKey)
+	}
+	return decision
+}
+
+func confirmedContradictionAffectsOutcome(task *taskstate.Task, report ContradictionReport) bool {
+	return task != nil && trustedContradictionReportAffectsOutcome(report)
+}
+
+func contradictionDecisionFieldKey(decision Decision) string {
+	return strings.Join([]string{
+		decision.Schema,
+		string(decision.Kind),
+		strconv.Itoa(decision.CriterionIndex),
+		decision.FindingID,
+		string(decision.RequirementKind),
+		decision.EvidenceState,
+		decision.Confidence,
+		decision.Action,
+		decision.Reason,
+		strconv.Itoa(decision.Priority),
+	}, "\x00")
+}
+
+func contradictionDecisionRuntimeKey(decision Decision, reportKey string) string {
+	return contradictionDecisionFieldKey(decision) + "\x00" + reportKey
+}
+
+func downgradeContradictionDecision() Decision {
+	return Decision{
+		Schema:        Schema,
+		Kind:          KindInspect,
+		EvidenceState: "UNVERIFIED",
+		Confidence:    "low",
+		Action:        "inspect the affected surface and choose the next safe action",
+		Reason:        contradictionUntrustedReason,
+	}
+}
+
+func boundDecisionForReport(decision Decision, report ContradictionReport) Decision {
+	decision = boundedDecision(decision)
+	if decision.Kind == KindContradiction && (!trustedContradictionReportAffectsOutcome(report) || decision.runtimeKey != contradictionDecisionRuntimeKey(decision, report.runtimeKey)) {
+		return downgradeContradictionDecision()
+	}
 	return decision
 }
 
@@ -349,6 +436,7 @@ func clampPriority(priority int) int {
 }
 
 func boundedDecision(decision Decision) Decision {
+	runtimeTrusted := decision.runtimeTrusted && decision.runtimeKey != "" && strings.HasPrefix(decision.runtimeKey, contradictionDecisionFieldKey(decision)+"\x00")
 	decision.Schema = strings.TrimSpace(decision.Schema)
 	decision.Kind = normalizeKind(decision.Kind)
 	decision.FindingID = safeFindingID(decision.FindingID)
@@ -379,6 +467,18 @@ func boundedDecision(decision Decision) Decision {
 			decision.Action = "run the narrowest relevant verification for the latest changes"
 		}
 		decision.Reason = "the latest mutation is not covered by passing evidence"
+	case KindContradiction:
+		if !runtimeTrusted {
+			return downgradeContradictionDecision()
+		}
+		decision.FindingID = ""
+		decision.CriterionIndex = -1
+		decision.RequirementKind = ""
+		decision.EvidenceState = string(ContradictionConfirmed)
+		decision.Confidence = "high"
+		decision.Action = contradictionAction
+		decision.Reason = contradictionReason
+		decision.runtimeTrusted = true
 	case KindHealthFinding:
 		decision.CriterionIndex = -1
 		decision.Action = actionForFinding(decision.FindingID)
@@ -430,7 +530,7 @@ func boundedDecision(decision Decision) Decision {
 
 func normalizeKind(kind Kind) Kind {
 	switch kind {
-	case KindBlocked, KindVerify, KindHealthFinding, KindCriterion, KindRequirement, KindInspect:
+	case KindBlocked, KindVerify, KindContradiction, KindHealthFinding, KindCriterion, KindRequirement, KindInspect:
 		return kind
 	default:
 		return ""
@@ -479,7 +579,7 @@ func actionForRequirement(kind taskstate.EvidenceKind) string {
 func normalizeEvidenceState(state string) string {
 	state = strings.ToUpper(strings.TrimSpace(state))
 	switch state {
-	case "PASS", "FAIL", "INCONCLUSIVE", "SKIPPED", "PROGRESS_ONLY", "BLOCKED", "NEEDS_VERIFICATION", "NEEDS_EVIDENCE", "ATTENTION", "UNKNOWN", "UNVERIFIED":
+	case "PASS", "FAIL", "INCONCLUSIVE", "SKIPPED", "PROGRESS_ONLY", "BLOCKED", "NEEDS_VERIFICATION", "NEEDS_EVIDENCE", "ATTENTION", "UNKNOWN", "UNVERIFIED", "CONFIRMED":
 		return state
 	default:
 		return "UNVERIFIED"

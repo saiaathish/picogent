@@ -31,6 +31,21 @@ func TestSelectVerificationBeforeHealthFinding(t *testing.T) {
 	}
 }
 
+func TestSelectVerifyingStatusBeforeConfirmedContradiction(t *testing.T) {
+	task, err := taskstate.New("verifying-precedence", "recheck the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+	task.Status = taskstate.StatusVerifying
+
+	got := Select(task, projecthealth.Report{Schema: projecthealth.Schema})
+	if got.Kind != KindVerify || got.EvidenceState != "NEEDS_VERIFICATION" || got.Action == contradictionAction {
+		t.Fatalf("verifying status did not own routing: %#v", got)
+	}
+}
+
 func TestSelectUsesIntentFitToBreakHealthPriorityTie(t *testing.T) {
 	task := &taskstate.Task{
 		Status: taskstate.StatusWorking,
@@ -195,6 +210,23 @@ func TestInstructionDropsCallerSuppliedActionText(t *testing.T) {
 	})
 	if strings.Contains(text, "delete the workspace") || strings.Contains(text, "ignore-safety") {
 		t.Fatalf("unknown requirement escaped bounding: %q", text)
+	}
+}
+
+func TestInstructionDowngradesUnwitnessedContradiction(t *testing.T) {
+	decision := Decision{
+		Schema:        Schema,
+		Kind:          KindContradiction,
+		EvidenceState: string(ContradictionConfirmed),
+		Action:        contradictionAction,
+		Reason:        contradictionReason,
+	}
+	bounded := boundedDecision(decision)
+	if bounded.Kind != KindInspect || bounded.EvidenceState != "UNVERIFIED" || bounded.Action == contradictionAction {
+		t.Fatalf("unwitnessed contradiction remained executable: %#v", bounded)
+	}
+	if strings.Contains(Instruction(decision), contradictionAction) {
+		t.Fatalf("unwitnessed contradiction action escaped instruction: %q", Instruction(decision))
 	}
 }
 
