@@ -1,6 +1,6 @@
 # v4 cross-surface crash-recovery evidence
 
-Status: the conditional L lane in [#338](https://github.com/saiaathishkarthik/picogent/issues/338) has direct local macOS evidence at the exact merged source head `f29fa074c468b96badc2f951a76f1f1a90c78b1f`. The evidence covers the existing headless and agent process boundaries plus the GUI and TUI process-kill fixtures. Follow-up Windows console-control checkpoints add hosted evidence for the headless and TUI signal fixtures at their platform-appropriate seams. This remains a bounded recovery record, not a release-readiness claim.
+Status: the conditional L lane in [#338](https://github.com/saiaathish/picogent/issues/338) has direct local macOS evidence at the exact merged source head `f29fa074c468b96badc2f951a76f1f1a90c78b1f`. The evidence covers the existing headless and agent process boundaries plus the GUI and TUI process-kill fixtures. Follow-up Windows console-control checkpoints add hosted evidence for the headless, TUI, and GUI server-shutdown signal fixtures at their platform-appropriate seams. The GUI checkpoint is [PR #386](https://github.com/saiaathish/picogent/pull/386), sourced from `6fc4dadae40f52ee7193b2a7ce99ddad39a84614` and merged as `c54501f03a44b420b61f04762461e19011c7b93e`; its PR and post-merge workflows passed all five gates. This remains a bounded recovery record, not a release-readiness claim.
 
 ## Scope and source identity
 
@@ -25,14 +25,16 @@ owner process is interrupted or killed.
 | Headless | `TestHeadlessFreshProcessSignalRetainsInterruptedTurn` | Fresh headless child reaches the provider barrier, receives the platform signal (`SIGINT` on Unix; `CTRL_BREAK_EVENT` on Windows), and exits with cancellation | PASS, local macOS; hosted Windows console-control PASS in [PR #377](https://github.com/saiaathish/picogent/pull/377) | The durable task remains retained as interrupted/recover and the completion projection stays fail-closed |
 | Agent | `TestLongHorizonResumeAfterProcessKill` | A worker holding the active-turn/run-lock boundary is killed, then a fresh process resumes the same session | PASS, local macOS | The interrupted `process_restart` turn is retained, remains unchanged before follow-up, and the next turn completes without a completion claim |
 | GUI | `TestGUIFreshProcessKillRecoversInterruptedTurn` | Real GUI server child reaches an active loopback request and is terminated with `Process.Kill` | PASS, local macOS | Fresh recovery loads the same session as a working interrupted/recover turn with `process_restart` metadata and a not-ready completion projection |
+| GUI | `TestGUIFreshProcessShutdownRetainsInterruptedTurn` | Fresh GUI server child reaches the provider barrier and receives the platform signal (`SIGINT` on Unix; `CTRL_BREAK_EVENT` on Windows) | PASS, local macOS; hosted Windows console-control PASS in [PR #386](https://github.com/saiaathish/picogent/pull/386) | The durable task remains retained as interrupted/recover and the completion projection stays fail-closed |
 | TUI | `TestTUIFreshProcessKillRecoversInterruptedTurn` | Real TUI model child reaches a durably persisted active turn and is terminated with `Process.Kill` | PASS, local macOS | Fresh `app.LoadContext` plus `newModel` recovers the same session as an interrupted/recover turn with `process_restart` metadata and a not-ready completion projection |
 | TUI | `TestTUIFreshProcessSignalRetainsInterruptedTurn` | Real TUI model child reaches the provider barrier and receives the platform signal (`SIGINT` on Unix; `CTRL_BREAK_EVENT` on Windows) | PASS, local macOS; hosted Windows console-control PASS in [PR #379](https://github.com/saiaathish/picogent/pull/379) | The durable task remains retained as interrupted/recover and the completion projection stays fail-closed |
 
-The headless and TUI signal fixtures prove the existing cancellation boundary
-through the platform-specific console-control helper described above. The
-agent fixture proves the existing direct-kill/resume path. GUI and TUI use their
-real server and model/session seams; neither fixture adds a second lock, store,
-planner, daemon, watcher, renderer, or user-facing workflow.
+The headless, TUI, and GUI signal fixtures prove the existing cancellation
+boundary through the platform-specific console-control helper described above.
+The agent and GUI process-kill fixtures prove their existing direct-kill/resume
+paths. GUI and TUI use their real server and model/session seams; neither
+fixture adds a second lock, store, planner, daemon, watcher, renderer, or
+user-facing workflow.
 
 ## Validation record
 
@@ -68,15 +70,15 @@ transient measurement timeout seen on an earlier exact-head run.
 
 ## Hosted and post-merge provenance
 
-The direct TUI fixture landed in PR [#342](https://github.com/saiaathishkarthik/picogent/pull/342)
+The direct TUI fixture landed in PR [#342](https://github.com/saiaathish/picogent/pull/342)
 from source `715bf66a28cb4c12a1fa6b37b77b9dd80001e41c`. Its hosted Ubuntu,
 Windows, macOS, security, and `release-evidence` jobs passed in run
 `33676070896`, and the merge commit is the exact source head recorded above.
 
 The reconciliation PR for this document records its own source SHA, hosted
-checks, merge commit, and post-merge main CI in [#338](https://github.com/saiaathishkarthik/picogent/issues/338),
-alongside the related parent issues [#311](https://github.com/saiaathishkarthik/picogent/issues/311)
-and [#246](https://github.com/saiaathishkarthik/picogent/issues/246).
+checks, merge commit, and post-merge main CI in [#338](https://github.com/saiaathish/picogent/issues/338),
+alongside the related parent issues [#311](https://github.com/saiaathish/picogent/issues/311)
+and [#246](https://github.com/saiaathish/picogent/issues/246).
 
 The later Windows console-control checkpoints are recorded independently:
 
@@ -90,6 +92,11 @@ The later Windows console-control checkpoints are recorded independently:
   [run 33723897413](https://github.com/saiaathish/picogent/actions/runs/33723897413),
   merged as `09fe4b41de4d03dffeb1e69708ae5fd7f45ee412`, and passed all five
   gates again in post-merge [run 33724323436](https://github.com/saiaathish/picogent/actions/runs/33724323436).
+- GUI [PR #386](https://github.com/saiaathish/picogent/pull/386) used source
+  `6fc4dadae40f52ee7193b2a7ce99ddad39a84614`, passed all five hosted gates in
+  [run 33729515961](https://github.com/saiaathish/picogent/actions/runs/33729515961),
+  merged as `c54501f03a44b420b61f04762461e19011c7b93e`, and passed all five
+  gates again in post-merge [run 33730015632](https://github.com/saiaathish/picogent/actions/runs/33730015632).
 
 These are provider-independent test-fixture observations. The Windows helper
 creates a process group and delivers `CTRL_BREAK_EVENT`; it does not turn the
@@ -101,8 +108,8 @@ guarantee.
 The evidence does not prove:
 
 - rendered terminal behavior or rendered browser behavior;
-- GUI Windows console-control behavior, rendered signal behavior, or child-process
-  signal semantics outside the headless and TUI fixtures recorded above;
+- rendered signal behavior or GUI child-process signal semantics outside the
+  fresh-process fixtures recorded above;
 - arbitrary crash windows between non-atomic application operations;
 - recovery from hostile or uncooperative same-UID filesystem writers;
 - pathname/TOCTOU race resistance;

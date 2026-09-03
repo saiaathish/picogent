@@ -1,11 +1,11 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-09-03 against the exact `main` merge
-`27fb38b20aec428ab53912a7e4fec4fd82a2985e` after the outcome, recovery, GUI,
+`c54501f03a44b420b61f04762461e19011c7b93e` after the outcome, recovery, GUI,
 undo-publication, lifecycle, proof-continuity, cancellation, hosted
 attestation, TUI recovery, setup, restore-inspection, and workflow action-pin
 slices through PRs #297, #298, #299, #301, #303, #318, #320, #343, #347,
-#349, #351, #353, #355, #357, #359, and #363 merged. The independent
+#349, #351, #353, #355, #357, #359, #363, and #386 merged. The independent
 release-evidence reconciliation is tracked in issue #356; prior audit
 observations and their unverified boundaries are preserved below.
 
@@ -35,7 +35,7 @@ not enough to establish real runtime behavior.
 | Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Hosted `govulncheck` now scans the dependency graph; tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Add hostile runtime evidence and preserve explicit limits around dependency reachability and path races |
 | Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, barrier-driven cancellation/save/publish stress, cooperative cross-process writers, trace lock-holder death recovery, sustained bounded trace retention, first-use lock creation recovery, project-registry transactions, and cross-surface lifecycle checkpoints | Unix/Windows lock primitives and deterministic recovery harnesses | Hostile process death outside the trace lock handoff, rendered cross-surface event ordering, and filesystem races lack complete stress evidence | New orchestration would add complexity before invariants are measured | Extend cross-process evidence only where it proves a user-visible recovery invariant |
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
-| GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, hostile wire coverage, bounded owned-browser reconnect/recovery and long-horizon fixture evidence, and HTTP-boundary shutdown/save-failure lifecycle evidence | Lifecycle and undo wiring; one local rendered reconnect path plus one bounded exact-head long-horizon browser run | Live-provider behavior, broad permission/undo semantics, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; remaining admission wrappers duplicate task/evidence routing | Add owned-browser permission, undo, full-recovery, and cross-platform evidence before release claims |
+| GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, hostile wire coverage, bounded owned-browser reconnect/recovery and long-horizon fixture evidence, HTTP-boundary shutdown/save-failure lifecycle evidence, and hosted Windows console-control cancellation at the server boundary | Lifecycle and undo wiring; one local rendered reconnect path plus one bounded exact-head long-horizon browser run | Live-provider behavior, broad permission/undo semantics, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; remaining admission wrappers duplicate task/evidence routing | Add owned-browser permission, undo, full-recovery, and cross-platform rendered evidence before release claims |
 | TUI/headless | Headless stdout/stderr, fail-closed permission behavior, resume state, explicit cleanup/persistence errors, and local macOS EOF/signal/save-failure evidence | CLI dispatch and exit classes | Non-TTY/rendered TUI behavior and cross-platform EOF/signal behavior remain unproven | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Add platform-appropriate subprocess/rendered evidence before changing the shared runtime boundary |
 | Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing remains duplicated | Repeated surface/control paths and stale benchmark anchors | Remove or simplify remaining duplicate control paths only after caller/API confirmation |
 
@@ -74,8 +74,10 @@ not enough to establish real runtime behavior.
   hostile HTTP/SSE wire coverage and redaction coverage are also merged. PR
   #197 records bounded macOS/arm64 BrowserOS evidence for reconnect,
   active-turn prompt preservation, and durable transcript recovery against a
-  deterministic local provider stub; live-provider, permission, undo, full
-  recovery, and cross-platform rendered behavior remain unverified.
+  deterministic local provider stub; PR #386 records the hosted Windows
+  console-control cancellation fixture at the GUI server boundary. Live-provider,
+  permission, undo, full recovery, and cross-platform rendered behavior remain
+  unverified.
 
 ### Wasteful
 
@@ -95,11 +97,12 @@ green unit tests or bounded hosted quality gates:
   security, and long-horizon tasks;
 - rendered GUI setup, verification, and the bounded macOS/local-stub reconnect
   and transcript-recovery path are recorded; HTTP-boundary GUI lifecycle
-  shutdown/reconnect/save-failure evidence is also recorded. Live-provider
-  behavior, permission, undoable file changes, full recovery, and cross-platform
-  rendered behavior remain unverified. Local macOS TUI/headless parity under
-  EOF, signals, and save failures is recorded; Windows and rendered behavior
-  remain unverified;
+  shutdown/reconnect/save-failure evidence is also recorded, including hosted
+  Windows console-control cancellation for the GUI shutdown fixture in PR #386.
+  Live-provider behavior, permission, undoable file changes, full recovery, and
+  cross-platform rendered behavior remain unverified. Local macOS TUI/headless
+  parity under EOF, signals, and save failures is recorded; Windows
+  EOF/save-failure behavior and rendered behavior remain unverified;
 - full restart/resume/steer behavior after process termination or changing
   goals; bounded fresh-process session attachment now records stale active-turn
   recovery with explicit route, evidence, and stop-reason metadata, and latest-
