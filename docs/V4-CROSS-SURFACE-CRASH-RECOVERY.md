@@ -1,6 +1,6 @@
 # v4 cross-surface crash-recovery evidence
 
-Status: the conditional L lane in [#338](https://github.com/saiaathish/picogent/issues/338) has direct local macOS evidence at the exact merged source head `f29fa074c468b96badc2f951a76f1f1a90c78b1f`. The evidence covers the existing headless and agent process boundaries plus the GUI and TUI process-kill fixtures. Follow-up Windows console-control checkpoints add hosted evidence for the headless, TUI, and GUI server-shutdown signal fixtures at their platform-appropriate seams. The GUI checkpoint is [PR #386](https://github.com/saiaathish/picogent/pull/386), sourced from `6fc4dadae40f52ee7193b2a7ce99ddad39a84614` and merged as `c54501f03a44b420b61f04762461e19011c7b93e`; its PR and post-merge workflows passed all five gates. This remains a bounded recovery record, not a release-readiness claim.
+Status: the conditional L lane in [#338](https://github.com/saiaathish/picogent/issues/338) has direct local macOS evidence at the exact historical source head `f29fa074c468b96badc2f951a76f1f1a90c78b1f`. The evidence covers the existing headless and agent process boundaries plus the GUI and TUI process-kill fixtures. Follow-up Windows console-control checkpoints add hosted evidence for the headless, TUI, and GUI server-shutdown signal fixtures at their platform-appropriate seams. This report is synchronized to current `main` `72f79797e555e38f29d926ed19142d4adae31eaa` by documentation-only checkpoint [#391](https://github.com/saiaathish/picogent/issues/391); fixture observations remain bound to their original source heads and hosted runs. This remains a bounded recovery record, not a release-readiness claim.
 
 ## Scope and source identity
 
@@ -17,6 +17,20 @@ Each fixture uses a disposable home/workspace and a deterministic loopback
 provider or an existing process-harness barrier. The assertions inspect the
 durable task/session state and the shared completion projection after the
 owner process is interrupted or killed.
+
+## Current-main checkpoint — documentation only
+
+The current repository head is `72f79797e555e38f29d926ed19142d4adae31eaa`,
+created by merge commit [#390](https://github.com/saiaathish/picogent/pull/390)
+from source `eb2b02b8e94f2dab6a82dd937db6b42e4283a63f`. Its post-merge
+workflow [33737597716](https://github.com/saiaathish/picogent/actions/runs/33737597716)
+passed `security`, Ubuntu, Windows, macOS, and `release-evidence`.
+
+PR #390 changed only the independent release-audit document, so it adds no
+new cross-surface runtime observation. The result table below intentionally
+retains the source head, merge commit, and hosted run associated with each
+original fixture. This checkpoint only binds the report to the exact current
+`main` head and preserves the evidence limits.
 
 ## Cross-surface result
 
@@ -97,6 +111,13 @@ The later Windows console-control checkpoints are recorded independently:
   [run 33729515961](https://github.com/saiaathish/picogent/actions/runs/33729515961),
   merged as `c54501f03a44b420b61f04762461e19011c7b93e`, and passed all five
   gates again in post-merge [run 33730015632](https://github.com/saiaathish/picogent/actions/runs/33730015632).
+
+The current-main documentation checkpoint is [PR #390](https://github.com/saiaathish/picogent/pull/390),
+source `eb2b02b8e94f2dab6a82dd937db6b42e4283a63f`, merged as
+`72f79797e555e38f29d926ed19142d4adae31eaa`, with all five jobs passing in
+[post-merge run 33737597716](https://github.com/saiaathish/picogent/actions/runs/33737597716).
+It changed the independent release audit only and did not rerun or broaden
+the cross-surface fixtures documented here.
 
 These are provider-independent test-fixture observations. The Windows helper
 creates a process group and delivers `CTRL_BREAK_EVENT`; it does not turn the
