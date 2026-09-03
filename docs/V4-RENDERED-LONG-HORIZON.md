@@ -4,8 +4,7 @@ Status: size:S contract for [#366](https://github.com/saiaathish/picogent/issues
 under the long-horizon evidence parent
 [#306](https://github.com/saiaathish/picogent/issues/306) and the broader
 outcome contract [#246](https://github.com/saiaathish/picogent/issues/246).
-The medium task-owned fixture and the large direct browser observation are
-not complete in this checkpoint.
+The medium task-owned fixture is delivered through [#368](https://github.com/saiaathish/picogent/issues/368) / PR #369, and the large direct browser checkpoint is recorded in [#370](https://github.com/saiaathish/picogent/issues/370). Remaining evidence limits are explicit below.
 
 ## Boundary
 
@@ -105,9 +104,27 @@ verification, steering, recovery, and stop eligibility, while keeping direct
 browser DOM and live-provider behavior `UNVERIFIED`. Operator instructions
 are in `docs/V4-RENDERED-LONG-HORIZON-FIXTURE.md`.
 
-## Remaining lane
+## Large direct evidence checkpoint
 
-The conditional large lane may record direct owned-browser observations only
-after the medium fixture produces stable evidence. Live-provider quality,
-unsupported cross-platform rendering, arbitrary hostile filesystem writers,
-release authorization, and v4 completion remain `UNVERIFIED`.
+The direct observation record is in
+`docs/V4-RENDERED-LONG-HORIZON-EVIDENCE.md` for [#370](https://github.com/saiaathish/picogent/issues/370).
+It was captured against exact merge/current `main` SHA
+`993258f4b97d196fd7c44cca78c235080fd062e9` using a clean VCS-stamped fixture
+binary. Both seed and reload manifests verified the source SHA and reported a
+clean source tree. The task-owned BrowserOS session directly observed Safe-mode
+permission, mutation visibility, inconclusive verification, deterministic
+workspace verification, steering invalidation, reload continuity, and the
+post-reload fail-closed state.
+
+This closes only the bounded direct-observation checkpoint. Browser screenshots
+were captured inline by the task-owned session, but no persisted path was
+exposed, so the screenshot path remains `UNRECORDED`. Live-provider quality,
+cross-platform rendered behavior, arbitrary hostile writers, broader crash
+windows, and release authorization remain `UNVERIFIED`.
+
+## Remaining evidence limits
+
+The medium and bounded large rendered lanes are now recorded, but live-provider
+quality, unsupported cross-platform rendering, arbitrary hostile filesystem
+writers, broader crash windows, release authorization, and v4 completion remain
+`UNVERIFIED`.
