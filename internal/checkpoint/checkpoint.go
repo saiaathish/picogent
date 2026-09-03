@@ -598,23 +598,22 @@ type operationError struct {
 }
 
 func applyMutation(root string, m *mutation, beforeWrite func(string)) *operationError {
-	current, err := readWorkspaceFile(root, m.entry.path)
-	if err != nil {
-		return &operationError{m.entry.path, "inspect", err}
-	}
-	if current.sum == m.entry.before.sum {
-		m.alreadyRestored = true
-		return nil
-	}
-	if current.sum != m.entry.expected {
-		return &operationError{m.entry.path, "conflict", ErrConflict}
-	}
-	m.after = current
+	// Restore preflight already captured the post-turn state in m.after. The
+	// workspace compare-and-publish primitive below performs the required final
+	// content, mode, and path-identity check immediately before publication;
+	// avoid reading the same file a second time in this layer. If that final
+	// check reports a content conflict, one follow-up read distinguishes an
+	// already-completed restore from a newer state; arbitrary conflicts still
+	// fail closed.
 	if beforeWrite != nil {
 		beforeWrite(filepath.ToSlash(m.entry.path))
 	}
 	if err := writeWorkspaceState(root, m.entry.path, m.after, m.entry.before); err != nil {
 		if errors.Is(err, workspace.ErrContentConflict) {
+			if current, inspectErr := readWorkspaceFile(root, m.entry.path); inspectErr == nil && current.sum == m.entry.before.sum {
+				m.alreadyRestored = true
+				return nil
+			}
 			return &operationError{m.entry.path, "conflict", ErrConflict}
 		}
 		operation := "remove"
