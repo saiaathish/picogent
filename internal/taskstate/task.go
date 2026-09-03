@@ -886,6 +886,16 @@ func (t *Task) invalidateCompletionEvidence(reason string, provenance completion
 	}
 	changed := false
 	proofInvalidated := false
+	// Capture current requirement proof before any verification alias is
+	// invalidated below. EvidenceKindVerification is accepted as a tests
+	// requirement by RequirementEvidenceState, so appending that marker first
+	// would otherwise hide an older typed tests PASS and leave it available for
+	// a later contradiction.
+	currentRequirements := make(map[EvidenceKind]bool)
+	for _, kind := range t.RequiredEvidenceKinds() {
+		status, current, _ := t.RequirementEvidenceState(kind)
+		currentRequirements[kind] = current && evidenceStatusPasses(status)
+	}
 	if len(t.Verification) > 0 {
 		latest := &t.Verification[len(t.Verification)-1]
 		if latest.Passed {
@@ -925,15 +935,14 @@ func (t *Task) invalidateCompletionEvidence(reason string, provenance completion
 		changed = true
 	}
 	for _, kind := range t.RequiredEvidenceKinds() {
-		status, current, _ := t.RequirementEvidenceState(kind)
-		if !current || !evidenceStatusPasses(status) {
+		if !currentRequirements[kind] {
 			continue
 		}
 		t.addTrustedEvidence(Evidence{
 			Kind:       kind,
 			Status:     "INCONCLUSIVE",
 			Source:     provenance.source,
-			Origin:     EvidenceOriginSystem,
+			Origin:     provenance.origin,
 			Summary:    summary,
 			Reference:  provenance.reference,
 			Confidence: "high",
@@ -975,6 +984,16 @@ func (t *Task) addEvidence(e Evidence, trusted bool) {
 	if t == nil {
 		return
 	}
+	// Normalize provenance before checking protected invalidation shapes. This
+	// keeps whitespace-only caller changes from manufacturing a supersession
+	// marker that can hide a current contradiction.
+	e.Kind = normalizeEvidenceKind(EvidenceKind(compactText(string(e.Kind), maxEvidenceKind)))
+	e.Status = compactText(e.Status, maxEvidenceStatus)
+	e.Source = compactText(e.Source, maxEvidenceSource)
+	e.Origin = EvidenceOrigin(compactText(string(e.Origin), maxEvidenceOrigin))
+	e.Summary = compactText(e.Summary, maxEvidenceSummary)
+	e.Reference = compactText(e.Reference, maxEvidenceReference)
+	e.Confidence = compactText(e.Confidence, maxEvidenceConfidence)
 	// Invalidation provenance is a protected internal marker. Generic callers
 	// may record advisory evidence, but cannot manufacture a supersession record
 	// that hides an otherwise current contradiction. Persisted markers remain
@@ -983,13 +1002,6 @@ func (t *Task) addEvidence(e Evidence, trusted bool) {
 		return
 	}
 	e.trusted = trusted
-	e.Kind = normalizeEvidenceKind(EvidenceKind(compactText(string(e.Kind), maxEvidenceKind)))
-	e.Status = compactText(e.Status, maxEvidenceStatus)
-	e.Source = compactText(e.Source, maxEvidenceSource)
-	e.Origin = EvidenceOrigin(compactText(string(e.Origin), maxEvidenceOrigin))
-	e.Summary = compactText(e.Summary, maxEvidenceSummary)
-	e.Reference = compactText(e.Reference, maxEvidenceReference)
-	e.Confidence = compactText(e.Confidence, maxEvidenceConfidence)
 	if e.Kind == "" || e.Status == "" || e.Summary == "" {
 		return
 	}
@@ -1187,7 +1199,7 @@ func (t *Task) RequirementEvidenceState(kind EvidenceKind) (string, bool, Eviden
 			continue
 		}
 		status := normalizeEvidenceStatus(evidence.Status)
-		if evidence.ChangeSeq != t.ChangeSeq || !evidence.trusted || !evidence.Origin.TrustedFor(kind) {
+		if completionInvalidationEvidence(evidence) || evidence.ChangeSeq != t.ChangeSeq || !evidence.trusted || !evidence.Origin.TrustedFor(kind) {
 			return status, false, evidence.Origin
 		}
 		return status, true, evidence.Origin

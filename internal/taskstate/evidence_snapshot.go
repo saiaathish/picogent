@@ -66,7 +66,7 @@ func (t *Task) EvidenceSnapshot() []EvidenceSnapshot {
 // must not cross the snapshot boundary.
 func categoricalEvidenceStatus(status string) (string, bool) {
 	switch normalized := normalizeEvidenceStatus(status); normalized {
-	case "PASS", "APPROVED", "CONFIRMED", "FAIL", "INCONCLUSIVE", "SKIPPED":
+	case "PASS", "APPROVED", "CONFIRMED", "FAIL", "INCONCLUSIVE", "SKIPPED", "DENIED":
 		return normalized, true
 	default:
 		return "", false

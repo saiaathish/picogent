@@ -84,6 +84,65 @@ func TestDetectContradictionsKeepsUntrustedRecordsAdvisory(t *testing.T) {
 	}
 }
 
+func TestDetectContradictionsProtectsRuntimeTrustFromSignalMutation(t *testing.T) {
+	task, err := taskstate.New("contradiction-signal-mutation", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+
+	report := DetectContradictions(task)
+	if report.State != ContradictionConfirmed || len(report.Signals) != 1 {
+		t.Fatalf("confirmed report = %#v", report)
+	}
+	report.Signals[0].PositiveStatus = "APPROVED"
+	report.Signals[0].PositiveOrigin = string(taskstate.EvidenceOriginUser)
+	formatted := FormatContradictions(report)
+	var decoded ContradictionReport
+	if err := json.Unmarshal([]byte(formatted), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.State != ContradictionAdvisory || decoded.Signals[0].State != ContradictionAdvisory {
+		t.Fatalf("mutated trusted signal remained confirmed = %#v", decoded)
+	}
+}
+
+func TestDetectContradictionsRecognizesDeniedApproval(t *testing.T) {
+	task, err := taskstate.New("contradiction-approval", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordApprovalEvidence("APPROVED", "approval granted", "user")
+	task.RecordApprovalEvidence("DENIED", "approval denied", "user")
+
+	report := DetectContradictions(task)
+	if report.State != ContradictionConfirmed || len(report.Signals) != 1 {
+		t.Fatalf("approval contradiction = %#v", report)
+	}
+	if report.Signals[0].NegativeStatus != "DENIED" || report.Signals[0].Scope != ContradictionScopeRequirement {
+		t.Fatalf("approval contradiction signal = %#v", report.Signals[0])
+	}
+}
+
+func TestDetectContradictionsResetsAllInvalidatedRequirementAliases(t *testing.T) {
+	task, err := taskstate.New("contradiction-alias-invalidation", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Intent = &taskstate.IntentContract{Outcome: task.Goal, NeedsTests: true}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.AddVerification("go test ./...", true, "verification passed")
+	if !task.InvalidateWorkspaceEvidence("workspace restored") {
+		t.Fatal("workspace evidence was not invalidated")
+	}
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+
+	if report := DetectContradictions(task); report.State != ContradictionNone || len(report.Signals) != 0 {
+		t.Fatalf("invalidated tests alias became a contradiction = %#v", report)
+	}
+}
+
 func TestDetectContradictionsDoesNotTreatInvalidationAsConflict(t *testing.T) {
 	task, err := taskstate.New("contradiction-invalidation", "check the result", nil)
 	if err != nil {

@@ -3,6 +3,7 @@ package outcome
 import (
 	"encoding/json"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/taskstate"
@@ -55,6 +56,10 @@ type ContradictionSignal struct {
 	// records; a caller-made report must remain advisory even when its visible
 	// labels look valid.
 	runtimeTrusted bool
+	// runtimeKey detects mutation of the exported categorical fields after a
+	// trusted signal was derived. The key is runtime-only and is intentionally
+	// not accepted from JSON or generic callers.
+	runtimeKey string
 }
 
 // ContradictionReport is a bounded derived view over one task snapshot.
@@ -149,7 +154,7 @@ func DetectContradictions(task *taskstate.Task) ContradictionReport {
 		if confirmed {
 			signalState = ContradictionConfirmed
 		}
-		report.Signals = append(report.Signals, ContradictionSignal{
+		signal := ContradictionSignal{
 			Scope:          contradictionScopeFor(key.kind, key.criterionIndex),
 			Kind:           key.kind,
 			CriterionIndex: key.criterionIndex,
@@ -160,7 +165,11 @@ func DetectContradictions(task *taskstate.Task) ContradictionReport {
 			NegativeOrigin: safeContradictionOrigin(key.kind, state.negative),
 			State:          signalState,
 			runtimeTrusted: confirmed,
-		})
+		}
+		if confirmed {
+			signal.runtimeKey = contradictionSignalRuntimeKey(signal)
+		}
+		report.Signals = append(report.Signals, signal)
 		if confirmed {
 			report.State = ContradictionConfirmed
 		} else if report.State == ContradictionNone {
@@ -205,6 +214,7 @@ func boundContradictionReport(report ContradictionReport) ContradictionReport {
 	}
 	valid := report.Signals[:0]
 	for _, signal := range report.Signals {
+		runtimeTrusted := signal.runtimeTrusted && signal.runtimeKey != "" && signal.runtimeKey == contradictionSignalRuntimeKey(signal)
 		kind, ok := canonicalContradictionKind(signal.Kind)
 		if !ok || contradictionPolarityFor(signal.PositiveStatus) != polarityPositive || contradictionPolarityFor(signal.NegativeStatus) != polarityNegative {
 			continue
@@ -221,7 +231,11 @@ func boundContradictionReport(report ContradictionReport) ContradictionReport {
 		signal.NegativeStatus = canonicalNegativeStatus(signal.NegativeStatus)
 		signal.PositiveOrigin = safeContradictionOriginString(kind, signal.PositiveOrigin)
 		signal.NegativeOrigin = safeContradictionOriginString(kind, signal.NegativeOrigin)
-		if signal.State == ContradictionConfirmed && (!signal.runtimeTrusted || signal.PositiveOrigin == "untrusted" || signal.NegativeOrigin == "untrusted") {
+		signal.runtimeTrusted = runtimeTrusted
+		if !runtimeTrusted {
+			signal.runtimeKey = ""
+		}
+		if signal.State == ContradictionConfirmed && (!runtimeTrusted || signal.PositiveOrigin == "untrusted" || signal.NegativeOrigin == "untrusted") {
 			signal.State = ContradictionAdvisory
 		} else if signal.State != ContradictionConfirmed {
 			signal.State = ContradictionAdvisory
@@ -231,6 +245,26 @@ func boundContradictionReport(report ContradictionReport) ContradictionReport {
 	report.Signals = valid
 	report.State = contradictionStateForSignals(report.Signals)
 	return report
+}
+
+// contradictionSignalRuntimeKey is an opaque runtime witness for the
+// categorical fields that establish trust. It deliberately keeps raw integer
+// values so an invalid caller mutation cannot normalize into a trusted
+// boundary during formatting.
+func contradictionSignalRuntimeKey(signal ContradictionSignal) string {
+	kind, ok := canonicalContradictionKind(signal.Kind)
+	if !ok {
+		return ""
+	}
+	return strings.Join([]string{
+		string(kind),
+		strconv.Itoa(signal.CriterionIndex),
+		strconv.Itoa(signal.ChangeSeq),
+		canonicalPositiveStatus(signal.PositiveStatus),
+		canonicalNegativeStatus(signal.NegativeStatus),
+		safeContradictionOriginString(kind, signal.PositiveOrigin),
+		safeContradictionOriginString(kind, signal.NegativeOrigin),
+	}, "\x00")
 }
 
 func contradictionStateForSignals(signals []ContradictionSignal) ContradictionState {
@@ -270,7 +304,7 @@ func contradictionPolarityFor(status string) contradictionPolarity {
 	switch strings.ToUpper(strings.TrimSpace(status)) {
 	case "PASS", "APPROVED", "CONFIRMED":
 		return polarityPositive
-	case "FAIL", "INCONCLUSIVE", "SKIPPED":
+	case "FAIL", "INCONCLUSIVE", "SKIPPED", "DENIED":
 		return polarityNegative
 	default:
 		return polarityNone
@@ -294,6 +328,8 @@ func canonicalNegativeStatus(status string) string {
 		return "INCONCLUSIVE"
 	case "SKIPPED":
 		return "SKIPPED"
+	case "DENIED":
+		return "DENIED"
 	default:
 		return "FAIL"
 	}
