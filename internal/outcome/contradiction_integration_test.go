@@ -74,6 +74,50 @@ func TestSelectRoutesAggregateRequirementContradiction(t *testing.T) {
 	}
 }
 
+func TestUnrequestedAggregateContradictionsDoNotRoute(t *testing.T) {
+	cases := []struct {
+		name   string
+		record func(*taskstate.Task, string)
+	}{
+		{name: "research", record: func(task *taskstate.Task, status string) {
+			task.RecordResearchEvidence(status, "research evidence", "research tool")
+		}},
+		{name: "measurement", record: func(task *taskstate.Task, status string) {
+			task.RecordMeasurementEvidence(status, "measurement evidence", "measurement tool")
+		}},
+		{name: "visual", record: func(task *taskstate.Task, status string) {
+			task.RecordVisualEvidence(status, "visual evidence", "visual inspection")
+		}},
+		{name: "tests", record: func(task *taskstate.Task, status string) {
+			task.RecordTestsEvidence(status, "test evidence", "test runner")
+		}},
+		{name: "approval", record: func(task *taskstate.Task, status string) {
+			task.RecordApprovalEvidence(status, "approval evidence", "user approval")
+		}},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			task, err := taskstate.New("unrequested-"+tt.name, "make the outcome reliable", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			task.Intent = &taskstate.IntentContract{Outcome: task.Goal}
+			tt.record(task, "PASS")
+			tt.record(task, "FAIL")
+
+			report := DetectContradictions(task)
+			if report.State != ContradictionConfirmed || len(report.Signals) != 1 {
+				t.Fatalf("%s contradiction report = %#v", tt.name, report)
+			}
+			contract := Build(task, projecthealth.Report{Schema: projecthealth.Schema})
+			if contract.Next.Kind == KindContradiction || contract.Stop.EvidenceState == string(ContradictionConfirmed) {
+				t.Fatalf("unrequested %s contradiction became executable = next=%#v stop=%#v", tt.name, contract.Next, contract.Stop)
+			}
+		})
+	}
+}
+
 func TestOptionalCriterionContradictionRemainsNonExecutable(t *testing.T) {
 	task, err := taskstate.New("optional-contradiction", "finish the outcome", nil)
 	if err != nil {

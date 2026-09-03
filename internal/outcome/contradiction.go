@@ -174,8 +174,11 @@ func DetectContradictions(task *taskstate.Task) ContradictionReport {
 		if trustedContradictionEvidence(key.kind, state.positive) && trustedContradictionEvidence(key.kind, state.negative) {
 			confirmedAny = true
 			if key.criterionIndex < 0 {
-				confirmedAffectsOutcome = true
-				break
+				if requiredContradictionKind(task, key.kind) {
+					confirmedAffectsOutcome = true
+					break
+				}
+				continue
 			}
 			for _, index := range task.RequiredCriterionIndices() {
 				if index == key.criterionIndex {
@@ -233,6 +236,26 @@ func DetectContradictions(task *taskstate.Task) ContradictionReport {
 	report.runtimeConfirmedAffectsOutcome = confirmedAffectsOutcome
 	report.runtimeKey = contradictionReportRuntimeKey(report)
 	return boundContradictionReport(report)
+}
+
+func requiredContradictionKind(task *taskstate.Task, kind taskstate.EvidenceKind) bool {
+	if task == nil {
+		return false
+	}
+	kind, ok := canonicalContradictionKind(kind)
+	if !ok {
+		return false
+	}
+	for _, required := range task.RequiredEvidenceKinds() {
+		required, ok := canonicalContradictionKind(required)
+		if !ok {
+			continue
+		}
+		if required == kind || (required == taskstate.EvidenceKindTests && kind == taskstate.EvidenceKindVerification) {
+			return true
+		}
+	}
+	return false
 }
 
 // FormatContradictions returns bounded JSON for diagnostics and future

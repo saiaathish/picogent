@@ -837,6 +837,11 @@ func boundContract(contract Contract) Contract {
 	contract.Stop.Policy = normalizeStopPolicy(contract.Stop.Policy)
 	contract.Stop.EvidenceState = normalizeStopEvidence(contract.Stop.EvidenceState)
 	contract.Stop.Reason = fixedStopReason(contract.Stop.Policy, contract.Stop.Reason)
+	if !trustedContradictionReportAffectsOutcome(contract.Contradictions) &&
+		(contract.Stop.EvidenceState == string(ContradictionConfirmed) || contract.Stop.Reason == contradictionReason) {
+		contract.Stop.EvidenceState = "UNVERIFIED"
+		contract.Stop.Reason = fixedStopReason(contract.Stop.Policy, "")
+	}
 	return contract
 }
 

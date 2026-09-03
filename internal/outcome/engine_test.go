@@ -416,6 +416,43 @@ func TestBoundContractReconcilesContradictionProjectionsConservatively(t *testin
 	}
 }
 
+func TestBoundContractDowngradesStaleContradictionStop(t *testing.T) {
+	task, err := taskstate.New("stale-contradiction-stop", "recheck the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Intent = &taskstate.IntentContract{Outcome: task.Goal, NeedsTests: true}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+	trusted := DetectContradictions(task)
+	var reloaded ContradictionReport
+	data, err := json.Marshal(trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &reloaded); err != nil {
+		t.Fatal(err)
+	}
+
+	contract := boundContract(Contract{
+		Schema:         EngineSchema,
+		Contradictions: trusted,
+		Turn:           TurnContract{Contradictions: reloaded},
+		Next:           contradictionDecision(trusted),
+		Stop: StopDecision{
+			Policy:        StopRecheck,
+			EvidenceState: string(ContradictionConfirmed),
+			Reason:        contradictionReason,
+		},
+	})
+	if contract.Stop.Policy != StopRecheck || contract.Stop.EvidenceState == string(ContradictionConfirmed) || contract.Stop.Reason == contradictionReason {
+		t.Fatalf("stale confirmed stop survived projection downgrade = %#v", contract.Stop)
+	}
+	if contract.Stop.EvidenceState != "UNVERIFIED" || contract.Stop.Reason != "recheck live evidence before stopping" {
+		t.Fatalf("stale stop was not downgraded to a generic recheck = %#v", contract.Stop)
+	}
+}
+
 func TestTurnContractCanonicalizesUntrustedLifecycleValues(t *testing.T) {
 	contract := Contract{
 		Schema: EngineSchema,
