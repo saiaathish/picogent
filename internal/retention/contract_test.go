@@ -65,6 +65,7 @@ func TestAllowlistedMarkersAreTheOnlyAcceptedMarkerValues(t *testing.T) {
 		{name: "zero", markers: Markers{}},
 		{name: "outcome", markers: Markers{Outcome: OutcomeCompleted}},
 		{name: "verification", markers: Markers{Verification: VerificationPassed}},
+		{name: "verification-skipped", markers: Markers{Verification: VerificationSkipped}},
 		{name: "recovery", markers: Markers{Recovery: RecoveryRepaired}},
 		{name: "error", markers: Markers{Error: ErrorUnresolved}},
 		{name: "all", markers: Markers{
@@ -107,6 +108,20 @@ func TestAllowlistedMarkersAreTheOnlyAcceptedMarkerValues(t *testing.T) {
 		}) {
 			t.Fatalf("unknown marker leaked into safe defaults: %+v", assessment)
 		}
+	}
+}
+
+func TestSkippedVerificationIsEligibleWithoutPositiveScore(t *testing.T) {
+	base := Assess(basicUnit(0, 0, RoleUser, Markers{Outcome: OutcomeCompleted}))
+	skipped := Assess(basicUnit(0, 0, RoleUser, Markers{
+		Outcome:      OutcomeCompleted,
+		Verification: VerificationSkipped,
+	}))
+	if !skipped.IsEligible() {
+		t.Fatalf("skipped verification assessment = %+v, want eligible", skipped)
+	}
+	if skipped.Score != base.Score {
+		t.Fatalf("skipped verification score = %d, want unmarked score %d", skipped.Score, base.Score)
 	}
 }
 

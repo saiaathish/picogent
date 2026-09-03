@@ -96,12 +96,13 @@ const (
 	VerificationPassed       VerificationCode = "passed"
 	VerificationFailed       VerificationCode = "failed"
 	VerificationInconclusive VerificationCode = "inconclusive"
+	VerificationSkipped      VerificationCode = "skipped"
 )
 
 // Valid reports whether c is in the versioned verification vocabulary.
 func (c VerificationCode) Valid() bool {
 	switch c {
-	case "", VerificationUnmarked, VerificationPassed, VerificationFailed, VerificationInconclusive:
+	case "", VerificationUnmarked, VerificationPassed, VerificationFailed, VerificationInconclusive, VerificationSkipped:
 		return true
 	default:
 		return false
