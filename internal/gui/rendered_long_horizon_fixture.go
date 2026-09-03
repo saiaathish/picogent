@@ -249,11 +249,12 @@ func newRenderedLongHorizonFixtureServer(phase, home, workspace string) (*server
 		hist = loaded.Messages
 	}
 	s := &server{
-		cfg:       cfg,
-		ag:        ag,
-		hist:      hist,
-		sessionID: renderedLongHorizonFixtureSession,
-		permCh:    make(chan perm.Decision, 1),
+		cfg:                      cfg,
+		ag:                       ag,
+		hist:                     hist,
+		sessionID:                renderedLongHorizonFixtureSession,
+		permCh:                   make(chan perm.Decision, 1),
+		suppressExtensionRebuild: true,
 	}
 	s.ensureProject()
 	return s, ag, runtime, nil

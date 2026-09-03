@@ -416,9 +416,13 @@ func (s *server) maybeRecommendExtensions(prompt string) {
 
 func (s *server) cleanupExtensionPool() {
 	s.mu.Lock()
+	suppressRebuild := s.suppressExtensionRebuild
 	cfg := s.cfg
 	ws := cfg.Workspace
 	s.mu.Unlock()
+	if suppressRebuild {
+		return
+	}
 
 	pool := extensions.NewPool(ws, cfg.Extensions.EssentialPlugins, cfg.Extensions.ActiveTransient)
 	_ = pool.CleanupTransient()
