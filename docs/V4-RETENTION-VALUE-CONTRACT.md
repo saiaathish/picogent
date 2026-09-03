@@ -72,6 +72,12 @@ call identifier exactly once. It never accepts an orphan or partial pair.
 6. ascending input index as a final tie-break when callers provide duplicate
    coordinates.
 
+When a unit is rejected but its coordinates are individually within the
+bounded range, `Assess` preserves `CurrentTurn`, `Position`, and
+`OriginalIndex` so rejected candidates still have the documented deterministic
+ordering. Invalid coordinates remain safe zero defaults and produce
+`UNVERIFIED/invalid-position`.
+
 The score is capped at 100. Its bounded contributions are:
 
 - role: user 24, assistant 16;

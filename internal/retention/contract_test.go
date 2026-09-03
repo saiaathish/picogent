@@ -164,6 +164,103 @@ func TestRankUsesDeterministicEligibilityScoreTurnPositionAndIndexOrder(t *testi
 	}
 }
 
+func TestRejectedAssessmentsRetainValidatedRankingCoordinates(t *testing.T) {
+	cases := []struct {
+		name string
+		unit Unit
+	}{
+		{
+			name: "empty",
+			unit: Unit{CurrentTurn: true, Position: 9, OriginalIndex: 4},
+		},
+		{
+			name: "oversized",
+			unit: Unit{
+				Messages:      make([]Message, MaxMessagesPerUnit+1),
+				CurrentTurn:   true,
+				Position:      10,
+				OriginalIndex: 5,
+			},
+		},
+		{
+			name: "unknown-role",
+			unit: Unit{
+				Messages:      []Message{{Role: Role("unknown")}},
+				CurrentTurn:   true,
+				Position:      11,
+				OriginalIndex: 6,
+			},
+		},
+		{
+			name: "system",
+			unit: Unit{
+				Messages:      []Message{{Role: RoleSystem}},
+				CurrentTurn:   true,
+				Position:      12,
+				OriginalIndex: 7,
+			},
+		},
+		{
+			name: "orphan",
+			unit: Unit{
+				Messages:      []Message{{Role: RoleTool, ToolCallID: "call-a"}},
+				CurrentTurn:   true,
+				Position:      13,
+				OriginalIndex: 8,
+			},
+		},
+		{
+			name: "unknown-marker",
+			unit: Unit{
+				Messages:      []Message{{Role: RoleUser}},
+				CurrentTurn:   true,
+				Position:      14,
+				OriginalIndex: 9,
+				Markers:       Markers{Outcome: OutcomeCode("unknown")},
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assessment := Assess(tc.unit)
+			if !assessment.CurrentTurn || assessment.Position != tc.unit.Position || assessment.OriginalIndex != tc.unit.OriginalIndex {
+				t.Fatalf("assessment coordinates = %+v, want current turn %t, position %d, original index %d", assessment, tc.unit.CurrentTurn, tc.unit.Position, tc.unit.OriginalIndex)
+			}
+		})
+	}
+}
+
+func TestInvalidCoordinatesRemainSafeDefaults(t *testing.T) {
+	assessment := Assess(Unit{
+		Messages:      []Message{{Role: RoleUser}},
+		CurrentTurn:   true,
+		Position:      MaxPosition + 1,
+		OriginalIndex: 3,
+	})
+	if assessment.Eligibility != EligibilityUnverified || assessment.Reason != ReasonInvalidPosition {
+		t.Fatalf("assessment = %+v, want UNVERIFIED/invalid-position", assessment)
+	}
+	if assessment.CurrentTurn || assessment.Position != 0 || assessment.OriginalIndex != 0 {
+		t.Fatalf("invalid coordinates leaked into assessment = %+v", assessment)
+	}
+}
+
+func TestRankUsesValidatedCoordinatesForRejectedCandidates(t *testing.T) {
+	units := []Unit{
+		{Messages: []Message{{Role: Role("unknown-a")}}, Position: 1, OriginalIndex: 8},
+		{Messages: []Message{{Role: Role("unknown-b")}}, Position: 2, OriginalIndex: 7},
+	}
+
+	ranked, err := Rank(units)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := []int{ranked[0].InputIndex, ranked[1].InputIndex}; !reflect.DeepEqual(got, []int{1, 0}) {
+		t.Fatalf("rejected ranking order = %v, want [1 0]", got)
+	}
+}
+
 func TestSelectUsesRankButRestoresOriginalTranscriptOrder(t *testing.T) {
 	units := []Unit{
 		basicUnit(10, 20, RoleUser, Markers{}),
