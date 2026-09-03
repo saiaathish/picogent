@@ -70,3 +70,11 @@ console-control or `SIGINT` semantics, arbitrary crash timing between
 application operations, hostile or uncooperative same-UID filesystem writers,
 pathname/TOCTOU race resistance, live-provider quality, rendered behavior, or
 release readiness.
+
+The later Windows console-control observation is a separate signal fixture, not
+an extension of this direct-kill record. See the
+[lifecycle contract](V4-LIFECYCLE-CONTRACT.md) and
+[cross-surface crash-recovery evidence](V4-CROSS-SURFACE-CRASH-RECOVERY.md)
+for the headless `CTRL_BREAK_EVENT` result in PR #377 and the separate TUI
+result in PR #379. Those records do not change this document's direct-kill
+scope or establish a general Windows crash guarantee.
