@@ -250,10 +250,6 @@ func waitForHeadlessTask(t *testing.T, store *taskstate.Store, sessionID string,
 }
 
 func TestHeadlessFreshProcessSignalRetainsInterruptedTurn(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows hosted runners do not provide a stable child SIGINT boundary; the limitation is recorded in the lifecycle contract")
-	}
-
 	home := t.TempDir()
 	codexHome := t.TempDir()
 	workspace := t.TempDir()
@@ -295,6 +291,9 @@ func TestHeadlessFreshProcessSignalRetainsInterruptedTurn(t *testing.T) {
 	}
 
 	binary := filepath.Join(t.TempDir(), "picogent")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", binary, ".")
 	build.Dir = mustWorkingDirectory(t)
 	if output, err := build.CombinedOutput(); err != nil {
@@ -307,6 +306,9 @@ func TestHeadlessFreshProcessSignalRetainsInterruptedTurn(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	if err := prepareSignalChild(cmd); err != nil {
+		t.Fatalf("prepare headless signal child: %v", err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -317,10 +319,10 @@ func TestHeadlessFreshProcessSignalRetainsInterruptedTurn(t *testing.T) {
 		_ = cmd.Wait()
 		t.Fatalf("headless child did not reach provider barrier\nstdout=%q\nstderr=%q", stdout.String(), stderr.String())
 	}
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+	if err := sendInterruptToChild(cmd); err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		t.Fatalf("interrupt headless child: %v", err)
+		t.Fatalf("interrupt headless child with platform console signal: %v", err)
 	}
 	wait := make(chan error, 1)
 	go func() { wait <- cmd.Wait() }()
