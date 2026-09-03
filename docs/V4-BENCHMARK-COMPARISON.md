@@ -5,11 +5,13 @@ regression comparison, not a live-provider quality, browser, or product-SLA
 claim.
 
 The v3/v4 comparison table below is anchored to the pre-measurement merged v4
-head `275afdb8bdb727ce7a67d37a0b4570eea595f125`. The current merged `main`
-head is `c6d87bf5b38e6afb1322e6982d3033357df59819`; PR #332 added a
-same-iteration causal control for the scripted-edit follow-up tracked by #302.
-`internal/benchmark/stages_test.go` provides both the standalone and composite
-controls.
+head `275afdb8bdb727ce7a67d37a0b4570eea595f125`. The latest merged `main`
+head is `4046d6c807514614cd704b73f9ef8da12eaa1ae1`; the earlier current-main
+checkpoint at `c6d87bf5b38e6afb1322e6982d3033357df59819` remains below as
+historical evidence. PR #332 added a same-iteration causal control for the
+scripted-edit follow-up tracked by #302, and PR #372 refreshes that control at
+the latest head. `internal/benchmark/stages_test.go` provides both the
+standalone and composite controls.
 
 ## Reproducibility
 
@@ -80,11 +82,11 @@ model:
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | Scripted agent edit | 551,042 / 589,875 / 1,155,500 | 7,371,376 / 7,559,750 / 9,845,291 | 113,328 / 113,920 / 116,288 | 125,376 / 125,632 / 127,936 | 1,114 / 1,116 / 1,151 | 1,316 / 1,316 / 1,351 |
 
-## Current-main stage controls
+## Historical current-main stage controls
 
-At exact current `main` head `c6d87bf5b38e6afb1322e6982d3033357df59819`, the
-provider-independent stage controls were rerun on the same Apple M3 arm64 host
-with Go `go1.26.6`:
+At the prior exact `main` head `c6d87bf5b38e6afb1322e6982d3033357df59819`,
+the provider-independent stage controls were rerun on the same Apple M3 arm64
+host with Go `go1.26.6`:
 
 ```sh
 go test ./internal/benchmark -run '^$' \
@@ -111,11 +113,13 @@ replacement for a live-provider measurement.
 | Production-shaped durable scripted turn | 40.913–41.905 ms | 319,690–349,482 | 3,002–3,020 |
 
 The durable scripted-turn row reports `2.000 model-calls/op`; the primitive and
-composite controls do not call a model.
+composite controls do not call a model. This section is retained as a
+historical checkpoint and is not the latest-main result.
 
-## Current-main causal scripted-edit follow-up
+## Historical current-main causal scripted-edit follow-up
 
-At the same exact merged `main` head `c6d87bf5b38e6afb1322e6982d3033357df59819`,
+At the same historical merged `main` head
+`c6d87bf5b38e6afb1322e6982d3033357df59819`,
 the full non-durable scripted-edit fixture and its same-iteration composite
 control were run three times with `-benchtime=100ms -benchmem -count=3`:
 
@@ -131,6 +135,47 @@ subtotal accounts for essentially all of this provider-independent local
 fixture's wall time; this does not establish a live-provider regression,
 product SLA, or release authorization.
 
+## Fresh current-main scripted-edit checkpoint
+
+At exact merged `main` head `4046d6c807514614cd704b73f9ef8da12eaa1ae1`, the
+same provider-independent controls were rerun on an Apple M3 arm64 Mac with
+Go `go1.26.6` on 2026-09-02. The repeated command was:
+
+```sh
+go test ./internal/benchmark -run '^$' \
+  -bench 'BenchmarkScriptedAgentEdit($|Stage)' -benchtime=100ms -benchmem -count=3
+```
+
+The full fixture and the same-iteration safety controls reported:
+
+| Operation | Time (min / median / max) | B/op | allocs/op | model-calls/op |
+| --- | ---: | ---: | ---: | ---: |
+| Full `Agent.Run` scripted edit | 7,184,314 / 7,635,533 / 9,355,554 ns/op | 141,621–141,674 | 1,463 | 2.000 |
+| Non-durable composite safety subtotal | 8,033,003 / 9,320,351 / 9,610,310 ns/op | 13,962–13,994 | 207 | — |
+| Production-shaped durable scripted turn | 65,744,208 / 72,648,020 / 99,701,250 ns/op | 367,680–393,576 | 3,214–3,239 | 2.000 |
+
+The standalone stage controls reported these ranges:
+
+| Stage | Time range | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Project run lock acquire/release | 1.273–1.974 ms | 3,143–3,144 | 65 |
+| Checkpoint capture | 0.608–0.668 ms | 7,072 | 75 |
+| Checkpoint seal | 0.609–0.683 ms | 1,886–1,889 | 25 |
+| Secure workspace publication | 5.011–5.856 ms | 1,792–1,811 | 40 |
+| Secure workspace publication with undo hook | 5.495–6.173 ms | 2,016–2,068 | 41–42 |
+| Durable task save | 7.724–7.904 ms | 11,495–11,545 | 152–153 |
+
+The composite's same-iteration phase ranges were run-lock `1.532–1.969 ms`,
+capture `0.828–0.872 ms`, secure publication `4.605–5.121 ms`, and
+seal/changed-path `1.068–1.767 ms`. The composite profile is dominated by
+kernel `openat` calls across the descriptor-safe lock, capture, and publication
+boundaries. That is a measurement of the required safety machinery, not proof
+of a redundant operation that can be removed or shared safely. The run remains
+a local control: it does not establish live-provider quality, cross-platform
+runtime behavior, a product SLA, or release readiness. No new production
+optimization lane is justified by this checkpoint alone; #302 remains open for
+a separately causal target.
+
 ## Interpretation
 
 - Context management improved in the working-set fixture at the median, with
@@ -139,14 +184,14 @@ product SLA, or release authorization.
   counts increased. Repo-map formatting and session metadata listing were
   materially slower in this run.
 - The pre-#332 scripted-edit comparison remains materially slower in v4 (about
-  12.8x at the median), with higher bytes and allocations. The current-main
-  composite control shows that the existing safety boundaries account for
-  essentially all of this provider-independent fixture; this is not evidence
-  that live-provider quality regressed.
+  12.8x at the median), with higher bytes and allocations. The historical and
+  fresh current-main composite controls both show that the existing safety
+  boundaries account for essentially all of this provider-independent fixture;
+  this is not evidence that live-provider quality regressed.
 - Verification plan/evidence remained close to the v3 baseline. The v4-only
   manifest path adds measurable work that has no v3 counterpart.
 
-These measurements establish a reproducible comparison and identify follow-up
-performance work. They do not justify a broad v4 performance or quality claim;
-live providers, rendered surfaces, external research, and long-horizon product
-outcomes remain outside this fixture.
+These measurements establish a reproducible comparison and preserve a bounded
+follow-up record for #302. They do not justify a broad v4 performance or
+quality claim; live providers, rendered surfaces, external research, and
+long-horizon product outcomes remain outside this fixture.
