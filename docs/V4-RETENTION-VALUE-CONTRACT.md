@@ -33,7 +33,7 @@ unmarked and normalized to `unmarked` in an eligible assessment.
 | Family | Allowlisted values |
 | --- | --- |
 | outcome | `unmarked`, `completed`, `changed`, `blocked`, `failed` |
-| verification | `unmarked`, `passed`, `failed`, `inconclusive` |
+| verification | `unmarked`, `passed`, `failed`, `inconclusive`, `skipped` |
 | recovery | `unmarked`, `resumed`, `restored`, `repaired` |
 | error | `unmarked`, `observed`, `resolved`, `unresolved` |
 
@@ -80,6 +80,11 @@ The score is capped at 100. Its bounded contributions are:
 - passed/failed verification: 18, inconclusive verification: 12;
 - any recovery marker: 14;
 - observed error: 16, resolved error: 12, unresolved error: 20.
+
+The existing verifier's `SKIPPED` status maps to the explicit `skipped`
+verification marker. A skipped verification is not a pass: it keeps the unit
+eligible when the rest of its structure is valid but contributes zero score,
+like `unmarked`.
 
 The score is intentionally a small deterministic heuristic, not a model
 judgment or completion authority. Durable task state and evidence remain the
