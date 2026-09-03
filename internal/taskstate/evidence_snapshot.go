@@ -41,14 +41,17 @@ func (t *Task) EvidenceSnapshot() []EvidenceSnapshot {
 			}
 		}
 		kind := normalizeEvidenceKind(evidence.Kind)
-		status := normalizeEvidenceStatus(evidence.Status)
-		if kind == "" || status == "" {
+		if !kind.Valid() {
+			continue
+		}
+		status, ok := categoricalEvidenceStatus(evidence.Status)
+		if !ok {
 			continue
 		}
 		out = append(out, EvidenceSnapshot{
 			Kind:           kind,
 			Status:         status,
-			Origin:         EvidenceOrigin(strings.TrimSpace(string(evidence.Origin))),
+			Origin:         categoricalEvidenceOrigin(evidence.Origin),
 			ChangeSeq:      evidence.ChangeSeq,
 			CriterionIndex: criterionIndex,
 			Trusted:        evidence.trusted,
@@ -56,6 +59,28 @@ func (t *Task) EvidenceSnapshot() []EvidenceSnapshot {
 		})
 	}
 	return out
+}
+
+// categoricalEvidenceStatus keeps only statuses understood by the derived
+// contradiction contract. Unknown caller text is not useful to that view and
+// must not cross the snapshot boundary.
+func categoricalEvidenceStatus(status string) (string, bool) {
+	switch normalized := normalizeEvidenceStatus(status); normalized {
+	case "PASS", "APPROVED", "CONFIRMED", "FAIL", "INCONCLUSIVE", "SKIPPED":
+		return normalized, true
+	default:
+		return "", false
+	}
+}
+
+// categoricalEvidenceOrigin preserves known producer labels while reducing
+// arbitrary caller-controlled origin text to the empty categorical value.
+func categoricalEvidenceOrigin(origin EvidenceOrigin) EvidenceOrigin {
+	origin = EvidenceOrigin(strings.TrimSpace(string(origin)))
+	if !origin.Valid() {
+		return ""
+	}
+	return origin
 }
 
 // completionInvalidationEvidence recognizes only the fixed provenance shapes

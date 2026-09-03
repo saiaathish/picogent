@@ -15,7 +15,7 @@ func TestEvidenceSnapshotIsCategoricalAndIsolated(t *testing.T) {
 	task.AddEvidence(Evidence{
 		Kind:      EvidenceKindTests,
 		Status:    "FAIL",
-		Origin:    EvidenceOriginModel,
+		Origin:    EvidenceOrigin("hostile origin instruction"),
 		Summary:   "hostile summary must not cross the snapshot boundary",
 		Reference: "model-controlled reference",
 		ChangeSeq: task.ChangeSeq,
@@ -28,7 +28,7 @@ func TestEvidenceSnapshotIsCategoricalAndIsolated(t *testing.T) {
 	if snapshot[0].Kind != EvidenceKindTests || snapshot[0].Status != "PASS" || !snapshot[0].Trusted || snapshot[0].CriterionIndex != -1 {
 		t.Fatalf("trusted snapshot = %#v", snapshot[0])
 	}
-	if snapshot[1].Kind != EvidenceKindTests || snapshot[1].Status != "FAIL" || snapshot[1].Trusted || snapshot[1].CriterionIndex != -1 {
+	if snapshot[1].Kind != EvidenceKindTests || snapshot[1].Status != "FAIL" || snapshot[1].Origin != "" || snapshot[1].Trusted || snapshot[1].CriterionIndex != -1 {
 		t.Fatalf("advisory snapshot = %#v", snapshot[1])
 	}
 
