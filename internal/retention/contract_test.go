@@ -99,6 +99,14 @@ func TestAllowlistedMarkersAreTheOnlyAcceptedMarkerValues(t *testing.T) {
 		if assessment.Eligibility != EligibilityUnverified || assessment.Reason != ReasonUnknownMarker {
 			t.Fatalf("unknown markers assessment = %+v", assessment)
 		}
+		if assessment.ToolPair != ToolPairNotPresent || assessment.Markers != (Markers{
+			Outcome:      OutcomeUnmarked,
+			Verification: VerificationUnmarked,
+			Recovery:     RecoveryUnmarked,
+			Error:        ErrorUnmarked,
+		}) {
+			t.Fatalf("unknown marker leaked into safe defaults: %+v", assessment)
+		}
 	}
 }
 
@@ -194,8 +202,7 @@ func TestBoundsFailClosed(t *testing.T) {
 		basicUnit(0, -1, RoleUser, Markers{}),
 		basicUnit(-1, 0, RoleUser, Markers{}),
 		basicUnit(0, MaxPosition+1, RoleUser, Markers{}),
-		basicUnit(0, 0, RoleUser, Markers{}),
-	}[:3] {
+	} {
 		if got := Assess(unit); got.Eligibility != EligibilityUnverified || got.Reason != ReasonInvalidPosition {
 			t.Fatalf("invalid coordinate assessment = %+v", got)
 		}
@@ -246,11 +253,25 @@ func TestCompleteToolPairsAreEligibleAndOrphansAreNot(t *testing.T) {
 			}},
 			reason: ReasonIncompleteToolPair,
 		},
+		{
+			name: "duplicate-across-exchanges",
+			unit: Unit{Messages: []Message{
+				{Role: RoleAssistant, ToolCallIDs: []string{"call-a"}},
+				{Role: RoleTool, ToolCallID: "call-a"},
+				{Role: RoleAssistant, ToolCallIDs: []string{"call-a"}},
+				{Role: RoleTool, ToolCallID: "call-a"},
+			}},
+			reason: ReasonMalformedInput,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Assess(tc.unit)
-			if got.Eligibility != EligibilityIneligible || got.Reason != tc.reason {
+			wantEligibility := EligibilityIneligible
+			if tc.reason == ReasonMalformedInput {
+				wantEligibility = EligibilityUnverified
+			}
+			if got.Eligibility != wantEligibility || got.Reason != tc.reason {
 				t.Fatalf("assessment = %+v, want ineligible/%q", got, tc.reason)
 			}
 		})

@@ -271,6 +271,13 @@ func Assess(unit Unit) Assessment {
 		Version:     VocabularyVersion,
 		Eligibility: EligibilityUnverified,
 		Reason:      ReasonMalformedInput,
+		ToolPair:    ToolPairNotPresent,
+		Markers: Markers{
+			Outcome:      OutcomeUnmarked,
+			Verification: VerificationUnmarked,
+			Recovery:     RecoveryUnmarked,
+			Error:        ErrorUnmarked,
+		},
 	}
 	if len(unit.Messages) == 0 {
 		a.Reason = ReasonEmptyUnit
@@ -314,6 +321,7 @@ func Assess(unit Unit) Assessment {
 func validateMessages(messages []Message) (Role, ToolPairStatus, ReasonCode) {
 	var primary Role
 	pending := make(map[string]struct{})
+	seenCallIDs := make(map[string]struct{})
 	pair := ToolPairNotPresent
 	for _, message := range messages {
 		if !message.Role.Valid() {
@@ -343,15 +351,14 @@ func validateMessages(messages []Message) (Role, ToolPairStatus, ReasonCode) {
 			if message.Role != RoleAssistant {
 				continue
 			}
-			seen := make(map[string]struct{}, len(message.ToolCallIDs))
 			for _, id := range message.ToolCallIDs {
 				if !validToolID(id) {
 					return "", ToolPairNotPresent, ReasonMalformedInput
 				}
-				if _, exists := seen[id]; exists {
+				if _, exists := seenCallIDs[id]; exists {
 					return "", ToolPairNotPresent, ReasonMalformedInput
 				}
-				seen[id] = struct{}{}
+				seenCallIDs[id] = struct{}{}
 				pending[id] = struct{}{}
 			}
 			if len(message.ToolCallIDs) != 0 {
