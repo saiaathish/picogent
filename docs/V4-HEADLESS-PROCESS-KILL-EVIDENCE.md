@@ -1,7 +1,6 @@
 # v4 headless direct-process-kill recovery evidence
 
-Status: local fresh-process evidence recorded; hosted platform results remain
-pending until the implementation PR completes its matrix.
+Status: local fresh-process evidence and hosted platform matrix recorded.
 
 This is the bounded headless slice of [#374](https://github.com/saiaathish/picogent/issues/374),
 under the broader run-lock recovery parent [#311](https://github.com/saiaathish/picogent/issues/311)
@@ -13,7 +12,7 @@ The executable fixture was validated at:
 
 ```text
 repository: github.com/saiaathish/picogent
-source:     ca2a8b3948e7f7a6afa83c2104916ec145bc1ff7 (test(headless): prove recovery after direct process kill)
+source:     1dae1ebbc084da5139215d97ee17a94acc5330ab (fix(test): use Windows executable path in headless fixture)
 runtime:    go1.26.6 darwin/arm64
 host:       Apple M3 arm64 macOS
 ```
@@ -48,9 +47,20 @@ go test ./cmd/picogent ./internal/lifecycle -count=1 -timeout=180s          PASS
 git diff --check                                                         PASS
 ```
 
-Hosted Windows, Ubuntu, and macOS results will be recorded from the exact PR
-source commit after the hosted matrix completes. No hosted result is inferred
-from this local run.
+The hosted matrix completed successfully from the exact PR source commit
+`1dae1ebbc084da5139215d97ee17a94acc5330ab`:
+
+```text
+run:             33719240748 (https://github.com/saiaathish/picogent/actions/runs/33719240748)
+test (ubuntu):   PASS
+test (windows):  PASS
+test (macos):    PASS
+security:        PASS
+release-evidence: PASS
+```
+
+These hosted results are recorded from GitHub's completed check runs; no
+hosted result is inferred from the local run.
 
 ## Evidence boundary
 
