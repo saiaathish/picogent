@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,7 +26,19 @@ const (
 	traceSustainedWorkers      = 4
 	traceSustainedEvents       = 256
 	traceSustainedWait         = 45 * time.Second
+	traceSustainedWindowsWait  = 90 * time.Second
 )
+
+func traceSustainedTimeout() time.Duration {
+	if runtime.GOOS == "windows" {
+		// Windows hosted runners can take longer to serialize the repeated
+		// descriptor-safe rewrites while four fresh processes contend. Keep the
+		// wait bounded, but leave enough room for the existing retention fixture
+		// to complete without changing its workload or assertions.
+		return traceSustainedWindowsWait
+	}
+	return traceSustainedWait
+}
 
 // TestTraceSustainedCrossProcessRetention drives enough real fresh-process
 // appends to force JSONL retention while writers contend on the kernel-backed
@@ -186,7 +199,7 @@ func waitForTraceSustainedChild(child *traceSustainedChild) error {
 	select {
 	case <-child.done:
 		return child.err
-	case <-time.After(traceSustainedWait):
+	case <-time.After(traceSustainedTimeout()):
 		if child.cmd != nil && child.cmd.Process != nil {
 			_ = child.cmd.Process.Kill()
 		}
@@ -200,7 +213,7 @@ func waitForTraceSustainedReady(t *testing.T, child *traceSustainedChild) {
 	if child == nil {
 		t.Fatal("sustained trace child was not started")
 	}
-	deadline := time.Now().Add(traceSustainedWait)
+	deadline := time.Now().Add(traceSustainedTimeout())
 	for {
 		if _, err := os.Stat(child.ready); err == nil {
 			return
@@ -220,7 +233,7 @@ func waitForTraceSustainedReady(t *testing.T, child *traceSustainedChild) {
 
 func waitForTraceSustainedFile(t *testing.T, path string) {
 	t.Helper()
-	deadline := time.Now().Add(traceSustainedWait)
+	deadline := time.Now().Add(traceSustainedTimeout())
 	for {
 		if _, err := os.Stat(path); err == nil {
 			return
