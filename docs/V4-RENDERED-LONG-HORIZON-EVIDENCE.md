@@ -9,10 +9,12 @@ This evidence record belongs to [#370](https://github.com/saiaathish/picogent/is
 - Fixture scenario: `rendered-multi-turn-outcome`.
 - Fixture session: `rendered-long-horizon-fixture`.
 - Browser session: `codex/rendered-evidence`, task-owned page `127`.
+- Observed at UTC: `2026-09-03T03:59:12.786Z` for the terminal reload state after verifier approval.
 - Seed manifest: `/var/folders/z_/zxn_ghn96dd_78qxc_dfh9_00000gq/T/picogent-rendered-long-horizon-home-1579389420/rendered-long-horizon-fixture-seed.json`.
 - Reload manifest: `/var/folders/z_/zxn_ghn96dd_78qxc_dfh9_00000gq/T/picogent-rendered-long-horizon-home-1579389420/rendered-long-horizon-fixture-reload.json`.
 - Both manifests recorded `source_sha_verified: true` and `source_tree_modified: false`.
 - Seed started at `2026-09-03T03:51:13.078857Z`; reload started at `2026-09-03T03:54:55.136277Z`.
+- Per-action timestamps were not exposed by the browser API and are therefore `UNRECORDED`; the sequence below is ordered from the live task-owned session.
 - The screenshot API returned direct inline captures in the owned browser session; it did not expose a persisted filesystem path. Screenshot path: `UNRECORDED`.
 
 The fixture home and workspace were disposable and shared only between the seed and reload phases. The deterministic provider was used intentionally; no live-provider behavior was exercised.

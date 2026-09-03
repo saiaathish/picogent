@@ -35,7 +35,7 @@ not enough to establish real runtime behavior.
 | Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Hosted `govulncheck` now scans the dependency graph; tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Add hostile runtime evidence and preserve explicit limits around dependency reachability and path races |
 | Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, barrier-driven cancellation/save/publish stress, cooperative cross-process writers, trace lock-holder death recovery, sustained bounded trace retention, first-use lock creation recovery, project-registry transactions, and cross-surface lifecycle checkpoints | Unix/Windows lock primitives and deterministic recovery harnesses | Hostile process death outside the trace lock handoff, rendered cross-surface event ordering, and filesystem races lack complete stress evidence | New orchestration would add complexity before invariants are measured | Extend cross-process evidence only where it proves a user-visible recovery invariant |
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
-| GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, hostile wire coverage, bounded owned-browser reconnect/recovery evidence, and HTTP-boundary shutdown/save-failure lifecycle evidence | Lifecycle and undo wiring; one local rendered reconnect path | Live-provider behavior, permission decisions, undoable changes, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; remaining admission wrappers duplicate task/evidence routing | Add owned-browser permission, undo, full-recovery, and cross-platform evidence before release claims |
+| GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, hostile wire coverage, bounded owned-browser reconnect/recovery and long-horizon fixture evidence, and HTTP-boundary shutdown/save-failure lifecycle evidence | Lifecycle and undo wiring; one local rendered reconnect path plus one bounded exact-head long-horizon browser run | Live-provider behavior, broad permission/undo semantics, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; remaining admission wrappers duplicate task/evidence routing | Add owned-browser permission, undo, full-recovery, and cross-platform evidence before release claims |
 | TUI/headless | Headless stdout/stderr, fail-closed permission behavior, resume state, explicit cleanup/persistence errors, and local macOS EOF/signal/save-failure evidence | CLI dispatch and exit classes | Non-TTY/rendered TUI behavior and cross-platform EOF/signal behavior remain unproven | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Add platform-appropriate subprocess/rendered evidence before changing the shared runtime boundary |
 | Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing remains duplicated | Repeated surface/control paths and stale benchmark anchors | Remove or simplify remaining duplicate control paths only after caller/API confirmation |
 
@@ -269,7 +269,7 @@ tracked in issue #243.
 ## Current-head reconciliation (2026-09-03)
 
 The scorecard is now reconciled with the exact audited `main` head
-`27fb38b20aec428ab53912a7e4fec4fd82a2985e`. The following bounded slices are
+`993258f4b97d196fd7c44cca78c235080fd062e9`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger and the completed
 continuity child lanes. The action-pin entry at the end is current-main
 evidence; older audit entries retain the limits that applied at their heads:
@@ -370,6 +370,22 @@ evidence; older audit entries retain the limits that applied at their heads:
   SHA pin is unchanged. This closes the moving-action-pin gap for the current
   CI workflow only; SBOM, production signing, live-provider, rendered-platform,
   hostile-runtime, and release-authorization claims remain unverified.
+- PR #367 delivers the small rendered long-horizon contract at source head
+  `7482d3d` and merge commit `d28a807d964088305346689287d8b329ba7916d3`;
+  PR run `33708035569` and post-merge `main` run `33708627256` passed all
+  hosted gates.
+- PR #369 delivers the medium task-owned rendered fixture at source head
+  `ca8ad9562ab090aabcef1575f5eb38bb17f5e7d7` and merge/current `main` commit
+  `993258f4b97d196fd7c44cca78c235080fd062e9`; PR run `33711166860` and
+  post-merge `main` run `33711511650` passed security, Ubuntu, macOS, Windows,
+  and release-evidence.
+- Issue #370 records the bounded large direct-browser checkpoint against that
+  exact clean merge source. The task-owned BrowserOS run directly observed
+  permission, mutation, verification, steering invalidation, and reload
+  fail-closed behavior through the deterministic local fixture. The record
+  keeps screenshot path `UNRECORDED` and live-provider, cross-platform,
+  hostile-writer, broader crash-window, and release-authorization boundaries
+  explicitly `UNVERIFIED`.
 
 The #296 medium lane is intentionally not opened: the small contract lane and
 the GUI integration lane exposed no production behavior defect. The focused
