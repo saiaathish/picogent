@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -35,10 +34,6 @@ func TestGUIFreshProcessShutdownRetainsInterruptedTurn(t *testing.T) {
 		}
 		return
 	}
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows hosted runners do not provide a stable child SIGINT boundary; the limitation is recorded in the lifecycle contract")
-	}
-
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	workspace := filepath.Join(root, "workspace")
@@ -111,6 +106,9 @@ func TestGUIFreshProcessShutdownRetainsInterruptedTurn(t *testing.T) {
 		"PICOGENT_ROUTER=0",
 		"PICOGENT_MODE=",
 	)
+	if err := prepareSignalChild(cmd); err != nil {
+		t.Fatal(err)
+	}
 	var childOutput strings.Builder
 	urlCh := make(chan string, 1)
 	stdoutDone := make(chan struct{})
@@ -173,7 +171,7 @@ func TestGUIFreshProcessShutdownRetainsInterruptedTurn(t *testing.T) {
 		cleanupChild()
 		t.Fatalf("GUI child did not reach provider barrier; stdout=%q stderr=%q", childOutput.String(), stderr.String())
 	}
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+	if err := sendInterruptToChild(cmd); err != nil {
 		cleanupChild()
 		t.Fatalf("interrupt GUI child: %v", err)
 	}
