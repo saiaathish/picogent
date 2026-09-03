@@ -1,12 +1,12 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-09-02 against the exact audited `main` head
-`81b5efeddddbe59f9dd832b961ccf770e176a984` after the outcome, recovery, GUI,
+`92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2` after the outcome, recovery, GUI,
 undo-publication, lifecycle, proof-continuity, cancellation, hosted
 attestation, and TUI recovery slices through PRs #297, #298, #299, #301,
-#303, #318, #320, #343, #347, and #349 merged. The independent
-release-evidence audit in issue #344 remains historical; its unverified
-boundaries are preserved below.
+#303, #318, #320, #343, #347, #349, #351, #353, and #355 merged. The
+independent release-evidence reconciliation is tracked in issue #356; prior
+audit observations and their unverified boundaries are preserved below.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -265,7 +265,7 @@ tracked in issue #243.
 ## Current-head reconciliation (2026-09-02)
 
 The scorecard is now reconciled with the exact audited `main` head
-`81b5efeddddbe59f9dd832b961ccf770e176a984`. The following bounded slices are
+`92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger and the completed
 continuity child lanes:
 
@@ -323,6 +323,20 @@ continuity child lanes:
   `33683301465`. The hosted gate ledger and both Sigstore subjects verify, but
   the signed manifest is `INCONCLUSIVE` because its bounded broader check was
   killed and targeted coverage was skipped. SBOM, production-release,
+  moving-action-pin, live-provider, rendered-platform, hostile-runtime, and
+  release-authorization claims remain outside the evidence.
+- PR #355 closes the bounded GUI fresh-process teardown issue #354. Its source
+  head is `8a3a347ea111818c164b2eac4782d9c861a84c15`, its merge commit is
+  `92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2`, and post-merge run
+  `33697379530` passed Ubuntu, Windows, macOS, security, and
+  release-evidence. The test-only helper bounds child and stdout cleanup; it
+  does not establish a production cancellation, rendered, live-provider, or
+  release-readiness claim.
+- Issue #356 refreshes the independent release audit at exact current `main`
+  SHA `92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2` using post-merge run
+  `33697379530`. The hosted gate ledger and both Sigstore subjects verify; the
+  manifest's broader check passed 42 tests, while targeted coverage was
+  skipped and coverage remained `UNVERIFIED`. SBOM, production-release,
   moving-action-pin, live-provider, rendered-platform, hostile-runtime, and
   release-authorization claims remain outside the evidence.
 

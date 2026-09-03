@@ -5,7 +5,7 @@ rechecked evidence report, not a release approval or a supply-chain
 certification.
 
 Latest audit snapshot: 2026-09-02 UTC
-Latest issue: [#344](https://github.com/saiaathish/picogent/issues/344)
+Latest issue: [#356](https://github.com/saiaathish/picogent/issues/356)
 Parent: [#316](https://github.com/saiaathish/picogent/issues/316)
 Broader parent: [#246](https://github.com/saiaathish/picogent/issues/246)
 
@@ -14,7 +14,108 @@ Historical snapshot: [#321](https://github.com/saiaathish/picogent/issues/321)
 “Independent” here means a fresh repository-side recheck of downloaded
 artifacts and the exact Git history. It does not mean a third-party audit.
 
-## Latest follow-up audit — current main after lifecycle evidence
+## Latest follow-up audit — current main after bounded GUI teardown
+
+This follow-up rechecks the exact `main` commit after [PR #355](https://github.com/saiaathish/picogent/pull/355)
+merged the bounded GUI fresh-process teardown evidence. It preserves the
+earlier lifecycle and attestation snapshots below as historical evidence; old
+artifact observations are not rewritten retroactively.
+
+### Candidate and hosted run
+
+- PR #355 source head: `8a3a347ea111818c164b2eac4782d9c861a84c15`.
+- Merge commit and current `main`: `92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2`.
+- Post-merge CI run: [33697379530](https://github.com/saiaathish/picogent/actions/runs/33697379530).
+- The run completed successfully for all five jobs:
+
+| Job | Job ID | Result |
+| --- | ---: | --- |
+| `security` | `100469082287` | `PASS` |
+| `test (ubuntu-latest)` | `100469082423` | `PASS` |
+| `test (windows-latest)` | `100469082441` | `PASS` |
+| `test (macos-latest)` | `100469082510` | `PASS` |
+| `release-evidence` | `100469841050` | `PASS` |
+
+| Artifact | Artifact ID | Size | Result |
+| --- | ---: | ---: | --- |
+| `verification-manifest-92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2` | `9872375889` | 970 bytes | present, unexpired |
+| `release-attestation-92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2` | `9872376304` | 16,448 bytes | present, unexpired |
+
+### Follow-up verdict
+
+| Claim | Result | Boundary |
+| --- | --- | --- |
+| All required hosted CI jobs passed for the exact pushed candidate | `CONFIRMED` | Security, Ubuntu, Windows, macOS, and dependent release-evidence jobs all completed with `success`. |
+| The release-evidence gates are valid | `CONFIRMED` | The downloaded ledger validates with exactly the required `test` and `security` records at the candidate SHA. |
+| The candidate source tree was clean when the manifest was collected | `CONFIRMED` | `head.sha` equals `expected_sha` and `head.tree` is `CLEAN`. |
+| The two signed subjects bind to the exact candidate and repository | `CONFIRMED` | Both verifier outputs record `saiaathish/picogent`, the candidate, the `push` event, run `33697379530`, and the main workflow signer. |
+| The hosted attestations verify under the canonical predicate namespace | `CONFIRMED` | Both subjects re-verify with the explicit repository, predicate type, and signer workflow; each records a Rekor timestamp. |
+| The verification manifest proves complete release readiness | `INCONCLUSIVE` | The broader `go test ./...` check passed 42 tests, but the targeted check was skipped and coverage was not collected. |
+| Production release, SBOM, provider, rendered-platform, and hostile-runtime claims are proven | `UNVERIFIED` | Those evidence boundaries remain outside this run. |
+
+### Independent artifact recheck
+
+The downloaded manifest reports schema `picogent.verify.v1`, candidate and
+expected SHA `92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2`, `head.match: PASS`,
+`head.tree: CLEAN`, and overall `status: UNVERIFIED`. Its targeted check is
+`SKIPPED` because no safe targeted command was detected. The broader
+`go test ./...` check is `PASS`, reports `passed: 42`, and has coverage
+`UNVERIFIED` because coverage was not collected. The hosted matrix's
+independent test jobs still reported `PASS`; this difference is retained
+rather than collapsed into one claim.
+
+The downloaded release-gates ledger was independently validated:
+
+```text
+release gates PASS: 2 required job(s) for push
+```
+
+The recomputed subject digests and the predicate values are:
+
+| Subject | SHA-256 |
+| --- | --- |
+| `release-gates.json` | `94b58b2fc11caa440e1837510506a35a8518df137521752af06dae3ed9e1f5bb` |
+| `verification-manifest.json` | `693986b34eddce6886b54c15ba1a08cfade2637532caa70b2ddbe9c5e277f39e` |
+
+The predicate and both independently downloaded verifier outputs record:
+
+```text
+predicate:    https://github.com/saiaathish/picogent/attestation/release-evidence/v1
+repository:   saiaathish/picogent
+candidate:    92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2
+event:        push
+run_id:       33697379530
+workflow:     saiaathish/picogent/.github/workflows/ci.yml@refs/heads/main
+signer:       saiaathish/picogent/.github/workflows/ci.yml@refs/heads/main
+issued_at:    2026-09-03T00:01:44.690037Z
+expires_at:   2026-09-10T00:01:44.690037Z
+```
+
+The local rechecks used the exact repository, predicate type, and signer
+workflow. `go run ./cmd/release-gates` returned success, and both
+`gh attestation verify` commands returned success. Their certificate evidence
+bound the workflow and source repository to `92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2`
+and recorded a Rekor timestamp at `2026-09-02T19:01:45-05:00`. This confirms
+the bounded hosted attestation path; it does not authorize a release or
+upgrade the manifest's `UNVERIFIED` state.
+
+### Remaining follow-up boundaries
+
+| Boundary | Result | Finding |
+| --- | --- | --- |
+| Predicate namespace and subject binding | `PASS` | The live workflow, predicate, repository, candidate, event, run, signer, and recomputed subject digests agree. |
+| Clean source provenance | `PASS` | The manifest records `head.tree: CLEAN` at the exact candidate SHA. |
+| Required hosted gate ledger | `PASS` | `test` and `security` are present exactly once with `PASS`, zero exit codes, and matching candidate/event. |
+| Verification manifest | `UNVERIFIED` | The broader check passed, but targeted work was skipped and coverage was not collected. |
+| SBOM and production release | `UNVERIFIED` | No SBOM, production binary, or release-package signature was present in the inspected run. |
+| Hosted action immutability | `INCONCLUSIVE` | `actions/attest` is full-hash pinned; checkout, setup, Node, and upload actions still use moving major tags. |
+| Live provider, rendered behavior, and hostile runtime | `UNVERIFIED` | These boundaries were not exercised by this evidence run. |
+
+The current run refreshes provenance after PR #355 and confirms the bounded
+hosted subject binding. It does not close the remaining evidence gaps; parent
+#316 remains open.
+
+## Previous follow-up audit — current main after lifecycle evidence
 
 This follow-up rechecks the exact `main` commit after [PR #343](https://github.com/saiaathish/picogent/pull/343)
 merged the cross-surface crash-recovery evidence. It preserves the prior
@@ -132,7 +233,7 @@ attestation path; it does not authorize a release or upgrade the manifest's
 | Hosted action immutability | `INCONCLUSIVE` | `actions/attest` is full-hash pinned; checkout, setup, Node, and upload actions still use moving major tags. |
 | Live provider, rendered behavior, and hostile runtime | `UNVERIFIED` | These boundaries were not exercised by this evidence run. |
 
-The current run refreshes provenance after PR #343 and confirms the canonical
+That historical run refreshed provenance after PR #343 and confirms the canonical
 attestation subject binding. It does not close the remaining evidence gaps;
 parent #316 remains open.
 
