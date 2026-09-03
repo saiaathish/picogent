@@ -85,6 +85,9 @@ func TestHeadlessFreshProcessKillRecoversInterruptedTurn(t *testing.T) {
 	}
 
 	binary := filepath.Join(t.TempDir(), "picogent")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	build := exec.Command("go", "build", "-o", binary, ".")
 	build.Dir = mustWorkingDirectory(t)
 	if output, err := build.CombinedOutput(); err != nil {
