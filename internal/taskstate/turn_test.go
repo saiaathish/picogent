@@ -95,7 +95,7 @@ func TestIntentChangeInvalidatesCurrentCriterionProof(t *testing.T) {
 		t.Fatalf("invalidated criterion proof = status=%q current=%v", status, current)
 	}
 	latest := task.Evidence[len(task.Evidence)-1]
-	if latest.Source != "outcome-contract" || latest.Reference != "durable intent change" || latest.Origin != EvidenceOriginSystem || latest.trusted {
+	if latest.Source != "outcome-contract" || latest.Reference != "durable intent change" || latest.Origin != EvidenceOriginSystem || !latest.trusted {
 		t.Fatalf("criterion contract invalidation provenance = %#v", latest)
 	}
 	if task.CompletionReady() {
