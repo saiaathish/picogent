@@ -280,6 +280,11 @@ func Assess(unit Unit) Assessment {
 			Error:        ErrorUnmarked,
 		},
 	}
+	if validCoordinate(unit.Position) && validCoordinate(unit.OriginalIndex) {
+		a.CurrentTurn = unit.CurrentTurn
+		a.Position = unit.Position
+		a.OriginalIndex = unit.OriginalIndex
+	}
 	if len(unit.Messages) == 0 {
 		a.Reason = ReasonEmptyUnit
 		return a
@@ -288,7 +293,7 @@ func Assess(unit Unit) Assessment {
 		a.Reason = ReasonInputTooLarge
 		return a
 	}
-	if unit.Position < 0 || unit.Position > MaxPosition || unit.OriginalIndex < 0 || unit.OriginalIndex > MaxPosition {
+	if !validCoordinate(unit.Position) || !validCoordinate(unit.OriginalIndex) {
 		a.Reason = ReasonInvalidPosition
 		return a
 	}
@@ -311,12 +316,13 @@ func Assess(unit Unit) Assessment {
 	a.Reason = ReasonEligible
 	a.Role = role
 	a.ToolPair = pair
-	a.CurrentTurn = unit.CurrentTurn
-	a.Position = unit.Position
-	a.OriginalIndex = unit.OriginalIndex
 	a.Markers = markers
 	a.Score = score(role, pair, markers)
 	return a
+}
+
+func validCoordinate(value int) bool {
+	return value >= 0 && value <= MaxPosition
 }
 
 func validateMessages(messages []Message) (Role, ToolPairStatus, ReasonCode) {
