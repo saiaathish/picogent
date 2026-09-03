@@ -612,36 +612,7 @@ func boundedMessages(messages []llm.Message, base Session) []llm.Message {
 		return nil
 	}
 
-	turns := splitTurns(normalized)
-	if len(turns) == 0 {
-		return newestUnits(nil, normalized, base)
-	}
-	selected := make([][]llm.Message, 0, len(turns))
-	latest := newestUnits(turns[len(turns)-1], nil, base)
-	if len(latest) > 0 {
-		selected = append(selected, latest)
-	}
-	for i := len(turns) - 2; i >= 0 && len(selected) < MaxSessionMessages; i-- {
-		candidate := make([][]llm.Message, 0, len(selected)+1)
-		candidate = append(candidate, turns[i])
-		candidate = append(candidate, selected...)
-		flat := flattenTurns(candidate)
-		if len(flat) > MaxSessionMessages || !sessionFits(base, flat) {
-			break
-		}
-		selected = candidate
-	}
-	flat := flattenTurns(selected)
-	if len(flat) > MaxSessionMessages {
-		flat = newestUnits(nil, flat, base)
-	}
-	if !sessionFits(base, flat) {
-		flat = newestUnits(nil, flat, base)
-	}
-	if len(flat) > MaxSessionMessages {
-		flat = flat[len(flat)-MaxSessionMessages:]
-	}
-	return flat
+	return retainMessagesByValue(normalized, base)
 }
 
 func boundMessage(message llm.Message) llm.Message {
