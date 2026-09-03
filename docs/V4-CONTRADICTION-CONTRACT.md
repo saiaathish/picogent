@@ -69,7 +69,13 @@ Existing intent-change, workspace-restoration, and stale-verification paths
 emit fixed invalidation provenance. Those records supersede the older PASS
 for their boundary; they are not contradictory observations. The provenance
 is recognized from the existing source/origin/reference contract and remains
-recognizable after reload, while reload still removes runtime trust.
+recognizable after reload, while reload still removes runtime trust. Generic
+advisory evidence cannot manufacture one of these protected markers; only the
+typed taskstate invalidation paths may append them.
+
+The formatter also retains a non-serialized runtime-derived bit. A
+caller-created or reloaded `ContradictionReport` is therefore formatted as
+`ADVISORY` even if its visible categorical labels claim `CONFIRMED`.
 
 ## Bounds and safety
 

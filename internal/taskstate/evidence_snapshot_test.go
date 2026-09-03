@@ -74,8 +74,8 @@ func TestEvidenceSnapshotMarksCompletionInvalidation(t *testing.T) {
 	if latest.Kind != EvidenceKindTests || latest.Status != "INCONCLUSIVE" || !latest.Supersedes {
 		t.Fatalf("latest invalidation snapshot = %#v", latest)
 	}
-	if latest.Trusted {
-		t.Fatal("contract invalidation was incorrectly treated as completion trust")
+	if !latest.Trusted {
+		t.Fatal("contract invalidation lost its runtime provenance")
 	}
 }
 

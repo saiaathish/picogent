@@ -49,6 +49,12 @@ type ContradictionSignal struct {
 	PositiveOrigin string                 `json:"positive_origin"`
 	NegativeOrigin string                 `json:"negative_origin"`
 	State          ContradictionState     `json:"state"`
+
+	// runtimeTrusted is intentionally not serialized. Only
+	// DetectContradictions can establish it from two trusted typed evidence
+	// records; a caller-made report must remain advisory even when its visible
+	// labels look valid.
+	runtimeTrusted bool
 }
 
 // ContradictionReport is a bounded derived view over one task snapshot.
@@ -153,6 +159,7 @@ func DetectContradictions(task *taskstate.Task) ContradictionReport {
 			PositiveOrigin: safeContradictionOrigin(key.kind, state.positive),
 			NegativeOrigin: safeContradictionOrigin(key.kind, state.negative),
 			State:          signalState,
+			runtimeTrusted: confirmed,
 		})
 		if confirmed {
 			report.State = ContradictionConfirmed
@@ -214,7 +221,7 @@ func boundContradictionReport(report ContradictionReport) ContradictionReport {
 		signal.NegativeStatus = canonicalNegativeStatus(signal.NegativeStatus)
 		signal.PositiveOrigin = safeContradictionOriginString(kind, signal.PositiveOrigin)
 		signal.NegativeOrigin = safeContradictionOriginString(kind, signal.NegativeOrigin)
-		if signal.State == ContradictionConfirmed && (signal.PositiveOrigin == "untrusted" || signal.NegativeOrigin == "untrusted") {
+		if signal.State == ContradictionConfirmed && (!signal.runtimeTrusted || signal.PositiveOrigin == "untrusted" || signal.NegativeOrigin == "untrusted") {
 			signal.State = ContradictionAdvisory
 		} else if signal.State != ContradictionConfirmed {
 			signal.State = ContradictionAdvisory

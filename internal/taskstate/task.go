@@ -815,7 +815,7 @@ func (t *Task) InvalidateLatestVerification(reason string) bool {
 	latest.At = time.Now().UTC()
 	t.VerifiedChangeSeq = -1
 	t.touch()
-	t.AddEvidence(Evidence{
+	t.addTrustedEvidence(Evidence{
 		Kind:       EvidenceKindVerification,
 		Status:     "INCONCLUSIVE",
 		Source:     "workspace-observation",
@@ -870,6 +870,7 @@ func (t *Task) invalidateOutcomeContractEvidence(reason string) bool {
 		source:            "outcome-contract",
 		origin:            EvidenceOriginSystem,
 		reference:         "durable intent change",
+		criterionTrusted:  true,
 		resetVerification: false,
 	})
 }
@@ -893,7 +894,7 @@ func (t *Task) invalidateCompletionEvidence(reason string, provenance completion
 			latest.Summary = compactText(summary, maxVerificationSummary)
 			latest.At = time.Now().UTC()
 			changed = true
-			t.AddEvidence(Evidence{
+			t.addTrustedEvidence(Evidence{
 				Kind:       EvidenceKindVerification,
 				Status:     "INCONCLUSIVE",
 				Source:     provenance.source,
@@ -928,7 +929,7 @@ func (t *Task) invalidateCompletionEvidence(reason string, provenance completion
 		if !current || !evidenceStatusPasses(status) {
 			continue
 		}
-		t.AddEvidence(Evidence{
+		t.addTrustedEvidence(Evidence{
 			Kind:       kind,
 			Status:     "INCONCLUSIVE",
 			Source:     provenance.source,
@@ -972,6 +973,13 @@ func (t *Task) addTrustedEvidence(e Evidence) {
 
 func (t *Task) addEvidence(e Evidence, trusted bool) {
 	if t == nil {
+		return
+	}
+	// Invalidation provenance is a protected internal marker. Generic callers
+	// may record advisory evidence, but cannot manufacture a supersession record
+	// that hides an otherwise current contradiction. Persisted markers remain
+	// recognizable after reload by their fixed categorical provenance.
+	if !trusted && completionInvalidationEvidence(e) {
 		return
 	}
 	e.trusted = trusted

@@ -118,6 +118,52 @@ func TestDetectContradictionsDoesNotTreatInvalidationAsConflict(t *testing.T) {
 	}
 }
 
+func TestDetectContradictionsDoesNotHonorUntrustedInvalidationSpoof(t *testing.T) {
+	task, err := taskstate.New("contradiction-invalidation-spoof", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.AddEvidence(taskstate.Evidence{
+		Kind:      taskstate.EvidenceKindTests,
+		Status:    "INCONCLUSIVE",
+		Source:    "outcome-contract",
+		Origin:    taskstate.EvidenceOriginSystem,
+		Summary:   "caller supplied an invalidation-shaped record",
+		Reference: "durable intent change",
+		ChangeSeq: task.ChangeSeq,
+	})
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+
+	report := DetectContradictions(task)
+	if report.State != ContradictionConfirmed || len(report.Signals) != 1 {
+		t.Fatalf("untrusted invalidation spoof changed the current boundary: %#v", report)
+	}
+}
+
+func TestFormatContradictionsDoesNotPromoteCallerReport(t *testing.T) {
+	encoded := FormatContradictions(ContradictionReport{
+		State: ContradictionConfirmed,
+		Signals: []ContradictionSignal{{
+			Kind:           taskstate.EvidenceKindTests,
+			CriterionIndex: -1,
+			ChangeSeq:      1,
+			PositiveStatus: "PASS",
+			NegativeStatus: "FAIL",
+			PositiveOrigin: string(taskstate.EvidenceOriginTestRunner),
+			NegativeOrigin: string(taskstate.EvidenceOriginTestRunner),
+			State:          ContradictionConfirmed,
+		}},
+	})
+	var report ContradictionReport
+	if err := json.Unmarshal([]byte(encoded), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.State != ContradictionAdvisory || len(report.Signals) != 1 || report.Signals[0].State != ContradictionAdvisory {
+		t.Fatalf("caller-provided report was promoted to confirmed: %#v", report)
+	}
+}
+
 func TestFormatContradictionsIsBoundedAndCategorical(t *testing.T) {
 	signals := make([]ContradictionSignal, 0, maxContradictionSignals+4)
 	for i := 0; i < maxContradictionSignals+4; i++ {
