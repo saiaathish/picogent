@@ -178,6 +178,21 @@ func TestSelectUsesRankButRestoresOriginalTranscriptOrder(t *testing.T) {
 	}
 }
 
+func TestSelectZeroLimitReturnsNoCandidates(t *testing.T) {
+	units := []Unit{
+		basicUnit(0, 1, RoleUser, Markers{Outcome: OutcomeCompleted}),
+		basicUnit(1, 2, RoleAssistant, Markers{Verification: VerificationPassed}),
+	}
+
+	selected, err := Select(units, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 0 {
+		t.Fatalf("selected %d candidates, want none", len(selected))
+	}
+}
+
 func TestBoundsFailClosed(t *testing.T) {
 	tooMany := make([]Unit, MaxUnits+1)
 	for i := range tooMany {

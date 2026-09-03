@@ -494,6 +494,9 @@ func Select(units []Unit, limit int) ([]RankedUnit, error) {
 	if limit < 0 || limit > MaxUnits {
 		return nil, ErrInvalidLimit
 	}
+	if limit == 0 {
+		return []RankedUnit{}, nil
+	}
 	ranked, err := Rank(units)
 	if err != nil {
 		return nil, err
