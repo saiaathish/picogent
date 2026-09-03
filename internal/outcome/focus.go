@@ -28,6 +28,7 @@ type Kind string
 const (
 	KindBlocked       Kind = "BLOCKED"
 	KindVerify        Kind = "VERIFY"
+	KindContradiction Kind = "CONTRADICTION"
 	KindHealthFinding Kind = "HEALTH_FINDING"
 	KindCriterion     Kind = "CRITERION"
 	KindRequirement   Kind = "REQUIREMENT"
@@ -55,6 +56,10 @@ type Decision struct {
 // over advisory prioritization. A malformed or hostile finding cannot supply
 // an instruction: only known finding IDs map to fixed actions.
 func Select(task *taskstate.Task, report projecthealth.Report) Decision {
+	return selectWithContradictions(task, report, DetectContradictions(task))
+}
+
+func selectWithContradictions(task *taskstate.Task, report projecthealth.Report, contradictions ContradictionReport) Decision {
 	decision := Decision{
 		Schema:        Schema,
 		Kind:          KindInspect,
@@ -92,6 +97,14 @@ func Select(task *taskstate.Task, report projecthealth.Report) Decision {
 				Priority:      99,
 			}
 		}
+	}
+
+	// A confirmed contradiction is stronger than ordinary prioritization, but
+	// an explicit blocker or fresh mutation verification still owns the first
+	// safe step. The contradiction route uses only fixed text; the bounded
+	// report carries the categorical boundary for diagnosis.
+	if confirmedContradictionAffectsOutcome(task, contradictions) {
+		return contradictionDecision()
 	}
 
 	if finding, ok := topFinding(task, report); ok {
@@ -154,6 +167,38 @@ func Select(task *taskstate.Task, report projecthealth.Report) Decision {
 	}
 
 	return decision
+}
+
+func contradictionDecision() Decision {
+	return Decision{
+		Schema:        Schema,
+		Kind:          KindContradiction,
+		EvidenceState: string(ContradictionConfirmed),
+		Confidence:    "high",
+		Action:        contradictionAction,
+		Reason:        contradictionReason,
+		Priority:      98,
+	}
+}
+
+func confirmedContradictionAffectsOutcome(task *taskstate.Task, report ContradictionReport) bool {
+	if task == nil || report.State != ContradictionConfirmed {
+		return false
+	}
+	for _, signal := range report.Signals {
+		if signal.State != ContradictionConfirmed || signal.CriterionIndex < 0 {
+			if signal.State == ContradictionConfirmed && signal.CriterionIndex < 0 {
+				return true
+			}
+			continue
+		}
+		for _, index := range task.RequiredCriterionIndices() {
+			if index == signal.CriterionIndex {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // SelectFromJSON is the agent-loop seam. It accepts only the JSON returned by
@@ -379,6 +424,14 @@ func boundedDecision(decision Decision) Decision {
 			decision.Action = "run the narrowest relevant verification for the latest changes"
 		}
 		decision.Reason = "the latest mutation is not covered by passing evidence"
+	case KindContradiction:
+		decision.FindingID = ""
+		decision.CriterionIndex = -1
+		decision.RequirementKind = ""
+		decision.EvidenceState = string(ContradictionConfirmed)
+		decision.Confidence = "high"
+		decision.Action = contradictionAction
+		decision.Reason = contradictionReason
 	case KindHealthFinding:
 		decision.CriterionIndex = -1
 		decision.Action = actionForFinding(decision.FindingID)
@@ -430,7 +483,7 @@ func boundedDecision(decision Decision) Decision {
 
 func normalizeKind(kind Kind) Kind {
 	switch kind {
-	case KindBlocked, KindVerify, KindHealthFinding, KindCriterion, KindRequirement, KindInspect:
+	case KindBlocked, KindVerify, KindContradiction, KindHealthFinding, KindCriterion, KindRequirement, KindInspect:
 		return kind
 	default:
 		return ""
@@ -479,7 +532,7 @@ func actionForRequirement(kind taskstate.EvidenceKind) string {
 func normalizeEvidenceState(state string) string {
 	state = strings.ToUpper(strings.TrimSpace(state))
 	switch state {
-	case "PASS", "FAIL", "INCONCLUSIVE", "SKIPPED", "PROGRESS_ONLY", "BLOCKED", "NEEDS_VERIFICATION", "NEEDS_EVIDENCE", "ATTENTION", "UNKNOWN", "UNVERIFIED":
+	case "PASS", "FAIL", "INCONCLUSIVE", "SKIPPED", "PROGRESS_ONLY", "BLOCKED", "NEEDS_VERIFICATION", "NEEDS_EVIDENCE", "ATTENTION", "UNKNOWN", "UNVERIFIED", "CONFIRMED":
 		return state
 	default:
 		return "UNVERIFIED"

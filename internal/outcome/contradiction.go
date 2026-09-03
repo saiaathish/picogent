@@ -15,6 +15,8 @@ const (
 	ContradictionSchema     = "picogent.outcome-contradiction.v1"
 	MaxContradictionBytes   = 4096
 	maxContradictionSignals = 8
+	contradictionAction     = "diagnose the conflicting evidence and recheck the requested outcome"
+	contradictionReason     = "current trusted evidence contains a contradiction; diagnose and recheck before continuing"
 )
 
 // ContradictionState describes whether comparable current evidence disagrees.

@@ -161,7 +161,7 @@ func TestBuildExposesCriterionEvidenceAndOptionalCriteriaDoNotBlock(t *testing.T
 	if !contract.CompletionReady || !contract.Evidence.Current {
 		t.Fatalf("all required criteria passed but contract is not ready: %#v", contract)
 	}
-	if contract.Stop.Policy != StopRecheck || contract.Stop.EvidenceState != "PASS" {
+	if contract.Next.Kind != KindContradiction || contract.Stop.Policy != StopRecheck || contract.Stop.EvidenceState != string(ContradictionConfirmed) {
 		t.Fatalf("ready stop decision = %#v", contract.Stop)
 	}
 }
