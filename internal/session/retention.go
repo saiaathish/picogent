@@ -75,12 +75,16 @@ func retainMessagesByValue(messages []llm.Message, base Session) []llm.Message {
 	// The user request is an explicit anchor. Add it before the complete-turn
 	// anchor so a large turn cannot crowd the latest request out.
 	if latestUser >= 0 {
-		if candidate, ok := byIndex[latestUser]; ok && appendRetentionCandidate(&selected, selectedIndexes, candidate, base) {
+		if candidate, ok := byIndex[latestUser]; ok && appendRetentionCandidate(&selected, selectedIndexes, candidate) {
 			selectedIndexes[candidate.index] = struct{}{}
 		}
 	}
 	if latestCompleteTurn >= 0 {
-		for _, candidate := range turns[latestCompleteTurn] {
+		// Admit the newest units first when the protected turn itself is
+		// larger than the message bound. The final sort below restores their
+		// original transcript order.
+		for i := len(turns[latestCompleteTurn]) - 1; i >= 0; i-- {
+			candidate := turns[latestCompleteTurn][i]
 			candidate, ok := byIndex[candidate.index]
 			if !ok {
 				continue
@@ -88,7 +92,7 @@ func retainMessagesByValue(messages []llm.Message, base Session) []llm.Message {
 			if _, alreadySelected := selectedIndexes[candidate.index]; alreadySelected {
 				continue
 			}
-			if appendRetentionCandidate(&selected, selectedIndexes, candidate, base) {
+			if appendRetentionCandidate(&selected, selectedIndexes, candidate) {
 				selectedIndexes[candidate.index] = struct{}{}
 			}
 		}
@@ -120,7 +124,7 @@ func retainMessagesByValue(messages []llm.Message, base Session) []llm.Message {
 			if _, alreadySelected := selectedIndexes[candidate.index]; alreadySelected {
 				continue
 			}
-			if appendRetentionCandidate(&selected, selectedIndexes, candidate, base) {
+			if appendRetentionCandidate(&selected, selectedIndexes, candidate) {
 				selectedIndexes[candidate.index] = struct{}{}
 			}
 		}
@@ -134,9 +138,48 @@ func retainMessagesByValue(messages []llm.Message, base Session) []llm.Message {
 		flat = append(flat, candidate.messages...)
 	}
 	if len(flat) > MaxSessionMessages || !sessionFits(base, flat) {
-		// This is defensive: every append is checked independently, but the
-		// final order is still validated at the same persistence boundary.
+		if trimmed, ok := trimRetentionCandidates(selected, required, base); ok {
+			return trimmed
+		}
+		// This is the final fail-safe for an anchor set that cannot fit by
+		// itself. It preserves the existing recency-only safety behavior.
 		return newestUnits(nil, flat, base)
+	}
+	return flat
+}
+
+// retainMessagesByRecency is the pre-M-lane eviction algorithm kept as a
+// benchmark control. It intentionally remains disconnected from production so
+// the comparison can measure the behavior that value-aware retention replaces.
+func retainMessagesByRecency(messages []llm.Message, base Session) []llm.Message {
+	turns := splitTurns(messages)
+	if len(turns) == 0 {
+		return newestUnits(nil, messages, base)
+	}
+	selected := make([][]llm.Message, 0, len(turns))
+	latest := newestUnits(turns[len(turns)-1], nil, base)
+	if len(latest) > 0 {
+		selected = append(selected, latest)
+	}
+	for i := len(turns) - 2; i >= 0 && len(selected) < MaxSessionMessages; i-- {
+		candidate := make([][]llm.Message, 0, len(selected)+1)
+		candidate = append(candidate, turns[i])
+		candidate = append(candidate, selected...)
+		flat := flattenTurns(candidate)
+		if len(flat) > MaxSessionMessages || !sessionFits(base, flat) {
+			break
+		}
+		selected = candidate
+	}
+	flat := flattenTurns(selected)
+	if len(flat) > MaxSessionMessages {
+		flat = newestUnits(nil, flat, base)
+	}
+	if !sessionFits(base, flat) {
+		flat = newestUnits(nil, flat, base)
+	}
+	if len(flat) > MaxSessionMessages {
+		flat = flat[len(flat)-MaxSessionMessages:]
 	}
 	return flat
 }
@@ -261,7 +304,7 @@ func boundedRetentionCandidates(candidates []retentionCandidate, required map[in
 	return out
 }
 
-func appendRetentionCandidate(selected *[]retentionCandidate, selectedIndexes map[int]struct{}, candidate retentionCandidate, base Session) bool {
+func appendRetentionCandidate(selected *[]retentionCandidate, selectedIndexes map[int]struct{}, candidate retentionCandidate) bool {
 	if _, exists := selectedIndexes[candidate.index]; exists {
 		return false
 	}
@@ -272,14 +315,32 @@ func appendRetentionCandidate(selected *[]retentionCandidate, selectedIndexes ma
 	if messageCount > MaxSessionMessages {
 		return false
 	}
-	flat := make([]llm.Message, 0, len(*selected)+len(candidate.messages))
-	for _, existing := range *selected {
-		flat = append(flat, existing.messages...)
-	}
-	flat = append(flat, candidate.messages...)
-	if !sessionFits(base, flat) {
-		return false
-	}
 	*selected = append(*selected, candidate)
 	return true
+}
+
+func trimRetentionCandidates(selected []retentionCandidate, required map[int]struct{}, base Session) ([]llm.Message, bool) {
+	for i := len(selected) - 1; i >= 0; i-- {
+		if _, isRequired := required[selected[i].index]; isRequired {
+			continue
+		}
+		selected = append(selected[:i], selected[i+1:]...)
+		flat := make([]llm.Message, 0, MaxSessionMessages)
+		messageCount := 0
+		for _, candidate := range selected {
+			messageCount += len(candidate.messages)
+			flat = append(flat, candidate.messages...)
+		}
+		if messageCount <= MaxSessionMessages && sessionFits(base, flat) {
+			sort.SliceStable(selected, func(i, j int) bool {
+				return selected[i].index < selected[j].index
+			})
+			ordered := make([]llm.Message, 0, len(flat))
+			for _, candidate := range selected {
+				ordered = append(ordered, candidate.messages...)
+			}
+			return ordered, true
+		}
+	}
+	return nil, false
 }

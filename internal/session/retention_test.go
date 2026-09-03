@@ -100,3 +100,22 @@ func TestValueAwareRetentionBoundsLargeLegacyInputAndKeepsLatestUser(t *testing.
 		}
 	}
 }
+
+func TestValueAwareRetentionUsesNewestPortionOfOversizedCompleteTurn(t *testing.T) {
+	base := Session{ID: "retention", Title: "chat", Workspace: "workspace"}
+	messages := []llm.Message{{Role: "user", Content: "large complete request"}}
+	for i := 0; i < MaxSessionMessages+20; i++ {
+		messages = append(messages, llm.Message{Role: "assistant", Content: fmt.Sprintf("response %03d", i)})
+	}
+
+	got := boundedMessages(messages, base)
+	if len(got) != MaxSessionMessages {
+		t.Fatalf("retained message count=%d, want %d", len(got), MaxSessionMessages)
+	}
+	if got[0].Content != "large complete request" {
+		t.Fatalf("latest user request was dropped: %#v", got[:min(len(got), 3)])
+	}
+	if got[len(got)-1].Content != fmt.Sprintf("response %03d", MaxSessionMessages+19) {
+		t.Fatalf("newest response=%q, want newest complete-turn response", got[len(got)-1].Content)
+	}
+}
