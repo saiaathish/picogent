@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/saiaathish/picogent/internal/projecthealth"
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
@@ -57,6 +58,60 @@ func TestDetectContradictionsSeparatesCriteriaAndOrdersSignals(t *testing.T) {
 	}
 	if report.Signals[0].Scope != ContradictionScopeCriterion || report.Signals[1].Scope != ContradictionScopeCriterion {
 		t.Fatalf("criterion scopes = %#v", report.Signals)
+	}
+}
+
+func TestDetectContradictionsRetainsConfirmedRoutingWhenSignalsAreTruncated(t *testing.T) {
+	task, err := taskstate.New("contradiction-cap", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = make([]taskstate.Criterion, maxContradictionSignals+1)
+	for index := range task.DefinitionOfDone {
+		task.DefinitionOfDone[index] = taskstate.Criterion{Description: "criterion", Required: true}
+	}
+	for index := 0; index < maxContradictionSignals; index++ {
+		task.AddEvidenceForCriterion(index, taskstate.Evidence{
+			Kind:      taskstate.EvidenceKindTests,
+			Status:    "PASS",
+			Origin:    taskstate.EvidenceOriginTestRunner,
+			Summary:   "advisory pass",
+			Reference: "test runner",
+			ChangeSeq: task.ChangeSeq,
+		})
+		task.AddEvidenceForCriterion(index, taskstate.Evidence{
+			Kind:      taskstate.EvidenceKindTests,
+			Status:    "FAIL",
+			Origin:    taskstate.EvidenceOriginModel,
+			Summary:   "advisory failure",
+			Reference: "model",
+			ChangeSeq: task.ChangeSeq,
+		})
+	}
+	// Build the final trusted pair separately, then append it to this synthetic
+	// over-capacity ledger. The detector must preserve its authority even when a
+	// persisted or forward-compatible caller presents more evidence than the
+	// normal task mutation helper retains.
+	trustedTask, err := taskstate.New("trusted-contradiction-cap", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trustedTask.DefinitionOfDone = []taskstate.Criterion{{Description: "trusted", Required: true}}
+	trustedTask.RecordCriterionTestsEvidence(0, "PASS", "trusted pass", "test runner")
+	trustedTask.RecordCriterionTestsEvidence(0, "FAIL", "trusted failure", "test runner")
+	index := maxContradictionSignals
+	positive := trustedTask.Evidence[0]
+	negative := trustedTask.Evidence[1]
+	positive.CriterionIndex = &index
+	negative.CriterionIndex = &index
+	task.Evidence = append(task.Evidence, positive, negative)
+
+	report := DetectContradictions(task)
+	if report.State != ContradictionConfirmed || len(report.Signals) != maxContradictionSignals || !report.Truncated {
+		t.Fatalf("truncated contradiction report = %#v", report)
+	}
+	if decision := Select(task, projecthealth.Report{Schema: projecthealth.Schema}); decision.Kind != KindContradiction {
+		t.Fatalf("hidden confirmed contradiction lost routing = %#v", decision)
 	}
 }
 
@@ -140,6 +195,23 @@ func TestDetectContradictionsResetsAllInvalidatedRequirementAliases(t *testing.T
 
 	if report := DetectContradictions(task); report.State != ContradictionNone || len(report.Signals) != 0 {
 		t.Fatalf("invalidated tests alias became a contradiction = %#v", report)
+	}
+}
+
+func TestDetectContradictionsResetsInvalidatedCriterionTestEvidence(t *testing.T) {
+	task, err := taskstate.New("criterion-test-invalidation", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.DefinitionOfDone = []taskstate.Criterion{{Description: "required test proof", Required: true}}
+	task.RecordCriterionTestsEvidence(0, "PASS", "tests passed", "test runner")
+	if !task.InvalidateWorkspaceEvidence("workspace restored") {
+		t.Fatal("workspace evidence was not invalidated")
+	}
+	task.RecordCriterionTestsEvidence(0, "FAIL", "tests failed after restore", "test runner")
+
+	if report := DetectContradictions(task); report.State != ContradictionNone || len(report.Signals) != 0 {
+		t.Fatalf("invalidated criterion test evidence became a contradiction = %#v", report)
 	}
 }
 

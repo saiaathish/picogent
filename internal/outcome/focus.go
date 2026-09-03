@@ -185,6 +185,9 @@ func confirmedContradictionAffectsOutcome(task *taskstate.Task, report Contradic
 	if task == nil || report.State != ContradictionConfirmed {
 		return false
 	}
+	if report.runtimeConfirmed && report.runtimeConfirmedAffectsOutcome && report.runtimeKey != "" && report.runtimeKey == contradictionReportRuntimeKey(report) {
+		return true
+	}
 	for _, signal := range report.Signals {
 		if signal.State != ContradictionConfirmed || signal.CriterionIndex < 0 {
 			if signal.State == ContradictionConfirmed && signal.CriterionIndex < 0 {
