@@ -364,6 +364,36 @@ func TestBuildUsesOneSharedTurnContractForEngineAndRouter(t *testing.T) {
 	}
 }
 
+func TestBoundContractReconcilesContradictionProjectionsConservatively(t *testing.T) {
+	task, err := taskstate.New("projection-reconcile", "recheck the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+	trusted := DetectContradictions(task)
+	var reloaded ContradictionReport
+	data, err := json.Marshal(trusted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &reloaded); err != nil {
+		t.Fatal(err)
+	}
+	contract := boundContract(Contract{
+		Schema:         EngineSchema,
+		Contradictions: trusted,
+		Turn:           TurnContract{Contradictions: reloaded},
+		Next:           contradictionDecision(trusted),
+	})
+	if !reflect.DeepEqual(contract.Contradictions, contract.Turn.Contradictions) {
+		t.Fatalf("contradiction projections diverged after binding: top=%#v nested=%#v", contract.Contradictions, contract.Turn.Contradictions)
+	}
+	if contract.Contradictions.State != ContradictionAdvisory || contract.Next.Kind == KindContradiction {
+		t.Fatalf("mismatched/reloaded contradiction was not downgraded: report=%#v next=%#v", contract.Contradictions, contract.Next)
+	}
+}
+
 func TestTurnContractCanonicalizesUntrustedLifecycleValues(t *testing.T) {
 	contract := Contract{
 		Schema: EngineSchema,

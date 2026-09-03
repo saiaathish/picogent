@@ -313,6 +313,82 @@ func boundContradictionReport(report ContradictionReport) ContradictionReport {
 	return report
 }
 
+func trustedContradictionReport(report ContradictionReport) bool {
+	return report.State == ContradictionConfirmed &&
+		report.runtimeConfirmed &&
+		report.runtimeKey != "" &&
+		report.runtimeKey == contradictionReportRuntimeKey(report)
+}
+
+func trustedContradictionReportAffectsOutcome(report ContradictionReport) bool {
+	return trustedContradictionReport(report) && report.runtimeConfirmedAffectsOutcome
+}
+
+// reconcileContradictionReports is the boundary between the engine's two
+// projections. A valid engine build supplies the same current report twice;
+// a caller or reloaded contract may supply divergent reports. Divergence is
+// retained only as bounded advisory categorical data, and both projections
+// receive that same downgraded value so routing cannot read the stronger one.
+func reconcileContradictionReports(left, right ContradictionReport) ContradictionReport {
+	left = boundContradictionReport(left)
+	right = boundContradictionReport(right)
+	if sameVisibleContradictionReport(left, right) {
+		return left
+	}
+
+	merged := ContradictionReport{Schema: ContradictionSchema}
+	seen := make(map[string]struct{})
+	appendSignals := func(report ContradictionReport) {
+		for _, signal := range report.Signals {
+			signal.State = ContradictionAdvisory
+			signal.runtimeTrusted = false
+			signal.runtimeKey = ""
+			key := contradictionSignalVisibleKey(signal)
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			if len(merged.Signals) >= maxContradictionSignals {
+				merged.Truncated = true
+				continue
+			}
+			merged.Signals = append(merged.Signals, signal)
+		}
+	}
+	appendSignals(left)
+	appendSignals(right)
+	merged.Truncated = merged.Truncated || left.Truncated || right.Truncated
+	if len(merged.Signals) > 0 {
+		merged.State = ContradictionAdvisory
+	}
+	return boundContradictionReport(merged)
+}
+
+func sameVisibleContradictionReport(left, right ContradictionReport) bool {
+	if left.Schema != right.Schema || left.State != right.State || left.Truncated != right.Truncated || len(left.Signals) != len(right.Signals) {
+		return false
+	}
+	for index := range left.Signals {
+		if contradictionSignalVisibleKey(left.Signals[index]) != contradictionSignalVisibleKey(right.Signals[index]) || left.Signals[index].State != right.Signals[index].State {
+			return false
+		}
+	}
+	return true
+}
+
+func contradictionSignalVisibleKey(signal ContradictionSignal) string {
+	return strings.Join([]string{
+		string(signal.Scope),
+		string(signal.Kind),
+		strconv.Itoa(signal.CriterionIndex),
+		strconv.Itoa(signal.ChangeSeq),
+		signal.PositiveStatus,
+		signal.NegativeStatus,
+		signal.PositiveOrigin,
+		signal.NegativeOrigin,
+	}, "\x00")
+}
+
 func contradictionReportRuntimeKey(report ContradictionReport) string {
 	parts := []string{
 		string(report.State),

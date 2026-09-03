@@ -736,7 +736,8 @@ func boundContract(contract Contract) Contract {
 	contract.Outcome = compactContractString(redact.Text(contract.Outcome), maxContractString)
 	contract.IntentClass = compactContractString(contract.IntentClass, 64)
 	contract.Turn = boundTurnContract(contract.Turn)
-	contract.Contradictions = boundContradictionReport(contract.Contradictions)
+	contract.Contradictions = reconcileContradictionReports(contract.Contradictions, contract.Turn.Contradictions)
+	contract.Turn.Contradictions = contract.Contradictions
 	contract.Failure = boundFailureIntelligence(contract.Failure)
 	if contract.Failure.Fingerprint == "" {
 		contract.Failure = contract.Turn.Failure
@@ -818,7 +819,7 @@ func boundContract(contract Contract) Contract {
 		contract.Health.DirtyPaths = 0
 	}
 	contract.Impact = boundImpact(contract.Impact)
-	contract.Next = boundedDecision(contract.Next)
+	contract.Next = boundDecisionForReport(contract.Next, contract.Contradictions)
 	if contract.Next.Kind == "" {
 		contract.Next = Decision{
 			Schema:        Schema,
@@ -828,7 +829,7 @@ func boundContract(contract Contract) Contract {
 			Action:        "inspect the affected surface and choose the next safe action",
 			Reason:        "no valid next focus was available",
 		}
-		contract.Next = boundedDecision(contract.Next)
+		contract.Next = boundDecisionForReport(contract.Next, contract.Contradictions)
 	}
 	contract.Stop.Policy = normalizeStopPolicy(contract.Stop.Policy)
 	contract.Stop.EvidenceState = normalizeStopEvidence(contract.Stop.EvidenceState)
