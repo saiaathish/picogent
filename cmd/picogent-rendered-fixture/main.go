@@ -14,6 +14,7 @@ import (
 )
 
 func main() {
+	scenario := flag.String("scenario", "recovery", "fixture scenario: recovery or long-horizon")
 	phase := flag.String("phase", "seed", "fixture phase: seed or reload")
 	home := flag.String("home", "", "disposable PICOGENT_HOME; required for reload")
 	workspace := flag.String("workspace", "", "disposable workspace; required for reload")
@@ -37,7 +38,17 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := gui.RunRenderedRecoveryFixture(ctx); err != nil {
+	var run func(context.Context) error
+	switch *scenario {
+	case "recovery":
+		run = gui.RunRenderedRecoveryFixture
+	case "long-horizon":
+		run = gui.RunRenderedLongHorizonFixture
+	default:
+		fmt.Fprintf(os.Stderr, "unknown fixture scenario %q; want recovery or long-horizon\n", *scenario)
+		os.Exit(2)
+	}
+	if err := run(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}

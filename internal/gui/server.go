@@ -154,6 +154,10 @@ type server struct {
 	// openPreview is test-only injection for exercising filesystem replacement
 	// between path resolution and the descriptor-safe open.
 	openPreview func(string, string) (*os.File, error)
+	// suppressExtensionRebuild is used only by build-tagged deterministic
+	// fixtures. The disposable fixture has no transient extension topology to
+	// clean up, and rebuilding would replace its scripted provider.
+	suppressExtensionRebuild bool
 
 	turnStarted  time.Time
 	turnPrompt   string
