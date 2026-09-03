@@ -80,7 +80,8 @@ func ValueAwareWindow(msgs []llm.Message, keep int) []llm.Message {
 	// The S contract deliberately bounds structural input. Preserve the
 	// explicit anchors plus the newest bounded candidate window before ranking;
 	// this makes the observation boundary visible instead of silently claiming
-	// that an arbitrarily old unit was considered.
+	// that an arbitrarily old unit was considered. A recency-only fallback is
+	// reserved for an empty or unusable candidate set below.
 	candidates = boundContextRetentionCandidates(candidates, turns, latestUser, latestCompleteTurn)
 	if len(candidates) == 0 {
 		return TruncateTail(msgs, keep)
