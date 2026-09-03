@@ -43,6 +43,35 @@ func TestRestoreRechecksPathBeforePublishing(t *testing.T) {
 	}
 }
 
+func TestRestoreTreatsAlreadyRestoredPathAsUnchanged(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := Capture(workspace, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("agent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	cp.restoreBeforeApply = func(rel string) {
+		if err := os.WriteFile(filepath.Join(workspace, rel), []byte("before"), 0o644); err != nil {
+			t.Fatalf("complete concurrent restore: %v", err)
+		}
+		cp.restoreBeforeApply = nil
+	}
+
+	result, err := cp.Restore()
+	if err != nil || !result.Complete || len(result.Unchanged) != 1 || result.Unchanged[0] != "note.txt" {
+		t.Fatalf("already-restored result = %+v err:%v", result, err)
+	}
+}
+
 func TestRestoreRechecksModeBeforePublishing(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not preserve Unix permission bits")
