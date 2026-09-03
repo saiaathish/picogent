@@ -319,28 +319,17 @@ func Assess(unit Unit) Assessment {
 }
 
 func validateMessages(messages []Message) (Role, ToolPairStatus, ReasonCode) {
+	if reason := validateMessageShapes(messages); reason != "" {
+		return "", ToolPairNotPresent, reason
+	}
+
 	var primary Role
 	pending := make(map[string]struct{})
-	seenCallIDs := make(map[string]struct{})
 	pair := ToolPairNotPresent
 	for _, message := range messages {
-		if !message.Role.Valid() {
-			return "", ToolPairNotPresent, ReasonUnknownRole
-		}
-		if message.Role == RoleSystem {
-			return RoleSystem, ToolPairNotPresent, ReasonSystemMessage
-		}
-		if len(message.ToolCallIDs) > MaxToolCallsPerMessage {
-			return "", ToolPairNotPresent, ReasonInputTooLarge
-		}
-		if message.Role != RoleAssistant && len(message.ToolCallIDs) != 0 {
-			return "", ToolPairNotPresent, ReasonMalformedInput
-		}
-		if message.Role != RoleTool && message.ToolCallID != "" {
-			return "", ToolPairNotPresent, ReasonMalformedInput
-		}
-
 		switch message.Role {
+		case RoleSystem:
+			return RoleSystem, ToolPairNotPresent, ReasonSystemMessage
 		case RoleUser, RoleAssistant:
 			if len(pending) != 0 {
 				return primary, pair, ReasonIncompleteToolPair
@@ -352,13 +341,6 @@ func validateMessages(messages []Message) (Role, ToolPairStatus, ReasonCode) {
 				continue
 			}
 			for _, id := range message.ToolCallIDs {
-				if !validToolID(id) {
-					return "", ToolPairNotPresent, ReasonMalformedInput
-				}
-				if _, exists := seenCallIDs[id]; exists {
-					return "", ToolPairNotPresent, ReasonMalformedInput
-				}
-				seenCallIDs[id] = struct{}{}
 				pending[id] = struct{}{}
 			}
 			if len(message.ToolCallIDs) != 0 {
@@ -381,6 +363,46 @@ func validateMessages(messages []Message) (Role, ToolPairStatus, ReasonCode) {
 		return "", ToolPairNotPresent, ReasonMalformedInput
 	}
 	return primary, pair, ""
+}
+
+// validateMessageShapes checks all role-specific fields before pairing
+// semantics run. This keeps malformed structural input UNVERIFIED even when
+// a later semantic rule would otherwise call it an orphan or incomplete pair.
+func validateMessageShapes(messages []Message) ReasonCode {
+	seenCallIDs := make(map[string]struct{})
+	for _, message := range messages {
+		if !message.Role.Valid() {
+			return ReasonUnknownRole
+		}
+		if len(message.ToolCallIDs) > MaxToolCallsPerMessage {
+			return ReasonInputTooLarge
+		}
+
+		switch message.Role {
+		case RoleAssistant:
+			if message.ToolCallID != "" {
+				return ReasonMalformedInput
+			}
+			for _, id := range message.ToolCallIDs {
+				if !validToolID(id) {
+					return ReasonMalformedInput
+				}
+				if _, exists := seenCallIDs[id]; exists {
+					return ReasonMalformedInput
+				}
+				seenCallIDs[id] = struct{}{}
+			}
+		case RoleUser, RoleSystem:
+			if len(message.ToolCallIDs) != 0 || message.ToolCallID != "" {
+				return ReasonMalformedInput
+			}
+		case RoleTool:
+			if len(message.ToolCallIDs) != 0 || !validToolID(message.ToolCallID) {
+				return ReasonMalformedInput
+			}
+		}
+	}
+	return ""
 }
 
 func validToolID(id string) bool {
