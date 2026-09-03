@@ -1,12 +1,13 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-09-02 against the exact audited `main` head
-`92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2` after the outcome, recovery, GUI,
+`41b95d6f37efc5f25e881a9da10ee0909dfa389a` after the outcome, recovery, GUI,
 undo-publication, lifecycle, proof-continuity, cancellation, hosted
-attestation, and TUI recovery slices through PRs #297, #298, #299, #301,
-#303, #318, #320, #343, #347, #349, #351, #353, and #355 merged. The
-independent release-evidence reconciliation is tracked in issue #356; prior
-audit observations and their unverified boundaries are preserved below.
+attestation, TUI recovery, setup, and restore-inspection slices through PRs
+#297, #298, #299, #301, #303, #318, #320, #343, #347, #349, #351, #353,
+#355, #357, and #359 merged. The independent release-evidence reconciliation
+is tracked in issue #356; prior audit observations and their unverified
+boundaries are preserved below.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -265,7 +266,7 @@ tracked in issue #243.
 ## Current-head reconciliation (2026-09-02)
 
 The scorecard is now reconciled with the exact audited `main` head
-`92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2`. The following bounded slices are
+`41b95d6f37efc5f25e881a9da10ee0909dfa389a`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger and the completed
 continuity child lanes:
 
@@ -332,13 +333,22 @@ continuity child lanes:
   release-evidence. The test-only helper bounds child and stdout cleanup; it
   does not establish a production cancellation, rendered, live-provider, or
   release-readiness claim.
-- Issue #356 refreshes the independent release audit at exact current `main`
-  SHA `92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2` using post-merge run
+- Issue #356 records the independent release audit at the prior audited
+  `main` SHA `92e13c590e5dde15e7e2a9849dc2cc7c40f7d3c2` using post-merge run
   `33697379530`. The hosted gate ledger and both Sigstore subjects verify; the
   manifest's broader check passed 42 tests, while targeted coverage was
   skipped and coverage remained `UNVERIFIED`. SBOM, production-release,
   moving-action-pin, live-provider, rendered-platform, hostile-runtime, and
   release-authorization claims remain outside the evidence.
+- Issue #358 is closed by PR #359, which reuses restore preflight state to
+  avoid a duplicate inspection while retaining the final secure
+  compare-before-publish and conflict checks. Its source head is
+  `168b4f9d0538cf8d5a921dd8b0ab8a3b3d5dda96`, merge commit is
+  `41b95d6f37efc5f25e881a9da10ee0909dfa389a`, and PR/post-merge runs
+  `33700420109`/`33700777570` passed the hosted gates. Targeted restore
+  allocations decreased from 100 to 77 per operation; wall-clock change is
+  inconclusive under filesystem variance. This remains bounded local control
+  evidence, not a broad performance or release-readiness claim.
 
 The #296 medium lane is intentionally not opened: the small contract lane and
 the GUI integration lane exposed no production behavior defect. The focused
