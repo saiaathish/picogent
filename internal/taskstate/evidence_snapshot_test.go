@@ -2,6 +2,7 @@ package taskstate
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -43,6 +44,9 @@ func TestEvidenceSnapshotIsCategoricalAndIsolated(t *testing.T) {
 	}
 	if string(encoded) == "" || string(encoded) == "null" {
 		t.Fatalf("snapshot did not remain serializable for diagnostics: %s", encoded)
+	}
+	if strings.Contains(string(encoded), "hostile") || strings.Contains(string(encoded), "instruction") {
+		t.Fatalf("raw evidence text escaped the snapshot: %s", encoded)
 	}
 }
 
