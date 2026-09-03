@@ -156,6 +156,17 @@ var scenarioTable = []Scenario{
 		UserVisibleError: ErrorCanceled, FreshProcessRequired: true, Evidence: EvidenceUnverified,
 	},
 	{
+		ID: "headless-process-kill-active-turn", Surface: SurfaceHeadless, Trigger: TriggerProcessKill,
+		Persisted: PersistenceExpectation{
+			TaskStatus: taskstate.StatusWorking, TurnState: taskstate.TurnInterrupted,
+			TurnRoute: string(taskstate.TurnRouteRecover), StopReason: taskstate.StopProcessRestart,
+			MustRetainTask: true, MustBeRecoverable: true,
+			Note: "an abrupt headless process kill skips graceful cleanup; the next invocation recovers the durably admitted active turn",
+		},
+		Completion:       CompletionExpectation{MustNotBeReady: true, MustNotShowMarker: true},
+		UserVisibleError: ErrorNone, FreshProcessRequired: true, Evidence: EvidenceUnverified,
+	},
+	{
 		ID: "headless-task-save-failure", Surface: SurfaceHeadless, Trigger: TriggerTaskSaveFailure,
 		Persisted: PersistenceExpectation{
 			TaskStatus: taskstate.StatusWorking, TurnState: taskstate.TurnActive,
