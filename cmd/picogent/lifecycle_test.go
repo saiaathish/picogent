@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/saiaathish/picogent/internal/agent"
+	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/lifecycle"
 	"github.com/saiaathish/picogent/internal/llm"
@@ -26,6 +27,224 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 )
+
+func TestHeadlessFreshProcessKillRecoversInterruptedTurn(t *testing.T) {
+	if os.Getenv("PICOGENT_HEADLESS_PROCESS_KILL_RESUME_HELPER") == "1" {
+		headlessProcessKillResumeHelper(t)
+		return
+	}
+
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	codexHome := filepath.Join(root, "codex")
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", codexHome)
+	t.Setenv("PICOGENT_PROVIDER", "")
+	t.Setenv("PICOGENT_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("PICOGENT_BASE_URL", "")
+	t.Setenv("PICOGENT_ROUTER", "0")
+	t.Setenv("PICOGENT_MODE", "")
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	var startedOnce sync.Once
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startedOnce.Do(func() { close(started) })
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	t.Cleanup(func() {
+		releaseOnce.Do(func() { close(release) })
+		provider.Close()
+	})
+
+	cfg := config.Default()
+	cfg.SetupComplete = true
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOpenAI
+	cfg.APIKey = "test-key"
+	cfg.BaseURL = provider.URL
+	cfg.Model = "headless-process-kill-test-model"
+	cfg.Router.Enabled = false
+	cfg.Router.UseLLMAdvisor = false
+	if err := config.Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	binary := filepath.Join(t.TempDir(), "picogent")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = mustWorkingDirectory(t)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build headless process-kill binary: %v\n%s", err, output)
+	}
+
+	const prompt = "fix the greeting after a process restart"
+	cmd := exec.Command(binary, "run", "--yes", "--dir", workspace, prompt)
+	cmd.Env = os.Environ()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		}
+	})
+
+	select {
+	case <-started:
+	case <-time.After(15 * time.Second):
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatalf("headless kill child did not reach provider barrier\nstdout=%q\nstderr=%q", stdout.String(), stderr.String())
+	}
+
+	store := taskstate.NewStore(filepath.Join(home, "tasks", projects.IDForPath(workspace)))
+	active := waitForHeadlessTask(t, store, headlessTaskSessionID(prompt), func(task *taskstate.Task) bool {
+		last := task.LastTurn()
+		return task.Status == taskstate.StatusWorking && last != nil && last.State == taskstate.TurnActive
+	})
+	if active == nil {
+		t.Fatal("headless child did not persist an active turn")
+	}
+
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("kill active headless child: %v", err)
+	}
+	if err := cmd.Wait(); err == nil {
+		t.Fatal("killed headless child exited cleanly")
+	}
+	cmd.Process = nil
+
+	resultPath := filepath.Join(root, "resume-result.json")
+	resumer := exec.Command(os.Args[0], "-test.run", "^TestHeadlessFreshProcessKillRecoversInterruptedTurn$", "-test.count=1")
+	resumer.Dir = workspace
+	resumer.Env = append(os.Environ(),
+		"PICOGENT_HEADLESS_PROCESS_KILL_RESUME_HELPER=1",
+		"PICOGENT_HOME="+home,
+		"PICOGENT_CODEX_HOME="+codexHome,
+		"PICOGENT_HEADLESS_PROCESS_KILL_WORKSPACE="+workspace,
+		"PICOGENT_HEADLESS_PROCESS_KILL_TASK_DIR="+filepath.Join(home, "tasks", projects.IDForPath(workspace)),
+		"PICOGENT_HEADLESS_PROCESS_KILL_SESSION="+headlessTaskSessionID(prompt),
+		"PICOGENT_HEADLESS_PROCESS_KILL_RESULT="+resultPath,
+	)
+	if output, err := resumer.CombinedOutput(); err != nil {
+		t.Fatalf("fresh headless process recovery failed: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(resultPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result headlessProcessKillRecoveryResult
+	if err := json.Unmarshal(data, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.SessionID != headlessTaskSessionID(prompt) || result.TaskStatus != taskstate.StatusWorking || result.TurnState != taskstate.TurnInterrupted || result.TurnRoute != string(taskstate.TurnRouteRecover) || result.EvidenceState != "UNVERIFIED" || result.StopReason != taskstate.StopProcessRestart || strings.TrimSpace(result.Hypothesis) == "" {
+		t.Fatalf("fresh headless process recovery = %#v, want process-restart recovery", result)
+	}
+	if result.Completion.Ready || strings.TrimSpace(result.Completion.Reason) == "" {
+		t.Fatalf("fresh headless completion = %#v, want fail-closed proof", result.Completion)
+	}
+
+	recovered, err := store.Load(result.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scenario := headlessLifecycleScenario(t, "headless-process-kill-active-turn")
+	observation := lifecycle.Observe(
+		scenario.ID, scenario.Surface, scenario.Trigger, recovered,
+		lifecycle.CompletionProjection{Required: true, Ready: result.Completion.Ready}, nil,
+	)
+	if violations := scenario.Check(observation); len(violations) != 0 {
+		t.Fatalf("fresh headless process-kill observation violations = %v", violations)
+	}
+}
+
+type headlessProcessKillRecoveryResult struct {
+	SessionID     string                    `json:"session_id"`
+	TaskStatus    taskstate.Status          `json:"task_status"`
+	TurnSequence  uint64                    `json:"turn_sequence"`
+	TurnState     taskstate.TurnState       `json:"turn_state"`
+	TurnRoute     string                    `json:"turn_route"`
+	EvidenceState string                    `json:"evidence_state"`
+	StopReason    taskstate.StopReason      `json:"stop_reason"`
+	Hypothesis    string                    `json:"hypothesis"`
+	Completion    taskstate.CompletionCheck `json:"completion"`
+}
+
+func headlessProcessKillResumeHelper(t *testing.T) {
+	t.Helper()
+	workspace := os.Getenv("PICOGENT_HEADLESS_PROCESS_KILL_WORKSPACE")
+	_, ag, err := app.LoadContext(context.Background(), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ag.Close()
+	if err := ag.SetTaskSession(os.Getenv("PICOGENT_HEADLESS_PROCESS_KILL_SESSION")); err != nil {
+		t.Fatal(err)
+	}
+	task := ag.TaskSnapshot()
+	if task == nil {
+		t.Fatal("fresh headless process did not load durable task")
+	}
+	last := task.LastTurn()
+	if last == nil || last.State != taskstate.TurnInterrupted || last.Route != string(taskstate.TurnRouteRecover) || last.EvidenceState != "UNVERIFIED" || last.StopReason != taskstate.StopProcessRestart || strings.TrimSpace(last.Hypothesis) == "" {
+		t.Fatalf("fresh headless process recovered turn = %#v, want process-restart recovery", last)
+	}
+	result := headlessProcessKillRecoveryResult{
+		SessionID:     task.SessionID,
+		TaskStatus:    task.Status,
+		TurnSequence:  last.Sequence,
+		TurnState:     last.State,
+		TurnRoute:     last.Route,
+		EvidenceState: last.EvidenceState,
+		StopReason:    last.StopReason,
+		Hypothesis:    last.Hypothesis,
+		Completion:    agent.CompletionProof(task),
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(os.Getenv("PICOGENT_HEADLESS_PROCESS_KILL_RESULT"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func waitForHeadlessTask(t *testing.T, store *taskstate.Store, sessionID string, want func(*taskstate.Task) bool) *taskstate.Task {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		task, err := store.Load(sessionID)
+		if err == nil {
+			if want(task) {
+				return task
+			}
+		} else if !errors.Is(err, taskstate.ErrNotFound) {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for task %q", sessionID)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestHeadlessFreshProcessSignalRetainsInterruptedTurn(t *testing.T) {
 	if runtime.GOOS == "windows" {
