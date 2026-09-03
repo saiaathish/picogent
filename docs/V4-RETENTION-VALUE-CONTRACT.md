@@ -1,10 +1,11 @@
 # v4 retention-value contract
 
-Status: S lane (`#404`), contract and tests only.
+Status: M lane (`#405`), contract integrated into durable session retention.
 
 The contract is versioned as `picogent.retention-value.v1`. It defines a
-provider-independent way to assess and rank complete history units without
-changing Picogent's current session eviction or live-compaction behavior.
+provider-independent way to assess and rank complete history units. Durable
+session saves use the contract for bounded history selection; live context
+compaction remains unchanged.
 
 ## Boundary
 
@@ -98,8 +99,9 @@ authoritative source for outcome and verification claims.
 
 `Select` takes the highest-ranked eligible units and then sorts just that
 subset by ascending original index. This preserves transcript order after
-selection. It is an unconnected contract helper in the S lane; it does not
-evict session history.
+selection. The durable session path uses the same `Rank` ordering while
+applying its byte/message capacity and preserving the newest user request and
+newest complete turn as anchors.
 
 ## Bounds
 
@@ -126,9 +128,10 @@ bounds, complete and incomplete tool pairs, malformed/unknown fallback,
 allowlisting, hostile instruction-like values, input immutability, and raw
 text leakage.
 
-This lane does not change `internal/session` or `internal/ctxmgr`. The M lane
-(`#405`) may integrate the contract into durable retention only after this
-contract is merged and a reproducible comparison against the current
-recency-only control demonstrates useful-context benefit. Live compaction and
-long-horizon evaluation remain conditional on M evidence in the L lane
-(`#406`).
+The M integration (`#405`) is measured against the pre-integration
+recency-only control with a deterministic fixture. Its focused comparison
+records retained-value coverage, representative unit counts, latency, and
+allocations. The fixture demonstrates useful-context benefit for complete
+tool exchanges, while the benchmark numbers remain local implementation
+measurements rather than live-provider quality evidence. Live compaction and
+long-horizon evaluation remain conditional on M evidence in the L lane (`#406`).
