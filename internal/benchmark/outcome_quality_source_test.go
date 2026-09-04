@@ -49,6 +49,28 @@ func TestValidateOutcomeQualitySourcePairRejectsDirtyWorkspace(t *testing.T) {
 	}
 }
 
+func TestValidateOutcomeQualitySourcePairRejectsIgnoredWorkspaceFile(t *testing.T) {
+	baselineWorkspace, baselineHead := newOutcomeQualityGitRepo(t, "baseline\n")
+	if err := os.WriteFile(filepath.Join(baselineWorkspace, ".gitignore"), []byte("ignored.txt\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runOutcomeQualityTestGit(t, baselineWorkspace, "add", "--", ".gitignore")
+	runOutcomeQualityTestGit(t, baselineWorkspace, "commit", "-m", "ignore fixture")
+	baselineHead = runOutcomeQualityTestGit(t, baselineWorkspace, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(baselineWorkspace, "ignored.txt"), []byte("ignored\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	candidateWorkspace, candidateHead := newOutcomeQualityGitRepo(t, "candidate\n")
+
+	err := ValidateOutcomeQualitySourcePair(context.Background(),
+		OutcomeQualitySourceBinding{Target: outcomeQualitySourceTarget(baselineHead), Workspace: baselineWorkspace},
+		OutcomeQualitySourceBinding{Target: outcomeQualitySourceTarget(candidateHead), Workspace: candidateWorkspace},
+	)
+	if err == nil || !strings.Contains(err.Error(), "worktree is not clean") {
+		t.Fatalf("ignored file error=%v, want clean-tree rejection", err)
+	}
+}
+
 func TestValidateOutcomeQualitySourcePairRejectsStaleDeclaredHead(t *testing.T) {
 	baselineWorkspace, _ := newOutcomeQualityGitRepo(t, "baseline\n")
 	candidateWorkspace, candidateHead := newOutcomeQualityGitRepo(t, "candidate\n")

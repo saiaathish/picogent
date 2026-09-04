@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/saiaathish/picogent/internal/gitobs"
 	"github.com/saiaathish/picogent/internal/verify"
 )
 
@@ -101,6 +102,13 @@ func validateOutcomeQualitySourceBinding(ctx context.Context, name string, targe
 		return fmt.Errorf("%s source is not at its declared clean head: %s", name, reason)
 	}
 	if evidence.Tree != "CLEAN" {
+		return fmt.Errorf("%s source worktree is not clean", name)
+	}
+	status, err := gitobs.Output(ctx, workspace, "status", "--porcelain=v1", "--untracked-files=all", "--ignored")
+	if err != nil || status.Truncated {
+		return fmt.Errorf("%s source clean-tree status is unavailable", name)
+	}
+	if strings.TrimSpace(status.Output) != "" {
 		return fmt.Errorf("%s source worktree is not clean", name)
 	}
 	return nil
