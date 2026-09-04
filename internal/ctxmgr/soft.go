@@ -343,7 +343,7 @@ func SoftFit(msgs []llm.Message, soft int) ([]llm.Message, string) {
 	}
 
 	if len(out) > KeepAfterCompact+1 {
-		out = TruncateTail(out, KeepAfterCompact)
+		out = ValueAwareWindow(out, KeepAfterCompact)
 		method = "soft-window"
 	}
 	if EstimateTokens(out) <= soft {
@@ -351,7 +351,7 @@ func SoftFit(msgs []llm.Message, soft int) ([]llm.Message, string) {
 	}
 
 	if len(out) > KeepRecent+2 {
-		out = TruncateTail(out, KeepRecent+2)
+		out = ValueAwareWindow(out, KeepRecent+2)
 		method = "soft-trim"
 	}
 	return out, method

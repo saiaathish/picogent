@@ -26,12 +26,12 @@ not enough to establish real runtime behavior.
 | Architecture | Tiny local-first, single-agent boundary; bounded state; shared outcome/turn contract; the GUI companion path is removed | Compact `taskstate` model | Lifecycle and persistence semantics remain distributed across `agent`, `goal`, `verify`, and the surfaces | Remaining duplicate surface orchestration and repeated admission/inference | Collapse or justify remaining duplicate control paths; do not add a second planner or index |
 | Agent reasoning | Evidence-gated completion, stale-goal protection, and durable intent/turn evidence | Bounded repair loop and durable context | Keyword intent inference; repair diversity is prompt advice rather than route enforcement | Repeated admission/inference logic in GUI, TUI, and headless | Enforce route diversity structurally only if recovery evidence justifies the added state |
 | Intent/outcome | Monotonic goal revisions, tombstones, atomic clear, and criterion-bound completion proof | Permission boundary and bounded criteria | Template-only definition of done; ambiguity, negation, and conflicting goals are not structured | Duplicate `Steps`/`DefinitionOfDone` and `Verification`/`Evidence` representations | Keep the taskstate criterion/evidence gate authoritative before expanding outcome features |
-| Memory | Bounded task and session records with save-before-publish; cooperative cross-process CAS/rebase coverage; structural value-aware session retention | Causal learning remains small and advisory | Value-aware selection is unmarked by default; session restart/reconnect recovery remains unverified | Transcript-shaped session storage duplicates structured task/evidence state | Measure sustained restart and compaction behavior before widening retention inputs |
-| Context efficiency | Pair-safe compaction; 8,192-character durable context; failure signals retained; bounded 32 KiB summary input | Deterministic stale-output reduction | Token estimates are rough and not provider-calibrated; lexical priority misses structured/non-English failures | Repeated stale skeletonization/deduplication passes | Measure token estimates and retention value before adding another compaction mechanism |
+| Memory | Bounded task and session records with save-before-publish; cooperative cross-process CAS/rebase coverage; structural value-aware session retention; L-lane live-window candidate evidence | Causal learning remains small and advisory | Live structural selection is unmarked by default; session restart/reconnect recovery remains unverified | Transcript-shaped session storage duplicates structured task/evidence state; live ranking costs more allocations than a tail | Measure production-shaped live retention and restart behavior before widening retention inputs |
+| Context efficiency | Pair-safe compaction; 8,192-character durable context; failure signals retained; bounded 32 KiB summary input; bounded value-aware live selection | Deterministic stale-output reduction | Token estimates are rough and not provider-calibrated; lexical priority misses structured/non-English failures | Live value-aware ranking is materially slower and allocation-heavy versus the recency control | Keep the structural benefit only if production-shaped measurements justify its overhead |
 | Repo intelligence | On-demand deterministic map with exact bounded provenance and no daemon/index/watcher | Bounded search and map output | Nested roots and fallback semantics still need broader behavioral evidence | Duplicate phrase/default command tables | Exercise provenance refresh at admission and after mutation across supported surfaces |
 | Verification | Explicit `PASS`/`FAIL`/`INCONCLUSIVE`/`SKIPPED`; criterion-bound evidence; targeted-to-broader stages; exact-head manifest | Changed-file cap forces broader verification; hosted matrix runs vet, bounded fuzz gates, and a validated release-gate ledger | Task-local verification and release-evidence projections remain distinct; textual proof truncation lacks structured metadata | Legacy verification paths pending caller confirmation | Keep the exact-head manifest, taskstate gate, and CI quality ledger aligned without broadening completion authority |
 | Repair/recovery | Local checkpoint/undo conflict safety, fail-closed permissions, and durable latest-turn undo | Durable task resume, GUI steering, and crash-after-write recovery evidence | Retry taxonomy, route diversity, partial rollback reporting, and hostile external-writer behavior remain incomplete | Prompt recovery hints would duplicate a future durable recovery ledger | Test and then persist side-effect/recovery metadata; do not replace checkpoint safety prematurely |
-| Performance | Deterministic local microbenchmarks, bounded long-session persistence through 256 turns, and fresh/warm child-process RSS envelopes exist | Bounded output/context controls | Provider-token accuracy, cross-surface startup, and stable cross-platform budgets remain unmeasured | Repeated large-output scans and broad provenance passes may waste CPU | Profile retention/provenance overhead and rerun v3-v4 comparisons before claiming performance gains |
+| Performance | Deterministic local microbenchmarks, bounded long-session persistence through 256 turns, fresh/warm child-process RSS envelopes, and a 96-turn live-retention stress fixture exist | Bounded output/context controls | Provider-token accuracy, cross-surface startup, and stable cross-platform budgets remain unmeasured | Live value-aware selection adds a large allocation/latency delta over the recency control; repeated large-output scans and broad provenance passes may waste CPU | Profile production-shaped retention overhead and rerun v3-v4 comparisons before claiming performance gains |
 | Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Hosted `govulncheck` now scans the dependency graph; tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Add hostile runtime evidence and preserve explicit limits around dependency reachability and path races |
 | Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, barrier-driven cancellation/save/publish stress, cooperative cross-process writers, trace lock-holder death recovery, sustained bounded trace retention, first-use lock creation recovery, project-registry transactions, and cross-surface lifecycle checkpoints | Unix/Windows lock primitives and deterministic recovery harnesses | Hostile process death outside the trace lock handoff, rendered cross-surface event ordering, and filesystem races lack complete stress evidence | New orchestration would add complexity before invariants are measured | Extend cross-process evidence only where it proves a user-visible recovery invariant |
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
@@ -389,6 +389,44 @@ evidence; older audit entries retain the limits that applied at their heads:
   keeps screenshot path `UNRECORDED` and live-provider, cross-platform,
   hostile-writer, broader crash-window, and release-authorization boundaries
   explicitly `UNVERIFIED`.
+
+## Retention L-lane candidate (2026-09-03)
+
+The M retention lane from issue #405 is closed by PR #416. Its source commits
+`c77c1a7`, `86e4870`, and `1a3f076` merged to `main` as `5a45b46`; hosted run
+`33816820403` passed the Ubuntu, Windows, macOS, security, and release-evidence
+jobs. This is the prerequisite evidence for the L lane, not a live-provider
+quality claim.
+
+The L candidate is implemented on top of that exact main merge by source
+checkpoints `9ba07f7` and `af3ca8c` on branch
+`codex/v4-retention-live-l-406`, with a documentation-only clarification
+checkpoint `88fae5c`. It routes the existing `internal/ctxmgr.Manage` windowing
+boundary through the S contract's bounded structural projection. The candidate
+preserves the system prompt, newest request, newest complete turn, and complete
+tool exchanges while keeping the one-agent interface and all permission,
+undo, provider, and surface boundaries unchanged.
+
+Direct local evidence on an Apple M3 arm64 Mac with Go `1.26.6`:
+
+- the focused window benchmark retained the historical target in `1.000` of
+  value-aware runs and `0.000` of recency-only runs; value-aware timing was
+  `23.3–30.6 µs/op` versus `0.296–0.378 µs/op`, with `65,632` versus `2,176`
+  bytes/op and `226` versus `2` allocations/op;
+- the 96-turn fixture reduced `384` raw messages to `18` managed messages at
+  `660` managed tokens, retained complete historical exchange `read-088`, and
+  the recency-only control did not; and
+- the full long-horizon stress benchmark reached `2.51–2.91 s/op` and
+  `214.7–216.1 MiB/op`, so this candidate records an allocation-heavy stress
+  cost rather than claiming an end-to-end performance improvement.
+
+Decision: keep the L integration as a conditional ship candidate because the
+retained-context benefit is reproducible and bounded. Do not promote this to a
+broad context-quality or release claim: live markers are currently unmarked,
+live-provider behavior is unverified, and rendered/cross-platform runtime
+behavior beyond hosted CI remains unverified. If production-shaped evidence
+does not justify the measured overhead, delete the live integration and retain
+the S/M contract.
 
 The #296 medium lane is intentionally not opened: the small contract lane and
 the GUI integration lane exposed no production behavior defect. The focused
