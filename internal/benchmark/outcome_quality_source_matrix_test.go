@@ -29,7 +29,7 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 	candidateSource := cleanOutcomeQualitySourceAtHead(t, outcomeQualityExactCandidateHead)
 	baselineTarget := outcomeQualityExactSourceTarget(OutcomeQualityLegacySourceHead)
 	candidateTarget := outcomeQualityExactSourceTarget(outcomeQualityExactCandidateHead)
-	provider := newOutcomeQualityLegacyMatrixProvider(t)
+	provider := newOutcomeQualityLegacyProvider(t)
 	build, err := BuildOutcomeQualitySourcePair(context.Background(), OutcomeQualitySourcePairBuildConfig{
 		Baseline:          OutcomeQualitySourceBinding{Target: baselineTarget, Workspace: baselineSource},
 		Candidate:         OutcomeQualitySourceBinding{Target: candidateTarget, Workspace: candidateSource},
@@ -52,6 +52,9 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 		Candidate: OutcomeQualitySourceBinding{Target: candidateTarget, Workspace: candidateSource},
 		Policy:    policy,
 		Command:   "exact-source-pair: v3 cmd/picogent + v4 outcome-quality-worker",
+		ScenarioInput: func(scenario OutcomeQualityScenario) (OutcomeQualityInput, error) {
+			return outcomeQualityLegacyInput(scenario), nil
+		},
 	})
 	if err != nil {
 		t.Fatalf("run exact source-pair matrix: %v", err)
@@ -59,6 +62,7 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 	if err := report.Validate(); err != nil {
 		t.Fatalf("validate exact source-pair report: %v", err)
 	}
+	persistOutcomeQualityExactReport(t, report)
 	wantObservations := len(DefaultOutcomeQualityScenarios()) * 2 * policy.Repetitions
 	if len(report.Observations) != wantObservations {
 		t.Fatalf("observations=%d, want %d", len(report.Observations), wantObservations)
@@ -81,8 +85,11 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 			}
 		case OutcomeVariantCandidate:
 			candidateObservations++
-			if observation.SourceHead != outcomeQualityExactCandidateHead || observation.Metrics.OutcomeSuccess != OutcomeAssessmentPass || observation.Metrics.Evidence != EvidenceCurrent {
-				t.Fatalf("candidate observation=%#v, want exact-head current pass", observation)
+			if observation.SourceHead != outcomeQualityExactCandidateHead || observation.Metrics.OutcomeSuccess != OutcomeAssessmentInconclusive {
+				t.Fatalf("candidate observation=%#v, want exact-head inconclusive current-proof boundary", observation)
+			}
+			if !containsOutcomeQualityReason(observation.Unverified, "current proof unavailable") {
+				t.Fatalf("candidate observation unverified=%v, want current-proof boundary", observation.Unverified)
 			}
 		default:
 			t.Fatalf("unexpected observation variant %q", observation.Variant)
@@ -101,18 +108,24 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 		t.Fatalf("source pair changed during exact matrix: %v", err)
 	}
 
-	if reportPath := strings.TrimSpace(os.Getenv("PICOGENT_OUTCOME_QUALITY_REPORT")); reportPath != "" {
-		if !filepath.IsAbs(reportPath) {
-			t.Fatalf("PICOGENT_OUTCOME_QUALITY_REPORT must be absolute, got %q", reportPath)
-		}
-		data, err := json.MarshalIndent(report, "", "  ")
-		if err != nil {
-			t.Fatalf("encode exact source-pair report: %v", err)
-		}
-		data = append(data, '\n')
-		if err := os.WriteFile(reportPath, data, 0o600); err != nil {
-			t.Fatalf("write exact source-pair report: %v", err)
-		}
+}
+
+func persistOutcomeQualityExactReport(t *testing.T, report OutcomeQualityReport) {
+	t.Helper()
+	reportPath := strings.TrimSpace(os.Getenv("PICOGENT_OUTCOME_QUALITY_REPORT"))
+	if reportPath == "" {
+		return
+	}
+	if !filepath.IsAbs(reportPath) {
+		t.Fatalf("PICOGENT_OUTCOME_QUALITY_REPORT must be absolute, got %q", reportPath)
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		t.Fatalf("encode exact source-pair report: %v", err)
+	}
+	data = append(data, '\n')
+	if err := os.WriteFile(reportPath, data, 0o600); err != nil {
+		t.Fatalf("write exact source-pair report: %v", err)
 	}
 }
 
