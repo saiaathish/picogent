@@ -100,7 +100,7 @@ func outcomeQualityLegacyInput(scenario OutcomeQualityScenario) OutcomeQualityIn
 // BuildOutcomeQualityLegacy validates the exact v3 source tree and builds
 // ./cmd/picogent from that tree. The build output and cache are external to the
 // source workspace, and the command uses typed arguments without a shell.
-func BuildOutcomeQualityLegacy(ctx context.Context, binding OutcomeQualitySourceBinding, buildConfig OutcomeQualityLegacyBuildConfig) (*OutcomeQualityLegacyBuild, error) {
+func BuildOutcomeQualityLegacy(ctx context.Context, binding OutcomeQualitySourceBinding, buildConfig OutcomeQualityLegacyBuildConfig) (build *OutcomeQualityLegacyBuild, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -134,7 +134,15 @@ func BuildOutcomeQualityLegacy(ctx context.Context, binding OutcomeQualitySource
 	keepBuildDir := false
 	defer func() {
 		if !keepBuildDir {
-			_ = removeOutcomeQualityLegacyDir(buildDir)
+			if cleanupErr := removeOutcomeQualityLegacyDir(buildDir); cleanupErr != nil {
+				cleanupErr = fmt.Errorf("cleanup outcome-quality legacy build directory: %w", cleanupErr)
+				if err == nil {
+					build = nil
+					err = cleanupErr
+				} else {
+					err = errors.Join(err, cleanupErr)
+				}
+			}
 		}
 	}()
 	canonicalBuildDir := buildDir

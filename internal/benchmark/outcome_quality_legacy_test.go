@@ -17,6 +17,38 @@ import (
 	"testing"
 )
 
+// The legacy executor deliberately launches an opaque v3 command. These
+// subprocess modes let Execute failure and cancellation paths be tested
+// without compiling another fixture binary or depending on a live provider.
+// The marker is injected only by outcomeQualityLegacyEnvironment; normal test
+// invocations never enter this helper.
+func init() {
+	if os.Getenv("PICOGENT_OUTCOME_QUALITY_LEGACY_CHILD") != "1" || len(os.Args) < 3 || os.Args[1] != "run" {
+		return
+	}
+	mode := os.Args[len(os.Args)-1]
+	switch mode {
+	case "legacy-test-command-failure":
+		fmt.Fprintln(os.Stderr, "legacy test command failure")
+		os.Exit(7)
+	case "legacy-test-provider-failure":
+		baseURL := strings.TrimRight(os.Getenv("PICOGENT_BASE_URL"), "/")
+		response, err := http.Post(baseURL+"/chat/completions", "application/json", strings.NewReader(`{"model":"test","messages":[]}`))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "legacy test provider request:", err)
+			os.Exit(8)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode < http.StatusBadRequest {
+			fmt.Fprintln(os.Stderr, "legacy test provider unexpectedly succeeded")
+			os.Exit(9)
+		}
+		os.Exit(7)
+	case "legacy-test-timeout":
+		select {}
+	}
+}
+
 func TestBuildOutcomeQualityLegacyLaunchesExactV3Binary(t *testing.T) {
 	legacySource := cleanOutcomeQualitySourceAtHead(t, "a07943b31044049afb0142f39198244cd3c75218")
 	head := outcomeQualityGitHead(t, legacySource)
@@ -500,6 +532,114 @@ func TestOutcomeQualityLegacyBuildCloseIsIdempotent(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("legacy build directory still exists after close: %v", err)
+	}
+}
+
+func TestOutcomeQualityLegacyExecuteSurfacesCommandFailureAndCleansRunDir(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeLegacyProviderResponse(w, nil, "unused")
+	}))
+	t.Cleanup(provider.Close)
+	executor, request, tempParent := newOutcomeQualityLegacyTestExecutor(t, provider.URL, "legacy-test-command-failure")
+
+	if _, err := executor.Execute(context.Background(), request); err == nil || !strings.Contains(err.Error(), "command failed") {
+		t.Fatalf("legacy command failure=%v, want command failure", err)
+	}
+	assertOutcomeQualityLegacyRunDirRemoved(t, tempParent)
+}
+
+func TestOutcomeQualityLegacyExecuteSurfacesProviderFailureAndCleansRunDir(t *testing.T) {
+	var requests int
+	var requestsMu sync.Mutex
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requestsMu.Lock()
+		requests++
+		requestsMu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, "not-json")
+	}))
+	t.Cleanup(provider.Close)
+	executor, request, tempParent := newOutcomeQualityLegacyTestExecutor(t, provider.URL, "legacy-test-provider-failure")
+
+	if _, err := executor.Execute(context.Background(), request); err == nil || !strings.Contains(err.Error(), "command failed") {
+		t.Fatalf("legacy provider failure=%v, want command failure", err)
+	}
+	requestsMu.Lock()
+	gotRequests := requests
+	requestsMu.Unlock()
+	if gotRequests != 1 {
+		t.Fatalf("provider requests=%d, want one rejected request", gotRequests)
+	}
+	assertOutcomeQualityLegacyRunDirRemoved(t, tempParent)
+}
+
+func TestOutcomeQualityLegacyExecuteTimeoutCleansRunDir(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeLegacyProviderResponse(w, nil, "unused")
+	}))
+	t.Cleanup(provider.Close)
+	executor, request, tempParent := newOutcomeQualityLegacyTestExecutor(t, provider.URL, "legacy-test-timeout")
+	request.Policy.TimeoutMillis = 100
+
+	if _, err := executor.Execute(context.Background(), request); err == nil {
+		t.Fatal("legacy timeout unexpectedly succeeded")
+	}
+	assertOutcomeQualityLegacyRunDirRemoved(t, tempParent)
+}
+
+func newOutcomeQualityLegacyTestExecutor(t *testing.T, providerURL, prompt string) (*OutcomeQualityLegacyProcessExecutor, OutcomeQualityExecutionRequest, string) {
+	t.Helper()
+	legacySource := cleanOutcomeQualitySourceAtHead(t, OutcomeQualityLegacySourceHead)
+	target := outcomeQualityLegacySourceTarget(OutcomeQualityLegacySourceHead)
+	command, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err = validateOutcomeQualityLegacyCommand(command, legacySource)
+	if err != nil {
+		t.Fatalf("validate test helper command: %v", err)
+	}
+	digest, size, err := hashOutcomeQualityLegacyCommand(command)
+	if err != nil {
+		t.Fatalf("hash test helper command: %v", err)
+	}
+	input := outcomeQualityLegacyInput(DefaultOutcomeQualityScenarios()[0])
+	input.Prompt = prompt
+	digestInput := outcomeQualityInputDigest(input)
+	scenario := DefaultOutcomeQualityScenarios()[0]
+	scenario.InputSHA256 = digestInput
+	request := OutcomeQualityExecutionRequest{
+		Scenario:    scenario,
+		Variant:     OutcomeVariantBaseline,
+		Repetition:  1,
+		InputSHA256: digestInput,
+		Input:       input,
+		Target:      target,
+		Policy:      validOutcomeQualityLegacyProxyPolicy(),
+	}
+	tempParent := t.TempDir()
+	return &OutcomeQualityLegacyProcessExecutor{
+		Command:       command,
+		Binding:       OutcomeQualitySourceBinding{Target: target, Workspace: legacySource},
+		ProviderURL:   providerURL,
+		Model:         "legacy-test-model",
+		TempParent:    tempParent,
+		commandPath:   command,
+		commandDigest: digest,
+		commandSize:   size,
+	}, request, tempParent
+}
+
+func assertOutcomeQualityLegacyRunDirRemoved(t *testing.T, tempParent string) {
+	t.Helper()
+	entries, err := os.ReadDir(tempParent)
+	if err != nil {
+		t.Fatalf("read legacy temp parent: %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "picogent-outcome-quality-legacy-run-") {
+			t.Fatalf("legacy run directory leaked: %q", entry.Name())
+		}
 	}
 }
 
