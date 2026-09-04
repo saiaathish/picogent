@@ -1080,6 +1080,7 @@ func outcomeQualityLegacyVerificationStatus(stderr string) OutcomeQualityVerific
 }
 
 type outcomeQualityLegacyBuffer struct {
+	mu        sync.Mutex
 	data      bytes.Buffer
 	truncated bool
 }
@@ -1088,6 +1089,8 @@ func (b *outcomeQualityLegacyBuffer) Write(data []byte) (int, error) {
 	if b == nil {
 		return len(data), nil
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	remaining := maxOutcomeQualityLegacyOutputBytes - b.data.Len()
 	if remaining <= 0 {
 		b.truncated = true
@@ -1106,6 +1109,8 @@ func (b *outcomeQualityLegacyBuffer) String() string {
 	if b == nil {
 		return ""
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.data.String()
 }
 
