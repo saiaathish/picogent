@@ -51,6 +51,28 @@ func TestValueAwareWindowDropsIncompleteCurrentToolUnit(t *testing.T) {
 	assertContextToolPairsComplete(t, got)
 }
 
+func TestValueAwareWindowBoundsLargeCandidateProjection(t *testing.T) {
+	fixture := make([]llm.Message, 0, 1+300*2)
+	fixture = append(fixture, llm.Message{Role: "system", Content: "system"})
+	for i := 0; i < 300; i++ {
+		fixture = append(fixture,
+			llm.Message{Role: "user", Content: fmt.Sprintf("request %03d", i)},
+			llm.Message{Role: "assistant", Content: fmt.Sprintf("response %03d", i)},
+		)
+	}
+
+	got := ValueAwareWindow(fixture, 10)
+	if len(got) > 10 {
+		t.Fatalf("window length=%d, want <= 10", len(got))
+	}
+	if !containsContextText(got, "request 299") {
+		t.Fatalf("latest request was dropped after bounded projection: %#v", got)
+	}
+	if !containsContextText(got, "response 299") {
+		t.Fatalf("latest complete response was dropped after bounded projection: %#v", got)
+	}
+}
+
 func TestManageUsesValueAwareWindowAtLiveCompactionBoundary(t *testing.T) {
 	fixture := liveRetentionFixture()
 	got, stats, err := Manage(context.Background(), nil, "gpt-5.6-terra", fixture, DefaultBudget)
