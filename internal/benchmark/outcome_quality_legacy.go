@@ -32,6 +32,8 @@ const (
 	maxOutcomeQualityLegacyBuildTimeout         = 2 * time.Minute
 	maxOutcomeQualityLegacyBinaryBytes          = 128 << 20
 	maxOutcomeQualityLegacyProviderPayloadBytes = 8 << 20
+	maxOutcomeQualityLegacyWorkspaceEntries     = 512
+	maxOutcomeQualityLegacyWorkspaceDepth       = 32
 	defaultOutcomeQualityLegacyModel            = "outcome-quality-legacy"
 	outcomeQualityLegacyLocalAPIKey             = "picogent-local-provider"
 )
@@ -247,7 +249,7 @@ func (e *OutcomeQualityLegacyProcessExecutor) validateOutcomeQualitySource(ctx c
 // line are measured directly. v3 does not expose provider token/context or
 // structured repair telemetry, so those gaps are returned as explicit
 // unverified reasons rather than being represented as zero measurements.
-func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, request OutcomeQualityExecutionRequest) (OutcomeQualityExecution, error) {
+func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, request OutcomeQualityExecutionRequest) (execution OutcomeQualityExecution, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -289,7 +291,16 @@ func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, reque
 	if err != nil {
 		return OutcomeQualityExecution{}, fmt.Errorf("create outcome-quality legacy run directory: %w", err)
 	}
-	defer os.RemoveAll(runRoot)
+	defer func() {
+		if cleanupErr := removeOutcomeQualityLegacyDir(runRoot); cleanupErr != nil {
+			cleanupErr = fmt.Errorf("cleanup outcome-quality legacy run directory: %w", cleanupErr)
+			if err == nil {
+				err = cleanupErr
+				return
+			}
+			err = errors.Join(err, cleanupErr)
+		}
+	}()
 	fixtureRoot := filepath.Join(runRoot, "workspace")
 	homeRoot := filepath.Join(runRoot, "home")
 	cacheRoot := filepath.Join(runRoot, "go-cache")
@@ -720,6 +731,13 @@ type outcomeQualityLegacyBudgetProxy struct {
 }
 
 func newOutcomeQualityLegacyBudgetProxy(providerURL string, policy OutcomeQualityPolicy) (*outcomeQualityLegacyBudgetProxy, error) {
+	providerURL, err := normalizeOutcomeQualityLegacyProviderURL(providerURL)
+	if err != nil {
+		return nil, fmt.Errorf("normalize provider URL: %w", err)
+	}
+	if err := validateOutcomeQualityPolicy(policy); err != nil {
+		return nil, fmt.Errorf("validate provider policy: %w", err)
+	}
 	target, err := url.Parse(providerURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse provider URL: %w", err)
@@ -827,21 +845,24 @@ func (p *outcomeQualityLegacyBudgetProxy) handle(w http.ResponseWriter, request 
 		return
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if usage > p.policy.MaxTokens {
+		p.mu.Unlock()
 		http.Error(w, "legacy provider token budget exceeded", http.StatusTooManyRequests)
 		return
 	}
 	if p.tokens+usage > p.policy.MaxTokens {
+		p.mu.Unlock()
 		http.Error(w, "legacy provider token budget exceeded", http.StatusTooManyRequests)
 		return
 	}
 	if p.toolCalls+toolCalls > p.policy.MaxToolCalls {
+		p.mu.Unlock()
 		http.Error(w, "legacy provider tool-call budget exceeded", http.StatusTooManyRequests)
 		return
 	}
 	p.tokens += usage
 	p.toolCalls += toolCalls
+	p.mu.Unlock()
 	writeOutcomeQualityLegacyProviderResponse(w, response.StatusCode, response.Header, responseBody)
 }
 
@@ -865,6 +886,10 @@ func outcomeQualityLegacyProviderUsage(payload []byte) (int, int, error) {
 	}
 	if *response.Usage.PromptTokens < 0 || *response.Usage.CompletionTokens < 0 {
 		return 0, 0, errors.New("usage contains a negative token count")
+	}
+	maxInt := int(^uint(0) >> 1)
+	if *response.Usage.PromptTokens > maxInt-*response.Usage.CompletionTokens {
+		return 0, 0, errors.New("usage token count overflows integer range")
 	}
 	usage := *response.Usage.PromptTokens + *response.Usage.CompletionTokens
 	toolCalls := 0
@@ -970,8 +995,6 @@ func inspectOutcomeQualityLegacyWorkspace(ctx context.Context, root string, inpu
 		}
 	}
 	entries := 0
-	const maxEntries = 512
-	const maxDepth = 32
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -983,8 +1006,8 @@ func inspectOutcomeQualityLegacyWorkspace(ctx context.Context, root string, inpu
 			return nil
 		}
 		entries++
-		if entries > maxEntries {
-			return fmt.Errorf("fixture contains more than %d filesystem entries", maxEntries)
+		if entries > maxOutcomeQualityLegacyWorkspaceEntries {
+			return fmt.Errorf("fixture contains more than %d filesystem entries", maxOutcomeQualityLegacyWorkspaceEntries)
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("fixture contains symlink %q", path)
@@ -999,8 +1022,8 @@ func inspectOutcomeQualityLegacyWorkspace(ctx context.Context, root string, inpu
 		if err != nil {
 			return err
 		}
-		if depth := strings.Count(filepath.ToSlash(rel), "/") + 1; depth > maxDepth {
-			return fmt.Errorf("fixture path %q exceeds depth %d", rel, maxDepth)
+		if depth := strings.Count(filepath.ToSlash(rel), "/") + 1; depth > maxOutcomeQualityLegacyWorkspaceDepth {
+			return fmt.Errorf("fixture path %q exceeds depth %d", rel, maxOutcomeQualityLegacyWorkspaceDepth)
 		}
 		rel, err = normalizeOutcomeQualityFixturePath(rel)
 		if err != nil {

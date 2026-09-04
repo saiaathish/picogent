@@ -242,7 +242,7 @@ func TestOutcomeQualityLegacyBudgetProxyEnforcesSharedBudgets(t *testing.T) {
 	}{
 		{
 			name:             "model calls",
-			policy:           OutcomeQualityPolicy{MaxTokens: 100, MaxModelCalls: 1, MaxToolCalls: 10, MaxTurns: 1},
+			policy:           OutcomeQualityPolicy{Repetitions: 2, TimeoutMillis: 1_000, MaxTokens: 100, MaxModelCalls: 1, MaxToolCalls: 10, MaxTurns: 1},
 			requests:         2,
 			toolCalls:        1,
 			promptTokens:     2,
@@ -253,7 +253,7 @@ func TestOutcomeQualityLegacyBudgetProxyEnforcesSharedBudgets(t *testing.T) {
 		},
 		{
 			name:             "tokens",
-			policy:           OutcomeQualityPolicy{MaxTokens: 4, MaxModelCalls: 2, MaxToolCalls: 10, MaxTurns: 2},
+			policy:           OutcomeQualityPolicy{Repetitions: 2, TimeoutMillis: 1_000, MaxTokens: 4, MaxModelCalls: 2, MaxToolCalls: 10, MaxTurns: 2},
 			requests:         1,
 			toolCalls:        1,
 			promptTokens:     2,
@@ -264,7 +264,7 @@ func TestOutcomeQualityLegacyBudgetProxyEnforcesSharedBudgets(t *testing.T) {
 		},
 		{
 			name:             "tool calls",
-			policy:           OutcomeQualityPolicy{MaxTokens: 100, MaxModelCalls: 2, MaxToolCalls: 1, MaxTurns: 2},
+			policy:           OutcomeQualityPolicy{Repetitions: 2, TimeoutMillis: 1_000, MaxTokens: 100, MaxModelCalls: 2, MaxToolCalls: 1, MaxTurns: 2},
 			requests:         1,
 			toolCalls:        2,
 			promptTokens:     2,
@@ -317,13 +317,202 @@ func TestOutcomeQualityLegacyBudgetProxyEnforcesSharedBudgets(t *testing.T) {
 	}
 }
 
+func TestOutcomeQualityLegacyBudgetProxyValidatesAndNormalizesInputs(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+	}))
+	defer upstream.Close()
+
+	validPolicy := OutcomeQualityPolicy{
+		Repetitions:   2,
+		TimeoutMillis: 1_000,
+		MaxTokens:     10,
+		MaxModelCalls: 2,
+		MaxToolCalls:  2,
+		MaxTurns:      2,
+	}
+	proxy, err := newOutcomeQualityLegacyBudgetProxy(upstream.URL+"/v1/", validPolicy)
+	if err != nil {
+		t.Fatalf("valid proxy inputs rejected: %v", err)
+	}
+	proxy.Close()
+
+	if _, err := newOutcomeQualityLegacyBudgetProxy("http://example.com", validPolicy); err == nil || !strings.Contains(err.Error(), "not loopback") {
+		t.Fatalf("non-loopback proxy URL error=%v", err)
+	}
+	if _, err := newOutcomeQualityLegacyBudgetProxy(upstream.URL, OutcomeQualityPolicy{}); err == nil || !strings.Contains(err.Error(), "repetitions") {
+		t.Fatalf("invalid proxy policy error=%v", err)
+	}
+}
+
+func TestOutcomeQualityLegacyBudgetProxyRejectsMissingUsage(t *testing.T) {
+	calls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"choices":[]}`)
+	}))
+	defer upstream.Close()
+	proxy, err := newOutcomeQualityLegacyBudgetProxy(upstream.URL, validOutcomeQualityLegacyProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+
+	response, err := http.Post(proxy.URL()+"/chat/completions", "application/json", strings.NewReader(`{"model":"fixture"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	closeErr := response.Body.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read proxy response: read=%v close=%v", readErr, closeErr)
+	}
+	if response.StatusCode != http.StatusBadGateway || !strings.Contains(string(body), "usage is missing") {
+		t.Fatalf("proxy response status=%d body=%q, want missing-usage 502", response.StatusCode, body)
+	}
+	if calls != 1 {
+		t.Fatalf("upstream calls=%d, want one", calls)
+	}
+}
+
+func TestOutcomeQualityLegacyProviderUsageRejectsTokenOverflow(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	payload, err := json.Marshal(map[string]any{
+		"usage": map[string]int{
+			"prompt_tokens":     maxInt,
+			"completion_tokens": 1,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := outcomeQualityLegacyProviderUsage(payload); err == nil || !strings.Contains(err.Error(), "overflows integer range") {
+		t.Fatalf("overflow usage error=%v, want explicit overflow rejection", err)
+	}
+}
+
+func TestOutcomeQualityLegacyBudgetProxyBoundsPayloads(t *testing.T) {
+	t.Run("request", func(t *testing.T) {
+		calls := 0
+		upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+		defer upstream.Close()
+		proxy, err := newOutcomeQualityLegacyBudgetProxy(upstream.URL, validOutcomeQualityLegacyProxyPolicy())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer proxy.Close()
+
+		response, err := http.Post(proxy.URL()+"/chat/completions", "application/json", strings.NewReader(strings.Repeat("x", maxOutcomeQualityLegacyProviderPayloadBytes+1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if readErr != nil || closeErr != nil {
+			t.Fatalf("read proxy response: read=%v close=%v", readErr, closeErr)
+		}
+		if response.StatusCode != http.StatusRequestEntityTooLarge || !strings.Contains(string(body), "request is too large") {
+			t.Fatalf("proxy response status=%d body=%q, want oversized-request 413", response.StatusCode, body)
+		}
+		if calls != 0 {
+			t.Fatalf("upstream calls=%d, want zero", calls)
+		}
+	})
+
+	t.Run("response", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, strings.Repeat("x", maxOutcomeQualityLegacyProviderPayloadBytes+1))
+		}))
+		defer upstream.Close()
+		proxy, err := newOutcomeQualityLegacyBudgetProxy(upstream.URL, validOutcomeQualityLegacyProxyPolicy())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer proxy.Close()
+
+		response, err := http.Post(proxy.URL()+"/chat/completions", "application/json", strings.NewReader(`{"model":"fixture"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if readErr != nil || closeErr != nil {
+			t.Fatalf("read proxy response: read=%v close=%v", readErr, closeErr)
+		}
+		if response.StatusCode != http.StatusBadGateway || !strings.Contains(string(body), "response is too large") {
+			t.Fatalf("proxy response status=%d body=%q, want oversized-response 502", response.StatusCode, body)
+		}
+	})
+}
+
+func TestOutcomeQualityLegacyBuildCloseIsIdempotent(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "build")
+	if err := os.MkdirAll(filepath.Join(dir, "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	build := &OutcomeQualityLegacyBuild{dir: dir}
+	if err := build.Close(); err != nil {
+		t.Fatalf("close legacy build: %v", err)
+	}
+	if err := build.Close(); err != nil {
+		t.Fatalf("second close legacy build: %v", err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy build directory still exists after close: %v", err)
+	}
+}
+
+func TestOutcomeQualityLegacyCommandRejectsInvalidIdentity(t *testing.T) {
+	source, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := filepath.Join(t.TempDir(), "picogent")
+	if err := os.WriteFile(valid, []byte("binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	nonExecutable := filepath.Join(t.TempDir(), "not-executable")
+	if err := os.WriteFile(nonExecutable, []byte("binary"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	inside := filepath.Join(source, "picogent")
+	if err := os.WriteFile(inside, []byte("binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(t.TempDir(), "directory")
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "empty", path: "", want: "is required"},
+		{name: "relative", path: "picogent", want: "absolute path"},
+		{name: "directory", path: directory, want: "not a regular file"},
+		{name: "not executable", path: nonExecutable, want: "not executable"},
+		{name: "inside source", path: inside, want: "outside source workspace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := validateOutcomeQualityLegacyCommand(tc.path, source); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("command %q error=%v, want %q", tc.path, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestInspectOutcomeQualityLegacyWorkspaceBoundsEntries(t *testing.T) {
 	root := t.TempDir()
 	input := OutcomeQualityInput{Files: []OutcomeQualityInputFile{{Path: "fixture.txt", Content: "before"}}}
 	if err := writeOutcomeQualityFixture(context.Background(), root, input); err != nil {
 		t.Fatal(err)
 	}
-	for index := 0; index < 512; index++ {
+	for index := 0; index < maxOutcomeQualityLegacyWorkspaceEntries; index++ {
 		path := filepath.Join(root, fmt.Sprintf("extra-%03d.txt", index))
 		if err := os.WriteFile(path, []byte("extra"), 0o600); err != nil {
 			t.Fatal(err)
@@ -332,6 +521,17 @@ func TestInspectOutcomeQualityLegacyWorkspaceBoundsEntries(t *testing.T) {
 	_, _, _, err := inspectOutcomeQualityLegacyWorkspace(context.Background(), root, input, map[string]string{"fixture.txt": "before"})
 	if err == nil || !strings.Contains(err.Error(), "more than 512 filesystem entries") {
 		t.Fatalf("unbounded legacy workspace inspection error=%v", err)
+	}
+}
+
+func validOutcomeQualityLegacyProxyPolicy() OutcomeQualityPolicy {
+	return OutcomeQualityPolicy{
+		Repetitions:   2,
+		TimeoutMillis: 1_000,
+		MaxTokens:     100,
+		MaxModelCalls: 2,
+		MaxToolCalls:  10,
+		MaxTurns:      2,
 	}
 }
 
