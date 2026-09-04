@@ -5,7 +5,7 @@ merged `main` head `b73db3f297edd7759de4030145574b26dc6eefdc`. This is a
 provider-independent regression comparison, not a live-provider quality,
 browser, or product-SLA claim.
 
-The historical v3/v4 comparison table below remains anchored to the
+The historical v3/v4 sections below remain anchored to the
 pre-measurement merged v4 head
 `275afdb8bdb727ce7a67d37a0b4570eea595f125`. The earlier current-main
 checkpoints at `c6d87bf5b38e6afb1322e6982d3033357df59819` and
