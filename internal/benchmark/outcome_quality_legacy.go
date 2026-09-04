@@ -3,6 +3,7 @@ package benchmark
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -25,9 +26,15 @@ import (
 const (
 	maxOutcomeQualityLegacyOutputBytes  = 64 << 10
 	maxOutcomeQualityLegacyBuildTimeout = 2 * time.Minute
+	maxOutcomeQualityLegacyBinaryBytes  = 128 << 20
 	defaultOutcomeQualityLegacyModel    = "outcome-quality-legacy"
 	outcomeQualityLegacyLocalAPIKey     = "picogent-local-provider"
 )
+
+// OutcomeQualityLegacySourceHead is the immutable v3 baseline used by this
+// adapter. A different source head is a different experiment and must use a
+// separately reviewed executor.
+const OutcomeQualityLegacySourceHead = "a07943b31044049afb0142f39198244cd3c75218"
 
 // OutcomeQualityLegacyBuildConfig controls the isolated v3 build and its
 // local OpenAI-compatible provider endpoint. ProviderURL must point to a
@@ -55,6 +62,10 @@ type OutcomeQualityLegacyProcessExecutor struct {
 	ProviderURL string
 	Model       string
 	TempParent  string
+
+	commandPath   string
+	commandDigest [sha256.Size]byte
+	commandSize   int64
 }
 
 func outcomeQualityLegacyInput(scenario OutcomeQualityScenario) OutcomeQualityInput {
@@ -92,6 +103,9 @@ func BuildOutcomeQualityLegacy(ctx context.Context, binding OutcomeQualitySource
 	model, err := normalizeOutcomeQualityLegacyModel(buildConfig.Model)
 	if err != nil {
 		return nil, fmt.Errorf("outcome-quality legacy model: %w", err)
+	}
+	if err := validateOutcomeQualityLegacyTarget("legacy build", binding.Target); err != nil {
+		return nil, err
 	}
 	workspaceRoot, err := canonicalOutcomeQualityWorkspace(binding.Workspace)
 	if err != nil {
@@ -154,12 +168,13 @@ func BuildOutcomeQualityLegacy(ctx context.Context, binding OutcomeQualitySource
 	if err := buildCtx.Err(); err != nil {
 		return nil, fmt.Errorf("build outcome-quality legacy cmd/picogent: %w", err)
 	}
-	info, err := os.Stat(binaryPath)
+	commandPath, err := validateOutcomeQualityLegacyCommand(binaryPath, workspaceRoot)
 	if err != nil {
-		return nil, fmt.Errorf("stat built outcome-quality legacy cmd/picogent: %w", err)
+		return nil, fmt.Errorf("validate built outcome-quality legacy cmd/picogent: %w", err)
 	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("built outcome-quality legacy cmd/picogent is not a regular file")
+	commandDigest, commandSize, err := hashOutcomeQualityLegacyCommand(commandPath)
+	if err != nil {
+		return nil, fmt.Errorf("identify built outcome-quality legacy cmd/picogent: %w", err)
 	}
 	if err := validateOutcomeQualitySourceBinding(ctx, "legacy build", binding.Target, workspaceRoot); err != nil {
 		return nil, err
@@ -168,11 +183,14 @@ func BuildOutcomeQualityLegacy(ctx context.Context, binding OutcomeQualitySource
 	keepBuildDir = true
 	return &OutcomeQualityLegacyBuild{
 		executor: &OutcomeQualityLegacyProcessExecutor{
-			Command:     binaryPath,
-			Binding:     OutcomeQualitySourceBinding{Target: binding.Target, Workspace: workspaceRoot},
-			ProviderURL: providerURL,
-			Model:       model,
-			TempParent:  buildDir,
+			Command:       commandPath,
+			Binding:       OutcomeQualitySourceBinding{Target: binding.Target, Workspace: workspaceRoot},
+			ProviderURL:   providerURL,
+			Model:         model,
+			TempParent:    buildDir,
+			commandPath:   commandPath,
+			commandDigest: commandDigest,
+			commandSize:   commandSize,
 		},
 		dir: buildDir,
 	}, nil
@@ -213,6 +231,9 @@ func (e *OutcomeQualityLegacyProcessExecutor) validateOutcomeQualitySource(ctx c
 	if err != nil {
 		return fmt.Errorf("outcome-quality legacy workspace: %w", err)
 	}
+	if err := validateOutcomeQualityLegacyTarget("legacy", e.Binding.Target); err != nil {
+		return err
+	}
 	return validateOutcomeQualitySourceBinding(ctx, "legacy", e.Binding.Target, workspaceRoot)
 }
 
@@ -250,7 +271,7 @@ func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, reque
 	if err := validateOutcomeQualitySourceBinding(ctx, "legacy", e.Binding.Target, workspaceRoot); err != nil {
 		return OutcomeQualityExecution{}, err
 	}
-	commandPath, err := validateOutcomeQualityLegacyCommand(e.Command, workspaceRoot)
+	commandPath, err := validateOutcomeQualityLegacyExecutable(e, workspaceRoot)
 	if err != nil {
 		return OutcomeQualityExecution{}, err
 	}
@@ -384,8 +405,8 @@ func validateOutcomeQualityLegacyRequest(request OutcomeQualityExecutionRequest)
 	if !outcomeQualityScenarioMatchesCatalog(request.Scenario) {
 		return OutcomeQualityInput{}, errors.New("legacy scenario is not in the stable catalog")
 	}
-	if !validSHA(request.Target.SourceHead) {
-		return OutcomeQualityInput{}, errors.New("legacy target source_head must be a full 40-character commit SHA")
+	if err := validateOutcomeQualityLegacyTarget("legacy request", request.Target); err != nil {
+		return OutcomeQualityInput{}, err
 	}
 	if err := validateOutcomeQualityPolicy(request.Policy); err != nil {
 		return OutcomeQualityInput{}, fmt.Errorf("legacy policy: %w", err)
@@ -402,14 +423,24 @@ func validateOutcomeQualityLegacyRequest(request OutcomeQualityExecutionRequest)
 }
 
 func validateOutcomeQualityProviderTarget(binding, request OutcomeQualityTarget) error {
-	if err := validateOutcomeQualityTarget("legacy binding", binding); err != nil {
+	if err := validateOutcomeQualityLegacyTarget("legacy binding", binding); err != nil {
 		return err
 	}
-	if err := validateOutcomeQualityTarget("legacy request", request); err != nil {
+	if err := validateOutcomeQualityLegacyTarget("legacy request", request); err != nil {
 		return err
 	}
 	if !outcomeQualityTargetsEqual(binding, request) {
 		return errors.New("legacy binding and request target must match")
+	}
+	return nil
+}
+
+func validateOutcomeQualityLegacyTarget(name string, target OutcomeQualityTarget) error {
+	if err := validateOutcomeQualityTarget(name, target); err != nil {
+		return err
+	}
+	if target.SourceHead != OutcomeQualityLegacySourceHead {
+		return fmt.Errorf("%s source_head=%q is not the allowlisted exact v3 baseline %q", name, target.SourceHead, OutcomeQualityLegacySourceHead)
 	}
 	return nil
 }
@@ -426,12 +457,18 @@ func validateOutcomeQualityLegacyCommand(raw, sourceWorkspace string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("resolve outcome-quality legacy command: %w", err)
 	}
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return "", fmt.Errorf("stat outcome-quality legacy command: %w", err)
 	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("outcome-quality legacy command must not be a symlink")
+	}
 	if !info.Mode().IsRegular() {
 		return "", errors.New("outcome-quality legacy command is not a regular file")
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		return "", errors.New("outcome-quality legacy command is not executable")
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -445,6 +482,75 @@ func validateOutcomeQualityLegacyCommand(raw, sourceWorkspace string) (string, e
 		return "", errors.New("outcome-quality legacy executor cannot use the v4 outcome-quality worker")
 	}
 	return filepath.Clean(resolved), nil
+}
+
+func validateOutcomeQualityLegacyExecutable(executor *OutcomeQualityLegacyProcessExecutor, sourceWorkspace string) (string, error) {
+	if executor == nil {
+		return "", errors.New("outcome-quality legacy executor is nil")
+	}
+	if executor.commandPath == "" || executor.commandSize <= 0 {
+		return "", errors.New("outcome-quality legacy executable identity is unavailable; use BuildOutcomeQualityLegacy")
+	}
+	commandPath, err := validateOutcomeQualityLegacyCommand(executor.Command, sourceWorkspace)
+	if err != nil {
+		return "", err
+	}
+	if !outcomeQualityLegacyPathsEqual(commandPath, executor.commandPath) {
+		return "", errors.New("outcome-quality legacy command path changed after build")
+	}
+	digest, size, err := hashOutcomeQualityLegacyCommand(commandPath)
+	if err != nil {
+		return "", err
+	}
+	if size != executor.commandSize || digest != executor.commandDigest {
+		return "", errors.New("outcome-quality legacy command bytes changed after build")
+	}
+	return commandPath, nil
+}
+
+func hashOutcomeQualityLegacyCommand(path string) ([sha256.Size]byte, int64, error) {
+	var digest [sha256.Size]byte
+	file, err := os.Open(path)
+	if err != nil {
+		return digest, 0, fmt.Errorf("open outcome-quality legacy command: %w", err)
+	}
+	info, statErr := file.Stat()
+	if statErr != nil {
+		_ = file.Close()
+		return digest, 0, fmt.Errorf("stat outcome-quality legacy command: %w", statErr)
+	}
+	if !info.Mode().IsRegular() {
+		_ = file.Close()
+		return digest, 0, errors.New("outcome-quality legacy command is not a regular file")
+	}
+	if info.Size() <= 0 || info.Size() > maxOutcomeQualityLegacyBinaryBytes {
+		_ = file.Close()
+		return digest, 0, fmt.Errorf("outcome-quality legacy command size=%d outside 1..%d", info.Size(), maxOutcomeQualityLegacyBinaryBytes)
+	}
+	hasher := sha256.New()
+	size, copyErr := io.Copy(hasher, io.LimitReader(file, maxOutcomeQualityLegacyBinaryBytes+1))
+	closeErr := file.Close()
+	if copyErr != nil {
+		return digest, 0, fmt.Errorf("read outcome-quality legacy command: %w", copyErr)
+	}
+	if closeErr != nil {
+		return digest, 0, fmt.Errorf("close outcome-quality legacy command: %w", closeErr)
+	}
+	if size != info.Size() {
+		return digest, 0, errors.New("outcome-quality legacy command changed while being identified")
+	}
+	if size > maxOutcomeQualityLegacyBinaryBytes {
+		return digest, 0, fmt.Errorf("outcome-quality legacy command exceeds %d bytes", maxOutcomeQualityLegacyBinaryBytes)
+	}
+	copy(digest[:], hasher.Sum(nil))
+	return digest, size, nil
+}
+
+func outcomeQualityLegacyPathsEqual(left, right string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(left), filepath.Clean(right))
+	}
+	return filepath.Clean(left) == filepath.Clean(right)
 }
 
 func outcomeQualityLegacyTempParent(raw, sourceWorkspace string) (string, error) {

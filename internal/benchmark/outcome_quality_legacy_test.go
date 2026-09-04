@@ -171,6 +171,48 @@ func TestOutcomeQualityLegacyRejectsV4WorkerCommand(t *testing.T) {
 	}
 }
 
+func TestOutcomeQualityLegacyRequiresAllowlistedSourceHead(t *testing.T) {
+	target := outcomeQualityLegacySourceTarget(OutcomeQualityLegacySourceHead)
+	if err := validateOutcomeQualityLegacyTarget("legacy", target); err != nil {
+		t.Fatalf("allowlisted legacy target rejected: %v", err)
+	}
+	target.SourceHead = strings.Repeat("b", 40)
+	if err := validateOutcomeQualityLegacyTarget("legacy", target); err == nil || !strings.Contains(err.Error(), "allowlisted exact v3 baseline") {
+		t.Fatalf("non-allowlisted legacy target error=%v", err)
+	}
+}
+
+func TestOutcomeQualityLegacyExecutableIdentityRejectsMutation(t *testing.T) {
+	source := t.TempDir()
+	command := filepath.Join(t.TempDir(), "picogent")
+	if err := os.WriteFile(command, []byte("first binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := validateOutcomeQualityLegacyCommand(command, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, size, err := hashOutcomeQualityLegacyCommand(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &OutcomeQualityLegacyProcessExecutor{
+		Command:       canonical,
+		commandPath:   canonical,
+		commandDigest: digest,
+		commandSize:   size,
+	}
+	if _, err := validateOutcomeQualityLegacyExecutable(executor, source); err != nil {
+		t.Fatalf("unchanged executable rejected: %v", err)
+	}
+	if err := os.WriteFile(command, []byte("replacement binary"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := validateOutcomeQualityLegacyExecutable(executor, source); err == nil || !strings.Contains(err.Error(), "bytes changed after build") {
+		t.Fatalf("replaced executable error=%v, want identity failure", err)
+	}
+}
+
 func outcomeQualityLegacySourceTarget(head string) OutcomeQualityTarget {
 	return OutcomeQualityTarget{
 		SourceHead:  head,
