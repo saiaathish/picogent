@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/procenv"
 )
@@ -20,6 +22,7 @@ const (
 	maxOutcomeQualityWorkerRequestBytes  = 2 << 20
 	maxOutcomeQualityWorkerResponseBytes = 64 << 10
 	maxOutcomeQualityWorkerArgs          = 32
+	maxOutcomeQualityWorkerReadTimeout   = 10 * time.Second
 )
 
 // OutcomeQualityWorkerRequest is the complete bounded input for one target
@@ -74,7 +77,9 @@ func RunOutcomeQualityWorker(ctx context.Context, input io.Reader, output io.Wri
 		return fmt.Errorf("outcome-quality worker executor is required")
 	}
 
-	request, err := decodeOutcomeQualityWorkerRequest(input)
+	readCtx, cancelRead := context.WithTimeout(ctx, maxOutcomeQualityWorkerReadTimeout)
+	defer cancelRead()
+	request, err := decodeOutcomeQualityWorkerRequest(readCtx, input)
 	if err != nil {
 		return err
 	}
@@ -82,18 +87,33 @@ func RunOutcomeQualityWorker(ctx context.Context, input io.Reader, output io.Wri
 	if err != nil {
 		return err
 	}
+	sourceHead, err := outcomeQualityWorkerSourceHead(ctx)
+	if err != nil {
+		return err
+	}
+	if sourceHead != request.Target.SourceHead {
+		return fmt.Errorf("outcome-quality worker source head does not match target")
+	}
 	execution, err := executor.Execute(ctx, executionRequest)
 	if err != nil {
 		return fmt.Errorf("outcome-quality worker execution failed: %w", err)
 	}
-	if err := validateOutcomeQualityMetrics(execution.Metrics, request.Policy, 0); err != nil {
+	reasons := boundedOutcomeQualityReasons(execution.Unverified, 8)
+	metrics := execution.Metrics
+	if len(reasons) > 0 {
+		metrics = inconclusiveOutcomeQualityMetrics(metrics.LatencyMillis)
+	}
+	if err := validateOutcomeQualityMetrics(metrics, request.Policy, 0); err != nil {
 		return fmt.Errorf("outcome-quality worker metrics: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("outcome-quality worker canceled: %w", err)
 	}
 	response := OutcomeQualityWorkerResponse{
 		Protocol:   OutcomeQualityWorkerProtocol,
-		SourceHead: request.Target.SourceHead,
-		Metrics:    execution.Metrics,
-		Unverified: boundedOutcomeQualityReasons(execution.Unverified, 8),
+		SourceHead: sourceHead,
+		Metrics:    metrics,
+		Unverified: reasons,
 	}
 	return encodeOutcomeQualityWorkerResponse(output, response)
 }
@@ -111,6 +131,12 @@ func (e *OutcomeQualityProcessExecutor) Execute(ctx context.Context, request Out
 	if strings.TrimSpace(e.Command) == "" {
 		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker command is required")
 	}
+	if len(e.Command) > MaxOutcomeQualityTextBytes {
+		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker command is too large")
+	}
+	if !filepath.IsAbs(e.Command) {
+		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker command must be an absolute path")
+	}
 	if len(e.Args) > maxOutcomeQualityWorkerArgs {
 		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker args exceed %d", maxOutcomeQualityWorkerArgs)
 	}
@@ -122,11 +148,16 @@ func (e *OutcomeQualityProcessExecutor) Execute(ctx context.Context, request Out
 	if err := validateOutcomeQualityWorkerTarget(e.Binding.Target, request.Target); err != nil {
 		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker target: %w", err)
 	}
+	if err := validateOutcomeQualityPolicy(request.Policy); err != nil {
+		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker policy: %w", err)
+	}
+	workerCtx, cancel := context.WithTimeout(ctx, time.Duration(request.Policy.TimeoutMillis)*time.Millisecond)
+	defer cancel()
 	workspace, err := canonicalOutcomeQualityWorkspace(e.Binding.Workspace)
 	if err != nil {
 		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker workspace: %w", err)
 	}
-	if err := validateOutcomeQualitySourceBinding(ctx, "worker", e.Binding.Target, workspace); err != nil {
+	if err := validateOutcomeQualitySourceBinding(workerCtx, "worker", e.Binding.Target, workspace); err != nil {
 		return OutcomeQualityExecution{}, err
 	}
 
@@ -148,18 +179,25 @@ func (e *OutcomeQualityProcessExecutor) Execute(ctx context.Context, request Out
 		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker request exceeds %d bytes", maxOutcomeQualityWorkerRequestBytes)
 	}
 
-	command := exec.CommandContext(ctx, e.Command, e.Args...)
+	command := exec.Command(e.Command, e.Args...)
 	command.Dir = workspace
-	command.Env = procenv.Sanitized()
+	command.Env = outcomeQualityWorkerEnvironment()
 	command.Stdin = bytes.NewReader(payload)
 	var stdout outcomeQualityWorkerBuffer
 	command.Stdout = &stdout
 	command.Stderr = io.Discard
-	if err := command.Run(); err != nil {
+	configureOutcomeQualityWorkerCommand(command)
+	if err := runOutcomeQualityWorkerCommand(workerCtx, command); err != nil {
+		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker command failed: %w", err)
+	}
+	if err := workerCtx.Err(); err != nil {
 		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker command failed: %w", err)
 	}
 	if stdout.truncated {
 		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker response exceeds %d bytes", maxOutcomeQualityWorkerResponseBytes)
+	}
+	if err := validateOutcomeQualitySourceBinding(workerCtx, "worker", e.Binding.Target, workspace); err != nil {
+		return OutcomeQualityExecution{}, err
 	}
 	response, err := decodeOutcomeQualityWorkerResponse(bytes.NewReader(stdout.data.Bytes()))
 	if err != nil {
@@ -187,8 +225,14 @@ func validateOutcomeQualityWorkerTarget(binding, request OutcomeQualityTarget) e
 	return nil
 }
 
-func decodeOutcomeQualityWorkerRequest(input io.Reader) (OutcomeQualityWorkerRequest, error) {
-	data, err := io.ReadAll(io.LimitReader(input, maxOutcomeQualityWorkerRequestBytes+1))
+func decodeOutcomeQualityWorkerRequest(ctx context.Context, input io.Reader) (OutcomeQualityWorkerRequest, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if input == nil {
+		return OutcomeQualityWorkerRequest{}, fmt.Errorf("read outcome-quality worker request: input is required")
+	}
+	data, err := readOutcomeQualityWorkerBytes(ctx, input, maxOutcomeQualityWorkerRequestBytes)
 	if err != nil {
 		return OutcomeQualityWorkerRequest{}, fmt.Errorf("read outcome-quality worker request: %w", err)
 	}
@@ -200,6 +244,40 @@ func decodeOutcomeQualityWorkerRequest(input io.Reader) (OutcomeQualityWorkerReq
 		return OutcomeQualityWorkerRequest{}, fmt.Errorf("decode outcome-quality worker request: %w", err)
 	}
 	return request, nil
+}
+
+func readOutcomeQualityWorkerBytes(ctx context.Context, input io.Reader, maxBytes int) ([]byte, error) {
+	readDone := make(chan struct{})
+	var data []byte
+	var readErr error
+	go func() {
+		data, readErr = io.ReadAll(io.LimitReader(input, int64(maxBytes)+1))
+		close(readDone)
+	}()
+	select {
+	case <-readDone:
+		return data, readErr
+	case <-ctx.Done():
+		if closer, ok := input.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		return nil, ctx.Err()
+	}
+}
+
+func outcomeQualityWorkerSourceHead(ctx context.Context) (string, error) {
+	result, err := procenv.Output(ctx, procenv.DefaultCommandTimeout, "git", "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("outcome-quality worker source head: %w", err)
+	}
+	if result.Truncated {
+		return "", fmt.Errorf("outcome-quality worker source head output is too large")
+	}
+	head := strings.TrimSpace(string(result.Output))
+	if !validSHA(head) {
+		return "", fmt.Errorf("outcome-quality worker source head is invalid")
+	}
+	return head, nil
 }
 
 func normalizeOutcomeQualityWorkerRequest(request OutcomeQualityWorkerRequest) (OutcomeQualityExecutionRequest, error) {
@@ -257,8 +335,12 @@ func encodeOutcomeQualityWorkerResponse(output io.Writer, response OutcomeQualit
 	if len(data) > maxOutcomeQualityWorkerResponseBytes {
 		return fmt.Errorf("outcome-quality worker response exceeds %d bytes", maxOutcomeQualityWorkerResponseBytes)
 	}
-	if _, err := output.Write(data); err != nil {
+	written, err := output.Write(data)
+	if err != nil {
 		return fmt.Errorf("write outcome-quality worker response: %w", err)
+	}
+	if written != len(data) {
+		return fmt.Errorf("write outcome-quality worker response: %w", io.ErrShortWrite)
 	}
 	return nil
 }

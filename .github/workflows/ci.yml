@@ -36,7 +36,7 @@ jobs:
         run: go vet ./...
       - name: Race test (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: go test -race ./internal/agent ./internal/gui ./internal/tui ./internal/taskstate ./internal/acceptance
+        run: go test -race ./internal/agent ./internal/benchmark ./internal/gui ./internal/tui ./internal/taskstate ./internal/acceptance
       - name: Fuzz security boundaries (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
