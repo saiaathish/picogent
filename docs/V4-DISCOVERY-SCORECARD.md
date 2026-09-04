@@ -1,14 +1,14 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-09-03 against the exact `main` merge
-`d565905fa736e944668cce0ddeec194a7222c6a6` after the outcome, recovery, GUI,
+`b73db3f297edd7759de4030145574b26dc6eefdc` after the outcome, recovery, GUI,
 undo-publication, lifecycle, proof-continuity, cancellation, hosted
-attestation, TUI recovery, setup, restore-inspection, and workflow action-pin
-slices through PRs #297, #298, #299, #301, #303, #318, #320, #343, #347,
-#349, #351, #353, #355, #357, #359, #363, #386, #401, #402, #407, #409,
-#411, #414, #415, #416, and #417 merged. The bounded release-evidence audit
-remains tracked in issue #316; prior audit observations and their unverified
-boundaries are preserved below.
+attestation, TUI recovery, setup, restore-inspection, workflow action-pin,
+contradiction, and retention slices through PRs #297, #298, #299, #301, #303,
+#318, #320, #343, #347, #349, #351, #353, #355, #357, #359, #363, #386,
+#401, #402, #407, #409, #411, #414, #415, #416, #417, and #419 merged. The
+bounded release-evidence audit remains tracked in issue #316; prior audit
+observations and their unverified boundaries are preserved below.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -82,7 +82,8 @@ not enough to establish real runtime behavior.
 
 ### Wasteful
 
-- Duplicate surface admission/inference and stale benchmark anchors.
+- Duplicate surface admission/inference and repeated large-output/provenance
+  scans.
 - Duplicate stale-output reduction paths and duplicate task/evidence models.
 - Optional provider installation and advanced UI concepts in the first-run
   path.
@@ -273,7 +274,7 @@ tracked in issue #243.
 ## Current-head reconciliation (2026-09-03)
 
 The scorecard is now reconciled with the exact audited `main` head
-`d565905fa736e944668cce0ddeec194a7222c6a6`. The following bounded slices are
+`b73db3f297edd7759de4030145574b26dc6eefdc`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger and the completed
 continuity child lanes. The action-pin entry at the end is current-main
 evidence; older audit entries retain the limits that applied at their heads:
@@ -420,7 +421,22 @@ evidence; older audit entries retain the limits that applied at their heads:
   provider-independent contract and test changes; they do not by themselves
   establish live context quality.
 
-## Retention L-lane candidate (2026-09-03)
+PR #419 reconciles the contradiction and retention evidence on the current
+main head. Its documentation source head is
+`cb370495eae144302ade542d7bace4404705fb70`, its merge commit is
+`b73db3f297edd7759de4030145574b26dc6eefdc`, and its PR validation run
+`33824175340` plus post-merge main run `33824519857` passed all five hosted
+gates. This was a documentation checkpoint; it did not change production
+behavior or open a new implementation lane.
+
+Issue #420 refreshes the current-head anchors in this scorecard, the
+deterministic benchmark comparison, and the independent release audit. The
+fresh benchmark remains provider-independent and records bounded v3/v4
+regressions; the current release manifest remains `UNVERIFIED`, and the
+highest-value unresolved measurement is outcome-level v3/v4 quality rather
+than another speculative optimization.
+
+## Historical retention L-lane candidate (2026-09-03)
 
 The M retention lane from issue #405 is closed by PR #416. Its source commits
 `c77c1a7`, `86e4870`, and `1a3f076` merged to `main` as `5a45b46`; PR hosted

@@ -1,19 +1,90 @@
 # Deterministic v3/v4 benchmark comparison
 
-Status: measured locally on 2026-09-02. This is a provider-independent
-regression comparison, not a live-provider quality, browser, or product-SLA
-claim.
+Status: refreshed with local measurements on 2026-09-03 at exact current
+merged `main` head `b73db3f297edd7759de4030145574b26dc6eefdc`. This is a
+provider-independent regression comparison, not a live-provider quality,
+browser, or product-SLA claim.
 
-The v3/v4 comparison table below is anchored to the pre-measurement merged v4
-head `275afdb8bdb727ce7a67d37a0b4570eea595f125`. The latest merged `main`
-head is `4046d6c807514614cd704b73f9ef8da12eaa1ae1`; the earlier current-main
-checkpoint at `c6d87bf5b38e6afb1322e6982d3033357df59819` remains below as
-historical evidence. PR #332 added a same-iteration causal control for the
-scripted-edit follow-up tracked by #302, and PR #372 refreshes that control at
-the latest head. `internal/benchmark/stages_test.go` provides both the
-standalone and composite controls.
+The historical v3/v4 sections below remain anchored to the
+pre-measurement merged v4 head
+`275afdb8bdb727ce7a67d37a0b4570eea595f125`. The earlier current-main
+checkpoints at `c6d87bf5b38e6afb1322e6982d3033357df59819` and
+`4046d6c807514614cd704b73f9ef8da12eaa1ae1` remain historical evidence. PR #332
+added a same-iteration causal control for the scripted-edit follow-up tracked
+by #302, and PR #372 refreshes that control at a prior merged head.
+`internal/benchmark/stages_test.go` provides both the standalone and composite
+controls.
 
-## Reproducibility
+## Fresh exact-current-main checkpoint (2026-09-03)
+
+The fresh comparison uses v3 baseline `a07943b31044049afb0142f39198244cd3c75218`
+and current v4/main candidate `b73db3f297edd7759de4030145574b26dc6eefdc`.
+Both exact heads were measured three times on the same Apple M3 arm64 Mac with
+Go `go1.26.6`. The deterministic common-operation command was:
+
+```sh
+go test ./internal/benchmark -run '^$' \
+  -bench '^(BenchmarkContextManage|BenchmarkRepoMap|BenchmarkSession|BenchmarkVerification)' \
+  -benchtime=100ms -benchmem -count=3
+```
+
+The scripted-edit command was:
+
+```sh
+go test ./internal/benchmark -run '^$' \
+  -bench '^BenchmarkScriptedAgentEdit$' -benchtime=1x -benchmem -count=3
+```
+
+Both commands passed at both exact heads. Times are `ns/op`; allocation columns
+are `B/op` and `allocs/op`. Values are min / median / max across the three
+runs:
+
+| Operation | v3 ns/op | v4 ns/op | v3 B/op | v4 B/op | v3 allocs/op | v4 allocs/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Context manage, working set | 48,549 / 48,891 / 50,756 | 81,095 / 81,633 / 83,660 | 105,067 / 105,067 / 105,070 | 172,559 / 172,560 / 172,560 | 243 | 495 |
+| Context manage, context-heavy | 2,397,467 / 2,411,633 / 2,446,490 | 2,604,863 / 2,607,996 / 2,651,241 | 486,447 / 486,452 / 486,909 | 1,067,565 / 1,069,645 / 1,069,721 | 659 / 659 / 660 | 2,397 / 2,401 / 2,401 |
+| Repo-map inspect | 34,973,833 / 35,995,812 / 45,360,694 | 34,380,430 / 35,690,260 / 39,710,979 | 49,157 / 51,014 / 51,016 | 121,885 / 123,404 / 124,168 | 257 / 259 / 260 | 297 / 298 / 299 |
+| Repo-map format | 3,222 / 3,222 / 3,390 | 32,934 / 33,733 / 33,903 | 2,370 | 2,532 / 2,542 / 2,562 | 12 | 20 |
+| Session metadata list, 60 records | 17,006,038 / 31,793,672 / 47,985,693 | 80,486,945 / 91,405,479 / 93,528,083 | 183,168 / 183,200 / 183,200 | 231,392 / 231,416 / 243,773 | 1,962 | 3,069 / 3,069 / 3,070 |
+| Verification plan | 2,124 / 2,125 / 2,201 | 2,194 / 2,358 / 3,286 | 864 | 864 | 15 | 15 |
+| Verification evidence | 3,598 / 3,785 / 4,301 | 3,520 / 3,638 / 3,959 | 1,792 | 1,792 | 1 | 1 |
+
+The v4 session-load fixture has a changed shape and is therefore reported
+separately rather than treated as a strict v3 comparison:
+
+| Operation | v4 ns/op | v4 B/op | v4 allocs/op |
+| --- | ---: | ---: | ---: |
+| Session load, canonical | 1,535,555 / 1,842,209 / 2,849,233 | 6,414 / 6,466 / 6,977 | 92 |
+| Session load, legacy-history | 2,550,120 / 3,430,354 / 6,966,698 | 722,894 / 729,002 / 730,869 | 2,033 / 2,035 / 2,035 |
+
+The scripted-edit fixture performs one deterministic edit turn per repetition
+and reports the model-call count supplied by the test double; it does not
+measure a live model:
+
+| Operation | v3 ns/op | v4 ns/op | v3 B/op | v4 B/op | v3 allocs/op | v4 allocs/op | model-calls/op |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Scripted agent edit | 713,542 / 872,458 / 922,749 | 8,383,333 / 9,294,457 / 13,295,875 | 113,136 / 113,808 / 116,288 | 125,376 / 125,648 / 127,952 | 1,114 / 1,115 / 1,151 | 1,316 / 1,317 / 1,352 | 2.000 / 2.000 |
+
+### Fresh-checkpoint interpretation
+
+- The working-set context fixture is `1.670x` slower at the median in v4,
+  with higher bytes and allocations; the context-heavy fixture is `1.081x`
+  slower and allocation-heavy.
+- Repo-map inspection is slightly faster at the median (`0.992x`) while using
+  more bytes and allocations. Repo-map formatting is `10.470x` slower, and
+  session metadata listing is `2.875x` slower at the median.
+- The scripted-edit fixture is `10.653x` slower at the median in v4, with
+  higher bytes and allocations. This remains a provider-independent local
+  control, not evidence of live-provider quality or a product-SLA regression.
+- Verification-plan and verification-evidence medians remain close in this
+  run. The changed-shape session-load rows are descriptive v4-only evidence.
+
+No new production optimization lane is justified by this checkpoint alone;
+issue #302 remains open for a separately causal target. Outcome-level v3/v4
+quality, live-provider behavior, rendered runtime behavior, and release
+readiness remain outside these measurements.
+
+## Historical comparison reproducibility
 
 The comparison commands were run three times at both exact heads, on the same
 Apple M3 arm64 Mac with Go `go1.26.6`:
@@ -135,7 +206,7 @@ subtotal accounts for essentially all of this provider-independent local
 fixture's wall time; this does not establish a live-provider regression,
 product SLA, or release authorization.
 
-## Fresh current-main scripted-edit checkpoint
+## Historical current-main scripted-edit checkpoint
 
 At exact merged `main` head `4046d6c807514614cd704b73f9ef8da12eaa1ae1`, the
 same provider-independent controls were rerun on an Apple M3 arm64 Mac with
@@ -176,7 +247,7 @@ runtime behavior, a product SLA, or release readiness. No new production
 optimization lane is justified by this checkpoint alone; #302 remains open for
 a separately causal target.
 
-## Interpretation
+## Historical interpretation
 
 - Context management improved in the working-set fixture at the median, with
   fewer bytes and allocations; the context-heavy fixture was modestly slower.
