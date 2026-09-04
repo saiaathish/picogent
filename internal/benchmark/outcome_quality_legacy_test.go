@@ -89,6 +89,9 @@ func TestOutcomeQualityLegacyProviderURLRequiresLoopbackHTTP(t *testing.T) {
 		{name: "credentials", url: "http://user:pass@127.0.0.1:8080"},
 		{name: "query", url: "http://127.0.0.1:8080/v1?token=secret"},
 		{name: "bad port", url: "http://127.0.0.1:0"},
+		{name: "empty port", url: "http://127.0.0.1:"},
+		{name: "empty ipv6 port", url: "http://[::1]:"},
+		{name: "out of range port", url: "http://127.0.0.1:65536"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -377,6 +380,41 @@ func TestOutcomeQualityLegacyBudgetProxyRejectsMissingUsage(t *testing.T) {
 	}
 }
 
+func TestOutcomeQualityLegacyBudgetProxyRejectsRedirects(t *testing.T) {
+	redirectTargetCalls := 0
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		redirectTargetCalls++
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer redirectTarget.Close()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, redirectTarget.URL, http.StatusTemporaryRedirect)
+	}))
+	defer upstream.Close()
+	proxy, err := newOutcomeQualityLegacyBudgetProxy(upstream.URL, validOutcomeQualityLegacyProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+
+	response, err := http.Post(proxy.URL()+"/chat/completions", "application/json", strings.NewReader(`{"model":"fixture"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, readErr := io.ReadAll(response.Body)
+	closeErr := response.Body.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read proxy response: read=%v close=%v", readErr, closeErr)
+	}
+	if response.StatusCode != http.StatusBadGateway || !strings.Contains(string(body), "redirects are not allowed") {
+		t.Fatalf("proxy response status=%d body=%q, want redirect rejection", response.StatusCode, body)
+	}
+	if redirectTargetCalls != 0 {
+		t.Fatalf("redirect target calls=%d, want zero", redirectTargetCalls)
+	}
+}
+
 func TestOutcomeQualityLegacyProviderUsageRejectsTokenOverflow(t *testing.T) {
 	maxInt := int(^uint(0) >> 1)
 	payload, err := json.Marshal(map[string]any{
@@ -487,7 +525,7 @@ func TestOutcomeQualityLegacyCommandRejectsInvalidIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, tc := range []struct {
+	cases := []struct {
 		name string
 		path string
 		want string
@@ -495,14 +533,44 @@ func TestOutcomeQualityLegacyCommandRejectsInvalidIdentity(t *testing.T) {
 		{name: "empty", path: "", want: "is required"},
 		{name: "relative", path: "picogent", want: "absolute path"},
 		{name: "directory", path: directory, want: "not a regular file"},
-		{name: "not executable", path: nonExecutable, want: "not executable"},
 		{name: "inside source", path: inside, want: "outside source workspace"},
-	} {
+	}
+	if runtime.GOOS != "windows" {
+		cases = append(cases, struct {
+			name string
+			path string
+			want string
+		}{name: "not executable", path: nonExecutable, want: "not executable"})
+	}
+	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := validateOutcomeQualityLegacyCommand(tc.path, source); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("command %q error=%v, want %q", tc.path, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestOutcomeQualityLegacyRequestRejectsRepetitionOutsidePolicy(t *testing.T) {
+	target := outcomeQualityLegacySourceTarget(OutcomeQualityLegacySourceHead)
+	scenario := DefaultOutcomeQualityScenarios()[0]
+	input, err := normalizeOutcomeQualityInput(outcomeQualityLegacyInput(scenario))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := outcomeQualityInputDigest(input)
+	scenario.InputSHA256 = digest
+	request := OutcomeQualityExecutionRequest{
+		Scenario:    scenario,
+		Variant:     OutcomeVariantBaseline,
+		Repetition:  3,
+		InputSHA256: digest,
+		Input:       input,
+		Target:      target,
+		Policy:      validOutcomeQualityLegacyProxyPolicy(),
+	}
+	if _, err := validateOutcomeQualityLegacyRequest(request); err == nil || !strings.Contains(err.Error(), "exceeds policy repetitions") {
+		t.Fatalf("repetition validation error=%v, want policy bound rejection", err)
 	}
 }
 

@@ -56,6 +56,7 @@ type OutcomeQualityLegacyBuildConfig struct {
 // workspace. The binary, Go cache, and per-observation state all live outside
 // that workspace. Call Close when the matrix is done.
 type OutcomeQualityLegacyBuild struct {
+	mu       sync.Mutex
 	executor *OutcomeQualityLegacyProcessExecutor
 	dir      string
 }
@@ -215,12 +216,20 @@ func (b *OutcomeQualityLegacyBuild) ProcessExecutor() *OutcomeQualityLegacyProce
 // Close removes only the temporary directory created by
 // BuildOutcomeQualityLegacy.
 func (b *OutcomeQualityLegacyBuild) Close() error {
-	if b == nil || b.dir == "" {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.dir == "" {
 		return nil
 	}
 	dir := b.dir
+	if err := removeOutcomeQualityLegacyDir(dir); err != nil {
+		return err
+	}
 	b.dir = ""
-	return removeOutcomeQualityLegacyDir(dir)
+	return nil
 }
 
 func (e *OutcomeQualityLegacyProcessExecutor) outcomeQualitySourceBinding() OutcomeQualitySourceBinding {
@@ -433,6 +442,9 @@ func validateOutcomeQualityLegacyRequest(request OutcomeQualityExecutionRequest)
 	if err := validateOutcomeQualityPolicy(request.Policy); err != nil {
 		return OutcomeQualityInput{}, fmt.Errorf("legacy policy: %w", err)
 	}
+	if request.Repetition > request.Policy.Repetitions {
+		return OutcomeQualityInput{}, fmt.Errorf("legacy repetition=%d exceeds policy repetitions=%d", request.Repetition, request.Policy.Repetitions)
+	}
 	input, err := normalizeOutcomeQualityInput(request.Input)
 	if err != nil {
 		return OutcomeQualityInput{}, fmt.Errorf("normalize legacy input: %w", err)
@@ -489,7 +501,7 @@ func validateOutcomeQualityLegacyCommand(raw, sourceWorkspace string) (string, e
 	if !info.Mode().IsRegular() {
 		return "", errors.New("outcome-quality legacy command is not a regular file")
 	}
-	if info.Mode().Perm()&0o111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o111 == 0 {
 		return "", errors.New("outcome-quality legacy command is not executable")
 	}
 	resolved, err := filepath.EvalSymlinks(path)
@@ -620,6 +632,9 @@ func normalizeOutcomeQualityLegacyProviderURL(raw string) (string, error) {
 	if u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return "", errors.New("provider URL must be a credential-free loopback origin")
 	}
+	if strings.HasSuffix(u.Host, ":") {
+		return "", errors.New("provider URL port is invalid")
+	}
 	host := u.Hostname()
 	if host == "" {
 		return "", errors.New("provider URL host is required")
@@ -676,6 +691,9 @@ func removeOutcomeQualityLegacyDir(root string) error {
 		return os.Chmod(path, 0o700)
 	})
 	removeErr := os.RemoveAll(root)
+	if errors.Is(walkErr, os.ErrNotExist) {
+		walkErr = nil
+	}
 	if walkErr != nil && removeErr != nil {
 		return errors.Join(walkErr, removeErr)
 	}
@@ -832,6 +850,10 @@ func (p *outcomeQualityLegacyBudgetProxy) handle(w http.ResponseWriter, request 
 	}
 	if len(responseBody) > maxOutcomeQualityLegacyProviderPayloadBytes {
 		http.Error(w, "legacy provider response is too large", http.StatusBadGateway)
+		return
+	}
+	if response.StatusCode >= http.StatusMultipleChoices && response.StatusCode < http.StatusBadRequest {
+		http.Error(w, "legacy provider redirects are not allowed", http.StatusBadGateway)
 		return
 	}
 	if response.StatusCode >= http.StatusBadRequest {
