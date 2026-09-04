@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -17,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/saiaathish/picogent/internal/procenv"
@@ -24,11 +28,12 @@ import (
 )
 
 const (
-	maxOutcomeQualityLegacyOutputBytes  = 64 << 10
-	maxOutcomeQualityLegacyBuildTimeout = 2 * time.Minute
-	maxOutcomeQualityLegacyBinaryBytes  = 128 << 20
-	defaultOutcomeQualityLegacyModel    = "outcome-quality-legacy"
-	outcomeQualityLegacyLocalAPIKey     = "picogent-local-provider"
+	maxOutcomeQualityLegacyOutputBytes          = 64 << 10
+	maxOutcomeQualityLegacyBuildTimeout         = 2 * time.Minute
+	maxOutcomeQualityLegacyBinaryBytes          = 128 << 20
+	maxOutcomeQualityLegacyProviderPayloadBytes = 8 << 20
+	defaultOutcomeQualityLegacyModel            = "outcome-quality-legacy"
+	outcomeQualityLegacyLocalAPIKey             = "picogent-local-provider"
 )
 
 // OutcomeQualityLegacySourceHead is the immutable v3 baseline used by this
@@ -309,7 +314,12 @@ func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, reque
 
 	command := exec.Command(commandPath, "run", "--yes", "--dir", fixtureRoot, input.Prompt)
 	command.Dir = fixtureRoot
-	command.Env = outcomeQualityLegacyEnvironment(homeRoot, tempRoot, cacheRoot, providerURL, model)
+	budgetProxy, err := newOutcomeQualityLegacyBudgetProxy(providerURL, request.Policy)
+	if err != nil {
+		return OutcomeQualityExecution{}, fmt.Errorf("start legacy provider budget proxy: %w", err)
+	}
+	defer budgetProxy.Close()
+	command.Env = outcomeQualityLegacyEnvironment(homeRoot, tempRoot, cacheRoot, budgetProxy.URL(), model)
 	command.Stdin = strings.NewReader("")
 	var stdout, stderr outcomeQualityLegacyBuffer
 	command.Stdout = &stdout
@@ -347,25 +357,26 @@ func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, reque
 		return OutcomeQualityExecution{}, fmt.Errorf("legacy fixture after-run observation is not fresh: %s", comparison.Reason)
 	}
 
-	correctContent, actual, changedPaths, inspectErr := inspectOutcomeQualityLegacyWorkspace(fixtureRoot, input, expected)
+	correctContent, actual, changedPaths, inspectErr := inspectOutcomeQualityLegacyWorkspace(ctx, fixtureRoot, input, expected)
 	if inspectErr != nil {
 		return OutcomeQualityExecution{}, fmt.Errorf("inspect legacy fixture: %w", inspectErr)
 	}
 	wantChanged := append([]string(nil), input.ExpectedChangedPaths...)
 	sort.Strings(wantChanged)
 	changedPathsMatch := sameOutcomeQualityStrings(changedPaths, wantChanged)
-	verification := outcomeQualityLegacyVerificationStatus(stdout.String(), stderr.String())
+	verification := outcomeQualityLegacyVerificationStatus(stderr.String())
 	evidence := EvidenceUnverified
 	if verification == OutcomeVerificationPass || verification == OutcomeVerificationFail {
 		evidence = EvidenceCurrent
 	}
+	tokens, modelCalls, toolCalls := budgetProxy.Metrics()
 	metrics := OutcomeQualityMetrics{
 		OutcomeSuccess:      OutcomeAssessmentInconclusive,
 		Correctness:         OutcomeAssessmentInconclusive,
 		UserQuestions:       0,
-		Tokens:              0,
-		ModelCalls:          0,
-		ToolCalls:           outcomeQualityLegacyToolCalls(stderr.String()),
+		Tokens:              tokens,
+		ModelCalls:          modelCalls,
+		ToolCalls:           toolCalls,
 		ChangedLines:        outcomeQualityChangedLines(input, actual),
 		UnnecessaryChanges:  outcomeQualityUnnecessaryChanges(changedPaths, wantChanged),
 		VerificationQuality: verification,
@@ -381,9 +392,9 @@ func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, reque
 		reasons = append(reasons, fmt.Sprintf("legacy v3 verification was %s", verification))
 	}
 	reasons = append(reasons,
-		"legacy v3 does not expose provider token usage or model-call counts",
 		"legacy v3 does not expose structured repair counts",
 		"legacy v3 does not expose context-growth measurement",
+		"legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3",
 	)
 	if verification == OutcomeVerificationPass && correctContent && changedPathsMatch {
 		metrics.OutcomeSuccess = OutcomeAssessmentPass
@@ -696,6 +707,186 @@ func outcomeQualityLegacyEnvironment(homeDir, tempDir, cacheDir, providerURL, mo
 	})
 }
 
+type outcomeQualityLegacyBudgetProxy struct {
+	server *httptest.Server
+	target *url.URL
+	client *http.Client
+	policy OutcomeQualityPolicy
+
+	mu         sync.Mutex
+	modelCalls int
+	toolCalls  int
+	tokens     int
+}
+
+func newOutcomeQualityLegacyBudgetProxy(providerURL string, policy OutcomeQualityPolicy) (*outcomeQualityLegacyBudgetProxy, error) {
+	target, err := url.Parse(providerURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse provider URL: %w", err)
+	}
+	proxy := &outcomeQualityLegacyBudgetProxy{
+		target: target,
+		client: &http.Client{
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+		policy: policy,
+	}
+	proxy.server = httptest.NewServer(http.HandlerFunc(proxy.handle))
+	return proxy, nil
+}
+
+func (p *outcomeQualityLegacyBudgetProxy) URL() string {
+	if p == nil || p.server == nil {
+		return ""
+	}
+	return p.server.URL
+}
+
+func (p *outcomeQualityLegacyBudgetProxy) Close() {
+	if p == nil || p.server == nil {
+		return
+	}
+	p.server.Close()
+}
+
+func (p *outcomeQualityLegacyBudgetProxy) Metrics() (tokens, modelCalls, toolCalls int) {
+	if p == nil {
+		return 0, 0, 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.tokens, p.modelCalls, p.toolCalls
+}
+
+func (p *outcomeQualityLegacyBudgetProxy) handle(w http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost || request.URL.Path != "/chat/completions" || request.URL.RawQuery != "" {
+		http.Error(w, "legacy provider proxy only accepts POST /chat/completions", http.StatusNotFound)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(request.Body, maxOutcomeQualityLegacyProviderPayloadBytes+1))
+	if err != nil {
+		http.Error(w, "could not read legacy provider request", http.StatusBadRequest)
+		return
+	}
+	if len(body) > maxOutcomeQualityLegacyProviderPayloadBytes {
+		http.Error(w, "legacy provider request is too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	modelLimit := p.policy.MaxModelCalls
+	if p.policy.MaxTurns < modelLimit {
+		modelLimit = p.policy.MaxTurns
+	}
+	p.mu.Lock()
+	if p.modelCalls >= modelLimit {
+		p.mu.Unlock()
+		http.Error(w, "legacy provider model-call budget exceeded", http.StatusTooManyRequests)
+		return
+	}
+	p.modelCalls++
+	p.mu.Unlock()
+
+	endpoint := *p.target
+	endpoint.Path = strings.TrimRight(p.target.Path, "/") + "/chat/completions"
+	endpoint.RawPath = ""
+	endpoint.RawQuery = ""
+	upstream, err := http.NewRequestWithContext(request.Context(), http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		http.Error(w, "could not create legacy provider request", http.StatusBadGateway)
+		return
+	}
+	for _, header := range []string{"Accept", "Authorization", "Content-Type"} {
+		for _, value := range request.Header.Values(header) {
+			upstream.Header.Add(header, value)
+		}
+	}
+	response, err := p.client.Do(upstream)
+	if err != nil {
+		http.Error(w, "legacy provider request failed", http.StatusBadGateway)
+		return
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxOutcomeQualityLegacyProviderPayloadBytes+1))
+	if err != nil {
+		http.Error(w, "could not read legacy provider response", http.StatusBadGateway)
+		return
+	}
+	if len(responseBody) > maxOutcomeQualityLegacyProviderPayloadBytes {
+		http.Error(w, "legacy provider response is too large", http.StatusBadGateway)
+		return
+	}
+	if response.StatusCode >= http.StatusBadRequest {
+		writeOutcomeQualityLegacyProviderResponse(w, response.StatusCode, response.Header, responseBody)
+		return
+	}
+
+	usage, toolCalls, err := outcomeQualityLegacyProviderUsage(responseBody)
+	if err != nil {
+		http.Error(w, "legacy provider response cannot prove benchmark budgets: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if usage > p.policy.MaxTokens {
+		http.Error(w, "legacy provider token budget exceeded", http.StatusTooManyRequests)
+		return
+	}
+	if p.tokens+usage > p.policy.MaxTokens {
+		http.Error(w, "legacy provider token budget exceeded", http.StatusTooManyRequests)
+		return
+	}
+	if p.toolCalls+toolCalls > p.policy.MaxToolCalls {
+		http.Error(w, "legacy provider tool-call budget exceeded", http.StatusTooManyRequests)
+		return
+	}
+	p.tokens += usage
+	p.toolCalls += toolCalls
+	writeOutcomeQualityLegacyProviderResponse(w, response.StatusCode, response.Header, responseBody)
+}
+
+func outcomeQualityLegacyProviderUsage(payload []byte) (int, int, error) {
+	var response struct {
+		Choices []struct {
+			Message struct {
+				ToolCalls []json.RawMessage `json:"tool_calls"`
+			} `json:"message"`
+		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     *int `json:"prompt_tokens"`
+			CompletionTokens *int `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(payload, &response); err != nil {
+		return 0, 0, fmt.Errorf("invalid JSON")
+	}
+	if response.Usage == nil || response.Usage.PromptTokens == nil || response.Usage.CompletionTokens == nil {
+		return 0, 0, errors.New("usage is missing prompt_tokens or completion_tokens")
+	}
+	if *response.Usage.PromptTokens < 0 || *response.Usage.CompletionTokens < 0 {
+		return 0, 0, errors.New("usage contains a negative token count")
+	}
+	usage := *response.Usage.PromptTokens + *response.Usage.CompletionTokens
+	toolCalls := 0
+	for _, choice := range response.Choices {
+		toolCalls += len(choice.Message.ToolCalls)
+	}
+	return usage, toolCalls, nil
+}
+
+func writeOutcomeQualityLegacyProviderResponse(w http.ResponseWriter, status int, headers http.Header, body []byte) {
+	for key, values := range headers {
+		if strings.EqualFold(key, "Content-Length") {
+			continue
+		}
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
 func outcomeQualityOverrideEnvironment(env []string, overrides map[string]string) []string {
 	keys := make([]string, 0, len(overrides))
 	for key := range overrides {
@@ -738,12 +929,15 @@ func outcomeQualityOverrideEnvironment(env []string, overrides map[string]string
 	return out
 }
 
-func inspectOutcomeQualityLegacyWorkspace(root string, input OutcomeQualityInput, expected map[string]string) (bool, map[string]string, []string, error) {
+func inspectOutcomeQualityLegacyWorkspace(ctx context.Context, root string, input OutcomeQualityInput, expected map[string]string) (bool, map[string]string, []string, error) {
 	actual := make(map[string]string, len(input.Files))
 	changed := make([]string, 0, len(input.Files))
 	known := make(map[string]struct{}, len(input.Files))
 	correct := true
 	for _, file := range input.Files {
+		if err := ctx.Err(); err != nil {
+			return false, actual, nil, err
+		}
 		known[file.Path] = struct{}{}
 		opened, err := workspace.OpenRead(root, file.Path)
 		if err != nil {
@@ -775,12 +969,22 @@ func inspectOutcomeQualityLegacyWorkspace(root string, input OutcomeQualityInput
 			changed = append(changed, file.Path)
 		}
 	}
+	entries := 0
+	const maxEntries = 512
+	const maxDepth = 32
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
 		if path == root {
 			return nil
+		}
+		entries++
+		if entries > maxEntries {
+			return fmt.Errorf("fixture contains more than %d filesystem entries", maxEntries)
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("fixture contains symlink %q", path)
@@ -794,6 +998,9 @@ func inspectOutcomeQualityLegacyWorkspace(root string, input OutcomeQualityInput
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
 			return err
+		}
+		if depth := strings.Count(filepath.ToSlash(rel), "/") + 1; depth > maxDepth {
+			return fmt.Errorf("fixture path %q exceeds depth %d", rel, maxDepth)
 		}
 		rel, err = normalizeOutcomeQualityFixturePath(rel)
 		if err != nil {
@@ -814,37 +1021,39 @@ func inspectOutcomeQualityLegacyWorkspace(root string, input OutcomeQualityInput
 	return correct, actual, changed, nil
 }
 
-func outcomeQualityLegacyVerificationStatus(stdout, stderr string) OutcomeQualityVerification {
+func outcomeQualityLegacyVerificationStatus(stderr string) OutcomeQualityVerification {
 	status := OutcomeVerificationUnverified
-	for _, line := range strings.Split(stdout+"\n"+stderr, "\n") {
-		fields := strings.Fields(line)
-		for index := 0; index+1 < len(fields); index++ {
-			if !strings.EqualFold(strings.Trim(fields[index], " \t:(),[]"), "verify") {
-				continue
-			}
-			switch strings.ToUpper(strings.Trim(fields[index+1], " \t:(),[]")) {
-			case "PASS":
-				status = OutcomeVerificationPass
-			case "FAIL":
-				status = OutcomeVerificationFail
-			case "INCONCLUSIVE":
-				status = OutcomeVerificationInconclusive
-			case "SKIPPED":
-				status = OutcomeVerificationSkipped
-			}
+	verifyResultPending := false
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.HasPrefix(line, "→ ") {
+			fields := strings.Fields(strings.TrimPrefix(line, "→ "))
+			verifyResultPending = len(fields) > 0 && strings.EqualFold(fields[0], "verify")
+			continue
+		}
+		if !verifyResultPending {
+			continue
+		}
+		if !strings.HasPrefix(line, "  ") {
+			verifyResultPending = false
+			continue
+		}
+		verifyResultPending = false
+		fields := strings.Fields(strings.TrimSpace(line))
+		if len(fields) < 2 || !strings.EqualFold(fields[0], "verify") {
+			continue
+		}
+		switch strings.ToUpper(strings.Trim(fields[1], " \t:(),[]")) {
+		case "PASS":
+			status = OutcomeVerificationPass
+		case "FAIL":
+			status = OutcomeVerificationFail
+		case "INCONCLUSIVE":
+			status = OutcomeVerificationInconclusive
+		case "SKIPPED":
+			status = OutcomeVerificationSkipped
 		}
 	}
 	return status
-}
-
-func outcomeQualityLegacyToolCalls(stderr string) int {
-	count := 0
-	for _, line := range strings.Split(stderr, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "→ ") {
-			count++
-		}
-	}
-	return count
 }
 
 type outcomeQualityLegacyBuffer struct {

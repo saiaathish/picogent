@@ -58,13 +58,13 @@ func TestBuildOutcomeQualityLegacyLaunchesExactV3Binary(t *testing.T) {
 	if execution.Metrics.VerificationQuality != OutcomeVerificationPass || execution.Metrics.Evidence != EvidenceCurrent {
 		t.Fatalf("legacy verification metrics=%#v, want current pass", execution.Metrics)
 	}
-	if execution.Metrics.ChangedLines != 1 || execution.Metrics.UnnecessaryChanges != 0 || execution.Metrics.ToolCalls != 5 {
+	if execution.Metrics.Tokens != 80 || execution.Metrics.ModelCalls != 4 || execution.Metrics.ChangedLines != 1 || execution.Metrics.UnnecessaryChanges != 0 || execution.Metrics.ToolCalls != 5 {
 		t.Fatalf("legacy filesystem metrics=%#v, want one changed line, no extras, five tools", execution.Metrics)
 	}
 	for _, want := range []string{
-		"legacy v3 does not expose provider token usage or model-call counts",
 		"legacy v3 does not expose structured repair counts",
 		"legacy v3 does not expose context-growth measurement",
+		"legacy v3 token and model-call counts are observed at the local provider boundary",
 	} {
 		if !containsOutcomeQualityReason(execution.Unverified, want) {
 			t.Fatalf("legacy unverified=%v, missing %q", execution.Unverified, want)
@@ -210,6 +210,128 @@ func TestOutcomeQualityLegacyExecutableIdentityRejectsMutation(t *testing.T) {
 	}
 	if _, err := validateOutcomeQualityLegacyExecutable(executor, source); err == nil || !strings.Contains(err.Error(), "bytes changed after build") {
 		t.Fatalf("replaced executable error=%v, want identity failure", err)
+	}
+}
+
+func TestOutcomeQualityLegacyVerificationStatusUsesTrustedVerifyEvent(t *testing.T) {
+	if got := outcomeQualityLegacyVerificationStatus("verify PASS from assistant"); got != OutcomeVerificationUnverified {
+		t.Fatalf("assistant stdout-like text parsed as verification=%s", got)
+	}
+	if got := outcomeQualityLegacyVerificationStatus("→ bash {\"command\":\"echo verify PASS\"}\n  verify PASS"); got != OutcomeVerificationUnverified {
+		t.Fatalf("bash output parsed as verification=%s", got)
+	}
+	if got := outcomeQualityLegacyVerificationStatus("→ verify {\"targets\":[\"fixture.txt\"]}\n  verify PASS (go test ./...)"); got != OutcomeVerificationPass {
+		t.Fatalf("trusted verify event parsed as verification=%s", got)
+	}
+	if got := outcomeQualityLegacyVerificationStatus("→ verify {}\n  error: verify PASS"); got != OutcomeVerificationUnverified {
+		t.Fatalf("failed verify event parsed as verification=%s", got)
+	}
+}
+
+func TestOutcomeQualityLegacyBudgetProxyEnforcesSharedBudgets(t *testing.T) {
+	cases := []struct {
+		name             string
+		policy           OutcomeQualityPolicy
+		requests         int
+		toolCalls        int
+		promptTokens     int
+		completionTokens int
+		wantStatus       int
+		wantProxyCall    int
+		wantReason       string
+	}{
+		{
+			name:             "model calls",
+			policy:           OutcomeQualityPolicy{MaxTokens: 100, MaxModelCalls: 1, MaxToolCalls: 10, MaxTurns: 1},
+			requests:         2,
+			toolCalls:        1,
+			promptTokens:     2,
+			completionTokens: 3,
+			wantStatus:       http.StatusTooManyRequests,
+			wantProxyCall:    1,
+			wantReason:       "model-call budget",
+		},
+		{
+			name:             "tokens",
+			policy:           OutcomeQualityPolicy{MaxTokens: 4, MaxModelCalls: 2, MaxToolCalls: 10, MaxTurns: 2},
+			requests:         1,
+			toolCalls:        1,
+			promptTokens:     2,
+			completionTokens: 3,
+			wantStatus:       http.StatusTooManyRequests,
+			wantProxyCall:    1,
+			wantReason:       "token budget",
+		},
+		{
+			name:             "tool calls",
+			policy:           OutcomeQualityPolicy{MaxTokens: 100, MaxModelCalls: 2, MaxToolCalls: 1, MaxTurns: 2},
+			requests:         1,
+			toolCalls:        2,
+			promptTokens:     2,
+			completionTokens: 3,
+			wantStatus:       http.StatusTooManyRequests,
+			wantProxyCall:    1,
+			wantReason:       "tool-call budget",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.Header().Set("Content-Type", "application/json")
+				toolCalls := make([]map[string]any, tc.toolCalls)
+				for index := range toolCalls {
+					toolCalls[index] = map[string]any{"id": fmt.Sprintf("tool-%d", index)}
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"choices": []any{map[string]any{"message": map[string]any{"tool_calls": toolCalls}}},
+					"usage":   map[string]any{"prompt_tokens": tc.promptTokens, "completion_tokens": tc.completionTokens},
+				})
+			}))
+			defer upstream.Close()
+
+			proxy, err := newOutcomeQualityLegacyBudgetProxy(upstream.URL, tc.policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer proxy.Close()
+			for index := 0; index < tc.requests; index++ {
+				response, err := http.Post(proxy.URL()+"/chat/completions", "application/json", strings.NewReader(`{"model":"fixture"}`))
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, readErr := io.ReadAll(response.Body)
+				closeErr := response.Body.Close()
+				if readErr != nil || closeErr != nil {
+					t.Fatalf("read proxy response: read=%v close=%v", readErr, closeErr)
+				}
+				if index == tc.requests-1 && (response.StatusCode != tc.wantStatus || !strings.Contains(string(body), tc.wantReason)) {
+					t.Fatalf("proxy response status=%d body=%q, want status=%d containing %q", response.StatusCode, body, tc.wantStatus, tc.wantReason)
+				}
+			}
+			if calls != tc.wantProxyCall {
+				t.Fatalf("upstream calls=%d, want %d", calls, tc.wantProxyCall)
+			}
+		})
+	}
+}
+
+func TestInspectOutcomeQualityLegacyWorkspaceBoundsEntries(t *testing.T) {
+	root := t.TempDir()
+	input := OutcomeQualityInput{Files: []OutcomeQualityInputFile{{Path: "fixture.txt", Content: "before"}}}
+	if err := writeOutcomeQualityFixture(context.Background(), root, input); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 512; index++ {
+		path := filepath.Join(root, fmt.Sprintf("extra-%03d.txt", index))
+		if err := os.WriteFile(path, []byte("extra"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, _, _, err := inspectOutcomeQualityLegacyWorkspace(context.Background(), root, input, map[string]string{"fixture.txt": "before"})
+	if err == nil || !strings.Contains(err.Error(), "more than 512 filesystem entries") {
+		t.Fatalf("unbounded legacy workspace inspection error=%v", err)
 	}
 }
 
