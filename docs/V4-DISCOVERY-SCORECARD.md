@@ -378,11 +378,12 @@ evidence; older audit entries retain the limits that applied at their heads:
   `7482d3d` and merge commit `d28a807d964088305346689287d8b329ba7916d3`;
   PR run `33708035569` and post-merge `main` run `33708627256` passed all
   hosted gates.
-- PR #369 delivers the medium task-owned rendered fixture at source head
-  `ca8ad9562ab090aabcef1575f5eb38bb17f5e7d7` and merge/current `main` commit
-  `993258f4b97d196fd7c44cca78c235080fd062e9`; PR run `33711166860` and
-  post-merge `main` run `33711511650` passed security, Ubuntu, macOS, Windows,
-  and release-evidence.
+- PR #369 delivered the medium task-owned rendered fixture at source head
+  `ca8ad9562ab090aabcef1575f5eb38bb17f5e7d7`; its historical merge/current
+  `main` commit was `993258f4b97d196fd7c44cca78c235080fd062e9`, and PR run
+  `33711166860` plus post-merge `main` run `33711511650` passed security,
+  Ubuntu, macOS, Windows, and release-evidence. This is historical evidence,
+  not the current main head.
 - Issue #370 records the bounded large direct-browser checkpoint against that
   exact clean merge source. The task-owned BrowserOS run directly observed
   permission, mutation, verification, steering invalidation, and reload
@@ -390,14 +391,42 @@ evidence; older audit entries retain the limits that applied at their heads:
   keeps screenshot path `UNRECORDED` and live-provider, cross-platform,
   hostile-writer, broader crash-window, and release-authorization boundaries
   explicitly `UNVERIFIED`.
+- PR #401 defines the bounded contradiction contract from source head
+  `070739834ea1f1a50365077def468eabf80cf189`, merged as
+  `9f437d5fa9e4443e71516d5d65a25d38fdade0f4`; post-merge main CI run
+  `33750421070` passed all hosted gates. PR #402 then integrates the signal
+  from source head `92f44b6f340c2f8eb3337b75706b1e7ccad48773`, merged as
+  `b9649d70532e5ccf8db1f135a3ec1d2b5fcdfc02`; post-merge main CI run
+  `33763296858` passed all hosted gates. The result is conservative routing
+  only for current, trusted, required-evidence contradictions; taskstate
+  remains the sole completion and retirement authority.
+- The retention-value S contract and bounded correctness follow-ups are
+  confirmed by PRs #407, #409, #411, #414, and #415. Their source-to-merge
+  heads are `98f0b11c63687f806a4f28332226a76e885e5cf9` →
+  `1b8f2128c27876b81774f4bd44307a91d3f75d7f`,
+  `266a012cf3b042c5a0eb8102e4f601e52043bf46` →
+  `4a864025a5c75b81989503c04a7a9beb7a3951a1`,
+  `dccf9dd5beb9debc81b2e5b5b280366f914a14ed` →
+  `a58fd31396c0fe3b53fa82ca735140bed3c6185a`,
+  `8a2ab3a095d4b6169a8b89c58a531c7acd26119b` →
+  `878eb43f5c9ee51c63eefcc95cbb4b202f2edca1`, and
+  `396dfb3d8137d885920f214da4c3b07edb43f4c8` →
+  `c305a5d7c85440a02b95c7a20fb6858a092d7744`. Their PR hosted runs
+  `33810724290`, `33811821869`, `33812969004`, `33813707119`, and
+  `33814501145` passed the five required gates. The first post-merge run at
+  `a58fd31` (`33813382360`) failed in the bounded Ubuntu fuzz step
+  `FuzzWebFetchIPBoundary`; the later `878eb43` and `c305a5d` main runs
+  (`33814265996` and `33814871805`) passed. These remain
+  provider-independent contract and test changes; they do not by themselves
+  establish live context quality.
 
 ## Retention L-lane candidate (2026-09-03)
 
 The M retention lane from issue #405 is closed by PR #416. Its source commits
-`c77c1a7`, `86e4870`, and `1a3f076` merged to `main` as `5a45b46`; hosted run
-`33816820403` passed the Ubuntu, Windows, macOS, security, and release-evidence
-jobs. This is the prerequisite evidence for the L lane, not a live-provider
-quality claim.
+`c77c1a7`, `86e4870`, and `1a3f076` merged to `main` as `5a45b46`; PR hosted
+run `33816820403` and post-merge main run `33817211910` passed the Ubuntu,
+Windows, macOS, security, and release-evidence jobs. This is the prerequisite
+evidence for the L lane, not a live-provider quality claim.
 
 The L candidate is implemented on top of that exact main merge by source
 checkpoints `9ba07f7` and `af3ca8c` on branch
@@ -406,7 +435,10 @@ checkpoint `88fae5c`. It routes the existing `internal/ctxmgr.Manage` windowing
 boundary through the S contract's bounded structural projection. The candidate
 preserves the system prompt, newest request, newest complete turn, and complete
 tool exchanges while keeping the one-agent interface and all permission,
-undo, provider, and surface boundaries unchanged.
+undo, provider, and surface boundaries unchanged. PR hosted run
+`33821972132` passed all five gates; the merge/current main is
+`d565905fa736e944668cce0ddeec194a7222c6a6`, and post-merge main run
+`33822349111` passed the same five gates.
 
 Direct local evidence on an Apple M3 arm64 Mac with Go `1.26.6`:
 
