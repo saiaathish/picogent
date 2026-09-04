@@ -1,13 +1,14 @@
 # Picogent v4 discovery scorecard
 
 Status: refreshed on 2026-09-03 against the exact `main` merge
-`c54501f03a44b420b61f04762461e19011c7b93e` after the outcome, recovery, GUI,
+`d565905fa736e944668cce0ddeec194a7222c6a6` after the outcome, recovery, GUI,
 undo-publication, lifecycle, proof-continuity, cancellation, hosted
 attestation, TUI recovery, setup, restore-inspection, and workflow action-pin
 slices through PRs #297, #298, #299, #301, #303, #318, #320, #343, #347,
-#349, #351, #353, #355, #357, #359, #363, and #386 merged. The independent
-release-evidence reconciliation is tracked in issue #356; prior audit
-observations and their unverified boundaries are preserved below.
+#349, #351, #353, #355, #357, #359, #363, #386, #401, #402, #407, #409,
+#411, #414, #415, #416, and #417 merged. The bounded release-evidence audit
+remains tracked in issue #316; prior audit observations and their unverified
+boundaries are preserved below.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -272,7 +273,7 @@ tracked in issue #243.
 ## Current-head reconciliation (2026-09-03)
 
 The scorecard is now reconciled with the exact audited `main` head
-`993258f4b97d196fd7c44cca78c235080fd062e9`. The following bounded slices are
+`d565905fa736e944668cce0ddeec194a7222c6a6`. The following bounded slices are
 confirmed by the parent issue's current evidence ledger and the completed
 continuity child lanes. The action-pin entry at the end is current-main
 evidence; older audit entries retain the limits that applied at their heads:
