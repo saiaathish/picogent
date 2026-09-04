@@ -835,6 +835,7 @@ type outcomeQualityLegacyProvider struct {
 	mu        sync.Mutex
 	requests  []legacyProviderRequest
 	serverErr string
+	readPaths []string
 }
 
 type legacyProviderRequest struct {
@@ -856,7 +857,17 @@ type legacyProviderMessage struct {
 
 func newOutcomeQualityLegacyProvider(t *testing.T) *outcomeQualityLegacyProvider {
 	t.Helper()
-	provider := &outcomeQualityLegacyProvider{}
+	return newOutcomeQualityLegacyProviderWithReadPaths(t, []string{"fixture.txt", "fixture_test.go", "go.mod"})
+}
+
+func newOutcomeQualityLegacyMatrixProvider(t *testing.T) *outcomeQualityLegacyProvider {
+	t.Helper()
+	return newOutcomeQualityLegacyProviderWithReadPaths(t, []string{"fixture.txt"})
+}
+
+func newOutcomeQualityLegacyProviderWithReadPaths(t *testing.T, readPaths []string) *outcomeQualityLegacyProvider {
+	t.Helper()
+	provider := &outcomeQualityLegacyProvider{readPaths: append([]string(nil), readPaths...)}
 	provider.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/chat/completions" {
 			http.Error(w, "unexpected path", http.StatusNotFound)
@@ -869,7 +880,7 @@ func newOutcomeQualityLegacyProvider(t *testing.T) *outcomeQualityLegacyProvider
 		}
 		provider.mu.Lock()
 		provider.requests = append(provider.requests, request)
-		callNumber := len(provider.requests)
+		callNumber := (len(provider.requests)-1)%4 + 1
 		provider.mu.Unlock()
 
 		scenario := DefaultOutcomeQualityScenarios()[0]
@@ -885,8 +896,8 @@ func newOutcomeQualityLegacyProvider(t *testing.T) *outcomeQualityLegacyProvider
 		w.Header().Set("Content-Type", "application/json")
 		switch callNumber {
 		case 1:
-			calls := make([]legacyProviderToolCall, 0, 3)
-			for index, path := range []string{"fixture.txt", "fixture_test.go", "go.mod"} {
+			calls := make([]legacyProviderToolCall, 0, len(provider.readPaths))
+			for index, path := range provider.readPaths {
 				calls = append(calls, legacyProviderToolCall{ID: fmt.Sprintf("read-%d", index+1), Name: "read_file", Arguments: fmt.Sprintf(`{"path":%q}`, path)})
 			}
 			writeLegacyProviderResponse(w, calls, "")
