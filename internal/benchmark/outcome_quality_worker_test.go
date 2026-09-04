@@ -219,6 +219,28 @@ func TestOutcomeQualityProcessExecutorUsesMinimalEnvironment(t *testing.T) {
 	}
 }
 
+func TestOutcomeQualityProcessExecutorDowngradesUnverifiedResponse(t *testing.T) {
+	workspace, head := newOutcomeQualityGitRepo(t, "worker\n")
+	request := outcomeQualityWorkerTestRequest(t)
+	request.Target = outcomeQualitySourceTarget(head)
+	executor := &OutcomeQualityProcessExecutor{
+		Command: os.Args[0],
+		Args:    []string{"-test.run", "^TestOutcomeQualityWorkerChild$", "-test.count=1"},
+		Binding: OutcomeQualitySourceBinding{Target: request.Target, Workspace: workspace},
+	}
+	t.Setenv(outcomeQualityWorkerChildEnv, "unverified-response")
+	execution, err := executor.Execute(context.Background(), requestToOutcomeQualityExecutionRequest(request))
+	if err != nil {
+		t.Fatalf("unverified worker response: %v", err)
+	}
+	if execution.Metrics.OutcomeSuccess != OutcomeAssessmentInconclusive || execution.Metrics.Evidence != EvidenceUnverified {
+		t.Fatalf("unverified worker metrics=%#v, want inconclusive", execution.Metrics)
+	}
+	if len(execution.Unverified) != 1 || execution.Unverified[0] != "worker evidence was not recorded" {
+		t.Fatalf("unverified worker reasons=%v", execution.Unverified)
+	}
+}
+
 func TestOutcomeQualityProcessExecutorKillsDescendantOnPolicyTimeout(t *testing.T) {
 	workspace, head := newOutcomeQualityGitRepo(t, "worker\n")
 	request := outcomeQualityWorkerTestRequest(t)
@@ -266,6 +288,23 @@ func TestOutcomeQualityWorkerChild(t *testing.T) {
 				os.Exit(1)
 			}
 		}
+	case "unverified-response":
+		sourceHead, err := outcomeQualityWorkerSourceHead(context.Background())
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		err = encodeOutcomeQualityWorkerResponse(os.Stdout, OutcomeQualityWorkerResponse{
+			Protocol:   OutcomeQualityWorkerProtocol,
+			SourceHead: sourceHead,
+			Metrics:    passingOutcomeQualityMetrics(),
+			Unverified: []string{"worker evidence was not recorded"},
+		})
+		if err != nil {
+			_, _ = fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 	err := RunOutcomeQualityWorker(context.Background(), os.Stdin, os.Stdout, OutcomeQualityExecutorFunc(func(_ context.Context, _ OutcomeQualityExecutionRequest) (OutcomeQualityExecution, error) {
 		return OutcomeQualityExecution{Metrics: passingOutcomeQualityMetrics()}, nil

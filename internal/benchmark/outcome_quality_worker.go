@@ -206,10 +206,15 @@ func (e *OutcomeQualityProcessExecutor) Execute(ctx context.Context, request Out
 	if response.SourceHead != request.Target.SourceHead {
 		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker source head does not match target")
 	}
-	if err := validateOutcomeQualityMetrics(response.Metrics, request.Policy, 0); err != nil {
+	reasons := boundedOutcomeQualityReasons(response.Unverified, 8)
+	metrics := response.Metrics
+	if len(reasons) > 0 {
+		metrics = inconclusiveOutcomeQualityMetrics(metrics.LatencyMillis)
+	}
+	if err := validateOutcomeQualityMetrics(metrics, request.Policy, 0); err != nil {
 		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker metrics: %w", err)
 	}
-	return OutcomeQualityExecution{Metrics: response.Metrics, Unverified: response.Unverified}, nil
+	return OutcomeQualityExecution{Metrics: metrics, Unverified: reasons}, nil
 }
 
 func validateOutcomeQualityWorkerTarget(binding, request OutcomeQualityTarget) error {
