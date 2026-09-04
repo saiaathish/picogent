@@ -46,6 +46,33 @@ arbitrary repository.
 
 ## Required M/L follow-up
 
+The bounded controller `RunOutcomeQualitySourcePairMatrix` now composes the
+preflight and matrix seams. It accepts one `OutcomeQualitySourceBinding` per
+variant plus one executor per variant, validates both source trees before the
+first execution, and routes the runner's stable baseline/candidate ordering to
+the matching executor. The executors remain separate inputs; the controller
+does not share their state or create a second task/report authority.
+
+```go
+report, err := benchmark.RunOutcomeQualitySourcePairMatrix(ctx,
+    benchmark.OutcomeQualitySourcePairConfig{
+        Baseline:  baselineBinding,
+        Candidate: candidateBinding,
+        Policy:    sharedPolicy,
+        Command:   launcherDescription,
+    },
+    baselineExecutor,
+    candidateExecutor,
+)
+```
+
+The controller still requires the caller to provide executors that were built
+or launched from the validated source worktrees. A source-head field returned
+by an executor is not binary provenance; target build/launch evidence remains
+the next execution responsibility. If a target cannot expose the bounded
+measurement adapter, the caller must preserve an inconclusive or `UNVERIFIED`
+observation rather than reuse the other variant's worker.
+
 The next execution lane must build or launch each target from the validated
 workspace without shell interpolation, send the same bounded input and policy
 to both targets, cap child output and runtime, and validate the returned
