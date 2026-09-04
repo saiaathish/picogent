@@ -275,6 +275,9 @@ func TestOutcomeQualityLegacyVerificationStatusUsesTrustedVerifyEvent(t *testing
 	if got := outcomeQualityLegacyVerificationStatus("→ verify {}\n  error: verify PASS"); got != OutcomeVerificationUnverified {
 		t.Fatalf("failed verify event parsed as verification=%s", got)
 	}
+	if got := outcomeQualityLegacyVerificationStatus("→ verify {}\n  verify PASS\n→ verify {}\n  error: verification command failed"); got != OutcomeVerificationUnverified {
+		t.Fatalf("failed verify after pass parsed as verification=%s", got)
+	}
 }
 
 func TestOutcomeQualityLegacyBudgetProxyEnforcesSharedBudgets(t *testing.T) {

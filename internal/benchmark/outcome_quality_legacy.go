@@ -1110,6 +1110,9 @@ func outcomeQualityLegacyVerificationStatus(stderr string) OutcomeQualityVerific
 		if strings.HasPrefix(line, "→ ") {
 			fields := strings.Fields(strings.TrimPrefix(line, "→ "))
 			verifyResultPending = len(fields) > 0 && strings.EqualFold(fields[0], "verify")
+			if verifyResultPending {
+				status = OutcomeVerificationUnverified
+			}
 			continue
 		}
 		if !verifyResultPending {
