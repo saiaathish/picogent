@@ -136,7 +136,10 @@ func BuildOutcomeQualityLegacy(ctx context.Context, binding OutcomeQualitySource
 	defer cancel()
 	command := exec.CommandContext(buildCtx, goCommand, "build", "-mod=readonly", "-trimpath", "-o", binaryPath, "./cmd/picogent")
 	command.Dir = workspaceRoot
-	command.Env = outcomeQualityLegacyBuildEnvironment(filepath.Join(buildDir, "go-cache"))
+	command.Env = outcomeQualityLegacyBuildEnvironment(
+		filepath.Join(buildDir, "go-cache"),
+		filepath.Join(buildDir, "go-mod-cache"),
+	)
 	var output outcomeQualityLegacyBuffer
 	command.Stdout = &output
 	command.Stderr = &output
@@ -519,10 +522,12 @@ func normalizeOutcomeQualityLegacyModel(raw string) (string, error) {
 	return model, nil
 }
 
-func outcomeQualityLegacyBuildEnvironment(cacheDir string) []string {
+func outcomeQualityLegacyBuildEnvironment(cacheDir, moduleCacheDir string) []string {
 	env := procenv.Sanitized()
 	return outcomeQualityOverrideEnvironment(env, map[string]string{
 		"GOCACHE":     cacheDir,
+		"GOMODCACHE":  moduleCacheDir,
+		"GOPATH":      filepath.Join(filepath.Dir(cacheDir), "go-path"),
 		"GOTOOLCHAIN": "local",
 		"GOWORK":      "off",
 	})
