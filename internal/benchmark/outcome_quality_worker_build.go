@@ -83,7 +83,7 @@ func BuildOutcomeQualityWorker(ctx context.Context, binding OutcomeQualitySource
 	defer cancel()
 	command := exec.CommandContext(buildCtx, goCommand, "build", "-o", binaryPath, "./cmd/outcome-quality-worker")
 	command.Dir = workspace
-	command.Env = outcomeQualityWorkerEnvironment()
+	command.Env = outcomeQualityWorkerEnvironmentWithCache(filepath.Join(buildDir, "go-cache"))
 	var output outcomeQualityBuildBuffer
 	command.Stdout = &output
 	command.Stderr = &output

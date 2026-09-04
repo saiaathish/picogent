@@ -72,6 +72,15 @@ func outcomeQualityWorkerEnvironment() []string {
 	return out
 }
 
+func outcomeQualityWorkerEnvironmentWithCache(cacheDir string) []string {
+	env := outcomeQualityWorkerEnvironment()
+	cacheDir = strings.TrimSpace(cacheDir)
+	if cacheDir == "" {
+		return env
+	}
+	return append(env, "GOCACHE="+cacheDir)
+}
+
 func hasOutcomeQualityWorkerEnvKey(env []string, want string) bool {
 	for _, entry := range env {
 		key, _, ok := strings.Cut(entry, "=")
