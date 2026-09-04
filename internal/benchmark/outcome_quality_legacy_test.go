@@ -110,6 +110,19 @@ func TestBuildOutcomeQualityLegacyLaunchesExactV3Binary(t *testing.T) {
 	}
 }
 
+func TestOutcomeQualityLegacyToolchainMatchesDeclaredVersion(t *testing.T) {
+	command, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateOutcomeQualityLegacyToolchain(context.Background(), command, runtime.Version()); err != nil {
+		t.Fatalf("current Go toolchain rejected: %v", err)
+	}
+	if err := validateOutcomeQualityLegacyToolchain(context.Background(), command, "go0.0.0"); err == nil || !strings.Contains(err.Error(), "does not match declared") {
+		t.Fatalf("mismatched Go toolchain error=%v, want declared-version rejection", err)
+	}
+}
+
 func TestOutcomeQualityLegacyProviderURLRequiresLoopbackHTTP(t *testing.T) {
 	cases := []struct {
 		name string

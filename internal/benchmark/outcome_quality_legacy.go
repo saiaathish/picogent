@@ -164,6 +164,9 @@ func BuildOutcomeQualityLegacy(ctx context.Context, binding OutcomeQualitySource
 	binaryPath := filepath.Join(buildDir, binaryName)
 	buildCtx, cancel := context.WithTimeout(ctx, maxOutcomeQualityLegacyBuildTimeout)
 	defer cancel()
+	if err := validateOutcomeQualityLegacyToolchain(buildCtx, goCommand, binding.Target.GoVersion); err != nil {
+		return nil, fmt.Errorf("validate Go toolchain for outcome-quality legacy build: %w", err)
+	}
 	command := exec.CommandContext(buildCtx, goCommand, "build", "-mod=readonly", "-trimpath", "-o", binaryPath, "./cmd/picogent")
 	command.Dir = workspaceRoot
 	command.Env = outcomeQualityLegacyBuildEnvironment(
@@ -586,6 +589,32 @@ func hashOutcomeQualityLegacyCommand(path string) ([sha256.Size]byte, int64, err
 	}
 	copy(digest[:], hasher.Sum(nil))
 	return digest, size, nil
+}
+
+func validateOutcomeQualityLegacyToolchain(ctx context.Context, command, expectedVersion string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return errors.New("Go toolchain command is required")
+	}
+	expectedVersion = strings.TrimSpace(expectedVersion)
+	if expectedVersion == "" {
+		return errors.New("expected Go toolchain version is required")
+	}
+	output, err := exec.CommandContext(ctx, command, "version").Output()
+	if err != nil {
+		return fmt.Errorf("read Go toolchain version: %w", err)
+	}
+	fields := strings.Fields(string(output))
+	if len(fields) < 3 || fields[0] != "go" || fields[1] != "version" {
+		return fmt.Errorf("unexpected Go toolchain version output %q", strings.TrimSpace(string(output)))
+	}
+	if fields[2] != expectedVersion {
+		return fmt.Errorf("Go toolchain version=%q does not match declared %q", fields[2], expectedVersion)
+	}
+	return nil
 }
 
 func outcomeQualityLegacyPathsEqual(left, right string) bool {
