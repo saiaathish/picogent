@@ -799,9 +799,15 @@ func cleanOutcomeQualitySourceAtHead(t *testing.T, head string) string {
 	if remote == "" {
 		t.Fatal("source origin remote is empty")
 	}
-	command := exec.Command("git", "-c", "core.autocrlf=false", "-c", "core.filemode=false", "clone", "--quiet", "--no-hardlinks", root, clone)
+	command := exec.Command("git", "clone", "--quiet", "--no-hardlinks", "--no-checkout", root, clone)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("clone source: %v\n%s", err, output)
+	}
+	for _, setting := range [][2]string{{"core.autocrlf", "false"}, {"core.filemode", "false"}} {
+		command = exec.Command("git", "-C", clone, "config", "--local", setting[0], setting[1])
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("configure source %s=%s: %v\n%s", setting[0], setting[1], err, output)
+		}
 	}
 	if err := exec.Command("git", "-C", clone, "cat-file", "-e", head+"^{commit}").Run(); err != nil {
 		command = exec.Command("git", "-C", clone, "remote", "set-url", "origin", remote)
