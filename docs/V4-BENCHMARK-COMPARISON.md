@@ -84,7 +84,7 @@ issue #302 remains open for a separately causal target. Outcome-level v3/v4
 quality, live-provider behavior, rendered runtime behavior, and release
 readiness remain outside these measurements.
 
-## Reproducibility
+## Historical comparison reproducibility
 
 The comparison commands were run three times at both exact heads, on the same
 Apple M3 arm64 Mac with Go `go1.26.6`:
@@ -206,7 +206,7 @@ subtotal accounts for essentially all of this provider-independent local
 fixture's wall time; this does not establish a live-provider regression,
 product SLA, or release authorization.
 
-## Fresh current-main scripted-edit checkpoint
+## Historical current-main scripted-edit checkpoint
 
 At exact merged `main` head `4046d6c807514614cd704b73f9ef8da12eaa1ae1`, the
 same provider-independent controls were rerun on an Apple M3 arm64 Mac with

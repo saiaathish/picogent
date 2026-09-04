@@ -436,7 +436,7 @@ regressions; the current release manifest remains `UNVERIFIED`, and the
 highest-value unresolved measurement is outcome-level v3/v4 quality rather
 than another speculative optimization.
 
-## Retention L-lane candidate (2026-09-03)
+## Historical retention L-lane candidate (2026-09-03)
 
 The M retention lane from issue #405 is closed by PR #416. Its source commits
 `c77c1a7`, `86e4870`, and `1a3f076` merged to `main` as `5a45b46`; PR hosted
