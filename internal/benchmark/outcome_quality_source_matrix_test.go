@@ -29,7 +29,7 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 	candidateSource := cleanOutcomeQualitySourceAtHead(t, outcomeQualityExactCandidateHead)
 	baselineTarget := outcomeQualityExactSourceTarget(OutcomeQualityLegacySourceHead)
 	candidateTarget := outcomeQualityExactSourceTarget(outcomeQualityExactCandidateHead)
-	provider := newOutcomeQualityLegacyProvider(t)
+	provider := newOutcomeQualityLegacyMatrixProvider(t)
 	build, err := BuildOutcomeQualitySourcePair(context.Background(), OutcomeQualitySourcePairBuildConfig{
 		Baseline:          OutcomeQualitySourceBinding{Target: baselineTarget, Workspace: baselineSource},
 		Candidate:         OutcomeQualitySourceBinding{Target: candidateTarget, Workspace: candidateSource},
@@ -52,9 +52,6 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 		Candidate: OutcomeQualitySourceBinding{Target: candidateTarget, Workspace: candidateSource},
 		Policy:    policy,
 		Command:   "exact-source-pair: v3 cmd/picogent + v4 outcome-quality-worker",
-		ScenarioInput: func(scenario OutcomeQualityScenario) (OutcomeQualityInput, error) {
-			return outcomeQualityLegacyInput(scenario), nil
-		},
 	})
 	if err != nil {
 		t.Fatalf("run exact source-pair matrix: %v", err)
