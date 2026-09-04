@@ -17,6 +17,9 @@ The report contract is `picogent.v4.outcome-quality.v1` and is implemented in
 does not replace `taskstate`, verification, permission, undo, or the Outcome
 Engine completion authority.
 
+The exact-head source-tree preflight for the remaining comparative lane is
+documented in [`V4-OUTCOME-QUALITY-COMPARISON.md`](V4-OUTCOME-QUALITY-COMPARISON.md).
+
 ## Stable scenario matrix
 
 `DefaultOutcomeQualityScenarios` contains 20 deterministic definitions. Each
