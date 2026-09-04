@@ -869,7 +869,7 @@ func newOutcomeQualityLegacyProvider(t *testing.T) *outcomeQualityLegacyProvider
 		}
 		provider.mu.Lock()
 		provider.requests = append(provider.requests, request)
-		callNumber := len(provider.requests)
+		callNumber := (len(provider.requests)-1)%4 + 1
 		provider.mu.Unlock()
 
 		scenario := DefaultOutcomeQualityScenarios()[0]
