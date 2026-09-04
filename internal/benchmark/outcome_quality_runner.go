@@ -200,7 +200,7 @@ func validateOutcomeQualityRunnerConfig(cfg OutcomeQualityRunnerConfig, executor
 	if err := validateOutcomeQualityTarget("candidate", cfg.Candidate); err != nil {
 		return err
 	}
-	if cfg.Baseline.SourceHead == cfg.Candidate.SourceHead {
+	if strings.EqualFold(cfg.Baseline.SourceHead, cfg.Candidate.SourceHead) {
 		return fmt.Errorf("baseline and candidate must use different source heads")
 	}
 	if cfg.Baseline.Host != cfg.Candidate.Host || cfg.Baseline.GoVersion != cfg.Candidate.GoVersion || cfg.Baseline.ToolVersion != cfg.Candidate.ToolVersion {

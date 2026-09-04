@@ -40,8 +40,9 @@ func BuildOutcomeQualityWorker(ctx context.Context, binding OutcomeQualitySource
 	if err := validateOutcomeQualitySourceBinding(ctx, "worker build", binding.Target, workspace); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(tempParent) != "" {
-		parent, err := filepath.Abs(tempParent)
+	buildTempParent := strings.TrimSpace(tempParent)
+	if buildTempParent != "" {
+		parent, err := filepath.Abs(buildTempParent)
 		if err != nil {
 			return nil, fmt.Errorf("outcome-quality worker build temp parent: %w", err)
 		}
@@ -51,9 +52,10 @@ func BuildOutcomeQualityWorker(ctx context.Context, binding OutcomeQualitySource
 		if outcomeQualityPathWithin(filepath.Clean(parent), workspace) {
 			return nil, fmt.Errorf("outcome-quality worker build temp parent must be outside source workspace")
 		}
+		buildTempParent = parent
 	}
 
-	buildDir, err := os.MkdirTemp(tempParent, "picogent-outcome-quality-worker-")
+	buildDir, err := os.MkdirTemp(buildTempParent, "picogent-outcome-quality-worker-")
 	if err != nil {
 		return nil, fmt.Errorf("create outcome-quality worker build directory: %w", err)
 	}
@@ -85,7 +87,8 @@ func BuildOutcomeQualityWorker(ctx context.Context, binding OutcomeQualitySource
 	var output outcomeQualityBuildBuffer
 	command.Stdout = &output
 	command.Stderr = &output
-	if err := command.Run(); err != nil {
+	configureOutcomeQualityWorkerCommand(command)
+	if err := runOutcomeQualityWorkerCommand(buildCtx, command); err != nil {
 		removeBuildDir()
 		detail := strings.TrimSpace(output.String())
 		if detail != "" {

@@ -2,6 +2,7 @@ package benchmark
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,8 +14,8 @@ func TestRunOutcomeQualitySourcePairMatrixRoutesEachVariantToItsBoundExecutor(t 
 	candidateWorkspace, candidateHead := newOutcomeQualityGitRepo(t, "candidate\n")
 	baselineTarget := outcomeQualitySourceTarget(baselineHead)
 	candidateTarget := outcomeQualitySourceTarget(candidateHead)
-	baseline := &recordingOutcomeQualityExecutor{}
-	candidate := &recordingOutcomeQualityExecutor{}
+	baseline := &recordingOutcomeQualityExecutor{binding: OutcomeQualitySourceBinding{Target: baselineTarget, Workspace: baselineWorkspace}}
+	candidate := &recordingOutcomeQualityExecutor{binding: OutcomeQualitySourceBinding{Target: candidateTarget, Workspace: candidateWorkspace}}
 	report, err := RunOutcomeQualitySourcePairMatrix(context.Background(), OutcomeQualitySourcePairConfig{
 		Baseline:  OutcomeQualitySourceBinding{Target: baselineTarget, Workspace: baselineWorkspace},
 		Candidate: OutcomeQualitySourceBinding{Target: candidateTarget, Workspace: candidateWorkspace},
@@ -61,8 +62,8 @@ func TestRunOutcomeQualitySourcePairMatrixPreflightsBeforeDelegating(t *testing.
 	if err := writeOutcomeQualityDirtyFile(baselineWorkspace); err != nil {
 		t.Fatal(err)
 	}
-	baseline := &recordingOutcomeQualityExecutor{}
-	candidate := &recordingOutcomeQualityExecutor{}
+	baseline := &recordingOutcomeQualityExecutor{binding: OutcomeQualitySourceBinding{Target: outcomeQualitySourceTarget(baselineHead), Workspace: baselineWorkspace}}
+	candidate := &recordingOutcomeQualityExecutor{binding: OutcomeQualitySourceBinding{Target: outcomeQualitySourceTarget(candidateHead), Workspace: candidateWorkspace}}
 	_, err := RunOutcomeQualitySourcePairMatrix(context.Background(), OutcomeQualitySourcePairConfig{
 		Baseline:  OutcomeQualitySourceBinding{Target: outcomeQualitySourceTarget(baselineHead), Workspace: baselineWorkspace},
 		Candidate: OutcomeQualitySourceBinding{Target: outcomeQualitySourceTarget(candidateHead), Workspace: candidateWorkspace},
@@ -86,14 +87,33 @@ func TestRunOutcomeQualitySourcePairMatrixRequiresBothExecutors(t *testing.T) {
 		Policy:    testOutcomeQualityRunnerConfig(2).Policy,
 		Command:   "outcome-quality-source-pair-test",
 	}
-	_, err := RunOutcomeQualitySourcePairMatrix(context.Background(), cfg, &recordingOutcomeQualityExecutor{}, nil)
+	_, err := RunOutcomeQualitySourcePairMatrix(context.Background(), cfg, &recordingOutcomeQualityExecutor{binding: cfg.Baseline}, nil)
 	if err == nil || !strings.Contains(err.Error(), "candidate executor is required") {
 		t.Fatalf("missing candidate error=%v", err)
 	}
 }
 
 type recordingOutcomeQualityExecutor struct {
+	binding  OutcomeQualitySourceBinding
 	requests []OutcomeQualityExecutionRequest
+}
+
+func (e *recordingOutcomeQualityExecutor) outcomeQualitySourceBinding() OutcomeQualitySourceBinding {
+	if e == nil {
+		return OutcomeQualitySourceBinding{}
+	}
+	return e.binding
+}
+
+func (e *recordingOutcomeQualityExecutor) validateOutcomeQualitySource(ctx context.Context) error {
+	if e == nil {
+		return fmt.Errorf("recording outcome-quality executor is nil")
+	}
+	workspace, err := canonicalOutcomeQualityWorkspace(e.binding.Workspace)
+	if err != nil {
+		return err
+	}
+	return validateOutcomeQualitySourceBinding(ctx, "recording", e.binding.Target, workspace)
 }
 
 func writeOutcomeQualityDirtyFile(root string) error {

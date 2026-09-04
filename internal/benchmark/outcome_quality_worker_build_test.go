@@ -88,7 +88,7 @@ func cleanOutcomeQualitySourceClone(t *testing.T) string {
 	t.Helper()
 	root := outcomeQualityModuleRoot(t)
 	clone := filepath.Join(t.TempDir(), "source")
-	command := exec.Command("git", "clone", "--quiet", "--no-hardlinks", root, clone)
+	command := exec.Command("git", "-c", "core.autocrlf=false", "-c", "core.filemode=false", "clone", "--quiet", "--no-hardlinks", root, clone)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("clone clean source: %v\n%s", err, output)
 	}
