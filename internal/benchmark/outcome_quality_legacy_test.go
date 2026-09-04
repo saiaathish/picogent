@@ -175,10 +175,11 @@ func TestOutcomeQualityLegacyBuildEnvironmentUsesExternalGoCaches(t *testing.T) 
 	t.Setenv("GOPATH", "/untrusted/source/go-path")
 	env := outcomeQualityLegacyBuildEnvironment("/tmp/legacy-cache", "/tmp/legacy-mod-cache")
 	joined := strings.Join(env, "\n")
+	expectedGOPATH := filepath.Join(filepath.Dir("/tmp/legacy-cache"), "go-path")
 	for _, want := range []string{
 		"GOCACHE=/tmp/legacy-cache",
 		"GOMODCACHE=/tmp/legacy-mod-cache",
-		"GOPATH=/tmp/go-path",
+		"GOPATH=" + expectedGOPATH,
 		"GOTOOLCHAIN=local",
 		"GOWORK=off",
 	} {
@@ -789,9 +790,28 @@ func cleanOutcomeQualitySourceAtHead(t *testing.T, head string) string {
 	t.Helper()
 	root := outcomeQualityModuleRoot(t)
 	clone := filepath.Join(t.TempDir(), "source")
+	remoteCommand := exec.Command("git", "-C", root, "remote", "get-url", "origin")
+	remoteOutput, err := remoteCommand.Output()
+	if err != nil {
+		t.Fatalf("read source remote: %v", err)
+	}
+	remote := strings.TrimSpace(string(remoteOutput))
+	if remote == "" {
+		t.Fatal("source origin remote is empty")
+	}
 	command := exec.Command("git", "-c", "core.autocrlf=false", "-c", "core.filemode=false", "clone", "--quiet", "--no-hardlinks", root, clone)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("clone source: %v\n%s", err, output)
+	}
+	if err := exec.Command("git", "-C", clone, "cat-file", "-e", head+"^{commit}").Run(); err != nil {
+		command = exec.Command("git", "-C", clone, "remote", "set-url", "origin", remote)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("configure source remote: %v\n%s", err, output)
+		}
+		command = exec.Command("git", "-C", clone, "fetch", "--quiet", "--no-tags", "--depth=1", "origin", head)
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("fetch source %s: %v\n%s", head, err, output)
+		}
 	}
 	command = exec.Command("git", "-C", clone, "checkout", "--quiet", "--detach", head)
 	if output, err := command.CombinedOutput(); err != nil {
