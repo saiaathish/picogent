@@ -112,7 +112,7 @@ func BuildOutcomeQualityLegacy(ctx context.Context, binding OutcomeQualitySource
 	keepBuildDir := false
 	defer func() {
 		if !keepBuildDir {
-			_ = os.RemoveAll(buildDir)
+			_ = removeOutcomeQualityLegacyDir(buildDir)
 		}
 	}()
 	canonicalBuildDir := buildDir
@@ -195,7 +195,7 @@ func (b *OutcomeQualityLegacyBuild) Close() error {
 	}
 	dir := b.dir
 	b.dir = ""
-	return os.RemoveAll(dir)
+	return removeOutcomeQualityLegacyDir(dir)
 }
 
 func (e *OutcomeQualityLegacyProcessExecutor) outcomeQualitySourceBinding() OutcomeQualitySourceBinding {
@@ -531,6 +531,30 @@ func outcomeQualityLegacyBuildEnvironment(cacheDir, moduleCacheDir string) []str
 		"GOTOOLCHAIN": "local",
 		"GOWORK":      "off",
 	})
+}
+
+func removeOutcomeQualityLegacyDir(root string) error {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return nil
+	}
+	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		return os.Chmod(path, 0o700)
+	})
+	removeErr := os.RemoveAll(root)
+	if walkErr != nil && removeErr != nil {
+		return errors.Join(walkErr, removeErr)
+	}
+	if walkErr != nil {
+		return walkErr
+	}
+	return removeErr
 }
 
 func outcomeQualityLegacyEnvironment(homeDir, tempDir, cacheDir, providerURL, model string) []string {
