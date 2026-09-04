@@ -16,6 +16,13 @@ func runOutcomeQualityWorkerCommand(ctx context.Context, command *exec.Cmd) erro
 	if err := command.Start(); err != nil {
 		return err
 	}
+	terminate, cleanup, err := attachOutcomeQualityWorkerProcess(command)
+	if err != nil {
+		terminateOutcomeQualityWorkerCommand(command)
+		_ = command.Wait()
+		return err
+	}
+	defer cleanup()
 
 	waitDone := make(chan error, 1)
 	go func() {
@@ -25,7 +32,7 @@ func runOutcomeQualityWorkerCommand(ctx context.Context, command *exec.Cmd) erro
 	case err := <-waitDone:
 		return err
 	case <-ctx.Done():
-		terminateOutcomeQualityWorkerCommand(command)
+		terminate()
 		<-waitDone
 		return ctx.Err()
 	}
