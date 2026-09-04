@@ -449,7 +449,10 @@ without new evidence for the declared telemetry and fixture-proof boundaries.
 
 ## Exact-head outcome-quality matrix (2026-09-04)
 
-PR #432 completed the source-pair matrix for issues #422 and #246. The run
+PR #432 completed the source-pair matrix for issues #422 and #246. The
+per-observation result is committed in
+[`V4-OUTCOME-QUALITY-REPORT-2026-09-04.json`](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json).
+The run
 used separate clean exact-head workspaces, the shared normalized three-file
 fixture and input digests, the same policy, stable scenario order, and two
 repetitions. It captured all 80 expected observations and preserved a valid

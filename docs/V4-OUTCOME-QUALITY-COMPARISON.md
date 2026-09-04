@@ -1,6 +1,6 @@
 # V4 exact-head outcome-quality comparison
 
-Status: the exact source-pair matrix for [#422](https://github.com/saiaathishkarthik/picogent/issues/422) and [#246](https://github.com/saiaathishkarthik/picogent/issues/246) is recorded, but its result is `INCONCLUSIVE`.
+Status: the exact source-pair matrix for [#422](https://github.com/saiaathish/picogent/issues/422) and [#246](https://github.com/saiaathishkarthik/picogent/issues/246) is recorded in the [bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json) and checkpointed by [#428](https://github.com/saiaathish/picogent/issues/428) and [PR #432](https://github.com/saiaathish/picogent/pull/432), but its result is `INCONCLUSIVE`.
 
 The outcome-quality contract and scripted executor are already defined in
 [`V4-OUTCOME-QUALITY-BENCHMARK.md`](V4-OUTCOME-QUALITY-BENCHMARK.md). This
@@ -93,6 +93,12 @@ The reviewed run used the fixed 20-scenario catalog, baseline-before-candidate
 ordering, and two repetitions. It captured all 80 expected observations and
 persisted a structurally valid report before the detailed evidence assertions
 ran.
+
+The complete per-observation JSON is committed as
+[`V4-OUTCOME-QUALITY-REPORT-2026-09-04.json`](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json).
+It is a local `darwin/arm64` opt-in execution artifact. The 5/5 hosted checks
+on PR #432 validate the reviewed source-pair implementation and its contract;
+they do not claim to have rerun this opt-in 80-observation matrix.
 
 | Field | Recorded evidence |
 | --- | --- |
