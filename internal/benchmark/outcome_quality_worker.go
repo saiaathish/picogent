@@ -60,6 +60,24 @@ type OutcomeQualityProcessExecutor struct {
 	Binding OutcomeQualitySourceBinding
 }
 
+func (e *OutcomeQualityProcessExecutor) outcomeQualitySourceBinding() OutcomeQualitySourceBinding {
+	if e == nil {
+		return OutcomeQualitySourceBinding{}
+	}
+	return e.Binding
+}
+
+func (e *OutcomeQualityProcessExecutor) validateOutcomeQualitySource(ctx context.Context) error {
+	if e == nil {
+		return fmt.Errorf("outcome-quality process executor is nil")
+	}
+	workspace, err := canonicalOutcomeQualityWorkspace(e.Binding.Workspace)
+	if err != nil {
+		return fmt.Errorf("outcome-quality worker workspace: %w", err)
+	}
+	return validateOutcomeQualitySourceBinding(ctx, "worker", e.Binding.Target, workspace)
+}
+
 // RunOutcomeQualityWorker serves exactly one request. It writes no response
 // when decoding, validation, or execution fails, allowing the controller to
 // record that observation as inconclusive instead of accepting partial data.
@@ -91,7 +109,7 @@ func RunOutcomeQualityWorker(ctx context.Context, input io.Reader, output io.Wri
 	if err != nil {
 		return err
 	}
-	if sourceHead != request.Target.SourceHead {
+	if !strings.EqualFold(sourceHead, request.Target.SourceHead) {
 		return fmt.Errorf("outcome-quality worker source head does not match target")
 	}
 	execution, err := executor.Execute(ctx, executionRequest)
@@ -203,7 +221,7 @@ func (e *OutcomeQualityProcessExecutor) Execute(ctx context.Context, request Out
 	if err != nil {
 		return OutcomeQualityExecution{}, err
 	}
-	if response.SourceHead != request.Target.SourceHead {
+	if !strings.EqualFold(response.SourceHead, request.Target.SourceHead) {
 		return OutcomeQualityExecution{}, fmt.Errorf("outcome-quality worker source head does not match target")
 	}
 	reasons := boundedOutcomeQualityReasons(response.Unverified, 8)
@@ -224,7 +242,7 @@ func validateOutcomeQualityWorkerTarget(binding, request OutcomeQualityTarget) e
 	if err := validateOutcomeQualityTarget("worker request", request); err != nil {
 		return err
 	}
-	if binding != request {
+	if !outcomeQualityTargetsEqual(binding, request) {
 		return fmt.Errorf("worker binding and request target must match")
 	}
 	return nil

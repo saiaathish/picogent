@@ -294,7 +294,7 @@ func (r OutcomeQualityReport) Validate() error {
 	if err := validateOutcomeQualityTarget("candidate", r.Candidate); err != nil {
 		return err
 	}
-	if r.Baseline.SourceHead == r.Candidate.SourceHead {
+	if strings.EqualFold(r.Baseline.SourceHead, r.Candidate.SourceHead) {
 		return fmt.Errorf("baseline and candidate must use different source heads")
 	}
 	if r.Baseline.Host != r.Candidate.Host || r.Baseline.GoVersion != r.Candidate.GoVersion || r.Baseline.ToolVersion != r.Candidate.ToolVersion {
@@ -366,7 +366,7 @@ func (r OutcomeQualityReport) Validate() error {
 		case OutcomeVariantCandidate:
 			target = r.Candidate
 		}
-		if observation.SourceHead != target.SourceHead {
+		if !strings.EqualFold(observation.SourceHead, target.SourceHead) {
 			return fmt.Errorf("observation %d source_head=%q does not match %s target", index, observation.SourceHead, observation.Variant)
 		}
 		if err := validateOutcomeQualityMetrics(observation.Metrics, r.Policy, index); err != nil {

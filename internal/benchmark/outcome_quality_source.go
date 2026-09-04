@@ -61,13 +61,20 @@ func validateOutcomeQualitySourceTargetPair(baseline, candidate OutcomeQualityTa
 	if err := validateOutcomeQualityTarget("candidate", candidate); err != nil {
 		return err
 	}
-	if baseline.SourceHead == candidate.SourceHead {
+	if strings.EqualFold(baseline.SourceHead, candidate.SourceHead) {
 		return fmt.Errorf("baseline and candidate must use different source heads")
 	}
 	if baseline.Host != candidate.Host || baseline.GoVersion != candidate.GoVersion || baseline.ToolVersion != candidate.ToolVersion {
 		return fmt.Errorf("baseline and candidate must share host, Go version, and tool version")
 	}
 	return nil
+}
+
+func outcomeQualityTargetsEqual(left, right OutcomeQualityTarget) bool {
+	return strings.EqualFold(left.SourceHead, right.SourceHead) &&
+		left.Host == right.Host &&
+		left.GoVersion == right.GoVersion &&
+		left.ToolVersion == right.ToolVersion
 }
 
 func canonicalOutcomeQualityWorkspace(raw string) (string, error) {
