@@ -1,20 +1,23 @@
 # Picogent v4 discovery scorecard
 
-Status: refreshed on 2026-09-04 against the exact `main` merge
-`9375f64c6cd93255bd6bd1f5451bc06c06f12baf` after the outcome, recovery, GUI,
+Status: refreshed on 2026-09-05 against the exact `main` merge
+`e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f` after the outcome, recovery, GUI,
 undo-publication, lifecycle, proof-continuity, cancellation, hosted
 attestation, TUI recovery, setup, restore-inspection, workflow action-pin,
 contradiction, and retention slices through PRs #297, #298, #299, #301, #303,
 #318, #320, #343, #347, #349, #351, #353, #355, #357, #359, #363, #386,
 #401, #402, #407, #409, #411, #414, #415, #416, #417, #419, #423, #425,
-#427, #430, #431, and #432 merged. The bounded release-evidence audit remains
+#427, #430, #431, #432, #434, and #436 merged. The bounded release-evidence audit remains
 tracked in issue #316; prior audit observations and their unverified
 boundaries are preserved below.
 
-The exact-head v3-versus-v4 outcome-quality matrix is now recorded in
-`docs/V4-OUTCOME-QUALITY-COMPARISON.md`. Its 80/80 observations remain
-`INCONCLUSIVE`; this is evidence of bounded execution and its limits, not a
-v4 quality win.
+The exact-head v3-versus-v4 outcome-quality matrix is refreshed in
+`docs/V4-OUTCOME-QUALITY-COMPARISON.md` and
+`V4-OUTCOME-QUALITY-REPORT-2026-09-05.json`. Its 80/80 observations remain
+`INCONCLUSIVE` as a comparison: all 40 candidate observations now have
+current full-fixture proof, while the 40 baseline observations still lack
+comparable structured telemetry. This is evidence of bounded execution and
+its limits, not a v4 quality win.
 
 The required 15-specialty Wave A audit was run in bounded read-only batches on
 2026-08-25. The findings below are carried forward and reconciled with the
@@ -104,9 +107,9 @@ green unit tests or bounded hosted quality gates:
 - a passing v3-versus-v4 outcome-quality result for vague, multi-file,
   debugging, refactoring, security, and long-horizon tasks. The exact-head
   matrix is now recorded with 80/80 observations, but remains `INCONCLUSIVE`:
-  38 baseline observations lack structured v3 repair/context telemetry, two
+  all 40 baseline observations lack structured v3 repair/context telemetry, two
   `advanced-architecture` baseline observations recorded fixture-write
-  failures, and all 40 candidate observations lacked full three-file proof;
+  failures, and the candidate proof gap is now closed for all 40 rows;
 - rendered GUI setup, verification, and the bounded macOS/local-stub reconnect
   and transcript-recovery path are recorded; HTTP-boundary GUI lifecycle
   shutdown/reconnect/save-failure evidence is also recorded, including hosted
@@ -447,11 +450,11 @@ highest-value outcome measurement is now recorded by the exact-head matrix,
 but it remains `INCONCLUSIVE` and cannot be used as a v3/v4 quality claim
 without new evidence for the declared telemetry and fixture-proof boundaries.
 
-## Exact-head outcome-quality matrix (2026-09-04)
+## Exact-head outcome-quality matrix (2026-09-05)
 
-PR #432 completed the source-pair matrix for issues #422 and #246. The
-per-observation result is committed in
-[`V4-OUTCOME-QUALITY-REPORT-2026-09-04.json`](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json).
+PR #436 closed the candidate full-fixture proof gap. The refreshed source-pair
+matrix for issues #422, #246, and #435 is committed in
+[`V4-OUTCOME-QUALITY-REPORT-2026-09-05.json`](V4-OUTCOME-QUALITY-REPORT-2026-09-05.json).
 The run
 used separate clean exact-head workspaces, the shared normalized three-file
 fixture and input digests, the same policy, stable scenario order, and two
@@ -461,17 +464,17 @@ repetitions. It captured all 80 expected observations and preserved a valid
 | Evidence | Recorded value |
 | --- | --- |
 | Baseline source | `a07943b31044049afb0142f39198244cd3c75218` |
-| Candidate source | `b3673658edc648b4058a828d7959ba5c062b8dc7` |
-| Reviewed/pushed matrix head | `c2a4c74e4bca83d42b152afa298bc4d5277d8aa4` |
-| Merge/current `main` at the run | `9375f64c6cd93255bd6bd1f5451bc06c06f12baf` |
-| Hosted PR checks | 5/5 passed on the reviewed head |
-| Post-merge main checks | 5/5 passed at the exact merge SHA |
+| Candidate source | `e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f` |
+| Matrix test-anchor head | `48eaf949a5e2cf3cf4e72e250305e97c3ffa5854` |
+| Merge/current `main` at the run | `e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f` |
+| PR #436 and post-merge checks | 5/5 hosted jobs passed; post-merge run `33972008573` |
 | Result | 80/80 observations; report `INCONCLUSIVE` |
 
 The baseline carried the declared v3 metric boundary and two recorded fixture
-write failures in `advanced-architecture`; the candidate's current proof did
-not match the full three-file capture. No scenario or category therefore has
-a valid pass/fail quality delta. Live-provider, arbitrary-repository,
+write failures in `advanced-architecture`; the candidate recorded 40/40
+passing observations with current full three-file proof. No scenario or
+category therefore has a valid v3/v4 quality delta while baseline telemetry
+is incomparable. Live-provider, arbitrary-repository,
 rendered, release-authorization, SBOM/signing, hostile-runtime, and overall
 v4 claims remain outside this evidence.
 

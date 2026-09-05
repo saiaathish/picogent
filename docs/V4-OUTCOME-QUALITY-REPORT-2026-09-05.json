@@ -1,0 +1,2053 @@
+{
+  "schema": "picogent.v4.outcome-quality.v1",
+  "scenario_set": "v3-v4-outcome-quality",
+  "status": "inconclusive",
+  "baseline": {
+    "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+    "host": "darwin/arm64",
+    "go_version": "go1.26.6",
+    "tool_version": "picogent-outcome-quality-runner-v1"
+  },
+  "candidate": {
+    "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+    "host": "darwin/arm64",
+    "go_version": "go1.26.6",
+    "tool_version": "picogent-outcome-quality-runner-v1"
+  },
+  "policy": {
+    "repetitions": 2,
+    "timeout_millis": 30000,
+    "max_tokens": 16000,
+    "max_model_calls": 64,
+    "max_tool_calls": 256,
+    "max_turns": 32
+  },
+  "command": "exact-source-pair: v3 cmd/picogent + v4 outcome-quality-worker",
+  "scenarios": [
+    {
+      "id": "beginner-vague-feature",
+      "category": "beginner",
+      "kind": "vague_feature",
+      "seed": 101,
+      "input_sha256": "6e835020f71c0c967d8a79def2269e01d58832087d4802378486bbfb4a515fa0"
+    },
+    {
+      "id": "beginner-broken-app",
+      "category": "beginner",
+      "kind": "broken_app",
+      "seed": 102,
+      "input_sha256": "d98226ce67be68f8f54bd69ed99780625c2b06bb73db4ce6b2f967e2197f1385"
+    },
+    {
+      "id": "beginner-setup-problem",
+      "category": "beginner",
+      "kind": "setup_problem",
+      "seed": 103,
+      "input_sha256": "85c1a263ad6bef9f25d6d072fe0bbc4d87f01ae54ab79e4216c71a74e845f4a0"
+    },
+    {
+      "id": "standard-bug",
+      "category": "standard_development",
+      "kind": "bug",
+      "seed": 201,
+      "input_sha256": "ef23697dfbbe030aef50e55d87045ce6790f67af5cb9aa53836ea8680ee5a230"
+    },
+    {
+      "id": "standard-feature",
+      "category": "standard_development",
+      "kind": "feature",
+      "seed": 202,
+      "input_sha256": "94538a80882de6e6f27cc15c61f8435704bcd8985193d5f301907352c07e9b3e"
+    },
+    {
+      "id": "standard-refactor",
+      "category": "standard_development",
+      "kind": "refactor",
+      "seed": 203,
+      "input_sha256": "42c689b22affdc0e1ac3dcd76577f81f47a9b3c03349315b392cde9fb17ea87a"
+    },
+    {
+      "id": "standard-tests",
+      "category": "standard_development",
+      "kind": "tests",
+      "seed": 204,
+      "input_sha256": "c4a0c7e66cc3cf1bf97cfe135e38775a9cd36c4d69c690e6434e7f1276dbb7dc"
+    },
+    {
+      "id": "advanced-migration",
+      "category": "advanced",
+      "kind": "migration",
+      "seed": 301,
+      "input_sha256": "eba45a9912cdaa648ba33afbd2b8c28c912320c8a5942e2d2459218ad8b1705c"
+    },
+    {
+      "id": "advanced-architecture",
+      "category": "advanced",
+      "kind": "architecture",
+      "seed": 302,
+      "input_sha256": "72b51d84c3063def524299a8716152c2bed0c1d7eb2ead8cfce059328378f779"
+    },
+    {
+      "id": "advanced-performance",
+      "category": "advanced",
+      "kind": "performance",
+      "seed": 303,
+      "input_sha256": "b9df3e878f48987fc260c74b3492a05fb29835da7bc29d71b677e89fd16372c6"
+    },
+    {
+      "id": "advanced-security",
+      "category": "advanced",
+      "kind": "security",
+      "seed": 304,
+      "input_sha256": "7c9a345e0c913b4745732c80800a87c0aab34bf8df2463248f1bc45c687a4066"
+    },
+    {
+      "id": "product-ui-polish",
+      "category": "product",
+      "kind": "ui_polish",
+      "seed": 401,
+      "input_sha256": "ab0ead2b985a97bdece83846649cc5dc58c8f942c3bf09f569966f4d0bbb7575"
+    },
+    {
+      "id": "product-onboarding",
+      "category": "product",
+      "kind": "onboarding",
+      "seed": 402,
+      "input_sha256": "314de7921e44618dbd4aa0a8d7c7284a7d7dd618b5e19e4241e65baf3e84502d"
+    },
+    {
+      "id": "product-launch-readiness",
+      "category": "product",
+      "kind": "launch_readiness",
+      "seed": 403,
+      "input_sha256": "4088ce1790cc31e11fccf058838dff71ed11d9d6c6e2147a1e823d3e9e7ef63f"
+    },
+    {
+      "id": "robustness-resume",
+      "category": "robustness",
+      "kind": "resume",
+      "seed": 501,
+      "input_sha256": "e4ecffb7b2c8ff3e7c41cdf080b4ecd0a478e390be86c6f98bd837740b6f4373"
+    },
+    {
+      "id": "robustness-cancel",
+      "category": "robustness",
+      "kind": "cancel",
+      "seed": 502,
+      "input_sha256": "5cb9e85ef59c774cdad01bbfe2d433bf9438dad0b1c55f13186312c388e69159"
+    },
+    {
+      "id": "robustness-steer",
+      "category": "robustness",
+      "kind": "steer",
+      "seed": 503,
+      "input_sha256": "5d3614bafed1e3c3eac3f1401927139a3964577923b914e79a7cb9bde0c0cf08"
+    },
+    {
+      "id": "robustness-undo",
+      "category": "robustness",
+      "kind": "undo",
+      "seed": 504,
+      "input_sha256": "238e45ed881150dc152ea1b882ada78bf7653a3d85e92b92a20bf773250601ad"
+    },
+    {
+      "id": "robustness-conflicting-edits",
+      "category": "robustness",
+      "kind": "conflicting_edits",
+      "seed": 505,
+      "input_sha256": "1e06e5a1b8b3e7751fa0580b0c3af923359ef335efbb0157d7fabaaffcf67d8f"
+    },
+    {
+      "id": "long-horizon-multi-stage",
+      "category": "long_horizon",
+      "kind": "multi_stage_improvement",
+      "seed": 601,
+      "input_sha256": "76f62b421e7d8366d9eba1ede5fa1bbc507b5c2d07ac2bd481bbf20008871ce7"
+    }
+  ],
+  "observations": [
+    {
+      "scenario_id": "beginner-vague-feature",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 20205,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-vague-feature",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 15149,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-vague-feature",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 5361,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 781,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "beginner-vague-feature",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 1064,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 781,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "beginner-broken-app",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 11216,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-broken-app",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 8106,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-broken-app",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 392,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 775,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "beginner-broken-app",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 323,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 775,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "beginner-setup-problem",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 8190,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-setup-problem",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 6387,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-setup-problem",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 334,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 781,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "beginner-setup-problem",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 416,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 781,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "standard-bug",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 7127,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-bug",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 6119,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-bug",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 376,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 761,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "standard-bug",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 334,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 761,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "standard-feature",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 6992,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-feature",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 6208,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-feature",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 298,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 769,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "standard-feature",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 272,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 769,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "standard-refactor",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5325,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-refactor",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 13364,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-refactor",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 2062,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 771,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "standard-refactor",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 2672,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 771,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "standard-tests",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 13251,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-tests",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 19659,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-tests",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 862,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 765,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "standard-tests",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 560,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 765,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "advanced-migration",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 11453,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-migration",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 11104,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-migration",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 505,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 773,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "advanced-migration",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 519,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 773,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "advanced-architecture",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 229,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "executor failed: legacy cmd/picogent command failed: exit status 2: → read_file {\"path\":\"fixture.txt\"}\n→ read_file {\"path\":\"fixture_test.go\"}\n→ read_file {\"path\":\"go.mod\"}\n  package fixture  import ( \t\"os\" \t\"testing\" )  func TestFixture(t *testing.T) { \tdata, err := os.ReadFile(\"fixture.txt\") …\n  before advanced-architecture \n  module example.com/picogent-outcome-quality-fixture  go 1.25 \n→ write_file {\"path\":\"fixture.txt\",\"content\":\"after advanced-architecture seed=302\\n\"}\n  write_file blocked in"
+      ]
+    },
+    {
+      "scenario_id": "advanced-architecture",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 326,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "executor failed: legacy cmd/picogent command failed: exit status 2: → read_file {\"path\":\"fixture.txt\"}\n→ read_file {\"path\":\"fixture_test.go\"}\n→ read_file {\"path\":\"go.mod\"}\n  module example.com/picogent-outcome-quality-fixture  go 1.25 \n  before advanced-architecture \n  package fixture  import ( \t\"os\" \t\"testing\" )  func TestFixture(t *testing.T) { \tdata, err := os.ReadFile(\"fixture.txt\") …\n→ write_file {\"path\":\"fixture.txt\",\"content\":\"after advanced-architecture seed=302\\n\"}\n  write_file blocked in"
+      ]
+    },
+    {
+      "scenario_id": "advanced-architecture",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 393,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 779,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "advanced-architecture",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 571,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 779,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "advanced-performance",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 7241,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-performance",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5729,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-performance",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 296,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 777,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "advanced-performance",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 280,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 777,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "advanced-security",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5655,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-security",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 6537,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-security",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 380,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 771,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "advanced-security",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 319,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 771,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "product-ui-polish",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5447,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-ui-polish",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5124,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-ui-polish",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 264,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 771,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "product-ui-polish",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 264,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 771,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "product-onboarding",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5202,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-onboarding",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4862,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-onboarding",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 304,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 773,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "product-onboarding",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 336,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 773,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "product-launch-readiness",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5444,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-launch-readiness",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5763,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-launch-readiness",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 310,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 785,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "product-launch-readiness",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 304,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 785,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "robustness-resume",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5277,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-resume",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5075,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-resume",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 254,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 771,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "robustness-resume",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 256,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 771,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "robustness-cancel",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5172,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-cancel",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 11558,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-cancel",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 557,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 771,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "robustness-cancel",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 487,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 771,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "robustness-steer",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 6095,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-steer",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 6353,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-steer",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 293,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 769,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "robustness-steer",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 273,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 769,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "robustness-undo",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5160,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-undo",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5829,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-undo",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 331,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 767,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "robustness-undo",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 350,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 767,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "robustness-conflicting-edits",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 7173,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-conflicting-edits",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 6446,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-conflicting-edits",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 296,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 793,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "robustness-conflicting-edits",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 276,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 793,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "long-horizon-multi-stage",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5506,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "long-horizon-multi-stage",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5921,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "long-horizon-multi-stage",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 283,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 785,
+        "evidence": "current"
+      }
+    },
+    {
+      "scenario_id": "long-horizon-multi-stage",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f",
+      "metrics": {
+        "outcome_success": "pass",
+        "correctness": "pass",
+        "user_questions": 1,
+        "tokens": 608,
+        "model_calls": 4,
+        "tool_calls": 5,
+        "latency_millis": 299,
+        "changed_lines": 1,
+        "unnecessary_changes": 0,
+        "verification_quality": "pass",
+        "repair_count": 0,
+        "context_growth_bytes": 785,
+        "evidence": "current"
+      }
+    }
+  ],
+  "unverified": [
+    "legacy v3 does not expose structured repair counts",
+    "legacy v3 does not expose context-growth measurement",
+    "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3",
+    "executor failed: legacy cmd/picogent command failed: exit status 2: → read_file {\"path\":\"fixture.txt\"}\n→ read_file {\"path\":\"fixture_test.go\"}\n→ read_file {\"path\":\"go.mod\"}\n  package fixture  import ( \t\"os\" \t\"testing\" )  func TestFixture(t *testing.T) { \tdata, err := os.ReadFile(\"fixture.txt\") …\n  before advanced-architecture \n  module example.com/picogent-outcome-quality-fixture  go 1.25 \n→ write_file {\"path\":\"fixture.txt\",\"content\":\"after advanced-architecture seed=302\\n\"}\n  write_file blocked in",
+    "executor failed: legacy cmd/picogent command failed: exit status 2: → read_file {\"path\":\"fixture.txt\"}\n→ read_file {\"path\":\"fixture_test.go\"}\n→ read_file {\"path\":\"go.mod\"}\n  module example.com/picogent-outcome-quality-fixture  go 1.25 \n  before advanced-architecture \n  package fixture  import ( \t\"os\" \t\"testing\" )  func TestFixture(t *testing.T) { \tdata, err := os.ReadFile(\"fixture.txt\") …\n→ write_file {\"path\":\"fixture.txt\",\"content\":\"after advanced-architecture seed=302\\n\"}\n  write_file blocked in"
+  ]
+}
