@@ -13,7 +13,7 @@ import (
 // This is the reviewed current-main candidate for the execution evidence
 // captured by the opt-in test below. A later comparison must declare a new
 // candidate head rather than silently relabeling this report.
-const outcomeQualityExactCandidateHead = "b3673658edc648b4058a828d7959ba5c062b8dc7"
+const outcomeQualityExactCandidateHead = "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f"
 
 // TestRunOutcomeQualityExactSourcePairMatrix is opt-in because it builds two
 // source trees and launches 80 isolated observations. Hosted CI exercises the
@@ -85,11 +85,11 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 			}
 		case OutcomeVariantCandidate:
 			candidateObservations++
-			if observation.SourceHead != outcomeQualityExactCandidateHead || observation.Metrics.OutcomeSuccess != OutcomeAssessmentInconclusive {
-				t.Fatalf("candidate observation=%#v, want exact-head inconclusive current-proof boundary", observation)
+			if observation.SourceHead != outcomeQualityExactCandidateHead || observation.Metrics.OutcomeSuccess != OutcomeAssessmentPass || observation.Metrics.Correctness != OutcomeAssessmentPass {
+				t.Fatalf("candidate observation=%#v, want exact-head passing three-file proof", observation)
 			}
-			if !containsOutcomeQualityReason(observation.Unverified, "current proof unavailable") {
-				t.Fatalf("candidate observation unverified=%v, want current-proof boundary", observation.Unverified)
+			if observation.Metrics.VerificationQuality != OutcomeVerificationPass || observation.Metrics.Evidence != EvidenceCurrent || len(observation.Unverified) != 0 {
+				t.Fatalf("candidate observation=%#v, want current verification and no unverified reasons", observation)
 			}
 		default:
 			t.Fatalf("unexpected observation variant %q", observation.Variant)

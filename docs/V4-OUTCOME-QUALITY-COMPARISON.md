@@ -1,6 +1,6 @@
 # V4 exact-head outcome-quality comparison
 
-Status: the exact source-pair matrix for [#422](https://github.com/saiaathish/picogent/issues/422) and [#246](https://github.com/saiaathishkarthik/picogent/issues/246) is recorded in the [bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json) and checkpointed by [#428](https://github.com/saiaathish/picogent/issues/428) and [PR #432](https://github.com/saiaathish/picogent/pull/432), but its result is `INCONCLUSIVE`.
+Status: the prior exact source-pair matrix for [#422](https://github.com/saiaathish/picogent/issues/422) and [#246](https://github.com/saiaathishkarthik/picogent/issues/246) remains preserved in the [2026-09-04 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json). The refreshed run for [#435](https://github.com/saiaathish/picogent/issues/435) is recorded in the [2026-09-05 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-05.json) and remains `INCONCLUSIVE` because the v3 baseline still lacks comparable structured telemetry.
 
 The outcome-quality contract and scripted executor are already defined in
 [`V4-OUTCOME-QUALITY-BENCHMARK.md`](V4-OUTCOME-QUALITY-BENCHMARK.md). This
@@ -82,7 +82,7 @@ report requires the fixed 20-scenario catalog, at least two repetitions,
 deterministic ordering, current verification evidence, and explicit failure or
 `UNVERIFIED` reasons.
 
-The completed matrix is recorded below. It does not establish live-provider
+The refreshed matrix is recorded below. It does not establish live-provider
 quality, rendered behavior, arbitrary repository success, release
 authorization, or overall v4 readiness. Those claims remain outside this
 evidence boundary.
@@ -95,17 +95,19 @@ persisted a structurally valid report before the detailed evidence assertions
 ran.
 
 The complete per-observation JSON is committed as
-[`V4-OUTCOME-QUALITY-REPORT-2026-09-04.json`](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json).
-It is a local `darwin/arm64` opt-in execution artifact. The 5/5 hosted checks
-on PR #432 validate the reviewed source-pair implementation and its contract;
-they do not claim to have rerun this opt-in 80-observation matrix.
+[`V4-OUTCOME-QUALITY-REPORT-2026-09-05.json`](V4-OUTCOME-QUALITY-REPORT-2026-09-05.json).
+It is a local `darwin/arm64` opt-in execution artifact. PR #436 fixed the
+candidate full-fixture proof binding, and its post-merge hosted run
+`33972008573` passed Ubuntu, macOS, Windows, security, and release-evidence
+checks; those checks validate the source fix and do not claim to have rerun
+this opt-in 80-observation matrix.
 
 | Field | Recorded evidence |
 | --- | --- |
 | Baseline source | `a07943b31044049afb0142f39198244cd3c75218` |
-| Candidate source | `b3673658edc648b4058a828d7959ba5c062b8dc7` |
-| Reviewed/pushed matrix head | `c2a4c74e4bca83d42b152afa298bc4d5277d8aa4` |
-| Merge/current `main` at the run | `9375f64c6cd93255bd6bd1f5451bc06c06f12baf` |
+| Candidate source | `e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f` |
+| Matrix test-anchor head | `48eaf949a5e2cf3cf4e72e250305e97c3ffa5854` |
+| Merge/current `main` at the run | `e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f` |
 | Host/toolchain | `darwin/arm64`, `go1.26.6` |
 | Runner | `picogent-outcome-quality-runner-v1` |
 | Shared policy | 2 repetitions, 30-second observation timeout, 32 maximum turns |
@@ -116,9 +118,9 @@ The recorded result is not a v4 quality win or regression claim:
 
 | Variant | Observations | Observed boundary |
 | --- | ---: | --- |
-| v3 baseline | 40 | 38 were downgraded because the exact v3 source does not expose structured repair-count/context-growth telemetry; 2 `advanced-architecture` observations also recorded a fixture write failure. |
-| v4 candidate | 40 | All were downgraded because the current proof observation did not match the required full three-file capture. |
-| Comparison | 80 | No pass/fail quality delta is computable while both sides contain incomplete proof. |
+| v3 baseline | 40 | All remain `INCONCLUSIVE` because the exact v3 source does not expose structured repair-count/context-growth telemetry; 2 `advanced-architecture` observations also recorded a reproducible fixture write failure. |
+| v4 candidate | 40 | All passed the deterministic fixture with current verification, including the required full three-file capture. |
+| Comparison | 80 | No v3/v4 quality delta is claimable because the baseline telemetry boundary remains incomplete; candidate fixture proof is now complete. |
 
 The catalog contains the following scenario counts. Counts are coverage
 counts, not successful outcomes; every row remains `INCONCLUSIVE` for
@@ -136,7 +138,8 @@ comparison purposes.
 ## Decision and next evidence boundary
 
 This is a complete observation-count and provenance checkpoint, not a
-quality-improvement result. A future comparison must add explicit compatible
-proof for the v3 telemetry boundary and the v4 full-fixture proof boundary,
-then declare a new exact candidate head. It must not relabel this report or
-turn deterministic fixture coverage into a broad autonomous-coding claim.
+quality-improvement result. The candidate full-fixture proof gap is closed for
+this deterministic lane, but a future comparison must add explicit compatible
+proof for the v3 telemetry boundary and resolve or preserve the two baseline
+fixture limitations. It must not turn deterministic fixture coverage into a
+broad autonomous-coding claim.
