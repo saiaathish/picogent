@@ -240,7 +240,12 @@ func outcomeQualityScript(input OutcomeQualityInput, expected map[string]string)
 		responses = append(responses, scriptedOutcomeToolResponse(writeCalls, 96, 48))
 	}
 
-	verifyArgs, err := json.Marshal(map[string]any{"targets": expectedPaths})
+	// Verification must bind every input file, not only files expected to
+	// change. The taskstate proof is compared with the full after-run fixture
+	// observation; targeting only changed files makes multi-file fixtures look
+	// stale even when their unchanged support files were checked successfully.
+	verifyPaths := outcomeQualityInputPaths(input)
+	verifyArgs, err := json.Marshal(map[string]any{"targets": verifyPaths})
 	if err != nil {
 		return nil, fmt.Errorf("encode scripted verification: %w", err)
 	}
@@ -269,7 +274,9 @@ func verifyOutcomeQualityFixture(ctx context.Context, root string, targets []str
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	want := append([]string(nil), input.ExpectedChangedPaths...)
+	// The verification observation is the complete fixture boundary. Content
+	// comparison below still decides which files were expected to change.
+	want := outcomeQualityInputPaths(input)
 	sort.Strings(want)
 	got := append([]string(nil), targets...)
 	sort.Strings(got)
