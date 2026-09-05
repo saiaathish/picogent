@@ -93,6 +93,9 @@ func TestBuildOutcomeQualityLegacyLaunchesExactV3Binary(t *testing.T) {
 	if execution.Metrics.Tokens != 80 || execution.Metrics.ModelCalls != 4 || execution.Metrics.ChangedLines != 1 || execution.Metrics.UnnecessaryChanges != 0 || execution.Metrics.ToolCalls != 5 {
 		t.Fatalf("legacy filesystem metrics=%#v, want one changed line, no extras, five tools", execution.Metrics)
 	}
+	if execution.Metrics.RepairCount != 0 || execution.Metrics.ContextGrowthBytes != 0 {
+		t.Fatalf("legacy unsupported metrics=%#v, want fail-closed zero values", execution.Metrics)
+	}
 	for _, want := range []string{
 		"legacy v3 does not expose structured repair counts",
 		"legacy v3 does not expose context-growth measurement",
@@ -102,8 +105,20 @@ func TestBuildOutcomeQualityLegacyLaunchesExactV3Binary(t *testing.T) {
 			t.Fatalf("legacy unverified=%v, missing %q", execution.Unverified, want)
 		}
 	}
-	if got := server.requestCount(); got != 4 {
-		t.Fatalf("provider requests=%d, want four typed v3 model turns", got)
+	advancedScenario := DefaultOutcomeQualityScenarios()[8]
+	advancedRequest := outcomeQualityLegacyTestRequestForScenario(t, outcomeQualityLegacySourceTarget(head), advancedScenario)
+	advancedExecution, err := executor.Execute(context.Background(), advancedRequest)
+	if err != nil {
+		t.Fatalf("execute advanced-architecture exact v3 binary: %v (provider requests=%d)", err, server.requestCount())
+	}
+	if advancedExecution.Metrics.OutcomeSuccess != OutcomeAssessmentPass ||
+		advancedExecution.Metrics.Correctness != OutcomeAssessmentPass ||
+		advancedExecution.Metrics.VerificationQuality != OutcomeVerificationPass ||
+		advancedExecution.Metrics.Evidence != EvidenceCurrent {
+		t.Fatalf("advanced-architecture legacy metrics=%#v, want filesystem pass", advancedExecution.Metrics)
+	}
+	if got := server.requestCount(); got != 8 {
+		t.Fatalf("provider requests=%d, want eight typed v3 model turns for two observations", got)
 	}
 	if err := validateOutcomeQualitySourceBinding(context.Background(), "legacy post-test", outcomeQualityLegacySourceTarget(head), legacySource); err != nil {
 		t.Fatalf("legacy source changed during build/run: %v", err)
@@ -166,6 +181,27 @@ func TestOutcomeQualityLegacyEnvironmentDoesNotInheritCredentialsOrWorkerSetting
 	}
 	if strings.Contains(joined, "PICOGENT_OUTCOME_QUALITY_WORKER_CHILD=") {
 		t.Fatalf("legacy environment inherited v4 worker marker: %q", joined)
+	}
+}
+
+func TestWriteOutcomeQualityLegacyConfigDisablesAutomaticTaskMode(t *testing.T) {
+	home := t.TempDir()
+	if err := writeOutcomeQualityLegacyConfig(home); err != nil {
+		t.Fatalf("write legacy benchmark config: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read legacy benchmark config: %v", err)
+	}
+	if string(data) != outcomeQualityLegacyConfig {
+		t.Fatalf("legacy benchmark config=%q, want %q", data, outcomeQualityLegacyConfig)
+	}
+	info, err := os.Stat(filepath.Join(home, "config.yaml"))
+	if err != nil {
+		t.Fatalf("stat legacy benchmark config: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("legacy benchmark config mode=%#o, want 0600", got)
 	}
 }
 
@@ -772,6 +808,11 @@ func outcomeQualityLegacySourceTarget(head string) OutcomeQualityTarget {
 func outcomeQualityLegacyTestRequest(t *testing.T, target OutcomeQualityTarget) OutcomeQualityExecutionRequest {
 	t.Helper()
 	scenario := DefaultOutcomeQualityScenarios()[0]
+	return outcomeQualityLegacyTestRequestForScenario(t, target, scenario)
+}
+
+func outcomeQualityLegacyTestRequestForScenario(t *testing.T, target OutcomeQualityTarget, scenario OutcomeQualityScenario) OutcomeQualityExecutionRequest {
+	t.Helper()
 	input, err := normalizeOutcomeQualityInput(outcomeQualityLegacyInput(scenario))
 	if err != nil {
 		t.Fatal(err)
