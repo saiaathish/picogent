@@ -1,14 +1,14 @@
 # V4 performance campaign
 
 Status: historical comparison captured on 2026-08-25, with current-head
-refreshes captured on 2026-08-30. This document records deterministic local
+refreshes through 2026-09-05. This document records deterministic local
 controls; it does not claim live-provider quality or end-to-end product
 performance.
 
 The measurements below retain the exact historical heads named in each
 section. Current merged `main` is now
-`281942c12369ce795e6f9a6dc824e3c08aede63a`; the older refresh at
-`eb824f293255d913dca894228bbd23609f37fe96` is intentionally not relabeled.
+`38b45ff99af0221f4b5dcbe16d356f78ff2b71a9`; older refreshes are intentionally
+not relabeled.
 Issue #302 tracks the current scripted-edit performance follow-up.
 
 ## Comparison
@@ -209,6 +209,48 @@ arm64 macOS, Go `go1.26.6`): 96 checkpoints, 96 resident-set samples,
 cross-platform comparison or a release budget. Hosted Windows and Linux
 measurements, GUI/TUI/headless envelopes, live-provider behavior, and
 long-horizon product quality remain unverified.
+
+## Exact current-main scripted-edit profile checkpoint
+
+The scripted-edit controls were rerun at exact merged `main` head
+`38b45ff99af0221f4b5dcbe16d356f78ff2b71a9` on 2026-09-05 using an Apple M3
+arm64 Mac and Go `go1.26.6`. The benchmark command was:
+
+```sh
+go test ./internal/benchmark -run '^$' \
+  -bench 'BenchmarkScriptedAgentEdit($|Stage)' \
+  -benchtime=100ms -benchmem -count=5
+```
+
+Values below are the observed minimum / median / maximum across five runs.
+The full fixture reports two scripted model calls per operation; the
+composite is the same-iteration non-durable safety subtotal.
+
+| Operation | ns/op (min / median / max) | B/op | allocs/op | model-calls/op |
+| --- | ---: | ---: | ---: | ---: |
+| Full scripted agent edit | 7,188,285 / 10,044,220 / 12,299,997 | 125,345–125,603 | 1,312 | 2.000 |
+| Non-durable composite safety subtotal | 8,174,262 / 9,335,101 / 9,642,254 | 13,074–13,138 | 198–199 | — |
+| Project run-lock acquire/release | 1,424,798 / 1,469,689 / 1,728,174 | 2,984–3,016 | 63 | — |
+| Checkpoint capture | 628,374 / 662,180 / 669,387 | 6,376–6,392 | 70 | — |
+| Checkpoint seal | 645,834 / 657,972 / 692,459 | 1,830–1,832 | 24 | — |
+| Secure workspace publication | 4,599,859 / 5,726,467 / 6,409,633 | 1,736–1,772 | 39–40 | — |
+| Secure workspace publication with hook | 6,037,790 / 6,161,223 / 7,853,594 | 1,976–1,999 | 41 | — |
+| Durable task save | 6,008,296 / 6,406,132 / 7,209,987 | 11,196–11,216 | 148 | — |
+| Production-shaped durable scripted turn | 44,022,917 / 53,481,938 / 58,032,291 | 307,456–371,000 | 3,006–3,040 | 2.000 |
+
+A bounded CPU profile of the full fixture and a separate profile of the
+composite both show kernel `openat`/descriptor traversal as the dominant
+sampled work. In the composite profile, the cumulative samples were
+approximately workspace publication 31%, project run lock 30%, workspace
+file reads used by checkpoint capture/seal 28%, and secure-directory setup
+16%; the percentages overlap because they are call-tree cumulative values.
+The full profile also includes the benchmark's untimed process-local undo
+consumption, so it is used only as a path inventory. The profile does not
+demonstrate a redundant traversal that can safely be shared across the
+existing symlink, hard-link, freshness, durability, and serialization
+boundaries. No production optimization lane is justified by this checkpoint;
+issue #302 remains open for a separately causal target or explicit acceptance
+of the measured safety cost.
 
 ## Not measured here
 

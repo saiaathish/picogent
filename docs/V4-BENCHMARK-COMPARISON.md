@@ -1,7 +1,7 @@
 # Deterministic v3/v4 benchmark comparison
 
-Status: refreshed with local measurements on 2026-09-03 at exact current
-merged `main` head `b73db3f297edd7759de4030145574b26dc6eefdc`. This is a
+Status: refreshed with local measurements on 2026-09-05 at exact current
+merged `main` head `38b45ff99af0221f4b5dcbe16d356f78ff2b71a9`. This is a
 provider-independent regression comparison, not a live-provider quality,
 browser, or product-SLA claim.
 
@@ -83,6 +83,44 @@ No new production optimization lane is justified by this checkpoint alone;
 issue #302 remains open for a separately causal target. Outcome-level v3/v4
 quality, live-provider behavior, rendered runtime behavior, and release
 readiness remain outside these measurements.
+
+## Exact current-main scripted-edit profile checkpoint (2026-09-05)
+
+The current merged `main` head was rerun on an Apple M3 arm64 Mac with Go
+`go1.26.6` using five repetitions of the scripted-edit and stage-control
+benchmarks:
+
+```sh
+go test ./internal/benchmark -run '^$' \
+  -bench 'BenchmarkScriptedAgentEdit($|Stage)' \
+  -benchtime=100ms -benchmem -count=5
+```
+
+Values are minimum / median / maximum across the five runs. The full fixture
+and production-shaped durable row each report `2.000 model-calls/op`.
+
+| Operation | ns/op (min / median / max) | B/op | allocs/op | model-calls/op |
+| --- | ---: | ---: | ---: | ---: |
+| Full `Agent.Run` scripted edit | 7,188,285 / 10,044,220 / 12,299,997 | 125,345–125,603 | 1,312 | 2.000 |
+| Same-iteration non-durable composite safety subtotal | 8,174,262 / 9,335,101 / 9,642,254 | 13,074–13,138 | 198–199 | — |
+| Project run-lock acquire/release | 1,424,798 / 1,469,689 / 1,728,174 | 2,984–3,016 | 63 | — |
+| Checkpoint capture | 628,374 / 662,180 / 669,387 | 6,376–6,392 | 70 | — |
+| Checkpoint seal | 645,834 / 657,972 / 692,459 | 1,830–1,832 | 24 | — |
+| Secure workspace publication | 4,599,859 / 5,726,467 / 6,409,633 | 1,736–1,772 | 39–40 | — |
+| Secure workspace publication with hook | 6,037,790 / 6,161,223 / 7,853,594 | 1,976–1,999 | 41 | — |
+| Durable task save | 6,008,296 / 6,406,132 / 7,209,987 | 11,196–11,216 | 148 | — |
+| Production-shaped durable scripted turn | 44,022,917 / 53,481,938 / 58,032,291 | 307,456–371,000 | 3,006–3,040 | 2.000 |
+
+The full and composite controls were also profiled separately. The composite
+profile sampled mostly kernel `openat`/descriptor traversal: workspace atomic
+publication, project locking, checkpoint file reads, and secure-directory
+setup. The full profile includes the benchmark's untimed process-local undo
+consumption, so it is treated as a path inventory rather than a timed
+attribution. These profiles identify the safety boundary, but do not prove a
+redundant operation that can be shared without weakening symlink, hard-link,
+freshness, durability, or serialization guarantees. No production
+optimization lane is justified by this checkpoint; #302 remains open for a
+separately causal target or explicit acceptance of the measured safety cost.
 
 ## Historical comparison reproducibility
 
