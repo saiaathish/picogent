@@ -1,0 +1,2174 @@
+{
+  "schema": "picogent.v4.outcome-quality.v1",
+  "scenario_set": "v3-v4-outcome-quality",
+  "status": "inconclusive",
+  "baseline": {
+    "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+    "host": "darwin/arm64",
+    "go_version": "go1.26.6",
+    "tool_version": "picogent-outcome-quality-runner-v1"
+  },
+  "candidate": {
+    "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+    "host": "darwin/arm64",
+    "go_version": "go1.26.6",
+    "tool_version": "picogent-outcome-quality-runner-v1"
+  },
+  "policy": {
+    "repetitions": 2,
+    "timeout_millis": 30000,
+    "max_tokens": 16000,
+    "max_model_calls": 64,
+    "max_tool_calls": 256,
+    "max_turns": 32
+  },
+  "command": "exact-source-pair: v3 cmd/picogent + v4 outcome-quality-worker",
+  "scenarios": [
+    {
+      "id": "beginner-vague-feature",
+      "category": "beginner",
+      "kind": "vague_feature",
+      "seed": 101,
+      "input_sha256": "6e835020f71c0c967d8a79def2269e01d58832087d4802378486bbfb4a515fa0"
+    },
+    {
+      "id": "beginner-broken-app",
+      "category": "beginner",
+      "kind": "broken_app",
+      "seed": 102,
+      "input_sha256": "d98226ce67be68f8f54bd69ed99780625c2b06bb73db4ce6b2f967e2197f1385"
+    },
+    {
+      "id": "beginner-setup-problem",
+      "category": "beginner",
+      "kind": "setup_problem",
+      "seed": 103,
+      "input_sha256": "85c1a263ad6bef9f25d6d072fe0bbc4d87f01ae54ab79e4216c71a74e845f4a0"
+    },
+    {
+      "id": "standard-bug",
+      "category": "standard_development",
+      "kind": "bug",
+      "seed": 201,
+      "input_sha256": "ef23697dfbbe030aef50e55d87045ce6790f67af5cb9aa53836ea8680ee5a230"
+    },
+    {
+      "id": "standard-feature",
+      "category": "standard_development",
+      "kind": "feature",
+      "seed": 202,
+      "input_sha256": "94538a80882de6e6f27cc15c61f8435704bcd8985193d5f301907352c07e9b3e"
+    },
+    {
+      "id": "standard-refactor",
+      "category": "standard_development",
+      "kind": "refactor",
+      "seed": 203,
+      "input_sha256": "42c689b22affdc0e1ac3dcd76577f81f47a9b3c03349315b392cde9fb17ea87a"
+    },
+    {
+      "id": "standard-tests",
+      "category": "standard_development",
+      "kind": "tests",
+      "seed": 204,
+      "input_sha256": "c4a0c7e66cc3cf1bf97cfe135e38775a9cd36c4d69c690e6434e7f1276dbb7dc"
+    },
+    {
+      "id": "advanced-migration",
+      "category": "advanced",
+      "kind": "migration",
+      "seed": 301,
+      "input_sha256": "eba45a9912cdaa648ba33afbd2b8c28c912320c8a5942e2d2459218ad8b1705c"
+    },
+    {
+      "id": "advanced-architecture",
+      "category": "advanced",
+      "kind": "architecture",
+      "seed": 302,
+      "input_sha256": "72b51d84c3063def524299a8716152c2bed0c1d7eb2ead8cfce059328378f779"
+    },
+    {
+      "id": "advanced-performance",
+      "category": "advanced",
+      "kind": "performance",
+      "seed": 303,
+      "input_sha256": "b9df3e878f48987fc260c74b3492a05fb29835da7bc29d71b677e89fd16372c6"
+    },
+    {
+      "id": "advanced-security",
+      "category": "advanced",
+      "kind": "security",
+      "seed": 304,
+      "input_sha256": "7c9a345e0c913b4745732c80800a87c0aab34bf8df2463248f1bc45c687a4066"
+    },
+    {
+      "id": "product-ui-polish",
+      "category": "product",
+      "kind": "ui_polish",
+      "seed": 401,
+      "input_sha256": "ab0ead2b985a97bdece83846649cc5dc58c8f942c3bf09f569966f4d0bbb7575"
+    },
+    {
+      "id": "product-onboarding",
+      "category": "product",
+      "kind": "onboarding",
+      "seed": 402,
+      "input_sha256": "314de7921e44618dbd4aa0a8d7c7284a7d7dd618b5e19e4241e65baf3e84502d"
+    },
+    {
+      "id": "product-launch-readiness",
+      "category": "product",
+      "kind": "launch_readiness",
+      "seed": 403,
+      "input_sha256": "4088ce1790cc31e11fccf058838dff71ed11d9d6c6e2147a1e823d3e9e7ef63f"
+    },
+    {
+      "id": "robustness-resume",
+      "category": "robustness",
+      "kind": "resume",
+      "seed": 501,
+      "input_sha256": "e4ecffb7b2c8ff3e7c41cdf080b4ecd0a478e390be86c6f98bd837740b6f4373"
+    },
+    {
+      "id": "robustness-cancel",
+      "category": "robustness",
+      "kind": "cancel",
+      "seed": 502,
+      "input_sha256": "5cb9e85ef59c774cdad01bbfe2d433bf9438dad0b1c55f13186312c388e69159"
+    },
+    {
+      "id": "robustness-steer",
+      "category": "robustness",
+      "kind": "steer",
+      "seed": 503,
+      "input_sha256": "5d3614bafed1e3c3eac3f1401927139a3964577923b914e79a7cb9bde0c0cf08"
+    },
+    {
+      "id": "robustness-undo",
+      "category": "robustness",
+      "kind": "undo",
+      "seed": 504,
+      "input_sha256": "238e45ed881150dc152ea1b882ada78bf7653a3d85e92b92a20bf773250601ad"
+    },
+    {
+      "id": "robustness-conflicting-edits",
+      "category": "robustness",
+      "kind": "conflicting_edits",
+      "seed": 505,
+      "input_sha256": "1e06e5a1b8b3e7751fa0580b0c3af923359ef335efbb0157d7fabaaffcf67d8f"
+    },
+    {
+      "id": "long-horizon-multi-stage",
+      "category": "long_horizon",
+      "kind": "multi_stage_improvement",
+      "seed": 601,
+      "input_sha256": "76f62b421e7d8366d9eba1ede5fa1bbc507b5c2d07ac2bd481bbf20008871ce7"
+    }
+  ],
+  "observations": [
+    {
+      "scenario_id": "beginner-vague-feature",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4999,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-vague-feature",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4256,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-vague-feature",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 1088,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "beginner-vague-feature",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 246,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "beginner-broken-app",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4167,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-broken-app",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4082,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-broken-app",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 222,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "beginner-broken-app",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 242,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "beginner-setup-problem",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4062,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-setup-problem",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4443,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "beginner-setup-problem",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 294,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "beginner-setup-problem",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 318,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "standard-bug",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5307,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-bug",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4613,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-bug",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 284,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "standard-bug",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 250,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "standard-feature",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4626,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-feature",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4445,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-feature",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 263,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "standard-feature",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 251,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "standard-refactor",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4494,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-refactor",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4456,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-refactor",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 350,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "standard-refactor",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 297,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "standard-tests",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4831,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-tests",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5006,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "standard-tests",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 300,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "standard-tests",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 265,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "advanced-migration",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4690,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-migration",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4718,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-migration",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 312,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "advanced-migration",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 264,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "advanced-architecture",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 156,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "executor failed: legacy cmd/picogent command failed: exit status 2: → read_file {\"path\":\"fixture.txt\"}\n→ read_file {\"path\":\"fixture_test.go\"}\n→ read_file {\"path\":\"go.mod\"}\n  module example.com/picogent-outcome-quality-fixture  go 1.25 \n  before advanced-architecture \n  package fixture  import ( \t\"os\" \t\"testing\" )  func TestFixture(t *testing.T) { \tdata, err := os.ReadFile(\"fixture.txt\") …\n→ write_file {\"path\":\"fixture.txt\",\"content\":\"after advanced-architecture seed=302\\n\"}\n  write_file blocked in"
+      ]
+    },
+    {
+      "scenario_id": "advanced-architecture",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 161,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "executor failed: legacy cmd/picogent command failed: exit status 2: → read_file {\"path\":\"fixture.txt\"}\n→ read_file {\"path\":\"fixture_test.go\"}\n→ read_file {\"path\":\"go.mod\"}\n  before advanced-architecture \n  module example.com/picogent-outcome-quality-fixture  go 1.25 \n  package fixture  import ( \t\"os\" \t\"testing\" )  func TestFixture(t *testing.T) { \tdata, err := os.ReadFile(\"fixture.txt\") …\n→ write_file {\"path\":\"fixture.txt\",\"content\":\"after advanced-architecture seed=302\\n\"}\n  write_file blocked in"
+      ]
+    },
+    {
+      "scenario_id": "advanced-architecture",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 299,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "advanced-architecture",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 334,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "advanced-performance",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5300,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-performance",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 5851,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-performance",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 395,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "advanced-performance",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 371,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "advanced-security",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4923,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-security",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4579,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "advanced-security",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 312,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "advanced-security",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 277,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "product-ui-polish",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4588,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-ui-polish",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4509,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-ui-polish",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 278,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "product-ui-polish",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 272,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "product-onboarding",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4673,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-onboarding",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4790,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-onboarding",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 290,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "product-onboarding",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 289,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "product-launch-readiness",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4971,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-launch-readiness",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4630,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "product-launch-readiness",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 249,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "product-launch-readiness",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 251,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "robustness-resume",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4499,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-resume",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4396,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-resume",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 265,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "robustness-resume",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 253,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "robustness-cancel",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4573,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-cancel",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4842,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-cancel",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 318,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "robustness-cancel",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 272,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "robustness-steer",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4605,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-steer",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4418,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-steer",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 271,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "robustness-steer",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 251,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "robustness-undo",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4447,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-undo",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4393,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-undo",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 256,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "robustness-undo",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 263,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "robustness-conflicting-edits",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4372,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-conflicting-edits",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4788,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "robustness-conflicting-edits",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 304,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "robustness-conflicting-edits",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 305,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "long-horizon-multi-stage",
+      "variant": "baseline",
+      "repetition": 1,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4912,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "long-horizon-multi-stage",
+      "variant": "baseline",
+      "repetition": 2,
+      "source_head": "a07943b31044049afb0142f39198244cd3c75218",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 4670,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "legacy v3 does not expose structured repair counts",
+        "legacy v3 does not expose context-growth measurement",
+        "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3"
+      ]
+    },
+    {
+      "scenario_id": "long-horizon-multi-stage",
+      "variant": "candidate",
+      "repetition": 1,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 302,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    },
+    {
+      "scenario_id": "long-horizon-multi-stage",
+      "variant": "candidate",
+      "repetition": 2,
+      "source_head": "b3673658edc648b4058a828d7959ba5c062b8dc7",
+      "metrics": {
+        "outcome_success": "inconclusive",
+        "correctness": "inconclusive",
+        "user_questions": 0,
+        "tokens": 0,
+        "model_calls": 0,
+        "tool_calls": 0,
+        "latency_millis": 251,
+        "changed_lines": 0,
+        "unnecessary_changes": 0,
+        "verification_quality": "inconclusive",
+        "repair_count": 0,
+        "context_growth_bytes": 0,
+        "evidence": "unverified"
+      },
+      "unverified": [
+        "current proof unavailable: scripted task completion evidence is not ready"
+      ]
+    }
+  ],
+  "unverified": [
+    "legacy v3 does not expose structured repair counts",
+    "legacy v3 does not expose context-growth measurement",
+    "legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3",
+    "current proof unavailable: scripted task completion evidence is not ready",
+    "executor failed: legacy cmd/picogent command failed: exit status 2: → read_file {\"path\":\"fixture.txt\"}\n→ read_file {\"path\":\"fixture_test.go\"}\n→ read_file {\"path\":\"go.mod\"}\n  module example.com/picogent-outcome-quality-fixture  go 1.25 \n  before advanced-architecture \n  package fixture  import ( \t\"os\" \t\"testing\" )  func TestFixture(t *testing.T) { \tdata, err := os.ReadFile(\"fixture.txt\") …\n→ write_file {\"path\":\"fixture.txt\",\"content\":\"after advanced-architecture seed=302\\n\"}\n  write_file blocked in",
+    "executor failed: legacy cmd/picogent command failed: exit status 2: → read_file {\"path\":\"fixture.txt\"}\n→ read_file {\"path\":\"fixture_test.go\"}\n→ read_file {\"path\":\"go.mod\"}\n  before advanced-architecture \n  module example.com/picogent-outcome-quality-fixture  go 1.25 \n  package fixture  import ( \t\"os\" \t\"testing\" )  func TestFixture(t *testing.T) { \tdata, err := os.ReadFile(\"fixture.txt\") …\n→ write_file {\"path\":\"fixture.txt\",\"content\":\"after advanced-architecture seed=302\\n\"}\n  write_file blocked in"
+  ]
+}
