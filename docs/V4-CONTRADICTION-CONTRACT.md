@@ -87,6 +87,27 @@ caller-created or reloaded `ContradictionReport` is therefore formatted as
 - the report is read-only and derived on demand;
 - taskstate completion remains the only completion/retirement authority.
 
+## Lifecycle projection
+
+The shared `outcome.TurnContract` is projected through the existing lifecycle
+seams rather than creating surface-specific contradiction state:
+
+- the agent keeps the bounded contradiction guidance in its internal outcome
+  focus;
+- GUI task-progress events and `/api/state` carry the bounded turn projection;
+- TUI task progress renders the same categorical summary;
+- headless runs report the same summary on an unverified result and retain it
+  as a diagnostic notice on successful completion;
+- `internal/lifecycle.Observe` captures the same projection for headless, TUI,
+  and GUI scenario checks.
+
+User-facing summaries contain only the contradiction state, bounded signal
+count, truncation marker, and fixed recovery wording. They never contain
+evidence summaries, origins, commands, repository text, or model output.
+Reloaded or caller-shaped reports remain advisory. These projections are
+deterministic/local contract evidence; they do not claim rendered-browser,
+live-provider, cross-platform, or release behavior.
+
 The signal is evidence of disagreement, not proof of which observation is
 correct. It does not claim semantic fact extraction, live-provider quality,
 rendered behavior, release readiness, or protection against arbitrary hostile

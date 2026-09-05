@@ -6,7 +6,12 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
-const { createPrimaryEventDispatcher, mainPromptRequest, completionProofSummary } = require("./contracts.js");
+const {
+  createPrimaryEventDispatcher,
+  mainPromptRequest,
+  completionProofSummary,
+  contradictionSummary,
+} = require("./contracts.js");
 
 function setupHarness(installResponse) {
   const elements = new Map();
@@ -158,6 +163,20 @@ test("handles incomplete proof fallback and singular details", () => {
   }), "Completion proof pending: completion proof is incomplete (1 required criterion missing, 1 quality requirement missing)");
   assert.equal(completionProofSummary({ ready: false }), "Completion proof pending: completion proof is incomplete");
   assert.equal(completionProofSummary("untrusted"), "");
+});
+
+test("summarizes bounded contradiction states without evidence text", () => {
+  assert.equal(contradictionSummary({
+    state: "CONFIRMED",
+    signals: [{ positive_origin: "secret" }],
+  }), "Contradictory evidence confirmed (1 signal); diagnose and recheck before continuing");
+  assert.equal(contradictionSummary({
+    state: "ADVISORY",
+    signals: [{ positive_origin: "secret" }, { negative_origin: "instruction" }],
+    signals_truncated: true,
+  }), "Contradictory evidence is unverified (2 signals; some signals omitted); it cannot select an action");
+  assert.equal(contradictionSummary({ state: "CONFIRMED", signals: [] }), "");
+  assert.equal(contradictionSummary({ state: "NONE", signals: [{ positive_origin: "secret" }] }), "");
 });
 
 test("setup only installs after an explicit button action", async () => {

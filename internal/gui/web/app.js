@@ -56,6 +56,7 @@ const taskStatusEl = $("task-progress-status");
 const taskGoalEl = $("task-progress-goal");
 const taskMetaEl = $("task-progress-meta");
 const taskProofEl = $("task-progress-proof");
+const taskContradictionEl = $("task-progress-contradiction");
 const taskStepsEl = $("task-progress-steps");
 const taskBlockedEl = $("task-progress-blocked");
 const taskFilesBtn = $("task-progress-files");
@@ -171,6 +172,9 @@ function clearTaskProgress() {
   taskProofEl.textContent = "";
   taskProofEl.hidden = true;
   taskProofEl.removeAttribute("data-ready");
+  taskContradictionEl.textContent = "";
+  taskContradictionEl.hidden = true;
+  taskContradictionEl.removeAttribute("data-state");
   taskStepsEl.replaceChildren();
   taskBlockedEl.textContent = "";
   taskBlockedEl.hidden = true;
@@ -185,9 +189,10 @@ function taskStepState(task, step, index) {
   return "Queued";
 }
 
-function announceTaskProgress(task, statusLabel, completion) {
+function announceTaskProgress(task, statusLabel, completion, outcome) {
   const currentStep = Number.isInteger(task.current_step) ? task.current_step : 0;
-  const key = [task.session_id, task.id, task.status, currentStep, completion?.ready, completion?.reason].join(":");
+  const contradiction = window.PicogentWebContracts?.contradictionSummary(outcome?.contradictions) || "";
+  const key = [task.session_id, task.id, task.status, currentStep, completion?.ready, completion?.reason, contradiction].join(":");
   if (key === taskAnnouncementKey) return;
   taskAnnouncementKey = key;
 
@@ -197,10 +202,11 @@ function announceTaskProgress(task, statusLabel, completion) {
   else if (task.status === "done") message += " All recorded steps complete.";
   const proofSummary = window.PicogentWebContracts?.completionProofSummary(completion) || "";
   if (proofSummary) message += " " + proofSummary + ".";
+  if (contradiction) message += " " + contradiction + ".";
   taskAnnouncerEl.textContent = message;
 }
 
-function renderTaskProgress(task, sourceSession, completion) {
+function renderTaskProgress(task, sourceSession, completion, outcome) {
   if (sourceSession && sourceSession !== sessionId) return;
   if (!task) {
     clearTaskProgress();
@@ -226,6 +232,14 @@ function renderTaskProgress(task, sourceSession, completion) {
     taskProofEl.dataset.ready = completion?.ready === true ? "true" : "false";
   } else {
     taskProofEl.removeAttribute("data-ready");
+  }
+  const contradiction = window.PicogentWebContracts?.contradictionSummary(outcome?.contradictions) || "";
+  taskContradictionEl.textContent = contradiction;
+  taskContradictionEl.hidden = !contradiction;
+  if (contradiction) {
+    taskContradictionEl.dataset.state = outcome?.contradictions?.state || "";
+  } else {
+    taskContradictionEl.removeAttribute("data-state");
   }
 
   const meta = [];
@@ -276,7 +290,7 @@ function renderTaskProgress(task, sourceSession, completion) {
 
   taskFilesBtn.textContent = "Changed files (" + changedFiles.length + ")";
   taskFilesBtn.disabled = changedFiles.length === 0;
-  announceTaskProgress(task, statusLabel, completion);
+  announceTaskProgress(task, statusLabel, completion, outcome);
 }
 
 function renderTaskChangedFiles(files) {
@@ -1115,7 +1129,7 @@ async function newChat() {
   try {
     const s = await (await fetch("/api/state")).json();
     if (epoch !== viewEpoch) return;
-    renderTaskProgress(s.task, s.session_id, s.completion);
+    renderTaskProgress(s.task, s.session_id, s.completion, s.outcome);
     renderOverview({ ...(s.overview || {}), evolve: s.evolve });
     renderAuthBanner(s.auth);
   } catch (_) {}
@@ -1165,7 +1179,7 @@ async function refresh(reconcileHistory = false) {
     evolve: s.evolve,
   });
   renderContext(s.context);
-  renderTaskProgress(s.task, s.session_id, s.completion);
+  renderTaskProgress(s.task, s.session_id, s.completion, s.outcome);
   if (s.pending_perm) {
     showPermission(s.pending_perm);
   } else if (!s.busy) {
@@ -2134,7 +2148,7 @@ function connectEvents() {
       const task = hasTaskEnvelope ? e.task : e;
       const eventSession = task?.session_id || e.session_id || "";
       if (!eventSession || eventSession !== sessionId) return;
-      renderTaskProgress(task, eventSession, e.completion);
+      renderTaskProgress(task, eventSession, e.completion, e.outcome);
       return;
     }
     if (e.type === "permission") {

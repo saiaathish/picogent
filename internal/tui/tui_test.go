@@ -632,6 +632,23 @@ func TestFormatTaskProgressDistinguishesReadyProof(t *testing.T) {
 	}
 }
 
+func TestFormatTaskProgressSurfacesContradictionSummary(t *testing.T) {
+	task, err := taskstate.New("tui-contradiction", "check the outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed", "test runner")
+
+	got := formatTaskProgress(task)
+	if !strings.Contains(got, "Contradictory evidence confirmed") || !strings.Contains(got, "diagnose and recheck") {
+		t.Fatalf("formatTaskProgress() = %q, want bounded contradiction summary", got)
+	}
+	if strings.Contains(got, "tests passed") || strings.Contains(got, "tests failed") {
+		t.Fatalf("formatTaskProgress() exposed evidence text: %q", got)
+	}
+}
+
 func TestTaskProgressMessageCarriesSharedCompletionProof(t *testing.T) {
 	task, err := taskstate.New("session-proof", "finish the loop", nil)
 	if err != nil {

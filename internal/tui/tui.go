@@ -22,6 +22,7 @@ import (
 	"github.com/saiaathish/picogent/internal/evolve"
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/outcome"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/redact"
 	"github.com/saiaathish/picogent/internal/scope"
@@ -1086,7 +1087,11 @@ func formatTaskProgressWithProof(task *taskstate.Task, proof taskstate.Completio
 	if len(task.ChangedFiles) == 1 {
 		files = "file"
 	}
-	return fmt.Sprintf("task · %s · %d/%d · %s · %s · %d %s", task.Status, done, len(task.Steps), detail, completionProofLabel(proof), len(task.ChangedFiles), files)
+	surfaceSummary := outcome.SurfaceSummary(outcome.TurnContractForTask(task))
+	if surfaceSummary != "" {
+		surfaceSummary = " · " + surfaceSummary
+	}
+	return fmt.Sprintf("task · %s · %d/%d · %s · %s%s · %d %s", task.Status, done, len(task.Steps), detail, completionProofLabel(proof), surfaceSummary, len(task.ChangedFiles), files)
 }
 
 func completionProofLabel(proof taskstate.CompletionCheck) string {

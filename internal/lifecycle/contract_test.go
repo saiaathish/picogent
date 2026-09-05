@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/saiaathish/picogent/internal/outcome"
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
@@ -148,6 +149,31 @@ func TestObserveCapturesDurableOutcomeWithoutMutatingTask(t *testing.T) {
 	}
 	if task.LastTurn() == nil || task.LastTurn().State != taskstate.TurnActive {
 		t.Fatal("Observe mutated the task")
+	}
+}
+
+func TestObserveProjectsContradictionAcrossLifecycleSurfaces(t *testing.T) {
+	task, err := taskstate.New("lifecycle-contradiction", "check the outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed with secret text", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed with secret text", "test runner")
+
+	for _, surface := range []Surface{SurfaceHeadless, SurfaceTUI, SurfaceGUI} {
+		t.Run(string(surface), func(t *testing.T) {
+			observation := Observe("contradiction", surface, TriggerCancellation, task, CompletionProjection{Required: true}, nil)
+			if observation.Outcome.Contradictions.State != outcome.ContradictionConfirmed {
+				t.Fatalf("lifecycle outcome = %#v, want confirmed contradiction", observation.Outcome)
+			}
+			summary := outcome.SurfaceSummary(observation.Outcome)
+			if !strings.Contains(summary, "diagnose and recheck") {
+				t.Fatalf("lifecycle summary = %q, want bounded recovery guidance", summary)
+			}
+			if strings.Contains(summary, "secret text") {
+				t.Fatalf("lifecycle summary exposed evidence text: %q", summary)
+			}
+		})
 	}
 }
 
