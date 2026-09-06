@@ -200,8 +200,15 @@ func TestWriteOutcomeQualityLegacyConfigDisablesAutomaticTaskMode(t *testing.T) 
 	if err != nil {
 		t.Fatalf("stat legacy benchmark config: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
-		t.Fatalf("legacy benchmark config mode=%#o, want 0600", got)
+	if info.IsDir() {
+		t.Fatal("legacy benchmark config is a directory")
+	}
+	// Windows does not honor Unix permission bits the same way; keep the
+	// restrictive mode assertion on POSIX hosts only.
+	if runtime.GOOS != "windows" {
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("legacy benchmark config mode=%#o, want 0600", got)
+		}
 	}
 }
 
