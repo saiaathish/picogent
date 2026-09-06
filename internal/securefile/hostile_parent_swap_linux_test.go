@@ -24,6 +24,7 @@ import (
 const (
 	hostileParentSwapHelperEnv   = "PICOGENT_HOSTILE_PARENT_SWAP_HELPER"
 	hostileParentSwapEvidenceEnv = "PICOGENT_HOSTILE_PARENT_SWAP_EVIDENCE_OUT"
+	hostileParentSwapSourceEnv   = "PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA"
 	hostileParentSwapAttempts    = 250
 )
 
@@ -61,6 +62,13 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux-only same-UID parent-swap harness")
 	}
+	candidateSHA, sourceTreeModified := currentSourceState(t)
+	if sourceTreeModified {
+		t.Fatalf("source tree must be clean before retaining hostile evidence")
+	}
+	if expected := strings.TrimSpace(os.Getenv(hostileParentSwapSourceEnv)); expected != "" && expected != candidateSHA {
+		t.Fatalf("source SHA mismatch: expected %s, current HEAD is %s", expected, candidateSHA)
+	}
 
 	root := t.TempDir()
 	outside := filepath.Join(root, "outside")
@@ -92,9 +100,10 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 	}
 
 	ops := []struct {
-		id   string
-		run  func(parent string) (successes, errors int, escape bool)
-		prep func(parent string) error
+		id     string
+		run    func(parent string) (successes, errors int, escape bool)
+		prep   func(parent string) error
+		verify func(parent string) error
 	}{
 		{
 			id: "securefile-write-atomic",
@@ -119,6 +128,16 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 					}
 				}
 				return successes, errs, escape
+			},
+			verify: func(parent string) error {
+				data, err := os.ReadFile(filepath.Join(parent, "state.yaml"))
+				if err != nil {
+					return fmt.Errorf("read trusted atomic-write result: %w", err)
+				}
+				if !strings.HasPrefix(string(data), "inside-") {
+					return fmt.Errorf("trusted atomic-write result has unexpected content %q", data)
+				}
+				return nil
 			},
 		},
 		{
@@ -153,6 +172,9 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 				}
 				return successes, errs, escape
 			},
+			verify: func(parent string) error {
+				return nil
+			},
 		},
 		{
 			id: "securefile-write-exclusive",
@@ -179,6 +201,25 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 				}
 				return successes, errs, escape
 			},
+			verify: func(parent string) error {
+				entries, err := os.ReadDir(parent)
+				if err != nil {
+					return fmt.Errorf("read trusted exclusive-write directory: %w", err)
+				}
+				for _, entry := range entries {
+					if !strings.HasPrefix(entry.Name(), "exclusive-") || !strings.HasSuffix(entry.Name(), ".json") {
+						continue
+					}
+					data, err := os.ReadFile(filepath.Join(parent, entry.Name()))
+					if err != nil {
+						return fmt.Errorf("read trusted exclusive-write result: %w", err)
+					}
+					if strings.HasPrefix(string(data), "exclusive-") {
+						return nil
+					}
+				}
+				return fmt.Errorf("no successful exclusive write remained in trusted parent")
+			},
 		},
 		{
 			id: "securefile-remove-file",
@@ -204,6 +245,17 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 					}
 				}
 				return successes, errs, escape
+			},
+			verify: func(parent string) error {
+				_, err := os.Lstat(filepath.Join(parent, "remove-target.txt"))
+				switch {
+				case err == nil:
+					return fmt.Errorf("successful remove left trusted target in place")
+				case errors.Is(err, os.ErrNotExist):
+					return nil
+				default:
+					return fmt.Errorf("stat trusted remove target: %w", err)
+				}
 			},
 		},
 	}
@@ -248,6 +300,48 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 		if err := cmd.Start(); err != nil {
 			t.Fatalf("start attacker for %s: %v", op.id, err)
 		}
+		waitCh := make(chan error, 1)
+		go func() { waitCh <- cmd.Wait() }()
+		waited := false
+		var waitErr error
+		waitForAttackerExit := func() error {
+			if waited {
+				return waitErr
+			}
+			timer := time.NewTimer(5 * time.Second)
+			defer timer.Stop()
+			select {
+			case waitErr = <-waitCh:
+				waited = true
+			case <-timer.C:
+				_ = cmd.Process.Kill()
+				waitErr = <-waitCh
+				waitErr = fmt.Errorf("attacker did not stop within 5s: %w", waitErr)
+				waited = true
+			}
+			return waitErr
+		}
+		restoreParent := func() {
+			if info, err := os.Lstat(parent); err == nil && info.Mode()&os.ModeSymlink != 0 {
+				_ = os.Remove(parent)
+			}
+			if _, err := os.Lstat(parent); errors.Is(err, os.ErrNotExist) {
+				_ = os.Rename(backup, parent)
+			}
+		}
+		cleanup := func() error {
+			_ = os.WriteFile(release, []byte("go\n"), 0o600)
+			_ = os.WriteFile(stop, []byte("stop\n"), 0o600)
+			err := waitForAttackerExit()
+			restoreParent()
+			return err
+		}
+		cleaned := false
+		defer func() {
+			if !cleaned {
+				_ = cleanup()
+			}
+		}()
 		waitForFile(t, ready, 15*time.Second)
 		if err := os.WriteFile(release, []byte("go\n"), 0o600); err != nil {
 			t.Fatal(err)
@@ -259,13 +353,10 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 		// Keep the attacker live briefly so the final swap counter is flushed
 		// after the last operation rather than racing the stop file.
 		time.Sleep(50 * time.Millisecond)
-		if err := os.WriteFile(stop, []byte("stop\n"), 0o600); err != nil {
-			t.Fatal(err)
+		if err := cleanup(); err != nil {
+			t.Fatalf("attacker for %s failed: %v\nstdout=%s\nstderr=%s", op.id, err, stdout.String(), stderr.String())
 		}
-		waitErr := cmd.Wait()
-		if waitErr != nil {
-			t.Fatalf("attacker for %s failed: %v\nstdout=%s\nstderr=%s", op.id, waitErr, stdout.String(), stderr.String())
-		}
+		cleaned = true
 
 		swaps := readSwapCount(t, swapsPath)
 		if swaps < 1 {
@@ -274,6 +365,14 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 		attackerConfirmed = true
 		if escape {
 			anyEscape = true
+		}
+		if successes == 0 {
+			t.Fatalf("%s completed with no successful in-tree operations", op.id)
+		}
+		if op.verify != nil {
+			if err := op.verify(parent); err != nil {
+				t.Fatalf("%s trusted in-tree effect: %v", op.id, err)
+			}
 		}
 		verdict := "PASS"
 		if escape {
@@ -292,13 +391,6 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 			t.Fatalf("%s escaped into outside sentinel directory", op.id)
 		}
 
-		// Restore trusted parent if left as symlink.
-		if info, err := os.Lstat(parent); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			_ = os.Remove(parent)
-		}
-		if _, err := os.Lstat(parent); errors.Is(err, os.ErrNotExist) {
-			_ = os.Rename(backup, parent)
-		}
 	}
 
 	after, err := os.ReadFile(sentinelPath)
@@ -333,13 +425,9 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 		overall = "INCONCLUSIVE"
 	}
 
-	sha := strings.TrimSpace(os.Getenv("PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA"))
-	if sha == "" {
-		sha = "UNRECORDED"
-	}
 	evidence := hostileParentSwapEvidence{
 		Schema:                "picogent.v4.hostile-parent-swap-evidence.v1",
-		CandidateSHA:          sha,
+		CandidateSHA:          candidateSHA,
 		OS:                    runtime.GOOS,
 		Architecture:          runtime.GOARCH,
 		Environment:           "task-owned-disposable",
@@ -354,7 +442,7 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 		Verdict:               overall,
 		ObservedAt:            time.Now().UTC().Format(time.RFC3339),
 		BroadTOCTOUClaim:      "UNVERIFIED",
-		SourceTreeModified:    false,
+		SourceTreeModified:    sourceTreeModified,
 	}
 	payload, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
@@ -482,36 +570,72 @@ func outsideTreeMutated(path, beforeDigest string) (bool, error) {
 }
 
 func outsideTreeSHA256(path string) (string, error) {
-	entries, err := os.ReadDir(path)
+	rootInfo, err := os.Lstat(path)
 	if err != nil {
 		return "", err
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("outside tree root is not a directory")
+	}
 	hash := sha256.New()
-	for _, entry := range entries {
-		entryPath := filepath.Join(path, entry.Name())
-		info, err := os.Lstat(entryPath)
+	var walk func(relative, directory string) error
+	walk = func(relative, directory string) error {
+		entries, err := os.ReadDir(directory)
 		if err != nil {
-			return "", err
+			return err
 		}
-		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", entry.Name(), info.Mode().String())
-		switch {
-		case info.Mode().IsRegular():
-			data, err := os.ReadFile(entryPath)
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+		for _, entry := range entries {
+			entryPath := filepath.Join(directory, entry.Name())
+			entryInfo, err := os.Lstat(entryPath)
 			if err != nil {
-				return "", err
+				return err
 			}
-			_, _ = hash.Write(data)
-		case info.Mode()&os.ModeSymlink != 0:
-			target, err := os.Readlink(entryPath)
-			if err != nil {
-				return "", err
+			entryRelative := filepath.ToSlash(filepath.Join(relative, entry.Name()))
+			_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", entryRelative, entryInfo.Mode().String())
+			switch {
+			case entryInfo.IsDir():
+				if err := walk(entryRelative, entryPath); err != nil {
+					return err
+				}
+			case entryInfo.Mode().IsRegular():
+				data, err := os.ReadFile(entryPath)
+				if err != nil {
+					return err
+				}
+				_, _ = hash.Write(data)
+			case entryInfo.Mode()&os.ModeSymlink != 0:
+				target, err := os.Readlink(entryPath)
+				if err != nil {
+					return err
+				}
+				_, _ = fmt.Fprint(hash, target)
 			}
-			_, _ = fmt.Fprint(hash, target)
+			_, _ = hash.Write([]byte{0})
 		}
-		_, _ = hash.Write([]byte{0})
+		return nil
+	}
+	if err := walk("", path); err != nil {
+		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func currentSourceState(t *testing.T) (string, bool) {
+	t.Helper()
+	shaOutput, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("resolve candidate HEAD: %v", err)
+	}
+	sha := strings.TrimSpace(string(shaOutput))
+	if sha == "" {
+		t.Fatal("git rev-parse HEAD returned an empty SHA")
+	}
+	statusOutput, err := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all").Output()
+	if err != nil {
+		t.Fatalf("check candidate tree: %v", err)
+	}
+	return sha, strings.TrimSpace(string(statusOutput)) != ""
 }
 
 func sha256Hex(data []byte) string {

@@ -53,11 +53,19 @@ type hostileWorkspaceSwapEvidence struct {
 	Verdict               string `json:"verdict"`
 	ObservedAt            string `json:"observed_at"`
 	BroadTOCTOUClaim      string `json:"broad_toctou_claim"`
+	SourceTreeModified    bool   `json:"source_tree_modified"`
 }
 
 func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("linux-only same-UID workspace parent-swap harness")
+	}
+	candidateSHA, sourceTreeModified := currentSourceState(t)
+	if sourceTreeModified {
+		t.Fatalf("source tree must be clean before retaining hostile evidence")
+	}
+	if expected := strings.TrimSpace(os.Getenv(hostileWorkspaceSourceEnv)); expected != "" && expected != candidateSHA {
+		t.Fatalf("source SHA mismatch: expected %s, current HEAD is %s", expected, candidateSHA)
 	}
 
 	root := t.TempDir()
@@ -126,6 +134,48 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	waited := false
+	var waitErr error
+	waitForAttackerExit := func() error {
+		if waited {
+			return waitErr
+		}
+		timer := time.NewTimer(5 * time.Second)
+		defer timer.Stop()
+		select {
+		case waitErr = <-waitCh:
+			waited = true
+		case <-timer.C:
+			_ = cmd.Process.Kill()
+			waitErr = <-waitCh
+			waitErr = fmt.Errorf("attacker did not stop within 5s: %w", waitErr)
+			waited = true
+		}
+		return waitErr
+	}
+	restoreNested := func() {
+		if info, err := os.Lstat(nested); err == nil && info.Mode()&os.ModeSymlink != 0 {
+			_ = os.Remove(nested)
+		}
+		if _, err := os.Lstat(nested); errors.Is(err, os.ErrNotExist) {
+			_ = os.Rename(backup, nested)
+		}
+	}
+	cleanup := func() error {
+		_ = os.WriteFile(release, []byte("go\n"), 0o600)
+		_ = os.WriteFile(stop, []byte("stop\n"), 0o600)
+		err := waitForAttackerExit()
+		restoreNested()
+		return err
+	}
+	cleaned := false
+	defer func() {
+		if !cleaned {
+			_ = cleanup()
+		}
+	}()
 	waitForWorkspaceFile(t, ready, 15*time.Second)
 	if err := os.WriteFile(release, []byte("go\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -135,6 +185,7 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	writeOK, writeErr, writeEscape := 0, 0, false
 	readOK, readErr, readEscape := 0, 0, false
 	removeOK, removeErr, removeEscape := 0, 0, false
+	removedPaths := make([]string, 0, hostileWorkspaceSwapAttempts)
 
 	for i := 0; i < hostileWorkspaceSwapAttempts; i++ {
 		if err := workspace.WriteAtomic(workspaceRoot, "nested/write-target.txt", []byte("inside-write\n")); err == nil {
@@ -170,6 +221,7 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 		path := fmt.Sprintf("nested/remove-%d.txt", i)
 		if err := workspace.Remove(workspaceRoot, path); err == nil {
 			removeOK++
+			removedPaths = append(removedPaths, path)
 		} else {
 			removeErr++
 		}
@@ -181,12 +233,10 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 		}
 	}
 
-	if err := os.WriteFile(stop, []byte("stop\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Wait(); err != nil {
+	if err := cleanup(); err != nil {
 		t.Fatalf("attacker failed: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
 	}
+	cleaned = true
 	swaps := readWorkspaceSwapCount(t, swapsPath)
 	if swaps < 1 {
 		t.Fatalf("no confirmed attacker swaps (%d)", swaps)
@@ -208,25 +258,29 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 		anyEscape = true
 	}
 
-	// Restore nested parent if needed.
-	if info, err := os.Lstat(nested); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		_ = os.Remove(nested)
+	if writeOK == 0 || readOK == 0 || removeOK == 0 {
+		t.Fatalf("completed with no successful in-tree operations: write=%d read=%d remove=%d", writeOK, readOK, removeOK)
 	}
-	if _, err := os.Lstat(nested); errors.Is(err, os.ErrNotExist) {
-		_ = os.Rename(backup, nested)
+	data, err := os.ReadFile(filepath.Join(nested, "write-target.txt"))
+	if err != nil {
+		t.Fatalf("read trusted workspace write result: %v", err)
+	}
+	if string(data) != "inside-write\n" {
+		t.Fatalf("trusted workspace write result has unexpected content %q", data)
+	}
+	for _, path := range removedPaths {
+		if _, err := os.Lstat(filepath.Join(workspaceRoot, path)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("successful remove left trusted path %s in place: %v", path, err)
+		}
 	}
 
 	verdict := "PASS"
 	if anyEscape {
 		verdict = "FAIL"
 	}
-	sourceSHA := strings.TrimSpace(os.Getenv(hostileWorkspaceSourceEnv))
-	if sourceSHA == "" {
-		sourceSHA = "UNRECORDED"
-	}
 	evidence := hostileWorkspaceSwapEvidence{
 		Schema:                "picogent.v4.hostile-parent-swap-workspace-evidence.v1",
-		CandidateSHA:          sourceSHA,
+		CandidateSHA:          candidateSHA,
 		OS:                    runtime.GOOS,
 		Architecture:          runtime.GOARCH,
 		Environment:           "task-owned-disposable",
@@ -248,6 +302,7 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 		Verdict:               verdict,
 		ObservedAt:            time.Now().UTC().Format(time.RFC3339),
 		BroadTOCTOUClaim:      "UNVERIFIED",
+		SourceTreeModified:    sourceTreeModified,
 	}
 	payload, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
@@ -376,36 +431,72 @@ func outsideTreeMutated(path, before string) (bool, error) {
 }
 
 func outsideTreeSHA256(path string) (string, error) {
-	entries, err := os.ReadDir(path)
+	rootInfo, err := os.Lstat(path)
 	if err != nil {
 		return "", err
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	if !rootInfo.IsDir() || rootInfo.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("outside tree root is not a directory")
+	}
 	hash := sha256.New()
-	for _, entry := range entries {
-		entryPath := filepath.Join(path, entry.Name())
-		info, err := os.Lstat(entryPath)
+	var walk func(relative, directory string) error
+	walk = func(relative, directory string) error {
+		entries, err := os.ReadDir(directory)
 		if err != nil {
-			return "", err
+			return err
 		}
-		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", entry.Name(), info.Mode().String())
-		switch {
-		case info.Mode().IsRegular():
-			data, err := os.ReadFile(entryPath)
+		sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+		for _, entry := range entries {
+			entryPath := filepath.Join(directory, entry.Name())
+			entryInfo, err := os.Lstat(entryPath)
 			if err != nil {
-				return "", err
+				return err
 			}
-			_, _ = hash.Write(data)
-		case info.Mode()&os.ModeSymlink != 0:
-			target, err := os.Readlink(entryPath)
-			if err != nil {
-				return "", err
+			entryRelative := filepath.ToSlash(filepath.Join(relative, entry.Name()))
+			_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", entryRelative, entryInfo.Mode().String())
+			switch {
+			case entryInfo.IsDir():
+				if err := walk(entryRelative, entryPath); err != nil {
+					return err
+				}
+			case entryInfo.Mode().IsRegular():
+				data, err := os.ReadFile(entryPath)
+				if err != nil {
+					return err
+				}
+				_, _ = hash.Write(data)
+			case entryInfo.Mode()&os.ModeSymlink != 0:
+				target, err := os.Readlink(entryPath)
+				if err != nil {
+					return err
+				}
+				_, _ = fmt.Fprint(hash, target)
 			}
-			_, _ = fmt.Fprint(hash, target)
+			_, _ = hash.Write([]byte{0})
 		}
-		_, _ = hash.Write([]byte{0})
+		return nil
+	}
+	if err := walk("", path); err != nil {
+		return "", err
 	}
 	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func currentSourceState(t *testing.T) (string, bool) {
+	t.Helper()
+	shaOutput, err := exec.Command("git", "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("resolve candidate HEAD: %v", err)
+	}
+	sha := strings.TrimSpace(string(shaOutput))
+	if sha == "" {
+		t.Fatal("git rev-parse HEAD returned an empty SHA")
+	}
+	statusOutput, err := exec.Command("git", "status", "--porcelain=v1", "--untracked-files=all").Output()
+	if err != nil {
+		t.Fatalf("check candidate tree: %v", err)
+	}
+	return sha, strings.TrimSpace(string(statusOutput)) != ""
 }
 
 func sha256Hex(data []byte) string {
