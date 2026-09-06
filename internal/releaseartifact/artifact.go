@@ -176,7 +176,7 @@ func buildTarget(workspace, outputDir, candidateSHA string, epoch int64, target 
 	if err != nil {
 		return TargetEvidence{}, err
 	}
-	expected, err := modulesFromSource(workspace)
+	expected, err := modulesFromSource(workspace, target)
 	if err != nil {
 		return TargetEvidence{}, err
 	}
@@ -335,10 +335,14 @@ func modulesFromBinary(binaryPath string) ([]moduleRef, error) {
 	return modules, nil
 }
 
-func modulesFromSource(workspace string) ([]moduleRef, error) {
+func modulesFromSource(workspace string, target Target) ([]moduleRef, error) {
 	cmd := exec.Command("go", "list", "-deps", "-f", `{{if and .Module (not .Standard)}}{{.Module.Path}}{{"\t"}}{{.Module.Version}}{{"\t"}}{{.Module.Sum}}{{end}}`, "./cmd/picogent")
 	cmd.Dir = workspace
-	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	cmd.Env = append(os.Environ(),
+		"CGO_ENABLED=0",
+		"GOOS="+target.GOOS,
+		"GOARCH="+target.GOARCH,
+	)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("go list -deps: %w\n%s", err, strings.TrimSpace(string(out)))
