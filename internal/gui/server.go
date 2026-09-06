@@ -36,6 +36,7 @@ import (
 	"github.com/saiaathish/picogent/internal/learn"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/opencodeauth"
+	"github.com/saiaathish/picogent/internal/outcome"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/projects"
 	"github.com/saiaathish/picogent/internal/redact"
@@ -71,6 +72,7 @@ type event struct {
 	PermissionID string                     `json:"permission_id,omitempty"`
 	Task         *taskstate.Task            `json:"task"`
 	Completion   *taskstate.CompletionCheck `json:"completion,omitempty"`
+	Outcome      *outcome.TurnContract      `json:"outcome,omitempty"`
 	turnGen      uint64                     `json:"-"`
 }
 
@@ -580,6 +582,7 @@ func sanitizeEvent(e event) event {
 	e.Path = guiEventText(e.Path, maxGUIEventTextBytes)
 	e.Task = sanitizeTask(e.Task)
 	e.Completion = sanitizeCompletion(e.Completion)
+	e.Outcome = sanitizeOutcome(e.Outcome)
 	return e
 }
 
@@ -592,6 +595,14 @@ func sanitizeCompletion(check *taskstate.CompletionCheck) *taskstate.CompletionC
 	cp.MissingRequirements = append([]taskstate.EvidenceKind(nil), check.MissingRequirements...)
 	cp.Requirements = append([]taskstate.RequirementEvidenceState(nil), check.Requirements...)
 	cp.Reason = guiEventText(check.Reason, maxGUIEventTextBytes)
+	return &cp
+}
+
+func sanitizeOutcome(contract *outcome.TurnContract) *outcome.TurnContract {
+	if contract == nil {
+		return nil
+	}
+	cp := outcome.BoundTurnContract(*contract)
 	return &cp
 }
 
@@ -651,7 +662,13 @@ func (s *server) emitTaskSnapshot(sessionID string) {
 			task = nil
 		}
 	}
-	s.emit(event{Type: "task_progress", SessionID: sessionID, Task: task, Completion: taskCompletionProof(task)})
+	s.emit(event{
+		Type:       "task_progress",
+		SessionID:  sessionID,
+		Task:       task,
+		Completion: taskCompletionProof(task),
+		Outcome:    taskOutcomeProjection(task),
+	})
 }
 
 func taskCompletionProof(task *taskstate.Task) *taskstate.CompletionCheck {
@@ -660,6 +677,14 @@ func taskCompletionProof(task *taskstate.Task) *taskstate.CompletionCheck {
 	}
 	proof := agent.CompletionProof(task)
 	return &proof
+}
+
+func taskOutcomeProjection(task *taskstate.Task) *outcome.TurnContract {
+	if task == nil {
+		return nil
+	}
+	contract := outcome.TurnContractForTask(task)
+	return &contract
 }
 
 func initialSession(workspace string) (id string, hist []llm.Message) {
@@ -824,6 +849,9 @@ func (s *server) snapshot() map[string]any {
 	}
 	if proof := taskCompletionProof(task); proof != nil {
 		out["completion"] = sanitizeCompletion(proof)
+	}
+	if projection := taskOutcomeProjection(task); projection != nil {
+		out["outcome"] = sanitizeOutcome(projection)
 	}
 	if store, err := learn.Load(cfg.Workspace); err == nil {
 		out["overview"] = store
@@ -2240,7 +2268,13 @@ func (h *guiHandler) OnTaskState(task *taskstate.Task) {
 	if task == nil || task.SessionID != h.sessionID {
 		return
 	}
-	h.emit(event{Type: "task_progress", SessionID: h.sessionID, Task: task, Completion: taskCompletionProof(task)})
+	h.emit(event{
+		Type:       "task_progress",
+		SessionID:  h.sessionID,
+		Task:       task,
+		Completion: taskCompletionProof(task),
+		Outcome:    taskOutcomeProjection(task),
+	})
 }
 
 func (h *guiHandler) beginTurn(prompt string) {

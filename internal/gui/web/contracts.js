@@ -65,5 +65,19 @@
     return "Completion proof pending: " + reason + (details.length ? " (" + details.join(", ") + ")" : "");
   }
 
-  return Object.freeze({ createPrimaryEventDispatcher, mainPromptRequest, completionProofSummary });
+  function contradictionSummary(report) {
+    if (!report || typeof report !== "object") return "";
+    const state = report.state;
+    if (state !== "CONFIRMED" && state !== "ADVISORY") return "";
+    const count = Array.isArray(report.signals) ? report.signals.length : 0;
+    if (count < 1) return "";
+    const label = count === 1 ? "signal" : "signals";
+    const truncated = report.signals_truncated === true ? "; some signals omitted" : "";
+    if (state === "CONFIRMED") {
+      return "Contradictory evidence confirmed (" + count + " " + label + truncated + "); diagnose and recheck before continuing";
+    }
+    return "Contradictory evidence is unverified (" + count + " " + label + truncated + "); it cannot select an action";
+  }
+
+  return Object.freeze({ createPrimaryEventDispatcher, mainPromptRequest, completionProofSummary, contradictionSummary });
 });

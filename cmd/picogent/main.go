@@ -24,6 +24,7 @@ import (
 	"github.com/saiaathish/picogent/internal/gui"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/mcpbridge"
+	"github.com/saiaathish/picogent/internal/outcome"
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/redact"
 	"github.com/saiaathish/picogent/internal/scope"
@@ -405,6 +406,7 @@ func runOnceContext(ctx context.Context, args []string) error {
 		if outcomeErr := classifyHeadlessOutcome(ctx, runGoal, result, err); outcomeErr != nil {
 			return outcomeErr
 		}
+		emitHeadlessOutcomeNotice(h, result.Task)
 		return clearHeadlessGoalAfterCompletion(a, cfg, runGoal, runGoalRevision, result)
 	}
 	automaticMode := autoModeForHeadlessTurn(a, cfg, originalPrompt)
@@ -422,6 +424,7 @@ func runOnceContext(ctx context.Context, args []string) error {
 	if outcomeErr := classifyHeadlessOutcome(ctx, runGoal, result, err); outcomeErr != nil {
 		return outcomeErr
 	}
+	emitHeadlessOutcomeNotice(h, result.Task)
 	return clearHeadlessGoalAfterCompletion(a, cfg, runGoal, runGoalRevision, result)
 }
 
@@ -460,9 +463,22 @@ func classifyHeadlessOutcome(ctx context.Context, expectedGoal string, result ag
 	completion := result.CompletionGate(expectedGoal)
 	if (completion.Required && !completion.Ready) ||
 		(strings.TrimSpace(expectedGoal) != "" && (!completion.Marker || !completion.Ready)) {
-		return newHeadlessUnverifiedError(completion.Explanation())
+		explanation := completion.Explanation()
+		if summary := outcome.SurfaceSummary(outcome.TurnContractForTask(result.Task)); summary != "" {
+			explanation = summary
+		}
+		return newHeadlessUnverifiedError(explanation)
 	}
 	return nil
+}
+
+func emitHeadlessOutcomeNotice(h *stdioHandler, task *taskstate.Task) {
+	if h == nil || task == nil {
+		return
+	}
+	if summary := outcome.SurfaceSummary(outcome.TurnContractForTask(task)); summary != "" {
+		fmt.Fprintln(h.stderr(), "Outcome:", summary+".")
+	}
 }
 
 func newHeadlessCanceledError(cause error) error {

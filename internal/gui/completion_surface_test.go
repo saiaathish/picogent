@@ -3,6 +3,7 @@ package gui
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/outcome"
@@ -40,6 +41,9 @@ func TestGUIProjectsLongHorizonOutcomeStates(t *testing.T) {
 			if got.Task.SessionID != tc.Task.SessionID {
 				t.Fatalf("GUI event session = %q, want %q", got.Task.SessionID, tc.Task.SessionID)
 			}
+			if got.Outcome == nil || !reflect.DeepEqual(*got.Outcome, contract.Turn) {
+				t.Fatalf("GUI event outcome = %#v, want shared turn projection %#v", got.Outcome, contract.Turn)
+			}
 			if last := tc.Task.LastTurn(); last != nil {
 				gotLast := got.Task.LastTurn()
 				if gotLast == nil || gotLast.State != last.State || gotLast.Route != last.Route {
@@ -64,7 +68,46 @@ func TestGUIProjectsLongHorizonOutcomeStates(t *testing.T) {
 			if wire.Completion == nil || !reflect.DeepEqual(*wire.Completion, want) {
 				t.Fatalf("GUI wire proof = %#v, want durable proof %#v", wire.Completion, want)
 			}
+			if wire.Outcome == nil || !reflect.DeepEqual(*wire.Outcome, contract.Turn) {
+				t.Fatalf("GUI wire outcome = %#v, want shared turn projection %#v", wire.Outcome, contract.Turn)
+			}
 		})
+	}
+}
+
+func TestGUIProjectsConfirmedContradictionThroughTaskProgress(t *testing.T) {
+	task, err := taskstate.New("gui-contradiction", "check the outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed with secret text", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed with secret text", "test runner")
+
+	events := make(chan event, 1)
+	s := &server{subs: []chan event{events}, sessionID: task.SessionID}
+	h := &guiHandler{s: s, sessionID: task.SessionID}
+	h.OnTaskState(task)
+	got := <-events
+	if got.Outcome == nil || got.Outcome.Contradictions.State != outcome.ContradictionConfirmed {
+		t.Fatalf("GUI contradiction outcome = %#v, want confirmed shared projection", got.Outcome)
+	}
+	if summary := outcome.SurfaceSummary(*got.Outcome); !strings.Contains(summary, "diagnose and recheck") {
+		t.Fatalf("GUI contradiction summary = %q, want bounded recovery guidance", summary)
+	}
+
+	wire, err := jsonTaskProgress(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wire.Outcome == nil || wire.Outcome.Contradictions.State != outcome.ContradictionConfirmed {
+		t.Fatalf("GUI wire contradiction outcome = %#v, want confirmed projection", wire.Outcome)
+	}
+	data, err := json.Marshal(got.Outcome)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "secret text") {
+		t.Fatalf("GUI contradiction wire exposed evidence text: %s", data)
 	}
 }
 
@@ -110,6 +153,7 @@ func TestGUIReloadProjectionRequiresFreshWorkspaceEvidence(t *testing.T) {
 type guiTaskProgressWire struct {
 	Task       *taskstate.Task            `json:"task"`
 	Completion *taskstate.CompletionCheck `json:"completion"`
+	Outcome    *outcome.TurnContract      `json:"outcome"`
 }
 
 func jsonTaskProgress(e event) (guiTaskProgressWire, error) {

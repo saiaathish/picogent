@@ -251,6 +251,36 @@ func TestHeadlessOutcomeClassificationUsesSharedCompletionProjection(t *testing.
 	}
 }
 
+func TestHeadlessContradictionProjectionUsesBoundedSurfaceSummary(t *testing.T) {
+	task, err := taskstate.New("headless-contradiction", "check the outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.RecordTestsEvidence("PASS", "tests passed with secret text", "test runner")
+	task.RecordTestsEvidence("FAIL", "tests failed with secret text", "test runner")
+
+	result := agent.Result{
+		Task: task,
+		Completion: agent.CompletionProjection{
+			Required: true,
+			Marker:   true,
+			Reason:   "ordinary completion proof is incomplete",
+		},
+	}
+	err = classifyHeadlessOutcome(context.Background(), "", result, nil)
+	if err == nil || exitCode(err) != 3 ||
+		!strings.Contains(err.Error(), "Contradictory evidence confirmed") ||
+		strings.Contains(err.Error(), "secret text") {
+		t.Fatalf("headless contradiction outcome = %v, exit=%d; want bounded contradiction summary", err, exitCode(err))
+	}
+
+	var stderr bytes.Buffer
+	emitHeadlessOutcomeNotice(&stdioHandler{errOut: &stderr}, task)
+	if got := stderr.String(); !strings.Contains(got, "Contradictory evidence confirmed") || strings.Contains(got, "secret text") {
+		t.Fatalf("headless contradiction notice = %q, want bounded summary", got)
+	}
+}
+
 func TestStdioSeparatesAnswerPromptsAndDiagnostics(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	h := &stdioHandler{
