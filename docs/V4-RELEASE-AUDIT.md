@@ -23,8 +23,7 @@ retention (#466). It preserves earlier audits below as historical evidence and
 does not authorize a release. Parent [#450](https://github.com/saiaathish/picogent/issues/450)
 is closed as completed; [#453](https://github.com/saiaathish/picogent/issues/453)
 remains open for live-provider, cross-platform rendered, and hostile TOCTOU
-observation. Draft evidence from [Draft release audit section](a60cac0d-5de2-4d2d-837d-bdb7f40ccdd7)
-was retargeted from `e6c5bb9` to this tip after #466 landed.
+observation.
 
 ### Candidate and hosted runs
 
