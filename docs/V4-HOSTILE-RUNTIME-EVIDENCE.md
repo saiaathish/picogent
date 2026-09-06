@@ -135,3 +135,15 @@ This record does not prove:
 The broader `hostile-filesystem-toctou` row remains `UNVERIFIED` until a
 separate evidence record establishes that larger claim without treating these
 deterministic tests as a substitute.
+
+## macOS same-UID parent-swap harness checkpoint
+
+Issue [#496](https://github.com/saiaathish/picogent/issues/496) adds a
+Darwin-only, separate-process hostile parent-swap harness for
+`securefile` and `workspace` confinement operations. The digest-only evidence
+contract and observed checkpoint are recorded in
+[V4-HOSTILE-PARENT-SWAP-DARWIN.md](V4-HOSTILE-PARENT-SWAP-DARWIN.md).
+
+That harness can `PASS` when confirmed attacker activity never mutates the
+outside sentinel and successful operations stay descriptor-anchored. It still
+does **not** upgrade `hostile-filesystem-toctou`.
