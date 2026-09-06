@@ -83,6 +83,63 @@ func TestLoadReportFailClosed(t *testing.T) {
 	}
 }
 
+func TestRetainReportRejectsSymlinkParent(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	linkRoot := t.TempDir()
+	link := filepath.Join(linkRoot, "linked-parent")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	artifact := filepath.Join(link, "runtime-boundary-matrix.json")
+	err := RetainReport(workspace, artifact, sampleReport(strings.Repeat("d", 40)))
+	if err == nil {
+		t.Fatal("retain accepted a symlink parent")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "runtime-boundary-matrix.json")); !os.IsNotExist(err) {
+		t.Fatalf("symlink parent received a write: %v", err)
+	}
+}
+
+func TestRetainReportRejectsSymlinkParentIntoWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	linkRoot := t.TempDir()
+	link := filepath.Join(linkRoot, "into-workspace")
+	if err := os.Symlink(workspace, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	artifact := filepath.Join(link, "runtime-boundary-matrix.json")
+	if err := RetainReport(workspace, artifact, sampleReport(strings.Repeat("e", 40))); err == nil {
+		t.Fatal("retain accepted a parent symlink into the workspace")
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "runtime-boundary-matrix.json")); !os.IsNotExist(err) {
+		t.Fatalf("workspace received retained artifact through symlink parent: %v", err)
+	}
+}
+
+func TestRetainReportRejectsSymlinkArtifactTarget(t *testing.T) {
+	workspace := t.TempDir()
+	artifactDir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte("keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(artifactDir, "runtime-boundary-matrix.json")
+	if err := os.Symlink(outside, artifact); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := RetainReport(workspace, artifact, sampleReport(strings.Repeat("f", 40))); err == nil {
+		t.Fatal("retain accepted an existing symlink artifact path")
+	}
+	got, err := os.ReadFile(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep\n" {
+		t.Fatalf("symlink target changed to %q", got)
+	}
+}
+
 func sampleReport(sha string) Report {
 	return Report{
 		Schema:       Schema,

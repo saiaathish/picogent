@@ -23,12 +23,19 @@ and validates schema, candidate SHA, clean-head provenance, and claim shape.
 
 ## Fail-closed cases
 
-- artifact path inside the checkout
+- artifact path inside the checkout (including after symlink resolution)
+- symlinked parent directories or non-directory ancestors
+- existing symlink at the artifact basename
 - missing artifact on load
 - overwrite of an existing artifact
 - malformed / trailing / oversized JSON
 - candidate SHA mismatch
 - dirty tree or HEAD mismatch during collection
+
+Parent creation uses `securefile.EnsureDir` and exclusive creation is
+anchored with `os.OpenRoot`, so a later parent pathname swap cannot redirect
+the already-opened directory handle. This still does **not** claim arbitrary
+same-UID TOCTOU coverage across every platform surface.
 
 ## Hosted retention
 
