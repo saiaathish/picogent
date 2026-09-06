@@ -32,8 +32,10 @@ the authoritative `origin/main` ref matched the same SHA. The run built the
 Picogent binary from that checkout and used `PICOGENT_PROVIDER=codex`,
 `PICOGENT_MODEL=gpt-5.6-luna`, and `PICOGENT_ROUTER=off` with a separate
 disposable `PICOGENT_HOME`, disposable per-case workspaces, and a copied
-task-owned Codex home. The copied credential was used only for the observation
-and was removed afterward.
+task-owned Codex home. The copied credential was used only for the observation;
+the operator removed that temporary credential and the provider session data
+after artifact generation. Cleanup is operator-reported and is not an
+independent credential-attestation claim.
 
 The retained digest-only artifact is outside the checkout at:
 
@@ -47,9 +49,13 @@ Artifact SHA-256:
 b3f6fa51e613ac0ac2a638e422736f92e89b00f31af661c39d4af960c9f96f73
 ```
 
-Raw provider responses, stderr captures, credentials, and provider session
-data were not retained. The artifact contains only canonical prompt digests,
-result digests, bounded metadata, and explicit tool/mutation assertions.
+The artifact path is host-local and is not a portable repository link. A
+digest-only copy of the artifact and the matrix summary is recorded in the
+conversation for PR #495 so the result can be reviewed after this disposable
+workspace is gone. Raw provider responses, stderr captures, credentials, and
+provider session data were intentionally not retained. The artifact contains
+only canonical prompt digests, result digests, bounded metadata, and explicit
+tool/mutation assertions.
 
 ## Fixed campaign observations
 
@@ -65,8 +71,10 @@ section of the runtime-boundary matrix. Every case ran in a fresh process with
 
 All three cases were below the declared 5000 ms per-case budget. The exact
 token and three-word cases matched their canonical output contracts. The
-bounded-summary case produced one non-empty sentence. No tool-start marker was
-observed on stderr, and each disposable workspace remained empty.
+bounded-summary case produced one non-empty sentence. The no-tool and empty
+workspace observations are operator-reported from the disposable runs and are
+represented by the artifact's self-reported boolean assertions; the discarded
+stderr and workspace snapshots are not independently replayable from this PR.
 
 ## Exact-head matrix projection
 
