@@ -76,6 +76,25 @@ workspace observations are operator-reported from the disposable runs and are
 represented by the artifact's self-reported boolean assertions; the discarded
 stderr and workspace snapshots are not independently replayable from this PR.
 
+## Reproduction checkout boundary
+
+The artifact is intentionally bound to the behavior checkout that existed
+before this documentation PR. Reproduce the matrix from a clean detached
+checkout of that exact SHA, not from this later documentation branch:
+
+```sh
+git clone https://github.com/saiaathish/picogent.git picogent-quality-072105d
+cd picogent-quality-072105d
+git fetch origin main
+git switch --detach 072105d0c885bf4161291f5eeccd3a3c37a39b0b
+test "$(git rev-parse HEAD)" = "072105d0c885bf4161291f5eeccd3a3c37a39b0b"
+test -z "$(git status --porcelain)"
+```
+
+The documentation branch and any later merge SHA must not be used to validate
+this pre-PR behavior artifact; doing so should remain `UNVERIFIED` rather than
+silently rebinding the evidence.
+
 ## Exact-head matrix projection
 
 The matrix loader accepted the retained artifact against the same clean source
