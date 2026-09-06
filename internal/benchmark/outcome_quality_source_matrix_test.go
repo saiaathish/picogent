@@ -13,7 +13,7 @@ import (
 // This is the reviewed current-main candidate for the execution evidence
 // captured by the opt-in test below. A later comparison must declare a new
 // candidate head rather than silently relabeling this report.
-const outcomeQualityExactCandidateHead = "e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f"
+const outcomeQualityExactCandidateHead = "a6d3af39bb24559fe2d71b4063cb1b8411cd2c7e"
 
 // TestRunOutcomeQualityExactSourcePairMatrix is opt-in because it builds two
 // source trees and launches 80 isolated observations. Hosted CI exercises the
