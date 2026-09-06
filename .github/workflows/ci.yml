@@ -186,6 +186,16 @@ jobs:
             --targeted-timeout 45s \
             --timeout 90s \
             > "$ARTIFACT_DIR/verification-manifest.json"
+      - name: Retain runtime-boundary matrix
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-evidence
+          EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          go run ./cmd/runtime-boundary-matrix \
+            --workspace . \
+            --candidate-sha "$EXPECTED_SHA" \
+            --out "$ARTIFACT_DIR/runtime-boundary-matrix.json" \
+            > "$ARTIFACT_DIR/runtime-boundary-matrix.stdout.json"
       - name: Prepare release attestation predicate
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
         env:
@@ -277,6 +287,8 @@ jobs:
             ${{ runner.temp }}/picogent-release-evidence/verification-manifest.json
             ${{ runner.temp }}/picogent-release-evidence/release-gates.json
             ${{ runner.temp }}/picogent-release-evidence/verification-coverage.out
+            ${{ runner.temp }}/picogent-release-evidence/runtime-boundary-matrix.json
+            ${{ runner.temp }}/picogent-release-evidence/runtime-boundary-matrix.stdout.json
           if-no-files-found: error
       - name: Upload release attestation evidence
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
