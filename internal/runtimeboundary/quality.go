@@ -28,8 +28,16 @@ var fixedLiveProviderQualityCaseIDs = []string{
 	"constraint-following",
 }
 
+var fixedLiveProviderQualityPrompts = map[string]string{
+	"exact-token":          "Reply with exactly LIVE_PROVIDER_QUALITY_OK. Do not call tools, inspect files, or modify anything.",
+	"bounded-summary":      "In exactly one sentence, explain what Picogent is for. Do not call tools, inspect files, or modify anything.",
+	"constraint-following": "Return exactly three words: local first agent. Do not call tools, inspect files, or modify anything.",
+}
+
 // LiveProviderQualityEvidence is a secret-free record of a bounded quality
-// campaign. Prompts and provider results are represented only by digests.
+// campaign. The loader binds prompt digests to the fixed prompt contract, but
+// result digests and provider identity remain self-reported because raw output
+// and credentials are intentionally not retained.
 type LiveProviderQualityEvidence struct {
 	Schema          string                            `json:"schema"`
 	Campaign        string                            `json:"campaign"`
@@ -152,6 +160,10 @@ func validateLiveProviderQualityEvidence(evidence LiveProviderQualityEvidence, e
 		if !validDigest(observed.PromptSHA256) || !validDigest(observed.ResultSHA256) {
 			return fmt.Errorf("live-provider quality evidence case %q has an invalid prompt/result digest", observed.ID)
 		}
+		expectedPromptDigest, ok := fixedLiveProviderQualityPromptDigest(observed.ID)
+		if !ok || observed.PromptSHA256 != expectedPromptDigest {
+			return fmt.Errorf("live-provider quality evidence case %q has a non-canonical prompt digest", observed.ID)
+		}
 		if observed.LatencyMS < 1 || observed.LatencyMS > evidence.LatencyBudgetMS {
 			return fmt.Errorf("live-provider quality evidence case %q latency is outside the budget", observed.ID)
 		}
@@ -186,4 +198,13 @@ func validateLiveProviderQualityEvidence(evidence LiveProviderQualityEvidence, e
 		}
 	}
 	return nil
+}
+
+func fixedLiveProviderQualityPromptDigest(id string) (string, bool) {
+	prompt, ok := fixedLiveProviderQualityPrompts[id]
+	if !ok {
+		return "", false
+	}
+	digest := sha256.Sum256([]byte(prompt))
+	return hex.EncodeToString(digest[:]), true
 }

@@ -23,10 +23,11 @@ Missing evidence is `UNVERIFIED`; an incomplete observation is
 `FAIL`. Any non-`PASS` result has `authorized: false`.
 
 The `live_provider` category is complete only when both its connectivity and
-fixed live-provider quality rows are `PASS`. The quality row is the bounded
-`fixed-no-tool-v1` campaign documented in the runtime-boundary matrix; it is
-not a substitute for broader provider, streaming, recovery, or cross-platform
-evidence.
+fixed live-provider quality rows are `PASS`. The quality row is the bounded,
+self-reported `fixed-no-tool-v1` campaign documented in the runtime-boundary
+matrix; its PASS does not independently attest provider identity or raw result
+semantics and is not a substitute for broader provider, streaming, recovery,
+or cross-platform evidence.
 
 The operator-approval record is an input contract, not an identity system. A
 trusted workflow must establish the actor's authority before supplying it.

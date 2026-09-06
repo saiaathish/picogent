@@ -1,7 +1,8 @@
 # v4 bounded live-provider quality evidence
 
-Status: the exact-head matrix recorded `PASS` for one fixed no-tool quality
-campaign observed through a Picogent run configured for Codex. This record
+Status: the exact-head matrix recorded `PASS` for one fixed no-tool,
+self-reported quality artifact observed through a Picogent run configured for
+Codex. This record
 belongs to [#488](https://github.com/saiaathishkarthik/picogent/issues/488)
 under the broader runtime-boundary parent
 [#453](https://github.com/saiaathishkarthik/picogent/issues/453). The artifact
@@ -47,7 +48,9 @@ Artifact SHA-256:
 The prompt identities and their exact contracts are defined by the
 `fixed-no-tool-v1` section of the
 [runtime-boundary matrix](V4-RUNTIME-BOUNDARY-MATRIX.md). The artifact stores
-only lowercase SHA-256 digests and bounded metadata.
+only lowercase SHA-256 digests and bounded metadata; the loader binds each
+prompt digest to the canonical prompt text, while result semantics and provider
+identity remain self-reported.
 
 | Case | Direct result check | Latency | Tools | Workspace mutation | Verdict |
 | --- | --- | ---: | --- | --- | --- |
@@ -77,7 +80,7 @@ was `PASS:6`, `INCONCLUSIVE:1`, `UNVERIFIED:4`, with these relevant rows:
 
 | Claim | Verdict | Boundary |
 | --- | --- | --- |
-| `live-provider-quality` | `PASS` | The three fixed no-tool cases passed with exact-head, digest-only evidence for the Codex-selected run; provider identity is not independently attested. |
+| `live-provider-quality` | `PASS` | The self-reported artifact passed canonical prompt-digest and bounded case checks for the Codex-selected run; provider identity and raw result semantics are not independently attested. |
 | `live-provider-connectivity` | `UNVERIFIED` | Connectivity is a separate artifact and was not inferred from quality evidence. |
 | `rendered-platform-local` | `UNVERIFIED` | No rendered-platform artifact was supplied by this campaign. |
 | `rendered-cross-platform` | `UNVERIFIED` | One macOS provider run cannot represent other supported platforms. |

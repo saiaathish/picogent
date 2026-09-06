@@ -45,12 +45,14 @@ row has a separate opt-in contract:
 `PICOGENT_LIVE_PROVIDER_QUALITY_ARTIFACT` must point at a valid quality
 evidence file. Connectivity evidence never upgrades the quality row.
 
-The latest bounded real-provider observation at exact merged `main` is recorded
+The latest bounded Codex-selected observation at exact merged `main` is recorded
 in [V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md)
 for [#488](https://github.com/saiaathishkarthik/picogent/issues/488). It
-projects `live-provider-quality=PASS` only for the three fixed no-tool cases;
-the connectivity, rendered, hostile-TOCTOU, and release-authorization rows
-remain independently evidence-bound.
+projects `live-provider-quality=PASS` only for the self-reported artifact's
+three fixed no-tool cases after canonical prompt-digest and bounded-shape
+checks; provider identity and raw result semantics are not independently
+attested. The connectivity, rendered, hostile-TOCTOU, and release-authorization
+rows remain independently evidence-bound.
 
 ## Hostile-runtime evidence
 
@@ -144,10 +146,13 @@ connectivity row. Its artifact uses schema
 | `bounded-summary` | `In exactly one sentence, explain what Picogent is for. Do not call tools, inspect files, or modify anything.` |
 | `constraint-following` | `Return exactly three words: local first agent. Do not call tools, inspect files, or modify anything.` |
 
-The prompt text and provider result are not retained in the artifact. Each case
-retains only lowercase SHA-256 digests, a bounded latency measurement, its
-verdict, and explicit `tools_used` / `mutation_observed` assertions. A complete
-passing artifact has this shape:
+The prompt text and provider result are not retained in the artifact. The
+loader binds each prompt digest to the canonical prompt text above; result
+digests, provider identity, and the provider's semantic answer remain
+self-reported because raw output and credentials are intentionally not retained.
+Each case retains only lowercase SHA-256 digests, a bounded latency measurement,
+its verdict, and explicit `tools_used` / `mutation_observed` assertions. A
+complete passing artifact has this shape:
 
 ```json
 {
@@ -203,12 +208,14 @@ go run ./cmd/runtime-boundary-matrix \
   --candidate-sha "$(git rev-parse HEAD)"
 ```
 
-`PASS` requires all three fixed cases exactly once, valid digests, every case
-within the declared latency budget, every case marked `PASS`, and explicit
-false no-tool/no-mutation assertions. A provider outage or incomplete campaign
-may remain `INCONCLUSIVE` or `UNVERIFIED`; the matrix does not infer either
-state as `PASS`. Malformed, stale-SHA, secret-shaped, trailing, oversized, or
-workspace-contained artifacts fail closed. This campaign does not prove
+`PASS` requires all three fixed cases exactly once, canonical prompt digests,
+valid result digests, every case within the declared latency budget, every case
+marked `PASS`, and explicit false no-tool/no-mutation assertions. A provider
+outage or incomplete campaign may remain `INCONCLUSIVE` or `UNVERIFIED`; the
+matrix does not infer either state as `PASS`. Malformed, stale-SHA,
+secret-shaped, trailing, oversized, or workspace-contained artifacts fail
+closed. The PASS is an artifact-level self-reported observation, not independent
+provider or result attestation. This campaign does not prove
 streaming quality, authentication refresh, tool behavior, recovery, sustained
 sessions, rendered behavior, cross-platform behavior, or release readiness.
 
