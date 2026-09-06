@@ -69,6 +69,37 @@ func TestCollectRejectsLiveFlagWithoutArtifact(t *testing.T) {
 	}
 }
 
+func TestCollectPassesBoundedHostileFilesystemWithoutTOCTOU(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	workspace := t.TempDir()
+	seedDocs(t, workspace)
+	write(t, workspace, "docs/V4-HOSTILE-RUNTIME-EVIDENCE.md", "# bounded hostile runtime evidence\n")
+	sha := commitAll(t, workspace)
+
+	report, err := Collect(Options{
+		Workspace:    workspace,
+		CandidateSHA: sha,
+		Now:          time.Unix(1700000000, 0).UTC(),
+		Environ:      func(string) string { return "" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deterministic := claimByID(t, report, "hostile-filesystem-deterministic")
+	if deterministic.Verdict != VerdictPass {
+		t.Fatalf("deterministic hostile-filesystem verdict = %s reason=%s", deterministic.Verdict, deterministic.Reason)
+	}
+	if !strings.Contains(deterministic.Reason, "same-UID filesystem TOCTOU") {
+		t.Fatalf("deterministic hostile-filesystem reason = %q", deterministic.Reason)
+	}
+	toctou := claimByID(t, report, "hostile-filesystem-toctou")
+	if toctou.Verdict != VerdictUnverified {
+		t.Fatalf("TOCTOU verdict = %s reason=%s", toctou.Verdict, toctou.Reason)
+	}
+}
+
 func TestCollectRejectsDirtyTree(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")

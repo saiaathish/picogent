@@ -355,6 +355,24 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 		hostile.Reason = "security campaign evidence doc is missing"
 	}
 
+	hostileFilesystemExists, _ := lookup(doc("docs/V4-HOSTILE-RUNTIME-EVIDENCE.md"))
+	hostileFilesystem := Claim{
+		ID:         "hostile-filesystem-deterministic",
+		Category:   CategoryHostile,
+		Title:      "Deterministic hostile-filesystem boundary",
+		Setup:      "Bounded securefile, procenv, and workspace tests for path substitution, atomic cleanup identity, and child-environment sanitization.",
+		Artifact:   "docs/V4-HOSTILE-RUNTIME-EVIDENCE.md and deterministic package tests",
+		Provenance: "exact-head bounded hostile-runtime evidence",
+		ObservedAt: observed,
+	}
+	if hostileFilesystemExists {
+		hostileFilesystem.Verdict = VerdictPass
+		hostileFilesystem.Reason = "bounded deterministic hostile-runtime evidence is documented; arbitrary same-UID filesystem TOCTOU remains outside this claim"
+	} else {
+		hostileFilesystem.Verdict = VerdictUnverified
+		hostileFilesystem.Reason = "bounded hostile-runtime evidence doc is missing"
+	}
+
 	hostileTOCTOU := Claim{
 		ID:         "hostile-filesystem-toctou",
 		Category:   CategoryHostile,
@@ -409,7 +427,7 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 		release.Reason = "release audit exists without claiming authorization"
 	}
 
-	return []Claim{liveConnectivity, live, renderedLocal, rendered, renderedCross, renderedUndoReload, hostile, hostileTOCTOU, recovery, release}
+	return []Claim{liveConnectivity, live, renderedLocal, rendered, renderedCross, renderedUndoReload, hostile, hostileFilesystem, hostileTOCTOU, recovery, release}
 }
 
 func boundClaim(claim Claim) Claim {
