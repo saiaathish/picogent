@@ -12,6 +12,7 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 )
 
@@ -64,6 +65,10 @@ func TestApprovedWriteRejectsWorkspaceRootReplacement(t *testing.T) {
 	cfg.Workspace = workspace
 	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
 	a := agent.New(cfg, fake, reg, perm.New(config.ModeSafe, workspace, nil))
+	// Keep the agent's run lock outside the hostile workspace. Windows holds
+	// the lock file open for the duration of Run, so the fixture must not make
+	// that unrelated runtime lock prevent the directory replacement itself.
+	a.TaskStore = taskstate.NewStore(t.TempDir())
 	handler := &replaceWorkspaceOnApproval{workspace: workspace, oldWorkspace: oldWorkspace}
 	if _, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "create blocked.txt"}, handler); err != nil {
 		t.Fatal(err)
