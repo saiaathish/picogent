@@ -5,7 +5,8 @@ Status: retention helper for the canonical
 release and does not upgrade live-provider, rendered-platform, or hostile
 TOCTOU gaps to `PASS`.
 
-Parent: [#461](https://github.com/saiaathish/picogent/issues/461)
+Parent: [#461](https://github.com/saiaathish/picogent/issues/461). Read-side
+follow-up: [#474](https://github.com/saiaathish/picogent/issues/474).
 
 ## Command
 
@@ -34,8 +35,11 @@ and validates schema, candidate SHA, clean-head provenance, and claim shape.
 
 Parent creation uses `securefile.EnsureDir` and exclusive creation is
 anchored with `os.OpenRoot`, so a later parent pathname swap cannot redirect
-the already-opened directory handle. This still does **not** claim arbitrary
-same-UID TOCTOU coverage across every platform surface.
+the already-opened directory handle. Loading now uses the existing
+descriptor/handle-anchored `securefile.ReadFileLimited` primitive, so a later
+parent rename cannot redirect the read. The path-based preflight before the
+secure root opens, final basename replacement races, and arbitrary same-UID
+TOCTOU coverage across every platform surface remain outside this guarantee.
 
 ## Hosted retention
 
