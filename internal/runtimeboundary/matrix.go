@@ -329,12 +329,49 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 		ID:         "rendered-cross-platform",
 		Category:   CategoryRendered,
 		Title:      "Rendered behavior across all supported desktop platforms",
-		Setup:      "Repeat the rendered fixture on macOS, Windows, and Linux owned browsers.",
-		Artifact:   "per-platform rendered evidence records",
+		Setup:      "Aggregate darwin/linux/windows owned-browser rendered-platform evidence at one exact SHA.",
+		Artifact:   "rendered-cross-platform evidence JSON referenced by " + RenderedCrossArtifactEnv,
 		Verdict:    VerdictUnverified,
-		Provenance: "no multi-platform rendered matrix artifact",
-		Reason:     "only a single local rendered evidence path is catalogued",
+		Reason:     "no rendered-cross-platform evidence artifact was supplied",
 		ObservedAt: observed,
+	}
+	if strings.TrimSpace(environ(RenderedCrossEvidenceEnv)) == "1" {
+		artifact := strings.TrimSpace(environ(RenderedCrossArtifactEnv))
+		if artifact == "" {
+			renderedCross.Verdict = VerdictFail
+			renderedCross.Reason = "rendered-cross-platform evidence requested without " + RenderedCrossArtifactEnv
+		} else if ok, err := lookup(artifact); err != nil {
+			renderedCross.Verdict = VerdictInconclusive
+			renderedCross.Reason = "rendered-cross-platform evidence artifact lookup failed"
+		} else if !ok {
+			renderedCross.Verdict = VerdictFail
+			renderedCross.Artifact = artifact
+			renderedCross.Reason = "rendered-cross-platform evidence artifact is missing"
+		} else {
+			evidence, digest, loadErr := loadRenderedCrossPlatformEvidence(workspace, artifact, sha)
+			if loadErr != nil {
+				renderedCross.Verdict = VerdictFail
+				renderedCross.Artifact = artifact
+				renderedCross.Reason = "rendered-cross-platform evidence validation failed: " + loadErr.Error()
+			} else {
+				renderedCross.Verdict = evidence.Verdict
+				renderedCross.Artifact = artifact
+				renderedCross.Provenance = "env:" + RenderedCrossEvidenceEnv + "+sha256:" + digest
+				renderedCross.ObservedAt = evidence.ObservedAt
+				switch evidence.Verdict {
+				case VerdictPass:
+					renderedCross.Reason = "darwin/linux/windows rendered-platform observations passed at the exact candidate SHA; live-provider and hostile-TOCTOU remain outside this claim"
+				case VerdictFail:
+					renderedCross.Reason = "rendered-cross-platform evidence recorded a failed platform observation"
+				case VerdictInconclusive:
+					renderedCross.Reason = "rendered-cross-platform evidence is incomplete across required desktop platforms"
+				default:
+					renderedCross.Reason = "rendered-cross-platform evidence remains unverified"
+				}
+			}
+		}
+	} else {
+		renderedCross.Provenance = "fail-closed default without " + RenderedCrossEvidenceEnv
 	}
 
 	recoveryFixtureDoc, _ := lookup(doc("docs/V4-RENDERED-RECOVERY-FIXTURE.md"))
