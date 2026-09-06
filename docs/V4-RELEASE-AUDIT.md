@@ -4,8 +4,8 @@ Status: `INCONCLUSIVE` for release authorization. This is an independently
 rechecked evidence report, not a release approval or a supply-chain
 certification.
 
-Latest audit snapshot: 2026-09-05 UTC (captured locally on 2026-09-05)
-Latest checkpoint: [PR #440](https://github.com/saiaathish/picogent/pull/440)
+Latest audit snapshot: 2026-09-06 UTC (captured locally on 2026-09-05 EDT)
+Latest checkpoint: post-[#445](https://github.com/saiaathish/picogent/pull/445)/[#447](https://github.com/saiaathish/picogent/pull/447) main `a4a4de276091e8110576adb6bbf1f526ec007f5d`
 Parent: [#316](https://github.com/saiaathish/picogent/issues/316)
 Broader parent: [#246](https://github.com/saiaathish/picogent/issues/246)
 
@@ -14,12 +14,147 @@ Historical snapshot: [#321](https://github.com/saiaathish/picogent/issues/321)
 “Independent” here means a fresh repository-side recheck of downloaded
 artifacts and the exact Git history. It does not mean a third-party audit.
 
-## Latest follow-up audit — exact current main after PR #440
+## Latest follow-up audit — exact current main after PR #445 and #447
 
-This refresh rechecks the exact current `main` after documentation-only PR
+This refresh rechecks the exact current `main` after security child-env
+sanitization (#445) and the post-#442 outcome-quality matrix refresh (#447).
+It preserves the prior #440/#446, #420, and #419 observations below as
+historical evidence; no earlier artifact observation is rewritten
+retroactively. The result is an evidence report, not release authorization.
+
+### Candidate and hosted run
+
+- PR #447 source head: `c0543fcec92d8192bad22b76f59e690fbd29754c`.
+- Merge commit and current `main`: `a4a4de276091e8110576adb6bbf1f526ec007f5d`.
+- Immediate predecessors on `main`: #445 (`7e6ccea`), #446 (`dc628bd`),
+  #444 (`821ae84`), #443 (`a493c2e`), #442 (`a6d3af3`), #441 (`923ce9a`).
+- PR #447 validation run: [34002680270](https://github.com/saiaathish/picogent/actions/runs/34002680270), all five required gates passed.
+- Post-merge CI run: [34003534333](https://github.com/saiaathish/picogent/actions/runs/34003534333).
+- The post-merge run completed successfully for all five jobs:
+
+| Job | Job ID | Result |
+| --- | ---: | --- |
+| `security` | `101406532734` | `PASS` |
+| `test (ubuntu-latest)` | `101406532869` | `PASS` |
+| `test (windows-latest)` | `101406532831` | `PASS` |
+| `test (macos-latest)` | `101406532828` | `PASS` |
+| `release-evidence` | `101407369018` | `PASS` |
+
+| Artifact | Artifact ID | Size | Result |
+| --- | ---: | ---: | --- |
+| `verification-manifest-a4a4de276091e8110576adb6bbf1f526ec007f5d` | `9980326421` | 991 bytes | present, unexpired |
+| `release-attestation-a4a4de276091e8110576adb6bbf1f526ec007f5d` | `9980326595` | 16,532 bytes | present, unexpired |
+
+### Current-head verdict
+
+| Claim | Result | Boundary |
+| --- | --- | --- |
+| All required hosted CI jobs passed for the exact pushed candidate | `CONFIRMED` | Security, Ubuntu, Windows, macOS, and dependent release-evidence jobs all completed with `success` at the merge SHA. |
+| The release-evidence gates are valid | `CONFIRMED` | The downloaded ledger validates locally with exactly the required `test` and `security` records at the candidate SHA and `push` event. |
+| The candidate source tree was clean when the manifest was collected | `CONFIRMED` | The manifest records matching candidate and expected SHA values, `head.match: PASS`, and `head.tree: CLEAN`. |
+| The two signed subjects bind to the exact candidate and repository | `CONFIRMED` | The predicate and downloaded Sigstore bundles record `saiaathish/picogent`, candidate `a4a4de27`, event `push`, run `34003534333`, and the main workflow identity. |
+| The hosted attestations verify under the canonical predicate namespace | `CONFIRMED` | Both subjects independently verify with the explicit repository, predicate type, signer workflow, and `refs/heads/main`; each records a Rekor timestamp. |
+| Hosted workflow actions are pinned immutably | `CONFIRMED` | All inspected `uses:` references in `.github/workflows/ci.yml` resolve to full commit hashes. |
+| The verification manifest proves complete release readiness | `INCONCLUSIVE` | The manifest's targeted check is `SKIPPED`; the bounded broader `go test ./...` check is `INCONCLUSIVE` with reason `signal: killed` after about 90.00 seconds and 7 passed tests. Coverage is `UNVERIFIED`. |
+| Production release, SBOM, provider, rendered-platform, and hostile-runtime claims are proven | `UNVERIFIED` | Those evidence boundaries remain outside this run. |
+
+### Independent artifact recheck
+
+The downloaded manifest reports schema `picogent.verify.v1`, candidate and
+expected SHA `a4a4de276091e8110576adb6bbf1f526ec007f5d`, `head.match: PASS`,
+`head.tree: CLEAN`, and overall `status: INCONCLUSIVE` with reason `signal:
+killed`. Its targeted check is `SKIPPED` because no safe targeted command was
+detected. The broader check records `passed: 7`,
+`duration_ns: 90002359382`, and coverage `UNVERIFIED` because coverage was not
+collected. The release-gate validator returned:
+
+```text
+release gates PASS: 2 required job(s) for push
+```
+
+The locally recomputed subject digests match the signed predicate:
+
+| Subject | SHA-256 |
+| --- | --- |
+| `release-gates.json` | `0351b8275c95aa974fb9d1df9552e91c368174ca26b6905ca0603ebe4d752cd4` |
+| `verification-manifest.json` | `5e9ce9f5c26033008ef8b9146448b1c3ae33927757c430e8d5af12f9431e61d7` |
+
+Both `gh attestation verify` commands returned success against the downloaded
+Sigstore bundles with the explicit repository, canonical predicate type, main
+signer workflow, and `--source-ref refs/heads/main`. The verified certificate
+evidence records signer
+`https://github.com/saiaathish/picogent/.github/workflows/ci.yml@refs/heads/main`
+and a Rekor timestamp of `2026-09-05T21:26:57-04:00` for each subject. The
+signed predicate records `issued_at: 2026-09-06T01:26:57.062313Z` and
+`expires_at: 2026-09-13T01:26:57.062313Z`. Neither verification result
+authorizes a release or upgrades the manifest's `INCONCLUSIVE` state.
+
+### Hostile review (bounded)
+
+This is a repository-side hostile pass over the exact-head evidence, not a
+claim that every hostile runtime path is closed.
+
+| Pressure | Result | Finding |
+| --- | --- | --- |
+| Dirty or mismatched candidate SHA | `PASS` | Manifest `head.match`/`head.tree` and gate `candidate_sha` agree with the pushed merge SHA; local gate validation fails closed when the expected SHA is wrong. |
+| Attestation subject digests | `PASS` | Local SHA-256 of both subjects equals the signed predicate fields and the verified statement digests. |
+| Predicate / signer / ref mismatch | `PASS` | Offline bundle verify requires the canonical predicate type, main signer workflow, and `refs/heads/main`. |
+| Moving action tags | `PASS` | Every `uses:` entry in `.github/workflows/ci.yml` is full-hash pinned at this head. |
+| Child-environment leakage (non-interactive) | `BOUNDED` | #445 lands `procenv.Sanitized()` for rg/bash/OpenCode/GUI helper children with hostile coverage from #444; arbitrary same-UID TOCTOU and untrusted MCP prompt injection remain outside this boundary. |
+| Live-provider / rendered / SBOM claims | `UNVERIFIED` | Not exercised by this audit run. |
+
+### Current-head boundary
+
+| Boundary | Result | Finding |
+| --- | --- | --- |
+| Predicate namespace and subject binding | `PASS` | The live workflow, predicate, repository, candidate, event, run, signer, and recomputed subject digests agree. |
+| Clean source provenance | `PASS` | The manifest records `head.tree: CLEAN` at the exact current main SHA. |
+| Required hosted gate ledger | `PASS` | `test` and `security` are present exactly once with `PASS`, zero exit codes, and matching candidate/event. |
+| Verification manifest | `INCONCLUSIVE` | The bounded broader check was killed; targeted work was skipped and coverage was not collected. |
+| SBOM and production release | `UNVERIFIED` | No SBOM, production binary, or release-package signature was present in the inspected run. |
+| Hosted action immutability | `PASS` | All workflow action references inspected in `.github/workflows/ci.yml` resolve to full commit hashes. |
+| Live provider, rendered behavior, and hostile runtime | `UNVERIFIED` | These boundaries were not exercised by this evidence run. |
+
+This is the latest exact-head release-evidence checkpoint, not a release
+approval. Signed supply-chain scope is bounded to the observed hosted
+subjects; production packaging, SBOM, live-provider quality, rendered
+behavior, broader hostile runtime, targeted coverage, outcome-quality win
+claims, and overall v4 readiness remain unverified or inconclusive. Parent
+#316 and broader parent #246 remain open until their scoped closeout records
+this exact-head terminus.
+
+### Current-head reproduction commands
+
+```sh
+gh run download 34003534333 --repo saiaathish/picogent --dir <audit-dir>
+jq -c '.[].attestation.bundle' \
+  <audit-dir>/release-attestation-a4a4de276091e8110576adb6bbf1f526ec007f5d/*attestation.json \
+  > <audit-dir>/release-evidence-bundle.jsonl
+go run ./cmd/release-gates \
+  --ledger <audit-dir>/verification-manifest-a4a4de276091e8110576adb6bbf1f526ec007f5d/release-gates.json \
+  --expected-sha a4a4de276091e8110576adb6bbf1f526ec007f5d \
+  --event push --required test,security
+gh attestation verify <audit-dir>/verification-manifest-a4a4de276091e8110576adb6bbf1f526ec007f5d/release-gates.json \
+  --repo saiaathish/picogent \
+  --bundle <audit-dir>/release-evidence-bundle.jsonl \
+  --predicate-type https://github.com/saiaathish/picogent/attestation/release-evidence/v1 \
+  --signer-workflow saiaathish/picogent/.github/workflows/ci.yml@refs/heads/main \
+  --source-ref refs/heads/main --format=json
+gh attestation verify <audit-dir>/verification-manifest-a4a4de276091e8110576adb6bbf1f526ec007f5d/verification-manifest.json \
+  --repo saiaathish/picogent \
+  --bundle <audit-dir>/release-evidence-bundle.jsonl \
+  --predicate-type https://github.com/saiaathish/picogent/attestation/release-evidence/v1 \
+  --signer-workflow saiaathish/picogent/.github/workflows/ci.yml@refs/heads/main \
+  --source-ref refs/heads/main --format=json
+```
+
+## Historical follow-up audit — exact main after PR #440
+
+This historical refresh rechecked the exact `main` after documentation-only PR
 #440. It preserves the prior #420 and #419 observations below as historical
 evidence; no earlier artifact observation is rewritten retroactively. The
-result is an evidence report, not release authorization.
+result is an evidence report, not release authorization. Superseded as the
+latest checkpoint by the post-#445/#447 refresh above.
 
 ### Candidate and hosted run
 
@@ -98,13 +233,13 @@ authorizes a release or upgrades the manifest's `INCONCLUSIVE` state.
 | Hosted action immutability | `PASS` | All workflow action references inspected in `.github/workflows/ci.yml` resolve to full commit hashes. |
 | Live provider, rendered behavior, and hostile runtime | `UNVERIFIED` | These boundaries were not exercised by this evidence run. |
 
-This is the latest exact-head release-evidence checkpoint, not a release
-approval. Signed supply-chain scope is bounded to the observed hosted
-subjects; production packaging, SBOM, live-provider quality, rendered
-behavior, hostile runtime, targeted coverage, and overall v4 readiness remain
-unverified or inconclusive. Parent #316 and broader parent #246 remain open.
+This historical checkpoint is superseded by the post-#445/#447 refresh above.
+Signed supply-chain scope remained bounded to the observed hosted subjects;
+production packaging, SBOM, live-provider quality, rendered behavior, hostile
+runtime, targeted coverage, and overall v4 readiness remained unverified or
+inconclusive.
 
-### Current-head reproduction commands
+### Historical reproduction commands (#440 head)
 
 ```sh
 gh run download 33998473168 --repo saiaathish/picogent --dir <audit-dir>
@@ -118,7 +253,7 @@ The attestation reproduction uses the downloaded wrapper's inner Sigstore
 bundles and the same explicit repository, canonical predicate, signer
 workflow, and `refs/heads/main` constraints shown in the prior section.
 
-## Latest follow-up audit — exact current main after PR #419
+## Historical follow-up audit — exact main after PR #419
 
 This refresh rechecks the exact current `main` after the documentation
 checkpoint in [PR #419](https://github.com/saiaathish/picogent/pull/419). It
