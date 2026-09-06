@@ -110,7 +110,15 @@ configuration.
   before an individual MCP tool reaches the permission gate.
 - MCP subprocesses receive a small inherited environment plus explicitly
   configured values; ordinary shell execution filters credential and loader
-  variables.
+  variables. The hostile regression
+  `TestCommandEnvFreshProcessDoesNotInheritSecrets` launches a fresh process
+  with the exact `commandEnv` output plus only a private test marker and
+  verifies that inherited secret and loader variables do not cross the
+  boundary. This S slice is based on exact `origin/main` source commit
+  `38b45ff99af0221f4b5dcbe16d356f78ff2b71a9`; the local test is not hosted or
+  live-provider evidence. Arbitrary external MCP server behavior, explicitly
+  configured environment values, and response-side leakage remain
+  `UNVERIFIED` until directly observed against the full PR-head SHA.
 - Static symlink escapes are rejected by permission classification, built-in
   file tools, and checkpoint capture. `FuzzResolveWorkspacePathBoundary` passed
   for a two-second local run.

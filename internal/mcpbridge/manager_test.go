@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -299,6 +300,47 @@ func TestCommandEnvDoesNotInheritParentSecrets(t *testing.T) {
 	if _, ok := os.LookupEnv("PICOGENT_TEST_SECRET"); !ok {
 		t.Fatal("test environment was unexpectedly changed")
 	}
+}
+
+func TestCommandEnvFreshProcessDoesNotInheritSecrets(t *testing.T) {
+	const helperKey = "PICOGENT_MCP_ENV_HELPER"
+	for _, key := range []string{
+		"PICOGENT_MCP_TEST_SECRET",
+		"BASH_ENV",
+		"LD_PRELOAD",
+		"NPM_CONFIG_USERCONFIG",
+	} {
+		t.Setenv(key, "sentinel-"+key)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestCommandEnvFreshProcessHelper", "-test.count=1")
+	cmd.Env = append(commandEnv(nil), helperKey+"=1")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fresh MCP environment helper failed: %v; output=%q", err, output)
+	}
+	if string(output) != "clean\n" {
+		t.Fatalf("fresh MCP environment helper output = %q, want clean marker", output)
+	}
+}
+
+func TestCommandEnvFreshProcessHelper(t *testing.T) {
+	if os.Getenv("PICOGENT_MCP_ENV_HELPER") != "1" {
+		return
+	}
+	for _, key := range []string{
+		"PICOGENT_MCP_TEST_SECRET",
+		"BASH_ENV",
+		"LD_PRELOAD",
+		"NPM_CONFIG_USERCONFIG",
+	} {
+		if value, ok := os.LookupEnv(key); ok {
+			_, _ = os.Stdout.WriteString("leaked " + key + "=" + value + "\n")
+			os.Exit(1)
+		}
+	}
+	_, _ = os.Stdout.WriteString("clean\n")
+	os.Exit(0)
 }
 
 func TestFormatResultRedactsCredentialShapedMCPOutput(t *testing.T) {
