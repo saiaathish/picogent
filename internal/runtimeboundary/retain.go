@@ -193,6 +193,10 @@ func rejectSymlinkAncestors(path string) error {
 
 // LoadReport loads a retained matrix artifact and fail-closes on missing,
 // malformed, oversized, schema-mismatched, or candidate-mismatched records.
+// securefile.ReadFileLimited opens the parent through its descriptor/handle-
+// anchored platform primitive, so the read does not reopen the artifact path
+// after parent validation. This narrows pathname replacement races without
+// claiming broad same-UID TOCTOU resistance on every supported platform.
 func LoadReport(artifactPath, expectedSHA string) (Report, error) {
 	var report Report
 	if strings.TrimSpace(artifactPath) == "" {
@@ -201,21 +205,14 @@ func LoadReport(artifactPath, expectedSHA string) (Report, error) {
 	if !validCommitSHA(strings.TrimSpace(expectedSHA)) {
 		return report, errors.New("expected candidate_sha must be a full commit id")
 	}
-	info, err := os.Lstat(artifactPath)
+	data, err := securefile.ReadFileLimited(artifactPath, MaxReportBytes)
 	if err != nil {
+		if errors.Is(err, securefile.ErrReadLimit) {
+			return report, errors.New("runtime matrix artifact exceeds size limit")
+		}
 		if errors.Is(err, os.ErrNotExist) {
 			return report, fmt.Errorf("runtime matrix artifact missing: %w", err)
 		}
-		return report, fmt.Errorf("inspect runtime matrix artifact: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return report, errors.New("runtime matrix artifact must be a regular file")
-	}
-	if info.Size() > int64(MaxReportBytes) {
-		return report, errors.New("runtime matrix artifact exceeds size limit")
-	}
-	data, err := os.ReadFile(artifactPath)
-	if err != nil {
 		return report, fmt.Errorf("read runtime matrix artifact: %w", err)
 	}
 	if len(data) == 0 {

@@ -140,6 +140,24 @@ func TestRetainReportRejectsSymlinkArtifactTarget(t *testing.T) {
 	}
 }
 
+func TestLoadReportRejectsSymlinkParent(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	linkRoot := t.TempDir()
+	link := filepath.Join(linkRoot, "linked-parent")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	sha := strings.Repeat("1", 40)
+	artifact := filepath.Join(outside, "runtime-boundary-matrix.json")
+	if err := RetainReport(workspace, artifact, sampleReport(sha)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadReport(filepath.Join(link, filepath.Base(artifact)), sha); err == nil {
+		t.Fatal("load accepted a symlinked artifact parent")
+	}
+}
+
 func sampleReport(sha string) Report {
 	return Report{
 		Schema:       Schema,
