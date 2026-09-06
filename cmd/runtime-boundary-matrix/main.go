@@ -23,6 +23,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	workspace := flags.String("workspace", ".", "clean source workspace")
 	candidateSHA := flags.String("candidate-sha", "", "exact full commit id")
+	outPath := flags.String("out", "", "optional absolute artifact path outside the workspace")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -42,6 +43,23 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, "runtime-boundary-matrix:", err)
 		return 1
+	}
+	if path := strings.TrimSpace(*outPath); path != "" {
+		if !filepath.IsAbs(path) {
+			path, err = filepath.Abs(path)
+			if err != nil {
+				fmt.Fprintln(stderr, "resolve artifact path:", err)
+				return 1
+			}
+		}
+		if err := runtimeboundary.RetainReport(abs, path, report); err != nil {
+			fmt.Fprintln(stderr, "retain matrix:", err)
+			return 1
+		}
+		if _, err := runtimeboundary.LoadReport(path, report.CandidateSHA); err != nil {
+			fmt.Fprintln(stderr, "validate retained matrix:", err)
+			return 1
+		}
 	}
 	if err := runtimeboundary.WriteJSON(stdout, report); err != nil {
 		fmt.Fprintln(stderr, "write matrix:", err)

@@ -13,6 +13,17 @@ go run ./cmd/runtime-boundary-matrix \
   --candidate-sha <full-commit-id>
 ```
 
+Optional exact-SHA retention outside the checkout:
+
+```sh
+go run ./cmd/runtime-boundary-matrix \
+  --workspace . \
+  --candidate-sha <full-commit-id> \
+  --out /absolute/path/outside/checkout/runtime-boundary-matrix.json
+```
+
+See [V4-RUNTIME-BOUNDARY-MATRIX-RETENTION.md](V4-RUNTIME-BOUNDARY-MATRIX-RETENTION.md).
+
 The workspace must be clean and `HEAD` must equal `--candidate-sha`. The JSON
 artifact uses schema `picogent.v4.runtime-boundary-matrix.v1`.
 
@@ -40,6 +51,8 @@ then, this matrix does not auto-score provider quality as `PASS`.
   allow→undo→reload API-boundary evidence doc is present; the browser runbook
   alone is not treated as that proof. Browser DOM, live-provider, and
   unsupported-platform claims remain outside the row.
-- Parent [#450](https://github.com/saiaathish/picogent/issues/450) stays open
-  until this matrix, hosted CI, and a fresh exact-head release audit close the
-  remaining release-readiness boundaries.
+- Parent release-readiness remains evidence-bound: retained matrix artifacts and
+  hosted CI do not authorize a release while live-provider, broader hostile
+  TOCTOU, and overall authorization gaps stay `UNVERIFIED` / `INCONCLUSIVE`.
+  Direct live/rendered/hostile observation continues under
+  [#453](https://github.com/saiaathish/picogent/issues/453).
