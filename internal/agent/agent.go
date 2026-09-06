@@ -812,6 +812,21 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				pending = append(pending, executed{call: call, req: req, text: "denied by user", permissionPrompted: prompted, permissionDecision: dec})
 				continue
 			}
+			// Do not checkpoint a path against a root that changed while the
+			// permission prompt was open. The execution loop repeats this check
+			// immediately before running each pending call because an earlier
+			// call in the same model batch may change the workspace.
+			if err := req.ValidateWorkspaceIdentity(); err != nil {
+				pending = append(pending, executed{
+					call:               call,
+					req:                req,
+					text:               "error: " + err.Error(),
+					err:                err,
+					permissionPrompted: prompted,
+					permissionDecision: dec,
+				})
+				continue
+			}
 			if call.Name == "write_file" || call.Name == "edit_file" {
 				if err := turnUndo.capture(req.Path); err != nil {
 					captureErr := fmt.Errorf("cannot safely checkpoint %s: %w", req.Path, err)
@@ -830,6 +845,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			call := pending[i].call
 			tool, _ := reg.Get(call.Name)
+			if err := pending[i].req.ValidateWorkspaceIdentity(); err != nil {
+				pending[i].err = err
+				pending[i].text = "error: " + err.Error()
+				continue
+			}
+			toolCtx := regCtx
+			toolCtx.WorkspaceIdentity = pending[i].req.WorkspaceIdentity()
 			pending[i].ran = true
 			var outText string
 			var runErr error
@@ -840,14 +862,14 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 					return
 				}
 				if call.Name == "verify" {
-					verification = executeVerification(ctx, tool, call, regCtx, a.runTool)
+					verification = executeVerification(ctx, tool, call, toolCtx, a.runTool)
 					outText, runErr = verification.output, verification.err
 					return
 				}
 				if a.runTool != nil {
-					outText, runErr = a.runTool(ctx, call, tool, regCtx)
+					outText, runErr = a.runTool(ctx, call, tool, toolCtx)
 				} else {
-					outText, runErr = tool.Run(ctx, call.Arguments, regCtx)
+					outText, runErr = tool.Run(ctx, call.Arguments, toolCtx)
 				}
 			}
 			if call.Name == "mcp_manage" {
