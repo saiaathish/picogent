@@ -241,6 +241,47 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 		live.Provenance = "fail-closed default without " + LiveEvidenceEnv
 	}
 
+	renderedPlatform, renderedArchitecture := currentRenderedPlatform()
+	renderedLocal := Claim{
+		ID:         "rendered-platform-local",
+		Category:   CategoryRendered,
+		Title:      "Task-owned rendered evidence on the current platform",
+		Setup:      "Task-owned disposable rendered fixture with exact source SHA and digest-only observation references.",
+		Artifact:   "rendered-platform evidence JSON referenced by " + RenderedArtifactEnv,
+		Verdict:    VerdictUnverified,
+		Reason:     "no rendered-platform evidence artifact was supplied",
+		ObservedAt: observed,
+	}
+	if strings.TrimSpace(environ(RenderedEvidenceEnv)) == "1" {
+		artifact := strings.TrimSpace(environ(RenderedArtifactEnv))
+		if artifact == "" {
+			renderedLocal.Verdict = VerdictFail
+			renderedLocal.Reason = "rendered evidence requested without " + RenderedArtifactEnv
+		} else if ok, err := lookup(artifact); err != nil {
+			renderedLocal.Verdict = VerdictInconclusive
+			renderedLocal.Reason = "rendered evidence artifact lookup failed"
+		} else if !ok {
+			renderedLocal.Verdict = VerdictFail
+			renderedLocal.Artifact = artifact
+			renderedLocal.Reason = "rendered evidence artifact is missing"
+		} else {
+			evidence, digest, loadErr := loadRenderedPlatformEvidence(workspace, artifact, sha, renderedPlatform, renderedArchitecture)
+			if loadErr != nil {
+				renderedLocal.Verdict = VerdictFail
+				renderedLocal.Artifact = artifact
+				renderedLocal.Reason = "rendered evidence validation failed: " + loadErr.Error()
+			} else {
+				renderedLocal.Verdict = evidence.Verdict
+				renderedLocal.Artifact = artifact
+				renderedLocal.Provenance = "env:" + RenderedEvidenceEnv + "+sha256:" + digest
+				renderedLocal.ObservedAt = evidence.ObservedAt
+				renderedLocal.Reason = "direct task-owned rendered observation recorded for " + renderedPlatform + "/" + renderedArchitecture
+			}
+		}
+	} else {
+		renderedLocal.Provenance = "fail-closed default without " + RenderedEvidenceEnv
+	}
+
 	renderedExists, _ := lookup(doc("docs/V4-RENDERED-LONG-HORIZON-EVIDENCE.md"))
 	rendered := Claim{
 		ID:         "rendered-long-horizon-local",
@@ -368,7 +409,7 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 		release.Reason = "release audit exists without claiming authorization"
 	}
 
-	return []Claim{liveConnectivity, live, rendered, renderedCross, renderedUndoReload, hostile, hostileTOCTOU, recovery, release}
+	return []Claim{liveConnectivity, live, renderedLocal, rendered, renderedCross, renderedUndoReload, hostile, hostileTOCTOU, recovery, release}
 }
 
 func boundClaim(claim Claim) Claim {

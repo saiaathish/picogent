@@ -105,6 +105,60 @@ observed host. It is not evidence of provider quality, authorization refresh,
 tool behavior, rendered UI behavior, cross-platform behavior, recovery, or
 release readiness.
 
+## Rendered-platform evidence
+
+The rendered rows are also split by claim size:
+
+- `rendered-platform-local` can reflect one valid task-owned observation on the
+  current OS and architecture.
+- `rendered-cross-platform` remains `UNVERIFIED`; one macOS, Windows, or Linux
+  record cannot stand in for the other supported platforms.
+
+Enable the narrow local row with an evidence artifact outside the checkout:
+
+```sh
+PICOGENT_RENDERED_PLATFORM_EVIDENCE=1 \
+PICOGENT_RENDERED_PLATFORM_ARTIFACT=/private/tmp/picogent-rendered-evidence.json \
+go run ./cmd/runtime-boundary-matrix \
+  --workspace . \
+  --candidate-sha "$(git rev-parse HEAD)"
+```
+
+The artifact uses schema `picogent.v4.rendered-platform-evidence.v1` and stores
+only bounded identity and digests:
+
+```json
+{
+  "schema": "picogent.v4.rendered-platform-evidence.v1",
+  "candidate_sha": "<full lowercase commit SHA>",
+  "platform": "darwin",
+  "architecture": "arm64",
+  "environment": "task-owned-disposable",
+  "browser": "browseros-neo",
+  "fixture": "rendered-recovery",
+  "observation_sha256": "<64 lowercase hex characters>",
+  "screenshot_sha256": "UNRECORDED",
+  "observed_at": "2026-09-06T12:00:00Z",
+  "verdict": "PASS",
+  "source_tree_modified": false
+}
+```
+
+The loader requires the exact candidate SHA and the current matrix host's
+platform/architecture, a task-owned disposable environment, valid fixture and
+browser identifiers, digest-only observation and screenshot references, an
+explicit clean-source assertion, and one of the bounded verdicts. Unknown or
+trailing fields, oversized/malformed records, workspace-contained or symlinked
+artifact paths, dirty-source assertions, and records from another host fail
+closed. A valid `FAIL`, `INCONCLUSIVE`, or `UNVERIFIED` record remains that
+verdict in the local row; the loader never infers `PASS` from artifact presence
+alone.
+
+The record is evidence of the named fixture on the named host only. It does
+not store or prove DOM output, screenshots, URLs, credentials, provider
+quality, unsupported-platform behavior, hostile filesystem races, recovery, or
+release readiness.
+
 ## Explicit boundaries
 
 - Credentials must never be inlined into the matrix artifact.
