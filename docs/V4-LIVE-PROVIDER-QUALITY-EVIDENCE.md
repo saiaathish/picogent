@@ -1,11 +1,13 @@
 # v4 bounded live-provider quality evidence
 
-Status: `PASS` for one fixed no-tool quality campaign on a real Codex
-provider. This record belongs to [#488](https://github.com/saiaathishkarthik/picogent/issues/488)
+Status: the exact-head matrix recorded `PASS` for one fixed no-tool quality
+campaign observed through a Picogent run configured for Codex. This record
+belongs to [#488](https://github.com/saiaathishkarthik/picogent/issues/488)
 under the broader runtime-boundary parent
-[#453](https://github.com/saiaathishkarthik/picogent/issues/453). It is not a
-streaming, tool-use, recovery, cross-platform, security, or release-readiness
-claim.
+[#453](https://github.com/saiaathishkarthik/picogent/issues/453). The artifact
+records provider selection and digest-only results; it is not an independent
+attestation of provider identity. It is not a streaming, tool-use, recovery,
+cross-platform, security, or release-readiness claim.
 
 ## Provenance
 
@@ -20,9 +22,13 @@ observed:   2026-09-06T09:18:19Z
 ```
 
 The source checkout was clean and `HEAD` matched the recorded full commit ID.
-The provider ran from a disposable `PICOGENT_HOME` and workspace. Raw prompts,
-raw responses, credentials, and provider session data are not retained in the
-repository.
+The command selected `PICOGENT_PROVIDER=codex` and used the host's existing
+Codex login from a disposable `PICOGENT_HOME` and workspace. The schema and
+artifact do not cryptographically attest the provider process or account
+identity. The canonical matrix publishes the fixed prompt text as the test
+contract; the external observation directory was cleaned to retain only the
+digest-only JSON artifact, with raw responses, credentials, and provider session
+data excluded.
 
 The digest-only artifact was retained outside the checkout at:
 
@@ -71,7 +77,7 @@ was `PASS:6`, `INCONCLUSIVE:1`, `UNVERIFIED:4`, with these relevant rows:
 
 | Claim | Verdict | Boundary |
 | --- | --- | --- |
-| `live-provider-quality` | `PASS` | The three fixed no-tool cases passed with exact-head, digest-only evidence. |
+| `live-provider-quality` | `PASS` | The three fixed no-tool cases passed with exact-head, digest-only evidence for the Codex-selected run; provider identity is not independently attested. |
 | `live-provider-connectivity` | `UNVERIFIED` | Connectivity is a separate artifact and was not inferred from quality evidence. |
 | `rendered-platform-local` | `UNVERIFIED` | No rendered-platform artifact was supplied by this campaign. |
 | `rendered-cross-platform` | `UNVERIFIED` | One macOS provider run cannot represent other supported platforms. |
@@ -83,6 +89,7 @@ was `PASS:6`, `INCONCLUSIVE:1`, `UNVERIFIED:4`, with these relevant rows:
 This record does not prove:
 
 - streaming quality, tool-use quality, authentication refresh, or sustained sessions;
+- provider process or account identity beyond the runtime selection and artifact self-report;
 - restart, steering, undo, rendered GUI/TUI/headless behavior, or cross-platform behavior;
 - arbitrary same-UID filesystem race resistance or production security;
 - v3-v4 comparative quality or release authorization.

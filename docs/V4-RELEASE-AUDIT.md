@@ -4,7 +4,9 @@ Status: `INCONCLUSIVE` for release authorization. This is an independently
 rechecked evidence report, not a release approval or a supply-chain
 certification.
 
-Latest audit snapshot: 2026-09-06 UTC
+Historical audit snapshot: 2026-09-06 UTC
+The checkpoint named below is historical and is superseded by later `main`
+merges; it is not a current release-readiness snapshot.
 Latest checkpoint: post-[#459](https://github.com/saiaathish/picogent/pull/459)/[#463](https://github.com/saiaathish/picogent/pull/463)/[#465](https://github.com/saiaathish/picogent/pull/465)/[#466](https://github.com/saiaathish/picogent/pull/466) main `b00b88c15b310c05042ebb8debd876b221160389`
 Parent: [#316](https://github.com/saiaathish/picogent/issues/316)
 Broader parent: [#246](https://github.com/saiaathish/picogent/issues/246)
@@ -14,7 +16,11 @@ Historical snapshot: [#321](https://github.com/saiaathish/picogent/issues/321)
 “Independent” here means a fresh repository-side recheck of downloaded
 artifacts and the exact Git history. It does not mean a third-party audit.
 
-## Latest follow-up audit — exact current main after PR #459/#463/#465/#466
+Later runtime-boundary work is recorded in
+[V4-RUNTIME-BOUNDARY-MATRIX.md](V4-RUNTIME-BOUNDARY-MATRIX.md) and its linked
+evidence records. At the current checkpoint, #450 and #453 remain open.
+
+## Historical follow-up audit — exact current main after PR #459/#463/#465/#466
 
 Status: `INCONCLUSIVE` for release authorization. This refresh rechecks exact
 `main` after the runtime-boundary matrix (#459), rendered recovery API-boundary
@@ -24,6 +30,9 @@ does not authorize a release. Parent [#450](https://github.com/saiaathish/picoge
 is closed as completed; [#453](https://github.com/saiaathish/picogent/issues/453)
 remains open for live-provider, cross-platform rendered, and hostile TOCTOU
 observation.
+
+Current ledger note: [#450](https://github.com/saiaathishkarthik/picogent/issues/450)
+is open now; the closed state above belongs only to this historical audit.
 
 ### Candidate and hosted runs
 
