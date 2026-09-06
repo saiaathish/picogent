@@ -152,3 +152,67 @@ func TestWriteAtomicParentSwapNeverEscapesDescriptor(t *testing.T) {
 		t.Fatalf("parent swap redirected write outside descriptor: %q", got)
 	}
 }
+
+func TestReadFileParentSwapNeverEscapesDescriptor(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	parent := filepath.Join(root, "state")
+	backup := filepath.Join(root, "state-real")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "state.yaml"), []byte("inside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outsideFile := filepath.Join(outside, "state.yaml")
+	if err := os.WriteFile(outsideFile, []byte("outside\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	stop := make(chan struct{})
+	var swaps sync.WaitGroup
+	swaps.Add(1)
+	go func() {
+		defer swaps.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := os.Rename(parent, backup); err != nil {
+				continue
+			}
+			_ = os.Symlink(outside, parent)
+			_ = os.Remove(parent)
+			_ = os.Rename(backup, parent)
+		}
+	}()
+
+	for i := 0; i < 400; i++ {
+		data, err := ReadFile(filepath.Join(parent, "state.yaml"))
+		if err == nil && string(data) != "inside\n" {
+			close(stop)
+			swaps.Wait()
+			t.Fatalf("parent swap redirected read outside descriptor: %q", data)
+		}
+	}
+	close(stop)
+	swaps.Wait()
+	if info, err := os.Lstat(parent); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		_ = os.Remove(parent)
+	}
+	if _, err := os.Lstat(parent); errors.Is(err, os.ErrNotExist) {
+		_ = os.Rename(backup, parent)
+	}
+	if info, err := os.Lstat(parent); err != nil || !info.IsDir() {
+		t.Fatalf("parent was not restored after read swap campaign: info=%v err=%v", info, err)
+	}
+	got, err := os.ReadFile(outsideFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "outside\n" {
+		t.Fatalf("outside file changed during read campaign: %q", got)
+	}
+}
