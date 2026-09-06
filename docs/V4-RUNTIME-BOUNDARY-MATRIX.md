@@ -43,6 +43,22 @@ The connectivity row stays `UNVERIFIED` unless
 row remains `UNVERIFIED`; this matrix never auto-scores provider quality as
 `PASS`.
 
+## Hostile-runtime evidence
+
+The hostile rows separate deterministic controls from the broader race claim:
+
+- `hostile-filesystem-deterministic` can become `PASS` when the exact-head
+  [bounded hostile-runtime evidence](V4-HOSTILE-RUNTIME-EVIDENCE.md) is present.
+  It covers the deterministic securefile, procenv, and workspace test families
+  named by that record.
+- `hostile-filesystem-toctou` remains `UNVERIFIED`. Descriptor/handle-anchored
+  operations and bounded ancestor-swap tests do not prove arbitrary same-UID
+  writers cannot race every cross-surface pathname boundary.
+
+The deterministic row is a narrower observation and does not authorize a
+release, upgrade the live-provider or rendered rows, or change the explicit
+limits in the evidence record.
+
 ## Live-provider connectivity evidence
 
 The matrix separates one narrow claim from the broader quality claim:
