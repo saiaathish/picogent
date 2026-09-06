@@ -177,7 +177,7 @@ func ManifestFromPipeline(result PipelineResult, provenance HeadEvidence) Manife
 				Passed:          nonNegativeInt(evidence.Passed),
 				Failed:          nonNegativeInt(evidence.Failed),
 				DurationNS:      nonNegativeDuration(evidence.Duration),
-				Coverage:        unverifiedCoverage(),
+				Coverage:        coverageFromResult(evidence),
 				OutputTruncated: evidence.OutputTruncated,
 				Reason:          boundedManifestString(evidence.Reason),
 			})
@@ -333,6 +333,16 @@ func normalizeManifestStatus(status ManifestStatus) ManifestStatus {
 
 func unverifiedCoverage() CoverageEvidence {
 	return CoverageEvidence{Status: ManifestUnverified, Reason: "coverage not collected"}
+}
+
+func coverageFromResult(evidence Result) CoverageEvidence {
+	if evidence.Coverage.Status == "" {
+		return unverifiedCoverage()
+	}
+	out := evidence.Coverage
+	out.Status = normalizeManifestStatus(out.Status)
+	out.Reason = boundedManifestString(out.Reason)
+	return out
 }
 
 func manifestStatus(status Status) ManifestStatus {

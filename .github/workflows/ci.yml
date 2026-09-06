@@ -182,6 +182,9 @@ jobs:
             --workspace . \
             --expected-sha "$EXPECTED_SHA" \
             --target internal/verify \
+            --coverprofile "$ARTIFACT_DIR/verification-coverage.out" \
+            --targeted-timeout 45s \
+            --timeout 90s \
             > "$ARTIFACT_DIR/verification-manifest.json"
       - name: Prepare release attestation predicate
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -273,6 +276,7 @@ jobs:
           path: |
             ${{ runner.temp }}/picogent-release-evidence/verification-manifest.json
             ${{ runner.temp }}/picogent-release-evidence/release-gates.json
+            ${{ runner.temp }}/picogent-release-evidence/verification-coverage.out
           if-no-files-found: error
       - name: Upload release attestation evidence
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}

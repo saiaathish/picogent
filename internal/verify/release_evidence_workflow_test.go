@@ -53,6 +53,9 @@ func TestReleaseEvidenceWorkflowUsesExternalArtifactDirectory(t *testing.T) {
 		"--workspace \"$GITHUB_WORKSPACE\"",
 		"--evidence-dir \"$ARTIFACT_DIR\"",
 		"> \"$ARTIFACT_DIR/verification-manifest.json\"",
+		"--target internal/verify",
+		"--coverprofile \"$ARTIFACT_DIR/verification-coverage.out\"",
+		"verification-coverage.out",
 		"subject-checksums: ${{ runner.temp }}/picogent-release-evidence/release-evidence.sha256",
 		"predicate-path: ${{ runner.temp }}/picogent-release-evidence/release-attestation-predicate.json",
 	} {

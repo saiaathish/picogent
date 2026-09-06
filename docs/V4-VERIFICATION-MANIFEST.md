@@ -19,6 +19,19 @@ records a bounded, exact-head targeted check before the broader workspace
 suite. Omitting `--target` intentionally records the targeted stage as
 `SKIPPED`; it must not be interpreted as targeted coverage.
 
+For hosted release-evidence coverage collection, also pass an external
+coverprofile path (never inside the checkout):
+
+```sh
+go run ./cmd/verify-manifest \
+  --workspace . \
+  --expected-sha <full-commit-id> \
+  --target internal/verify \
+  --coverprofile /tmp/picogent-release-evidence/verification-coverage.out \
+  --targeted-timeout 45s \
+  --timeout 90s
+```
+
 The JSON artifact uses schema `picogent.verify.v1` and records:
 
 - exact `HEAD` and whether it matches the expected full commit ID;
@@ -26,13 +39,16 @@ The JSON artifact uses schema `picogent.verify.v1` and records:
 - host platform and Go version;
 - every targeted and broader pipeline check, status, duration, counts, and
   whether captured output was truncated;
-- an explicit coverage state.
+- an explicit coverage state, including a measured percent when a validated
+  Go coverprofile was collected for the targeted stage.
 
 Raw command output is intentionally omitted. The manifest is bounded to
 `24 KiB`; check overflow is reported as `checks_truncated`. A passing pipeline
 still produces `UNVERIFIED` when exact SHA, clean provenance, complete output,
-or required coverage is not proven. `UNVERIFIED` exists only in this evidence
-projection and is not an existing verifier status.
+or required coverage is not proven. Targeted coverprofile collection for
+`internal/verify` does not authorize whole-repository coverage or upgrade a
+killed broader `go test ./...` observation to `PASS`. `UNVERIFIED` exists only
+in this evidence projection and is not an existing verifier status.
 
 Verification command output is bounded to `8 KiB`. If a command exits
 successfully but its evidence is truncated, the verifier reports
@@ -53,14 +69,14 @@ The job first emits `release-gates.json`, a bounded ledger for the required
 event. The ledger rejects missing, duplicate, failed, mismatched, nonzero, or
 truncated records; the `release-evidence` job runs with `always()` so a failed
 dependency cannot silently turn into a skipped evidence job. The job uploads
-both `verification-manifest.json` and `release-gates.json` as a bounded Actions
-artifact.
+`verification-manifest.json`, `release-gates.json`, and
+`verification-coverage.out` as a bounded Actions artifact outside the checkout.
 
 These artifacts are review evidence for the exact tested tree; they are not, by
 themselves, a release approval. In particular, the verification manifest can
-remain `UNVERIFIED` when coverage or another provenance requirement is not
-collected, while the required CI gate ledger still fails closed on a missing or
-failed job.
+remain `INCONCLUSIVE` or `UNVERIFIED` when the broader suite is killed or when
+broader coverage is not collected, while the required CI gate ledger still fails
+closed on a missing or failed job.
 
 ## Local benchmark evidence
 

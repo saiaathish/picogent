@@ -81,7 +81,12 @@ type Options struct {
 	Repair            RepairFunc
 	Executor          Executor
 	Timeout           time.Duration
-	SkipReason        string
+	// TargetedTimeout bounds only the targeted stage. Zero uses Timeout.
+	TargetedTimeout time.Duration
+	// CoverProfile, when set, collects Go coverage for the targeted stage only.
+	// The path must already be outside the workspace for release-evidence use.
+	CoverProfile string
+	SkipReason   string
 }
 
 // DetectPlan derives safe targeted commands and one broader command.
@@ -153,9 +158,13 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 	if timeout <= 0 {
 		timeout = 90 * time.Second
 	}
+	targetedTimeout := options.TargetedTimeout
+	if targetedTimeout <= 0 {
+		targetedTimeout = timeout
+	}
 	verificationAttempt := 0
 
-	runStage := func(scope Scope, commands []Command) StageResult {
+	runStage := func(scope Scope, commands []Command, stageTimeout time.Duration) StageResult {
 		stage := StageResult{Scope: scope}
 		if err := ctx.Err(); err != nil {
 			stage.Status = StatusInconclusive
@@ -169,10 +178,31 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 		}
 		stage.Status = StatusPass
 		for _, command := range commands {
+			if scope == ScopeTargeted && strings.TrimSpace(options.CoverProfile) != "" {
+				covered, err := withGoCoverProfile(command, options.CoverProfile)
+				if err != nil {
+					stage.Status = StatusInconclusive
+					stage.Reason = err.Error()
+					stage.Evidence = append(stage.Evidence, Result{
+						OK:       false,
+						Status:   StatusInconclusive,
+						Scope:    scope,
+						Runner:   command.Runner,
+						Command:  command.Display,
+						Reason:   err.Error(),
+						Coverage: unverifiedCoverage(),
+					})
+					return stage
+				}
+				command = covered
+			}
 			verificationAttempt++
-			current := normalizeResult(execute(ctx, workspace, command, verificationAttempt, timeout), command, verificationAttempt)
+			current := normalizeResult(execute(ctx, workspace, command, verificationAttempt, stageTimeout), command, verificationAttempt)
 			if err := ctx.Err(); err != nil {
 				current = contextEndedResult(current, command, verificationAttempt, err)
+			}
+			if scope == ScopeTargeted && strings.TrimSpace(options.CoverProfile) != "" {
+				current = attachCoverProfile(current, options.CoverProfile)
 			}
 			stage.Evidence = append(stage.Evidence, current)
 			for current.Status == StatusFail && options.Repair != nil && len(result.RepairAttempts) < maxRepairs {
@@ -208,9 +238,12 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 					break
 				}
 				verificationAttempt++
-				current = normalizeResult(execute(ctx, workspace, command, verificationAttempt, timeout), command, verificationAttempt)
+				current = normalizeResult(execute(ctx, workspace, command, verificationAttempt, stageTimeout), command, verificationAttempt)
 				if contextErr := ctx.Err(); contextErr != nil {
 					current = contextEndedResult(current, command, verificationAttempt, contextErr)
+				}
+				if scope == ScopeTargeted && strings.TrimSpace(options.CoverProfile) != "" {
+					current = attachCoverProfile(current, options.CoverProfile)
 				}
 				attempt.Result = current
 				attempt.Status = current.Status
@@ -226,7 +259,7 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 		return stage
 	}
 
-	targeted := runStage(ScopeTargeted, result.Plan.Targeted)
+	targeted := runStage(ScopeTargeted, result.Plan.Targeted, targetedTimeout)
 	result.Stages = append(result.Stages, targeted)
 	requestedTargets := false
 	for _, target := range options.Targets {
@@ -240,6 +273,13 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 		targeted.Reason = "requested targets have no safe targeted command"
 		result.Stages[0] = targeted
 	}
+	if requestedTargets && strings.TrimSpace(options.CoverProfile) != "" && result.Plan.Runner != "go" {
+		targeted.Status = StatusInconclusive
+		targeted.Reason = "coverprofile collection requires the go runner"
+		if len(result.Stages) > 0 {
+			result.Stages[0] = targeted
+		}
+	}
 	// An empty target list is an expected absence of targeted coverage, not a
 	// reason to skip the workspace suite. Requested targets without a safe
 	// mapping remain inconclusive and continue to fail closed.
@@ -249,7 +289,7 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 		result.Duration = time.Since(started)
 		return result
 	}
-	broader := runStage(ScopeBroader, result.Plan.Broader)
+	broader := runStage(ScopeBroader, result.Plan.Broader, timeout)
 	result.Stages = append(result.Stages, broader)
 	result.Status = broader.Status
 	result.Reason = broader.Reason
