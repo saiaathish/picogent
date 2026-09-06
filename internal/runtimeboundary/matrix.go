@@ -20,12 +20,12 @@ import (
 )
 
 const (
-	Schema           = "picogent.v4.runtime-boundary-matrix.v1"
-	MaxReportBytes   = 48 << 10
-	MaxClaims        = 32
-	MaxTextBytes     = 512
-	LiveEvidenceEnv  = "PICOGENT_LIVE_PROVIDER_EVIDENCE"
-	LiveArtifactEnv  = "PICOGENT_LIVE_PROVIDER_ARTIFACT"
+	Schema          = "picogent.v4.runtime-boundary-matrix.v1"
+	MaxReportBytes  = 48 << 10
+	MaxClaims       = 32
+	MaxTextBytes    = 512
+	LiveEvidenceEnv = "PICOGENT_LIVE_PROVIDER_EVIDENCE"
+	LiveArtifactEnv = "PICOGENT_LIVE_PROVIDER_ARTIFACT"
 )
 
 // Verdict is the fail-closed observation vocabulary for one claim.
@@ -60,31 +60,31 @@ const (
 
 // Claim is one matrix row with observable setup, artifact, and provenance.
 type Claim struct {
-	ID          string   `json:"id"`
-	Category    Category `json:"category"`
-	Title       string   `json:"title"`
-	Setup       string   `json:"setup"`
-	Artifact    string   `json:"artifact"`
-	Verdict     Verdict  `json:"verdict"`
-	Provenance  string   `json:"provenance"`
-	Reason      string   `json:"reason,omitempty"`
-	ObservedAt  string   `json:"observed_at,omitempty"`
+	ID         string   `json:"id"`
+	Category   Category `json:"category"`
+	Title      string   `json:"title"`
+	Setup      string   `json:"setup"`
+	Artifact   string   `json:"artifact"`
+	Verdict    Verdict  `json:"verdict"`
+	Provenance string   `json:"provenance"`
+	Reason     string   `json:"reason,omitempty"`
+	ObservedAt string   `json:"observed_at,omitempty"`
 }
 
 // Report is the exact-SHA-bound matrix artifact.
 type Report struct {
-	Schema       string           `json:"schema"`
-	CandidateSHA string           `json:"candidate_sha"`
-	HeadMatch    string           `json:"head_match"`
-	Tree         string           `json:"tree"`
-	HostOS       string           `json:"host_os"`
-	HostArch     string           `json:"host_arch"`
-	GoVersion    string           `json:"go_version"`
-	GeneratedAt  string           `json:"generated_at"`
-	Claims       []Claim          `json:"claims"`
-	Summary      map[string]int   `json:"summary"`
-	Unverified   []string         `json:"unverified,omitempty"`
-	Reason       string           `json:"reason,omitempty"`
+	Schema       string         `json:"schema"`
+	CandidateSHA string         `json:"candidate_sha"`
+	HeadMatch    string         `json:"head_match"`
+	Tree         string         `json:"tree"`
+	HostOS       string         `json:"host_os"`
+	HostArch     string         `json:"host_arch"`
+	GoVersion    string         `json:"go_version"`
+	GeneratedAt  string         `json:"generated_at"`
+	Claims       []Claim        `json:"claims"`
+	Summary      map[string]int `json:"summary"`
+	Unverified   []string       `json:"unverified,omitempty"`
+	Reason       string         `json:"reason,omitempty"`
 }
 
 // Options configures one matrix collection.
@@ -175,35 +175,69 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 	observed := now.UTC().Format(time.RFC3339)
 	doc := func(rel string) string { return filepath.Join(workspace, filepath.FromSlash(rel)) }
 
+	liveConnectivity := Claim{
+		ID:         "live-provider-connectivity",
+		Category:   CategoryLiveProvider,
+		Title:      "Direct connectivity to a real authenticated provider",
+		Setup:      "Task-owned disposable state/workspace with a fixed no-tool prompt and secret-free digests.",
+		Artifact:   "live-provider evidence JSON referenced by " + LiveArtifactEnv,
+		Verdict:    VerdictUnverified,
+		Reason:     "no live-provider connectivity evidence artifact was supplied",
+		ObservedAt: observed,
+	}
 	live := Claim{
-		ID:       "live-provider-quality",
-		Category: CategoryLiveProvider,
-		Title:    "Live provider quality on a real authenticated provider",
-		Setup:    "Task-owned live provider session with explicit evidence artifact; credentials never inlined.",
-		Artifact: "live-provider evidence JSON referenced by " + LiveArtifactEnv,
-		Verdict:  VerdictUnverified,
-		Reason:   "no live-provider evidence artifact was supplied",
+		ID:         "live-provider-quality",
+		Category:   CategoryLiveProvider,
+		Title:      "Live provider quality on a real authenticated provider",
+		Setup:      "Task-owned live provider session with explicit evidence artifact; credentials never inlined.",
+		Artifact:   "live-provider evidence JSON referenced by " + LiveArtifactEnv,
+		Verdict:    VerdictUnverified,
+		Reason:     "no live-provider evidence artifact was supplied",
 		ObservedAt: observed,
 	}
 	if strings.TrimSpace(environ(LiveEvidenceEnv)) == "1" {
 		artifact := strings.TrimSpace(environ(LiveArtifactEnv))
 		if artifact == "" {
+			liveConnectivity.Verdict = VerdictFail
+			liveConnectivity.Reason = "live evidence requested without " + LiveArtifactEnv
 			live.Verdict = VerdictFail
 			live.Reason = "live evidence requested without " + LiveArtifactEnv
 		} else if ok, err := lookup(artifact); err != nil {
+			liveConnectivity.Verdict = VerdictInconclusive
+			liveConnectivity.Reason = "live evidence artifact lookup failed"
 			live.Verdict = VerdictInconclusive
 			live.Reason = "live evidence artifact lookup failed"
 		} else if !ok {
+			liveConnectivity.Verdict = VerdictFail
+			liveConnectivity.Reason = "live evidence artifact is missing"
+			liveConnectivity.Artifact = artifact
 			live.Verdict = VerdictFail
 			live.Reason = "live evidence artifact is missing"
 			live.Artifact = artifact
 		} else {
-			live.Verdict = VerdictUnverified
-			live.Artifact = artifact
-			live.Reason = "artifact present but automated live-provider quality scoring is outside this matrix"
-			live.Provenance = "env:" + LiveEvidenceEnv + "+artifact"
+			evidence, digest, err := loadLiveProviderEvidence(workspace, artifact, sha)
+			if err != nil {
+				liveConnectivity.Verdict = VerdictFail
+				liveConnectivity.Reason = "live evidence validation failed: " + err.Error()
+				liveConnectivity.Artifact = artifact
+				live.Verdict = VerdictFail
+				live.Reason = "live evidence validation failed; provider quality remains unproven"
+				live.Artifact = artifact
+			} else {
+				liveConnectivity.Verdict = VerdictPass
+				liveConnectivity.Artifact = artifact
+				liveConnectivity.Provenance = "env:" + LiveEvidenceEnv + "+sha256:" + digest
+				liveConnectivity.ObservedAt = evidence.ObservedAt
+				liveConnectivity.Reason = "direct fixed-prompt provider response was recorded without tools or mutation"
+				live.Verdict = VerdictUnverified
+				live.Artifact = artifact
+				live.Reason = "provider connectivity is recorded; automated live-provider quality scoring is outside this matrix"
+				live.Provenance = liveConnectivity.Provenance
+				live.ObservedAt = evidence.ObservedAt
+			}
 		}
 	} else {
+		liveConnectivity.Provenance = "fail-closed default without " + LiveEvidenceEnv
 		live.Provenance = "fail-closed default without " + LiveEvidenceEnv
 	}
 
@@ -334,7 +368,7 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 		release.Reason = "release audit exists without claiming authorization"
 	}
 
-	return []Claim{live, rendered, renderedCross, renderedUndoReload, hostile, hostileTOCTOU, recovery, release}
+	return []Claim{liveConnectivity, live, rendered, renderedCross, renderedUndoReload, hostile, hostileTOCTOU, recovery, release}
 }
 
 func boundClaim(claim Claim) Claim {
