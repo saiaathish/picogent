@@ -36,6 +36,7 @@ const (
 	maxOutcomeQualityLegacyWorkspaceDepth       = 32
 	defaultOutcomeQualityLegacyModel            = "outcome-quality-legacy"
 	outcomeQualityLegacyLocalAPIKey             = "picogent-local-provider"
+	outcomeQualityLegacyConfig                  = "auto_task_mode: false\n"
 )
 
 // OutcomeQualityLegacySourceHead is the immutable v3 baseline used by this
@@ -329,6 +330,9 @@ func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, reque
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return OutcomeQualityExecution{}, fmt.Errorf("create outcome-quality legacy directory: %w", err)
 		}
+	}
+	if err := writeOutcomeQualityLegacyConfig(homeRoot); err != nil {
+		return OutcomeQualityExecution{}, err
 	}
 	if err := writeOutcomeQualityFixture(ctx, fixtureRoot, input); err != nil {
 		return OutcomeQualityExecution{}, err
@@ -771,6 +775,17 @@ func outcomeQualityLegacyEnvironment(homeDir, tempDir, cacheDir, providerURL, mo
 		"PICOGENT_MODE":                         "fast",
 		"PICOGENT_OUTCOME_QUALITY_LEGACY_CHILD": "1",
 	})
+}
+
+// writeOutcomeQualityLegacyConfig keeps scenario labels from changing the v3
+// task boundary. The exact v3 classifier treats "architect" as a planning
+// request, so the advanced-architecture fixture otherwise blocks its write
+// even when the benchmark explicitly requests Fast mode with --yes.
+func writeOutcomeQualityLegacyConfig(homeDir string) error {
+	if err := os.WriteFile(filepath.Join(homeDir, "config.yaml"), []byte(outcomeQualityLegacyConfig), 0o600); err != nil {
+		return fmt.Errorf("write outcome-quality legacy config: %w", err)
+	}
+	return nil
 }
 
 type outcomeQualityLegacyBudgetProxy struct {
