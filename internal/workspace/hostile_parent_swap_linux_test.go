@@ -25,6 +25,7 @@ import (
 const (
 	hostileWorkspaceSwapHelperEnv = "PICOGENT_HOSTILE_WORKSPACE_SWAP_HELPER"
 	hostileWorkspaceSwapAttempts  = 200
+	hostileWorkspaceSwapPause     = 100 * time.Microsecond
 	hostileWorkspaceEvidenceEnv   = "PICOGENT_HOSTILE_PARENT_SWAP_EVIDENCE_OUT"
 	hostileWorkspaceSourceEnv     = "PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA"
 )
@@ -373,6 +374,9 @@ func TestLinuxSameUIDWorkspaceParentSwapAttackerHelper(t *testing.T) {
 		_ = os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600)
 		_ = os.Remove(parent)
 		_ = os.Rename(backup, parent)
+		// Keep the trusted parent present briefly so victim operations can
+		// succeed while the separate attacker continues swapping it.
+		time.Sleep(hostileWorkspaceSwapPause)
 	}
 	if err := os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
