@@ -172,9 +172,6 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 				}
 				return successes, errs, escape
 			},
-			verify: func(parent string) error {
-				return nil
-			},
 		},
 		{
 			id: "securefile-write-exclusive",
@@ -636,6 +633,50 @@ func currentSourceState(t *testing.T) (string, bool) {
 		t.Fatalf("check candidate tree: %v", err)
 	}
 	return sha, strings.TrimSpace(string(statusOutput)) != ""
+}
+
+func TestOutsideTreeSHA256RecursesWithoutFollowingSymlinks(t *testing.T) {
+	root := t.TempDir()
+	nested := filepath.Join(root, "nested")
+	if err := os.MkdirAll(nested, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	nestedMarker := filepath.Join(nested, "marker.txt")
+	if err := os.WriteFile(nestedMarker, []byte("nested-v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	symlinkTarget := t.TempDir()
+	if err := os.WriteFile(filepath.Join(symlinkTarget, "target.txt"), []byte("target-v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(symlinkTarget, filepath.Join(root, "linked-target")); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := outsideTreeSHA256(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nestedMarker, []byte("nested-v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	afterNested, err := outsideTreeSHA256(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == afterNested {
+		t.Fatal("recursive outside-tree digest missed nested mutation")
+	}
+	if err := os.WriteFile(filepath.Join(symlinkTarget, "target.txt"), []byte("target-v2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	afterSymlinkTarget, err := outsideTreeSHA256(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterNested != afterSymlinkTarget {
+		t.Fatal("outside-tree digest followed a symlink target")
+	}
 }
 
 func sha256Hex(data []byte) string {
