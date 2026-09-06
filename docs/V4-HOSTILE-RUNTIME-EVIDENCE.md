@@ -158,5 +158,19 @@ does **not** upgrade `hostile-filesystem-toctou`.
 
 The exercised attacker presents a symlink after renaming the trusted parent.
 Replacement with an ordinary attacker-owned directory between permission
-approval and file-tool execution is intentionally outside this slice and
-remains an unresolved P1 boundary.
+approval and file-tool execution is covered by the separate workspace-root
+identity binding work under [#502](https://github.com/saiaathish/picogent/issues/502).
+Broad arbitrary same-UID TOCTOU across every surface remains `UNVERIFIED`.
+
+## Linux same-UID parent-swap harness checkpoint
+
+Issue [#504](https://github.com/saiaathish/picogent/issues/504) extends the
+same separate-process parent-swap confinement harness to Linux for
+`securefile` and `workspace`. The digest-only evidence contract and commands
+are recorded in
+[V4-HOSTILE-PARENT-SWAP-LINUX.md](V4-HOSTILE-PARENT-SWAP-LINUX.md).
+
+Hosted Ubuntu (or any Linux host) must collect the retained artifacts. This
+macOS authoring checkout cannot claim Linux observations. The row
+`hostile-filesystem-toctou` stays `UNVERIFIED` until a broader evidence
+record exists.
