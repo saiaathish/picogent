@@ -45,6 +45,13 @@ row has a separate opt-in contract:
 `PICOGENT_LIVE_PROVIDER_QUALITY_ARTIFACT` must point at a valid quality
 evidence file. Connectivity evidence never upgrades the quality row.
 
+The latest bounded real-provider observation at exact merged `main` is recorded
+in [V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md)
+for [#488](https://github.com/saiaathishkarthik/picogent/issues/488). It
+projects `live-provider-quality=PASS` only for the three fixed no-tool cases;
+the connectivity, rendered, hostile-TOCTOU, and release-authorization rows
+remain independently evidence-bound.
+
 ## Hostile-runtime evidence
 
 The hostile rows separate deterministic controls from the broader race claim:
