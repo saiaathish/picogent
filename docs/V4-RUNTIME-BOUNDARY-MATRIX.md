@@ -67,9 +67,10 @@ The matrix separates one narrow claim from the broader quality claim:
 
 - `live-provider-connectivity` can become `PASS` when a real provider answers a
   fixed, no-tool prompt in a task-owned disposable home and workspace.
-- `live-provider-quality` remains `UNVERIFIED`. One successful response does
-  not measure answer quality, streaming, tool use, authentication refresh,
-  recovery, or sustained behavior.
+- `live-provider-quality` remains `UNVERIFIED` when only this connectivity
+  artifact is supplied. One successful response does not measure answer
+  quality, streaming, tool use, authentication refresh, recovery, or sustained
+  behavior.
 
 Run the probe with disposable paths and retain the record outside the checkout.
 For example, the provider probe may be run as:
