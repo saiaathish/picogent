@@ -170,12 +170,16 @@ same separate-process parent-swap confinement harness to Linux for
 are recorded in
 [V4-HOSTILE-PARENT-SWAP-LINUX.md](V4-HOSTILE-PARENT-SWAP-LINUX.md).
 
-Hosted Ubuntu (or any Linux host) must collect the retained artifacts. A
-Docker `golang:1.25-bookworm` linux/arm64 observation at source
-`90b611e3307f4d36a45cce2e47a10d2f0be32541` recorded securefile artifact
-`474e680af6095ede86d5d5f4aab6f554448fb95b74dc6e3ee25129c385f0cd6a` and
-workspace artifact
-`f6ded21d60c71d2bdba9824f2c0d36a7e21b5b40d48c233f84c73ba3b4b2f3e3`, both
-`PASS` with confirmed attacker activity and unchanged outside digests. The
-row `hostile-filesystem-toctou` stays `UNVERIFIED` until a broader evidence
-record exists.
+The hosted Ubuntu workflow retained artifacts at source
+`bace7ecbf4da0118c543066beacdbff6a058f857` from
+[CI run 34037551757](https://github.com/saiaathish/picogent/actions/runs/34037551757).
+The Linux/amd64 securefile artifact is
+`ce769fd8eb2a316de9e6f1946b30e01c31df1cdd19aa03beb69f153f6b73fa61` and the
+workspace artifact is
+`c1b4758ebbd97f27e18dc034e4a48345a6bdc7b31bb169b86ac868f04d675756`. Both
+reported `PASS` with confirmed attacker activity and unchanged outside
+sentinel/tree digests. The bounded harness required successful in-tree
+operations, rejected dirty or stale source identity, cleaned up attacker
+helpers, and hashed nested outside-tree entries without following symlinks.
+The row `hostile-filesystem-toctou` stays `UNVERIFIED` until a broader
+evidence record exists.
