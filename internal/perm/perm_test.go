@@ -324,6 +324,32 @@ func TestOutsidePathStillRequiresAndHonorsExplicitApproval(t *testing.T) {
 	}
 }
 
+func TestClassifyPathRejectsReplacedWorkspaceRoot(t *testing.T) {
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "workspace")
+	oldWorkspace := filepath.Join(parent, "workspace-old")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	req := perm.ClassifyPath("write_file", "note.txt", workspace, "write note.txt")
+	if err := req.ValidateWorkspaceIdentity(); err != nil {
+		t.Fatalf("unchanged workspace identity = %v", err)
+	}
+	if err := os.Rename(workspace, oldWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(workspace)
+		_ = os.Rename(oldWorkspace, workspace)
+	})
+	if err := req.ValidateWorkspaceIdentity(); !errors.Is(err, perm.ErrWorkspaceChanged) {
+		t.Fatalf("replaced workspace identity = %v, want %v", err, perm.ErrWorkspaceChanged)
+	}
+}
+
 func TestGateConcurrentStateUpdates(t *testing.T) {
 	gate := perm.New(config.ModeSafe, "/tmp/ws", func(context.Context, perm.Request) (perm.Decision, error) {
 		return perm.AllowAlways, nil

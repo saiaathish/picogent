@@ -32,6 +32,71 @@ type Request struct {
 	Command          string
 	Destructive      bool
 	OutsideWorkspace bool
+	// workspaceIdentity is intentionally unexported so permission/UI payloads
+	// remain path-only. The agent carries this runtime binding through the
+	// approval-to-execution boundary and revalidates it before file I/O.
+	workspaceIdentity *WorkspaceIdentity
+}
+
+// ErrWorkspaceChanged reports that the workspace approved for a path request
+// no longer has the same filesystem identity. It is a race detector for the
+// approval boundary, not a universal same-UID pathname CAS guarantee.
+var ErrWorkspaceChanged = errors.New("workspace root changed after permission")
+
+// WorkspaceIdentity is a runtime-only binding to the canonical workspace root.
+// Its fields stay private so callers cannot forge an identity from a path.
+type WorkspaceIdentity struct {
+	root string
+	info os.FileInfo
+}
+
+// ValidateWorkspaceIdentity rechecks the root captured during path
+// classification. Non-path tools have no identity and remain unaffected.
+// Path-scoped file tools fail closed when the approval binding is missing.
+func (r Request) ValidateWorkspaceIdentity() error {
+	if r.workspaceIdentity == nil {
+		switch r.Tool {
+		case "read_file", "write_file", "edit_file":
+			return fmt.Errorf("%w: missing approval binding", ErrWorkspaceChanged)
+		default:
+			return nil
+		}
+	}
+	return r.workspaceIdentity.Validate()
+}
+
+// WorkspaceIdentity returns the runtime binding captured for this request.
+// The returned value must be treated as opaque and is intended for the tool
+// context's final pre-I/O validation.
+func (r Request) WorkspaceIdentity() *WorkspaceIdentity {
+	return r.workspaceIdentity
+}
+
+// BindWorkspaceIdentity returns req carrying the provided opaque approval
+// binding. Callers cannot forge an identity from a path; they can only reuse a
+// binding previously captured by ClassifyPath. Tests use this to exercise
+// stale-root rejection without renaming the live workspace while unrelated
+// runtime locks are held (notably on Windows).
+func BindWorkspaceIdentity(req Request, identity *WorkspaceIdentity) Request {
+	req.workspaceIdentity = identity
+	return req
+}
+
+// Validate rechecks the canonical root against the identity captured during
+// permission classification. os.SameFile uses platform-specific file IDs
+// where available, including Windows file identity data.
+func (i *WorkspaceIdentity) Validate() error {
+	if i == nil {
+		return nil
+	}
+	current, err := captureWorkspaceIdentity(i.root)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrWorkspaceChanged, err)
+	}
+	if !os.SameFile(i.info, current.info) {
+		return fmt.Errorf("%w: approved root %q was replaced", ErrWorkspaceChanged, i.root)
+	}
+	return nil
 }
 
 // WorkspacePath is a requested path resolved against a workspace. Path is
@@ -41,6 +106,7 @@ type WorkspacePath struct {
 	Root             string
 	Path             string
 	OutsideWorkspace bool
+	identity         *WorkspaceIdentity
 }
 
 type Prompter func(ctx context.Context, req Request) (Decision, error)
@@ -341,6 +407,10 @@ func shellPathIsAbsolute(path string) bool {
 
 func ClassifyPath(tool, relOrAbs, workspace, summary string) Request {
 	req := Request{Tool: tool, Summary: summary, Path: relOrAbs}
+	// Capture the root even when the requested target cannot be resolved. An
+	// explicit approval must not lose the workspace identity just because the
+	// target itself is malformed or missing.
+	req.workspaceIdentity, _ = captureWorkspaceIdentity(workspace)
 	resolved, err := ResolveWorkspacePath(workspace, relOrAbs)
 	if err != nil {
 		// Do not auto-allow a path whose real target could not be established
@@ -348,6 +418,7 @@ func ClassifyPath(tool, relOrAbs, workspace, summary string) Request {
 		req.OutsideWorkspace = true
 		req.Hint = "path could not be safely resolved"
 	} else {
+		req.workspaceIdentity = resolved.identity
 		if resolved.OutsideWorkspace {
 			req.Path = resolved.Path
 			req.OutsideWorkspace = true
@@ -377,22 +448,11 @@ func ResolveWorkspacePath(workspace, requested string) (WorkspacePath, error) {
 		return WorkspacePath{}, errors.New("path is empty")
 	}
 
-	input, err := filepath.Abs(workspace)
+	identity, err := captureWorkspaceIdentity(workspace)
 	if err != nil {
 		return WorkspacePath{}, err
 	}
-	root, err := filepath.EvalSymlinks(input)
-	if err != nil {
-		return WorkspacePath{}, fmt.Errorf("resolve workspace: %w", err)
-	}
-	root = filepath.Clean(root)
-	info, err := os.Stat(root)
-	if err != nil {
-		return WorkspacePath{}, err
-	}
-	if !info.IsDir() {
-		return WorkspacePath{}, errors.New("workspace is not a directory")
-	}
+	root := identity.root
 
 	candidate := requested
 	if !filepath.IsAbs(candidate) {
@@ -411,7 +471,35 @@ func ResolveWorkspacePath(workspace, requested string) (WorkspacePath, error) {
 		Root:             root,
 		Path:             resolved,
 		OutsideWorkspace: !within(resolved, root),
+		identity:         identity,
 	}, nil
+}
+
+func captureWorkspaceIdentity(workspace string) (*WorkspaceIdentity, error) {
+	input, err := filepath.Abs(workspace)
+	if err != nil {
+		return nil, err
+	}
+	root, err := filepath.EvalSymlinks(input)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace: %w", err)
+	}
+	root = filepath.Clean(root)
+	// Open the directory and Stat the descriptor so the captured identity is
+	// tied to the filesystem object observed at classification time.
+	dir, err := os.Open(root)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	info, err := dir.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, errors.New("workspace is not a directory")
+	}
+	return &WorkspaceIdentity{root: root, info: info}, nil
 }
 
 // resolveExistingComponents follows each existing path component. For a new

@@ -27,8 +27,11 @@ const (
 var ErrRegistryClosed = errors.New("tool registry is closed")
 
 type Context struct {
-	Workspace   string
-	BashTimeout time.Duration
+	Workspace string
+	// WorkspaceIdentity is the runtime approval binding for the current file
+	// tool call. It is validated again immediately before workspace I/O.
+	WorkspaceIdentity *perm.WorkspaceIdentity
+	BashTimeout       time.Duration
 	// BeforeWorkspacePublish runs after a native-file write has been staged
 	// and validated but before its final atomic publication. It is optional and
 	// is used by the agent to persist crash-recovery metadata.
@@ -379,6 +382,9 @@ func skipDir(name string) bool {
 }
 
 func mustWorkspace(c Context) (string, error) {
+	if err := c.WorkspaceIdentity.Validate(); err != nil {
+		return "", err
+	}
 	resolved, err := perm.ResolveWorkspacePath(c.Workspace, ".")
 	if err != nil {
 		return "", err
