@@ -29,7 +29,7 @@ func TestRunEmitsExactHeadManifest(t *testing.T) {
 	head := strings.TrimSpace(gitRun(t, dir, "rev-parse", "--verify", "HEAD^{commit}"))
 
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"--workspace", dir, "--expected-sha", head}, &stdout, &stderr); code != 0 {
+	if code := run(context.Background(), []string{"--workspace", dir, "--expected-sha", head, "--target", "main.go"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run exit code = %d, stderr = %q", code, stderr.String())
 	}
 	if stderr.Len() != 0 {
@@ -43,14 +43,33 @@ func TestRunEmitsExactHeadManifest(t *testing.T) {
 		t.Fatalf("manifest provenance = %+v", manifest.Head)
 	}
 	passingCheck := false
+	targetedCheck := false
 	for _, check := range manifest.Checks {
 		if check.Status == verify.ManifestPass {
 			passingCheck = true
-			break
+		}
+		if check.Scope == verify.ScopeTargeted {
+			if check.Status != verify.ManifestPass {
+				t.Fatalf("targeted check = %+v", check)
+			}
+			targetedCheck = true
 		}
 	}
 	if !passingCheck {
 		t.Fatalf("manifest checks = %+v", manifest.Checks)
+	}
+	if !targetedCheck {
+		t.Fatalf("manifest omitted targeted check: %+v", manifest.Checks)
+	}
+}
+
+func TestRunRejectsEmptyTarget(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"--target", " "}, &stdout, &stderr); code != 2 {
+		t.Fatalf("run exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "target must not be empty") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 

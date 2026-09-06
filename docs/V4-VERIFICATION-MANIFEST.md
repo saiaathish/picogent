@@ -7,8 +7,17 @@ repair authorization, or CI orchestration.
 Run it for a workspace with an exact expected commit:
 
 ```sh
-go run ./cmd/verify-manifest --workspace . --expected-sha <full-commit-id>
+go run ./cmd/verify-manifest \
+  --workspace . \
+  --expected-sha <full-commit-id> \
+  --target internal/verify
 ```
+
+`--target` is repeatable and accepts a workspace-relative Go file or
+directory. Hosted release evidence targets `internal/verify` so the manifest
+records a bounded, exact-head targeted check before the broader workspace
+suite. Omitting `--target` intentionally records the targeted stage as
+`SKIPPED`; it must not be interpreted as targeted coverage.
 
 The JSON artifact uses schema `picogent.verify.v1` and records:
 
