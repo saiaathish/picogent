@@ -1,8 +1,8 @@
 # v4 rendered recovery fixture
 
 This build-tagged fixture supports the large rendered-recovery lane in
-[#291](https://github.com/saiaathishkarthik/picogent/issues/291), under parent
-[#246](https://github.com/saiaathishkarthik/picogent/issues/246). It is an
+[#467](https://github.com/saiaathishkarthik/picogent/issues/467), under parent
+[#453](https://github.com/saiaathishkarthik/picogent/issues/453). It is an
 evidence harness, not a second Picogent workflow and not a live-provider test.
 
 ## Run
