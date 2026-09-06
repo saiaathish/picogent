@@ -47,18 +47,19 @@ const (
 
 // Result is a structured test run. Existing fields remain source-compatible.
 type Result struct {
-	OK              bool          `json:"ok"`
-	Status          Status        `json:"status"`
-	Scope           Scope         `json:"scope,omitempty"`
-	Runner          string        `json:"runner"`
-	Command         string        `json:"command"`
-	Passed          int           `json:"passed"`
-	Failed          int           `json:"failed"`
-	Output          string        `json:"output"`
-	OutputTruncated bool          `json:"output_truncated,omitempty"`
-	Reason          string        `json:"reason,omitempty"`
-	Duration        time.Duration `json:"duration"`
-	Attempt         int           `json:"attempt,omitempty"`
+	OK              bool             `json:"ok"`
+	Status          Status           `json:"status"`
+	Scope           Scope            `json:"scope,omitempty"`
+	Runner          string           `json:"runner"`
+	Command         string           `json:"command"`
+	Passed          int              `json:"passed"`
+	Failed          int              `json:"failed"`
+	Output          string           `json:"output"`
+	OutputTruncated bool             `json:"output_truncated,omitempty"`
+	Reason          string           `json:"reason,omitempty"`
+	Duration        time.Duration    `json:"duration"`
+	Attempt         int              `json:"attempt,omitempty"`
+	Coverage        CoverageEvidence `json:"coverage,omitempty"`
 }
 
 // Detect picks the broad test command for the workspace.
