@@ -155,3 +155,8 @@ were collected at exact source `effe52a21f770bc435bbb1596df1452339cbd82a`:
 They include same-name outside read markers, complete outside-tree digests,
 operation counts, attacker activity, and Darwin/arm64 provenance. It still
 does **not** upgrade `hostile-filesystem-toctou`.
+
+The exercised attacker presents a symlink after renaming the trusted parent.
+Replacement with an ordinary attacker-owned directory between permission
+approval and file-tool execution is intentionally outside this slice and
+remains an unresolved P1 boundary.

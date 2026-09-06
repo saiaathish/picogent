@@ -8,6 +8,12 @@ under parent [#453](https://github.com/saiaathish/picogent/issues/453).
 It does **not** upgrade the broad runtime-boundary row
 `hostile-filesystem-toctou`. That claim remains `UNVERIFIED`.
 
+The attacker protocol exercised here renames the trusted parent, presents a
+symlink to the outside directory at the original name, and restores the
+trusted parent. Ordinary same-UID replacement with a different attacker-owned
+directory, including the approval-to-execution workspace-root identity gap,
+is a separate unresolved boundary.
+
 ## Provenance
 
 ```text
@@ -89,6 +95,8 @@ artifact-sha256=8dfe6a54f26bc664e5972e85ebb0180a896111ebeb8b33953cfd9b44c6da03ce
 - Darwin-only; Windows reparse-point and Linux cross-surface claims remain
   outside this record.
 - Does not authorize upgrading `hostile-filesystem-toctou` to `PASS`.
+- Does not cover ordinary attacker-directory replacement after permission
+  approval; the workspace-root identity boundary remains a separate issue.
 - Does not prove arbitrary same-UID races after every final identity check on
   every package surface.
 - Does not claim live-provider, rendered, or release readiness.
