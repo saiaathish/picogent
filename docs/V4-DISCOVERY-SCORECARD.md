@@ -1,23 +1,25 @@
 # Picogent v4 discovery scorecard
 
 Status: outcome-quality evidence refreshed on 2026-09-05 against the exact
-`main` merge `a6d3af39bb24559fe2d71b4063cb1b8411cd2c7e`; feature/state
-reconciliation remains bound to its named source heads. The matrix below is a
-historical exact-head measurement, not a claim about later main merges. The
-reconciled slices include outcome, recovery, GUI, undo-publication, lifecycle,
-proof-continuity, cancellation, hosted
+`main` merge `a6d3af39bb24559fe2d71b4063cb1b8411cd2c7e` (docs refresh #447);
+feature/state reconciliation remains bound to its named source heads. The
+matrix below is a historical exact-head measurement, not a claim about later
+main merges. The reconciled slices include outcome, recovery, GUI,
+undo-publication, lifecycle, proof-continuity, cancellation, hosted
 attestation, TUI recovery, setup, restore-inspection, workflow action-pin,
-contradiction, and retention slices through PRs #297, #298, #299, #301, #303,
-#318, #320, #343, #347, #349, #351, #353, #355, #357, #359, #363, #386,
-#401, #402, #407, #409, #411, #414, #415, #416, #417, #419, #423, #425,
-#427, #430, #431, #432, #434, #436, and #442 merged. The bounded release-evidence audit remains
-tracked in issue #316; prior audit observations and their unverified
-boundaries are preserved below.
+contradiction, retention, and child-env sanitization slices through PRs #297,
+#298, #299, #301, #303, #318, #320, #343, #347, #349, #351, #353, #355, #357,
+#359, #363, #386, #401, #402, #407, #409, #411, #414, #415, #416, #417, #419,
+#423, #425, #427, #430, #431, #432, #434, #436, #441, #442, #443, #444, #445,
+and #447 merged. The bounded release-evidence audit remains tracked in issue
+#316; prior audit observations and their unverified boundaries are preserved
+below.
 
-The remote `main` now includes documentation-only PR #440 at merge
-`1e1ef174d47a84d32d5a33cd6cb0f062cb9c3758`. Its fresh release-evidence audit
-is recorded at the exact head in `docs/V4-RELEASE-AUDIT.md`; this scorecard's
-feature/state observations remain bound to their named source heads.
+The remote `main` tip for the latest independent release-evidence recheck is
+`a4a4de276091e8110576adb6bbf1f526ec007f5d` (post-#445/#447). Its fresh audit
+is recorded at the exact head in `docs/V4-RELEASE-AUDIT.md` and remains
+`INCONCLUSIVE` for release authorization; this scorecard's feature/state
+observations remain bound to their named source heads.
 
 The exact-head v3-versus-v4 outcome-quality matrix is refreshed in
 `docs/V4-OUTCOME-QUALITY-COMPARISON.md` and
