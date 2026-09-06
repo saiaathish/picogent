@@ -29,7 +29,7 @@ func TestRunEmitsExactHeadManifest(t *testing.T) {
 	head := strings.TrimSpace(gitRun(t, dir, "rev-parse", "--verify", "HEAD^{commit}"))
 
 	var stdout, stderr bytes.Buffer
-	if code := run(context.Background(), []string{"--workspace", dir, "--expected-sha", head, "--target", "main.go"}, &stdout, &stderr); code != 0 {
+	if code := run(context.Background(), []string{"--workspace", dir, "--expected-sha", head, "--target", "main.go", "--target", "main.go"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("run exit code = %d, stderr = %q", code, stderr.String())
 	}
 	if stderr.Len() != 0 {
