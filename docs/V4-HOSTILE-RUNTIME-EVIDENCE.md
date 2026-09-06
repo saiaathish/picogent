@@ -170,7 +170,12 @@ same separate-process parent-swap confinement harness to Linux for
 are recorded in
 [V4-HOSTILE-PARENT-SWAP-LINUX.md](V4-HOSTILE-PARENT-SWAP-LINUX.md).
 
-Hosted Ubuntu (or any Linux host) must collect the retained artifacts. This
-macOS authoring checkout cannot claim Linux observations. The row
-`hostile-filesystem-toctou` stays `UNVERIFIED` until a broader evidence
+Hosted Ubuntu (or any Linux host) must collect the retained artifacts. A
+Docker `golang:1.25-bookworm` linux/arm64 observation at source
+`90b611e3307f4d36a45cce2e47a10d2f0be32541` recorded securefile artifact
+`474e680af6095ede86d5d5f4aab6f554448fb95b74dc6e3ee25129c385f0cd6a` and
+workspace artifact
+`f6ded21d60c71d2bdba9824f2c0d36a7e21b5b40d48c233f84c73ba3b4b2f3e3`, both
+`PASS` with confirmed attacker activity and unchanged outside digests. The
+row `hostile-filesystem-toctou` stays `UNVERIFIED` until a broader evidence
 record exists.
