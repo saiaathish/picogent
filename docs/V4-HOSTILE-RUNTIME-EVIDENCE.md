@@ -145,5 +145,13 @@ contract and observed checkpoint are recorded in
 [V4-HOSTILE-PARENT-SWAP-DARWIN.md](V4-HOSTILE-PARENT-SWAP-DARWIN.md).
 
 That harness can `PASS` when confirmed attacker activity never mutates the
-outside sentinel and successful operations stay descriptor-anchored. It still
+outside sentinel or any other entry in the outside tree, and successful
+operations stay descriptor-anchored. The current retained Darwin artifacts
+were collected at exact source `effe52a21f770bc435bbb1596df1452339cbd82a`:
+
+- securefile artifact: `1823593e9d9de2ed5bfec45ccd519da005cdaab550e197f8b38bf91bfdc56273`;
+- workspace artifact: `8dfe6a54f26bc664e5972e85ebb0180a896111ebeb8b33953cfd9b44c6da03ce`.
+
+They include same-name outside read markers, complete outside-tree digests,
+operation counts, attacker activity, and Darwin/arm64 provenance. It still
 does **not** upgrade `hostile-filesystem-toctou`.
