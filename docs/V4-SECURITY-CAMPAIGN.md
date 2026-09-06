@@ -81,6 +81,21 @@ and cleanup never unlinks a replacement inode.
 The undo-specific platform research and delivery decision are recorded in
 `docs/V4-UNDO-PUBLICATION.md` and tracked by issue #274.
 
+### Non-interactive helper subprocess boundary
+
+The shared `procenv.Sanitized()` environment now also covers non-interactive
+helpers used for `rg` content search, OpenCode CLI model discovery, GUI
+line-count fallback, browser launching, and model-executed shell commands.
+Credential-shaped variables, startup hooks, loader controls, pager settings,
+and package-manager overrides are removed while normal runtime values such as
+`PATH`, `HOME`, and locale remain available. `internal/procenv/env_test.go`
+launches a fresh child and proves that secret-like variables do not cross this
+boundary while those runtime values do.
+
+Interactive provider login and related provider/keychain helpers (`agyauth` and
+`claudeauth`), as well as OS folder/file pickers, remain outside this slice;
+their ambient integration requirements need separate allowlisting work.
+
 ### Durable session history
 
 Session titles, message content, text parts, and tool-call arguments now pass

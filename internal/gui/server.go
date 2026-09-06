@@ -38,6 +38,7 @@ import (
 	"github.com/saiaathish/picogent/internal/opencodeauth"
 	"github.com/saiaathish/picogent/internal/outcome"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/procenv"
 	"github.com/saiaathish/picogent/internal/projects"
 	"github.com/saiaathish/picogent/internal/redact"
 	"github.com/saiaathish/picogent/internal/scope"
@@ -3120,5 +3121,6 @@ func openBrowser(url string) {
 	default:
 		return
 	}
+	cmd.Env = procenv.Sanitized()
 	_ = cmd.Start()
 }

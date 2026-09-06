@@ -50,7 +50,9 @@ func TestUnsafeKeyIsCaseInsensitive(t *testing.T) {
 }
 
 func TestOutputSanitizesEnvironmentAndBoundsOutput(t *testing.T) {
-	t.Setenv("PROCENV_TEST_SECRET", "must-not-cross")
+	for _, key := range []string{"PROCENV_TEST_SECRET", "PROCENV_TEST_API_TOKEN", "PROCENV_TEST_PASSWORD"} {
+		t.Setenv(key, "must-not-cross")
+	}
 	t.Setenv("PROCENV_HELPER", "1")
 	// The helper is a fresh test binary. Five seconds leaves room for race
 	// instrumentation and cold-start variance while still bounding a hung
@@ -64,6 +66,29 @@ func TestOutputSanitizesEnvironmentAndBoundsOutput(t *testing.T) {
 	}
 	if string(result.Output) != "clean\n" {
 		t.Fatalf("helper observed unsanitized environment: %q", result.Output)
+	}
+}
+
+func TestOutputPreservesSafeRuntimeEnvironment(t *testing.T) {
+	path := os.Getenv("PATH")
+	if path == "" {
+		t.Fatal("PATH is required for this contract test")
+	}
+	home := t.TempDir()
+	t.Setenv("PROCENV_HELPER", "contract")
+	t.Setenv("PROCENV_TEST_SECRET", "must-not-cross")
+	t.Setenv("PROCENV_TEST_API_TOKEN", "must-not-cross")
+	t.Setenv("PROCENV_TEST_PASSWORD", "must-not-cross")
+	t.Setenv("HOME", home)
+	t.Setenv("LC_ALL", "C")
+
+	result, err := Output(context.Background(), 5*time.Second, os.Args[0], "-test.run=TestProcenvHelperProcess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fmt.Sprintf("token=\npassword=\npath=%s\nhome=%s\nlocale=C\n", path, home)
+	if string(result.Output) != want {
+		t.Fatalf("helper environment = %q, want %q", result.Output, want)
 	}
 }
 
@@ -99,10 +124,20 @@ func TestProcenvHelperProcess(t *testing.T) {
 		_, _ = fmt.Fprint(os.Stdout, strings.Repeat("x", MaxOutputBytes+4096))
 	case "sleep":
 		time.Sleep(5 * time.Second)
+	case "contract":
+		_, _ = fmt.Fprintf(os.Stdout, "token=%s\npassword=%s\npath=%s\nhome=%s\nlocale=%s\n",
+			os.Getenv("PROCENV_TEST_API_TOKEN"),
+			os.Getenv("PROCENV_TEST_PASSWORD"),
+			os.Getenv("PATH"),
+			os.Getenv("HOME"),
+			os.Getenv("LC_ALL"),
+		)
 	default:
-		if os.Getenv("PROCENV_TEST_SECRET") != "" {
-			_, _ = fmt.Fprintln(os.Stdout, "leaked")
-			return
+		for _, key := range []string{"PROCENV_TEST_SECRET", "PROCENV_TEST_API_TOKEN", "PROCENV_TEST_PASSWORD"} {
+			if os.Getenv(key) != "" {
+				_, _ = fmt.Fprintln(os.Stdout, "leaked")
+				return
+			}
 		}
 		_, _ = fmt.Fprintln(os.Stdout, "clean")
 	}

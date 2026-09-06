@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/saiaathish/picogent/internal/procenv"
 )
 
 func TestGlobMatch(t *testing.T) {
@@ -52,7 +54,7 @@ func TestSanitizedCommandEnvOmitsCredentialsAndStartupHooks(t *testing.T) {
 	t.Setenv("PICOGENT_TEST_API_KEY", "do-not-leak")
 	t.Setenv("BASH_ENV", "/tmp/evil-profile")
 	t.Setenv("PICOGENT_TEST_SAFE", "kept")
-	env := sanitizedCommandEnv()
+	env := procenv.Sanitized()
 	joined := strings.Join(env, "\n")
 	if strings.Contains(joined, "PICOGENT_TEST_API_KEY=") || strings.Contains(joined, "BASH_ENV=") {
 		t.Fatalf("sensitive environment leaked: %s", joined)
@@ -60,7 +62,7 @@ func TestSanitizedCommandEnvOmitsCredentialsAndStartupHooks(t *testing.T) {
 	if !strings.Contains(joined, "PICOGENT_TEST_SAFE=kept") {
 		t.Fatalf("ordinary environment was unexpectedly removed: %s", joined)
 	}
-	if os.Getenv("PATH") != "" && !hasEnvKey(env, "PATH") {
+	if os.Getenv("PATH") != "" && !strings.Contains(joined, "PATH=") {
 		t.Fatal("sanitized environment removed PATH")
 	}
 }

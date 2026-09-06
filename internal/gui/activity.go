@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/gitobs"
+	"github.com/saiaathish/picogent/internal/procenv"
 )
 
 func diffStats(workspace, relPath string) (added, removed int) {
@@ -25,7 +26,9 @@ func diffStats(workspace, relPath string) (added, removed int) {
 	}
 	// Untracked or new file: count lines in working tree file.
 	abs := filepath.Join(workspace, relPath)
-	data, err := exec.Command("wc", "-l", abs).Output()
+	cmd := exec.Command("wc", "-l", abs)
+	cmd.Env = procenv.Sanitized()
+	data, err := cmd.Output()
 	if err != nil {
 		return 0, 0
 	}
