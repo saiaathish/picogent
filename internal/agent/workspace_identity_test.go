@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/agent"
@@ -15,30 +14,6 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 )
-
-type replaceWorkspaceOnApproval struct {
-	allowAll
-	once         sync.Once
-	workspace    string
-	oldWorkspace string
-	err          error
-}
-
-func (h *replaceWorkspaceOnApproval) OnNeedPermission(_ context.Context, req perm.Request) (perm.Decision, error) {
-	if req.Tool != "write_file" {
-		return perm.Allow, nil
-	}
-	h.once.Do(func() {
-		h.err = os.Rename(h.workspace, h.oldWorkspace)
-		if h.err == nil {
-			h.err = os.Mkdir(h.workspace, 0o700)
-		}
-	})
-	if h.err != nil {
-		return perm.Deny, h.err
-	}
-	return perm.Allow, nil
-}
 
 func TestApprovedWriteRejectsWorkspaceRootReplacement(t *testing.T) {
 	parent := t.TempDir()
@@ -52,6 +27,23 @@ func TestApprovedWriteRejectsWorkspaceRootReplacement(t *testing.T) {
 		_ = os.RemoveAll(oldWorkspace)
 	})
 
+	// Capture the approval binding against the original root, then replace the
+	// directory at the same path with an ordinary attacker-owned tree. Windows
+	// cannot reliably rename that root while an agent Run holds unrelated
+	// project locks, so the stale binding is reinjected through ClassifyPath
+	// instead of racing a mid-prompt rename.
+	seed := perm.ClassifyPath("write_file", "blocked.txt", workspace, "write blocked.txt")
+	approvedIdentity := seed.WorkspaceIdentity()
+	if approvedIdentity == nil {
+		t.Fatal("expected workspace identity binding")
+	}
+	if err := os.Rename(workspace, oldWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
 	args, err := json.Marshal(map[string]string{"path": "blocked.txt", "content": "must not publish"})
 	if err != nil {
 		t.Fatal(err)
@@ -63,18 +55,20 @@ func TestApprovedWriteRejectsWorkspaceRootReplacement(t *testing.T) {
 	cfg := config.Default()
 	cfg.Provider = config.ProviderOllama
 	cfg.Workspace = workspace
-	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	reg := tools.NewRegistry(tools.Context{
+		Workspace: workspace,
+		ClassifyPath: func(tool, path, ws, summary string) perm.Request {
+			req := perm.ClassifyPath(tool, path, ws, summary)
+			return perm.BindWorkspaceIdentity(req, approvedIdentity)
+		},
+	})
 	a := agent.New(cfg, fake, reg, perm.New(config.ModeSafe, workspace, nil))
 	// Keep the agent's run lock outside the hostile workspace. Windows holds
 	// the lock file open for the duration of Run, so the fixture must not make
-	// that unrelated runtime lock prevent the directory replacement itself.
+	// that unrelated runtime lock prevent directory replacement itself.
 	a.TaskStore = taskstate.NewStore(t.TempDir())
-	handler := &replaceWorkspaceOnApproval{workspace: workspace, oldWorkspace: oldWorkspace}
-	if _, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "create blocked.txt"}, handler); err != nil {
+	if _, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "create blocked.txt"}, allowAll{}); err != nil {
 		t.Fatal(err)
-	}
-	if handler.err != nil {
-		t.Fatalf("replace workspace during approval: %v", handler.err)
 	}
 	if _, err := os.Stat(filepath.Join(workspace, "blocked.txt")); !os.IsNotExist(err) {
 		t.Fatalf("replacement workspace received the approved write: %v", err)

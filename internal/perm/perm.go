@@ -72,6 +72,16 @@ func (r Request) WorkspaceIdentity() *WorkspaceIdentity {
 	return r.workspaceIdentity
 }
 
+// BindWorkspaceIdentity returns req carrying the provided opaque approval
+// binding. Callers cannot forge an identity from a path; they can only reuse a
+// binding previously captured by ClassifyPath. Tests use this to exercise
+// stale-root rejection without renaming the live workspace while unrelated
+// runtime locks are held (notably on Windows).
+func BindWorkspaceIdentity(req Request, identity *WorkspaceIdentity) Request {
+	req.workspaceIdentity = identity
+	return req
+}
+
 // Validate rechecks the canonical root against the identity captured during
 // permission classification. os.SameFile uses platform-specific file IDs
 // where available, including Windows file identity data.
