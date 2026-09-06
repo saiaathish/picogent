@@ -237,6 +237,24 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 		ObservedAt: observed,
 	}
 
+	recoveryFixtureDoc, _ := lookup(doc("docs/V4-RENDERED-RECOVERY-FIXTURE.md"))
+	renderedUndoReload := Claim{
+		ID:         "rendered-recovery-undo-reload",
+		Category:   CategoryRendered,
+		Title:      "Rendered permission, undo, and fresh-process reload API boundary",
+		Setup:      "Deterministic rendered_recovery fixture: allow mutation, undo, then reload.",
+		Artifact:   "docs/V4-RENDERED-RECOVERY-FIXTURE.md plus automated API-boundary fixture test",
+		Provenance: "runbook present; automated end-to-end API boundary remains incomplete",
+		ObservedAt: observed,
+	}
+	if recoveryFixtureDoc {
+		renderedUndoReload.Verdict = VerdictUnverified
+		renderedUndoReload.Reason = "recovery fixture runbook exists, but a complete automated allow→undo→reload API-boundary observation is not yet retained as matrix evidence"
+	} else {
+		renderedUndoReload.Verdict = VerdictUnverified
+		renderedUndoReload.Reason = "rendered recovery fixture documentation is missing"
+	}
+
 	hostileChildEnvExists, _ := lookup(doc("docs/V4-SECURITY-CAMPAIGN.md"))
 	hostile := Claim{
 		ID:         "hostile-child-env-sanitization",
@@ -309,7 +327,7 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 		release.Reason = "release audit exists without claiming authorization"
 	}
 
-	return []Claim{live, rendered, renderedCross, hostile, hostileTOCTOU, recovery, release}
+	return []Claim{live, rendered, renderedCross, renderedUndoReload, hostile, hostileTOCTOU, recovery, release}
 }
 
 func boundClaim(claim Claim) Claim {
