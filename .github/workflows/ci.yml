@@ -181,6 +181,7 @@ jobs:
           go run ./cmd/verify-manifest \
             --workspace . \
             --expected-sha "$EXPECTED_SHA" \
+            --target internal/verify \
             > "$ARTIFACT_DIR/verification-manifest.json"
       - name: Prepare release attestation predicate
         if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
