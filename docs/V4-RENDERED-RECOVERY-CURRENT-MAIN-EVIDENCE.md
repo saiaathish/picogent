@@ -7,6 +7,11 @@ rendered recovery observation against the exact merged `main` tip. The record
 is intentionally bounded: it does not claim live-provider quality,
 cross-platform behavior, hostile-writer safety, or release readiness.
 
+The temporary home, manifests, and matrix artifact named below are
+author-host-local paths from the observation and are not durable PR artifacts.
+The digest-only evidence record and matrix summary are preserved in the
+[#492 issue record](https://github.com/saiaathish/picogent/issues/492).
+
 ## Provenance
 
 - Source SHA: `a4c825b4f451506c0072a64183bca724f33d4b55`.
@@ -19,21 +24,27 @@ cross-platform behavior, hostile-writer safety, or release readiness.
 - Seed URL: `http://127.0.0.1:60425/`.
 - Reload URL: `http://127.0.0.1:60572/`.
 - Fixture session: `rendered-recovery-fixture`.
-- Disposable fixture home:
+- Author-host-local disposable fixture home (not retained in this PR):
   `/var/folders/z_/zxn_ghn96dd_78qxc_dfh9_00000gq/T/picogent-rendered-recovery-home-3601527703`.
-- Workspace: `/var/folders/z_/zxn_ghn96dd_78qxc_dfh9_00000gq/T/picogent-rendered-recovery-home-3601527703/workspace`.
-- Seed manifest:
+- Author-host-local workspace (not retained in this PR):
+  `/var/folders/z_/zxn_ghn96dd_78qxc_dfh9_00000gq/T/picogent-rendered-recovery-home-3601527703/workspace`.
+- Author-host-local seed manifest (not retained in this PR):
   `/var/folders/z_/zxn_ghn96dd_78qxc_dfh9_00000gq/T/picogent-rendered-recovery-home-3601527703/rendered-recovery-fixture-seed.json`.
-- Reload manifest:
+- Author-host-local reload manifest (not retained in this PR):
   `/var/folders/z_/zxn_ghn96dd_78qxc_dfh9_00000gq/T/picogent-rendered-recovery-home-3601527703/rendered-recovery-fixture-reload.json`.
-- Both manifests recorded `issue=467`, `parent_issue=453`,
+- The fixture manifests recorded `issue=467`, `parent_issue=453`;
+  `467` identifies the fixture implementation lane, while this fresh
+  current-main evidence checkpoint belongs to `#492`.
+- Both manifests recorded
   `source_sha_verified=true`, and `source_tree_modified=false`.
 - Both manifests recorded probe SHA-256
   `6edfb9937f622dadd7cb093d2e4150c3747de904ef6be0e15d15eed69e1e627b`.
 - Seed started at `2026-09-06T10:47:35.078035Z`; reload started at
   `2026-09-06T10:49:38.369536Z`.
-- Matrix generated at `2026-09-06T10:52:21Z`; the retained rendered evidence
-  artifact was `/private/tmp/picogent-rendered-platform-a4c825b.json`.
+- Matrix generated at `2026-09-06T10:52:21Z`; the author-host-local rendered
+  evidence artifact used for that run was
+  `/private/tmp/picogent-rendered-platform-a4c825b.json` and is not retained
+  in this PR. Its digest-only contents are preserved in the #492 issue record.
 - Browser action timestamps and durable screenshot paths were not exposed;
   both are therefore `UNRECORDED`. Screenshots were inspected inline at the
   permission, post-Allow, post-Undo, and reload checkpoints.
@@ -57,8 +68,8 @@ is not evidence that the undone path still exists.
 
 ## Matrix result
 
-The exact-head matrix was run from a clean clone with the digest-only rendered
-artifact and recorded:
+The exact-head matrix was run from a clean checkout at the exact source SHA
+with the digest-only rendered artifact and recorded:
 
 ```text
 HEAD=PASS  tree=CLEAN
@@ -70,7 +81,7 @@ hostile-filesystem-toctou=UNVERIFIED
 release-authorization=INCONCLUSIVE
 ```
 
-The rendered artifact used observation digest
+The local run used observation digest
 `9cc265674aa47e0dab903562244e64bc3bb7dfbe3218e54a3d6d12a9a80b254b` and
 `screenshot_sha256: UNRECORDED`. The matrix loader retained the artifact digest
 `926656ae9e4475334e6301412a7f9f188509f742d5d3112965f90b509a3378ff`.
