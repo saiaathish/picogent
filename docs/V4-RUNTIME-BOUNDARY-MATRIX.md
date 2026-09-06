@@ -45,14 +45,20 @@ row has a separate opt-in contract:
 `PICOGENT_LIVE_PROVIDER_QUALITY_ARTIFACT` must point at a valid quality
 evidence file. Connectivity evidence never upgrades the quality row.
 
-The latest bounded Codex-selected observation at exact merged `main` is recorded
-in [V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md)
-for [#488](https://github.com/saiaathishkarthik/picogent/issues/488). It
-projects `live-provider-quality=PASS` only for the self-reported artifact's
-three fixed no-tool cases after canonical prompt-digest and bounded-shape
-checks; provider identity and raw result semantics are not independently
-attested. The connectivity, rendered, hostile-TOCTOU, and release-authorization
-rows remain independently evidence-bound.
+The latest tip-bound Codex observation at exact merged `main`
+`e7c5f04d227c12eede0456d11a5ddcbb6636cee4` is recorded in
+[V4-LIVE-PROVIDER-EVIDENCE-E7C5F04.md](V4-LIVE-PROVIDER-EVIDENCE-E7C5F04.md)
+for [#497](https://github.com/saiaathish/picogent/issues/497). With the matching
+digest-only artifacts supplied, it projects both
+`live-provider-connectivity=PASS` and `live-provider-quality=PASS` for the
+fixed no-tool campaign after canonical prompt-digest and bounded-shape checks;
+provider identity and raw result semantics are not independently attested. The
+matching rendered allow→undo→reload observation is
+[V4-RENDERED-RECOVERY-EVIDENCE-E7C5F04.md](V4-RENDERED-RECOVERY-EVIDENCE-E7C5F04.md).
+Historical quality-only records such as
+[V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md)
+remain unchanged. Hostile-TOCTOU, cross-platform rendered, and
+release-authorization rows remain independently evidence-bound.
 
 ## Hostile-runtime evidence
 
