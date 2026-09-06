@@ -1,7 +1,8 @@
 # Picogent v4 discovery scorecard
 
-Status: refreshed on 2026-09-05 against the exact `main` merge
-`e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f` after the outcome, recovery, GUI,
+Status: feature/state reconciliation refreshed on 2026-09-05 against the
+exact `main` merge `e7160234e7a6a3c3efe8959cf9f9b56cc4c1f87f` after the
+outcome, recovery, GUI,
 undo-publication, lifecycle, proof-continuity, cancellation, hosted
 attestation, TUI recovery, setup, restore-inspection, workflow action-pin,
 contradiction, and retention slices through PRs #297, #298, #299, #301, #303,
@@ -10,6 +11,11 @@ contradiction, and retention slices through PRs #297, #298, #299, #301, #303,
 #427, #430, #431, #432, #434, and #436 merged. The bounded release-evidence audit remains
 tracked in issue #316; prior audit observations and their unverified
 boundaries are preserved below.
+
+The remote `main` now includes documentation-only PR #440 at merge
+`1e1ef174d47a84d32d5a33cd6cb0f062cb9c3758`. Its fresh release-evidence audit
+is recorded at the exact head in `docs/V4-RELEASE-AUDIT.md`; this scorecard's
+feature/state observations remain bound to their named source heads.
 
 The exact-head v3-versus-v4 outcome-quality matrix is refreshed in
 `docs/V4-OUTCOME-QUALITY-COMPARISON.md` and
