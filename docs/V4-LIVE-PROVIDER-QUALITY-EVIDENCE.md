@@ -14,12 +14,12 @@ cross-platform, security, or release-readiness claim.
 
 ```text
 repository: github.com/saiaathishkarthik/picogent
-source:     67802ddaf761b31d6aec50f289cec474cf0522cc
+source:     4400bdcbf3a3e50f52ac11ffb3ccfb6d51945ead
 provider:   codex
 campaign:   fixed-no-tool-v1
 runtime:    go1.26.6 darwin/arm64
 environment: task-owned-disposable
-observed:   2026-09-06T09:18:19Z
+observed:   2026-09-06T10:20:00Z
 ```
 
 The source checkout was clean and `HEAD` matched the recorded full commit ID.
@@ -34,13 +34,13 @@ data excluded.
 The digest-only artifact was retained outside the checkout at:
 
 ```text
-/private/tmp/picogent-live-quality-observation.dnYuTL/live-provider-quality-evidence.json
+/private/tmp/picogent-live-quality-observation-postmerge-4400bdc/live-provider-quality-evidence.json
 ```
 
 Artifact SHA-256:
 
 ```text
-036c8fd8368a592979c36d48f16c20e6b5e617ec81cbfa0e92d91d363fa4e807
+31a93fe3854f79ea51b92de4d7f855dbf43b28a58f790f76e1683cde38e18f26
 ```
 
 ## Fixed campaign observations
@@ -54,9 +54,9 @@ identity remain self-reported.
 
 | Case | Direct result check | Latency | Tools | Workspace mutation | Verdict |
 | --- | --- | ---: | --- | --- | --- |
-| `exact-token` | Exact one-token response matched `LIVE_PROVIDER_QUALITY_OK` | 3094 ms | none observed | none observed | `PASS` |
-| `bounded-summary` | One non-empty line with one sentence | 2459 ms | none observed | none observed | `PASS` |
-| `constraint-following` | Exact three-word response matched `local first agent` | 2110 ms | none observed | none observed | `PASS` |
+| `exact-token` | Exact one-token response matched `LIVE_PROVIDER_QUALITY_OK` | 3949 ms | none observed | none observed | `PASS` |
+| `bounded-summary` | One non-empty line with one sentence | 2618 ms | none observed | none observed | `PASS` |
+| `constraint-following` | Exact three-word response matched `local first agent` | 3022 ms | none observed | none observed | `PASS` |
 
 All three cases were below the declared 5000 ms per-case budget. The command
 exited successfully for each case, emitted no tool-start markers, and left the
@@ -69,10 +69,10 @@ source SHA:
 
 ```sh
 PICOGENT_LIVE_PROVIDER_QUALITY_EVIDENCE=1 \
-PICOGENT_LIVE_PROVIDER_QUALITY_ARTIFACT=/private/tmp/picogent-live-quality-observation.dnYuTL/live-provider-quality-evidence.json \
+PICOGENT_LIVE_PROVIDER_QUALITY_ARTIFACT=/private/tmp/picogent-live-quality-observation-postmerge-4400bdc/live-provider-quality-evidence.json \
 go run ./cmd/runtime-boundary-matrix \
   --workspace . \
-  --candidate-sha 67802ddaf761b31d6aec50f289cec474cf0522cc
+  --candidate-sha 4400bdcbf3a3e50f52ac11ffb3ccfb6d51945ead
 ```
 
 The observed provenance was `HEAD=PASS` and `tree=CLEAN`. The matrix summary
