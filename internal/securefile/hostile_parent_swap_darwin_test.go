@@ -242,8 +242,13 @@ func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
 		if err := os.WriteFile(release, []byte("go\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+		// Require confirmed attacker activity before measuring confinement.
+		waitForConfirmedSwaps(t, swapsPath, 1, 15*time.Second)
 
 		successes, errs, escape := op.run(parent)
+		// Keep the attacker live briefly so the final swap counter is flushed
+		// after the last operation rather than racing the stop file.
+		time.Sleep(50 * time.Millisecond)
 		if err := os.WriteFile(stop, []byte("stop\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -253,18 +258,16 @@ func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
 		}
 
 		swaps := readSwapCount(t, swapsPath)
-		if swaps > 0 {
-			attackerConfirmed = true
+		if swaps < 1 {
+			t.Fatalf("%s observed no confirmed attacker swaps", op.id)
 		}
+		attackerConfirmed = true
 		if escape {
 			anyEscape = true
 		}
 		verdict := "PASS"
-		if escape || swaps < 1 {
+		if escape {
 			verdict = "FAIL"
-			if swaps < 1 && !escape {
-				verdict = "INCONCLUSIVE"
-			}
 		}
 		evidenceOps = append(evidenceOps, hostileParentSwapOpEvidence{
 			ID:             op.id,
@@ -277,9 +280,6 @@ func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
 		})
 		if escape {
 			t.Fatalf("%s escaped into outside sentinel directory", op.id)
-		}
-		if swaps < 1 {
-			t.Fatalf("%s observed no confirmed attacker swaps", op.id)
 		}
 
 		// Restore trusted parent if left as symlink.
@@ -401,6 +401,7 @@ func TestDarwinSameUIDParentSwapAttackerHelper(t *testing.T) {
 			continue
 		}
 		swaps++
+		_ = os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600)
 		_ = os.Remove(parent)
 		_ = os.Rename(backup, parent)
 	}
@@ -418,6 +419,22 @@ func waitForFile(t *testing.T, path string, timeout time.Duration) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", path)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func waitForConfirmedSwaps(t *testing.T, path string, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if data, err := os.ReadFile(path); err == nil {
+			if n, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && n >= want {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for >=%d attacker swaps in %s", want, path)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}

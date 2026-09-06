@@ -82,6 +82,7 @@ func TestDarwinSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	if err := os.WriteFile(release, []byte("go\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	waitForWorkspaceSwaps(t, swapsPath, 1, 15*time.Second)
 
 	writeOK, writeErr, writeEscape := 0, 0, false
 	readOK, readErr, readEscape := 0, 0, false
@@ -210,6 +211,7 @@ func TestDarwinSameUIDWorkspaceParentSwapAttackerHelper(t *testing.T) {
 			continue
 		}
 		swaps++
+		_ = os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600)
 		_ = os.Remove(parent)
 		_ = os.Rename(backup, parent)
 	}
@@ -227,6 +229,22 @@ func waitForWorkspaceFile(t *testing.T, path string, timeout time.Duration) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", path)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func waitForWorkspaceSwaps(t *testing.T, path string, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		if data, err := os.ReadFile(path); err == nil {
+			if n, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && n >= want {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for >=%d attacker swaps in %s", want, path)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
