@@ -74,6 +74,36 @@ The matrix command must observe a clean worktree whose `HEAD` equals the
 candidate SHA. It fail-closes on missing or malformed provenance and does not
 accept an artifact path inside the workspace.
 
+## Retained-artifact publication checkpoint
+
+PR #483 extends this bounded record at source checkpoint
+`a76802e3d39b56290d8652257b4e4accfb82ecaf`. `runtimeboundary.RetainReport`
+now delegates exclusive artifact creation to `securefile.WriteExclusive`,
+which creates the parent through the descriptor/handle-anchored implementation,
+refuses overwrite, and removes only the inode it opened when a write fails.
+
+The following focused checks passed at that exact source identity:
+
+```text
+go test ./internal/securefile ./internal/runtimeboundary -count=1
+PASS
+
+go test -race ./internal/securefile ./internal/runtimeboundary -count=1
+PASS
+```
+
+The Unix-only `TestRetainReportParentSwapNeverEscapesDescriptor` campaign
+repeatedly renames the intended parent away, presents a symlink to a separate
+outside directory, and restores the parent while retained artifacts are
+attempted. The outside directory retained only its sentinel file. Failures
+during the hostile interval are accepted; a successful operation must not
+escape into the hostile target.
+
+This is a bounded Unix observation of retained-artifact parent replacement. It
+does not establish Windows reparse-point behavior, arbitrary same-UID races
+after every final identity check, or a cross-surface guarantee. Therefore the
+matrix row `hostile-filesystem-toctou` remains `UNVERIFIED`.
+
 ## Explicit limits
 
 This record does not prove:

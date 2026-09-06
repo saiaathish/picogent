@@ -111,6 +111,57 @@ func ReadFileLimited(path string, maxBytes int) ([]byte, error) {
 	return readFile(path, maxBytes)
 }
 
+// WriteExclusive creates a regular file below a descriptor/handle-anchored
+// parent, writes the complete payload, and refuses to overwrite an existing
+// entry. If publication fails, cleanup removes only the inode opened by this
+// call. This narrows pathname replacement races; it is not a guarantee against
+// every same-UID writer changing a name after the final identity check.
+func WriteExclusive(path string, data []byte, mode os.FileMode) error {
+	return writeExclusive(path, data, mode, nil)
+}
+
+func writeExclusive(path string, data []byte, mode os.FileMode, write func(*os.File, []byte) error) error {
+	root, name, err := openParent(path, true)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if mode.Perm() == 0 {
+		mode = 0o600
+	}
+	file, err := root.openExclusive(name, mode.Perm())
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("file %q already exists: %w", path, err)
+		}
+		return err
+	}
+	removeEntry := true
+	defer func() {
+		if removeEntry {
+			// The name may have been replaced while the descriptor was open.
+			// removeMatching leaves an unowned replacement untouched.
+			_ = root.removeMatching(name, file)
+		}
+		_ = file.Close()
+	}()
+
+	if write == nil {
+		write = func(file *os.File, data []byte) error { return writeAll(file, data) }
+	}
+	if err := write(file, data); err != nil {
+		return fmt.Errorf("write exclusive file: %w", err)
+	}
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("sync exclusive file: %w", err)
+	}
+	removeEntry = false
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("close exclusive file: %w", err)
+	}
+	return nil
+}
+
 func readFile(path string, maxBytes int) ([]byte, error) {
 	root, name, err := openParent(path, false)
 	if err != nil {

@@ -110,6 +110,81 @@ func TestWriteAtomicRejectsSymlinkParent(t *testing.T) {
 	}
 }
 
+func TestWriteExclusivePublishesWithoutOverwrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "artifact.json")
+	if err := WriteExclusive(path, []byte("first\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "first\n" {
+		t.Fatalf("exclusive write = %q", got)
+	}
+	if err := WriteExclusive(path, []byte("second\n"), 0o600); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("overwrite error = %v", err)
+	}
+	got, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "first\n" {
+		t.Fatalf("rejected overwrite changed artifact to %q", got)
+	}
+}
+
+func TestWriteExclusiveFailureCleansOwnedEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "artifact.json")
+	injected := errors.New("injected exclusive write failure")
+	if err := writeExclusive(path, []byte("secret\n"), 0o600, func(*os.File, []byte) error {
+		return injected
+	}); !errors.Is(err, injected) {
+		t.Fatalf("exclusive write error = %v, want injected failure", err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed exclusive write left an entry: %v", err)
+	}
+}
+
+func TestWriteExclusiveRejectsSymlinkTarget(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(target, []byte("keep\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "artifact.json")
+	if err := os.Symlink(target, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := WriteExclusive(path, []byte("replace\n"), 0o600); err == nil {
+		t.Fatal("exclusive writer accepted a symlink target")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "keep\n" {
+		t.Fatalf("symlink target changed to %q", got)
+	}
+}
+
+func TestWriteExclusiveRejectsSymlinkParent(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	link := filepath.Join(root, "linked")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	path := filepath.Join(link, "artifact.json")
+	if err := WriteExclusive(path, []byte("must not escape\n"), 0o600); err == nil {
+		t.Fatal("exclusive writer accepted a symlink parent")
+	}
+	if _, err := os.Stat(filepath.Join(outside, "artifact.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("symlink parent received a write: %v", err)
+	}
+}
+
 func TestRemoveFileRejectsSymlinkTarget(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(t.TempDir(), "outside.yaml")
