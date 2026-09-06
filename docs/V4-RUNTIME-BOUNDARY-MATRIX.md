@@ -228,6 +228,12 @@ The rendered rows are also split by claim size:
 - `rendered-cross-platform` remains `UNVERIFIED`; one macOS, Windows, or Linux
   record cannot stand in for the other supported platforms.
 
+The latest direct current-main local observation is recorded in
+[V4-RENDERED-RECOVERY-CURRENT-MAIN-EVIDENCE.md](V4-RENDERED-RECOVERY-CURRENT-MAIN-EVIDENCE.md)
+for [#492](https://github.com/saiaathish/picogent/issues/492). It proves only
+the `darwin/arm64` rendered recovery path; cross-platform behavior remains
+`UNVERIFIED`.
+
 Enable the narrow local row with an evidence artifact outside the checkout:
 
 ```sh
