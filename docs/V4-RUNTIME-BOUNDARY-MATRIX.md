@@ -231,8 +231,12 @@ The rendered rows are also split by claim size:
 
 - `rendered-platform-local` can reflect one valid task-owned observation on the
   current OS and architecture.
-- `rendered-cross-platform` remains `UNVERIFIED`; one macOS, Windows, or Linux
-  record cannot stand in for the other supported platforms.
+- `rendered-cross-platform` remains `UNVERIFIED` unless
+  `PICOGENT_RENDERED_CROSS_PLATFORM_EVIDENCE=1` and
+  `PICOGENT_RENDERED_CROSS_PLATFORM_ARTIFACT` supply a valid aggregation for
+  darwin, linux, and windows at the exact candidate SHA. See
+  [V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md). One local
+  platform record cannot stand in for the other supported platforms.
 
 The latest direct current-main local observation is recorded in
 [V4-RENDERED-RECOVERY-CURRENT-MAIN-EVIDENCE.md](V4-RENDERED-RECOVERY-CURRENT-MAIN-EVIDENCE.md)
