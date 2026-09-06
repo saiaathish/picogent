@@ -1,0 +1,111 @@
+name: release-artifacts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  production-artifacts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25.14"
+      - name: Prepare external artifact directory
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-artifacts
+        run: |
+          go run ./cmd/release-evidence-layout \
+            --workspace "$GITHUB_WORKSPACE" \
+            --evidence-dir "$ARTIFACT_DIR"
+          mkdir -p "$ARTIFACT_DIR"
+      - name: Build deterministic production artifacts
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-artifacts
+          EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct "$EXPECTED_SHA")"
+          go run ./cmd/release-artifact \
+            --workspace "$GITHUB_WORKSPACE" \
+            --output-dir "$ARTIFACT_DIR" \
+            --candidate-sha "$EXPECTED_SHA" \
+            --source-date-epoch "$SOURCE_DATE_EPOCH" \
+            --go-version "go1.25.14" \
+            --targets linux/amd64,darwin/arm64,windows/amd64 \
+            > "$ARTIFACT_DIR/release-artifact-manifest.stdout.json"
+      - name: Prepare release-artifact attestation predicate
+        if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-artifacts
+          EXPECTED_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import datetime, hashlib, json, os, pathlib
+          artifact_dir = pathlib.Path(os.environ["ARTIFACT_DIR"])
+          manifest_path = artifact_dir / "release-artifact-manifest.json"
+          manifest = json.loads(manifest_path.read_text())
+          subjects = []
+          digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+          subjects.append({"name": "release-artifact-manifest.json", "sha256": digest})
+          for target in manifest.get("targets", []):
+              for key in ("binary", "package", "sbom"):
+                  item = target[key]
+                  path = artifact_dir / item["name"]
+                  actual = hashlib.sha256(path.read_bytes()).hexdigest()
+                  if actual != item["sha256"]:
+                      raise SystemExit(f"digest mismatch for {item['name']}")
+                  subjects.append({"name": item["name"], "sha256": actual})
+          issued = datetime.datetime.now(datetime.timezone.utc)
+          predicate = {
+              "schema": "picogent.release-artifact-attestation.v1",
+              "repository": os.environ["REPOSITORY"],
+              "candidate_sha": os.environ["EXPECTED_SHA"],
+              "event": os.environ["EVENT_NAME"],
+              "workflow": os.environ["WORKFLOW_REF"],
+              "run_id": int(os.environ["RUN_ID"]),
+              "subjects": subjects,
+              "signer": os.environ["WORKFLOW_REF"],
+              "issued_at": issued.isoformat().replace("+00:00", "Z"),
+              "expires_at": (issued + datetime.timedelta(days=7)).isoformat().replace("+00:00", "Z"),
+          }
+          (artifact_dir / "release-artifact-predicate.json").write_text(json.dumps(predicate, indent=2, sort_keys=True) + "\n")
+          lines = [f"{s['sha256']}  {s['name']}" for s in subjects]
+          (artifact_dir / "release-artifact.sha256").write_text("\n".join(lines) + "\n")
+          PY
+      - name: Publish signed release-artifact attestation
+        if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-checksums: ${{ runner.temp }}/picogent-release-artifacts/release-artifact.sha256
+          predicate-type: https://github.com/saiaathish/picogent/attestation/release-artifact/v1
+          predicate-path: ${{ runner.temp }}/picogent-release-artifacts/release-artifact-predicate.json
+      - name: Record fork attestation boundary
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        env:
+          ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-artifacts
+        run: |
+          printf '%s\n' '{"status":"UNVERIFIED","reason":"fork pull requests cannot write hosted attestations"}' \
+            > "$ARTIFACT_DIR/release-artifact-attestation-status.json"
+      - name: Upload production artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-artifacts-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/picogent-release-artifacts/
+          if-no-files-found: error
