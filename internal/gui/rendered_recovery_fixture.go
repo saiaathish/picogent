@@ -115,8 +115,8 @@ func RunRenderedRecoveryFixture(ctx context.Context) error {
 		return err
 	}
 	manifest := renderedRecoveryFixtureManifest{
-		Issue:        "291",
-		ParentIssue:  "246",
+		Issue:        "467",
+		ParentIssue:  "453",
 		Phase:        phase,
 		URL:          "http://" + ln.Addr().String() + "/",
 		Home:         home,

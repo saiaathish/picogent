@@ -578,6 +578,7 @@ button, input, textarea { font: inherit; color: inherit; }
   color: var(--mute);
   font-size: 12px;
 }
+.turn-recovery[hidden] { display: none; }
 .turn-recovery button {
   flex: 0 0 auto;
   min-height: 34px;
