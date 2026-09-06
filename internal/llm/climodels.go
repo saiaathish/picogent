@@ -12,18 +12,19 @@ import (
 
 	"github.com/saiaathish/picogent/internal/agyauth"
 	"github.com/saiaathish/picogent/internal/opencodeauth"
+	"github.com/saiaathish/picogent/internal/procenv"
 )
 
 // Dynamic (CLI-discovered) models, separate from the router catalog tiers.
 var (
-	cliMu     sync.RWMutex
-	cliByEco  = map[Ecosystem][]ModelEntry{}
+	cliMu      sync.RWMutex
+	cliByEco   = map[Ecosystem][]ModelEntry{}
 	cliFetched time.Time
 )
 
 const (
-	EcoOpenCode     Ecosystem = "opencode"
-	EcoOpenCodeGo   Ecosystem = "opencode-go"
+	EcoOpenCode    Ecosystem = "opencode"
+	EcoOpenCodeGo  Ecosystem = "opencode-go"
 	EcoAntigravity Ecosystem = "antigravity"
 )
 
@@ -98,6 +99,7 @@ func discoverOpenCodeModels(provider string, eco Ecosystem) []ModelEntry {
 	// Prefer `opencode models <provider>` when CLI is present.
 	if bin, err := exec.LookPath("opencode"); err == nil {
 		cmd := exec.Command(bin, "models", provider)
+		cmd.Env = procenv.Sanitized()
 		out, err := cmd.CombinedOutput()
 		if err == nil {
 			var ms []ModelEntry

@@ -1,7 +1,8 @@
-// Package procenv builds a bounded environment for subprocesses that inspect
-// or verify a user's workspace. It keeps ordinary runtime settings while
-// removing credentials, loader hooks, shell startup files, and tool-control
-// variables that can execute code or redirect a tool outside its contract.
+// Package procenv builds a bounded environment for non-interactive subprocesses
+// that inspect or operate within a user's workspace. It keeps ordinary runtime
+// settings while removing credentials, loader hooks, shell startup files, and
+// tool-control variables that can execute code or redirect a tool outside its
+// contract.
 package procenv
 
 import (

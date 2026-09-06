@@ -603,7 +603,9 @@ func validateOutcomeQualityLegacyToolchain(ctx context.Context, command, expecte
 	if expectedVersion == "" {
 		return errors.New("expected Go toolchain version is required")
 	}
-	output, err := exec.CommandContext(ctx, command, "version").Output()
+	cmd := exec.CommandContext(ctx, command, "version")
+	cmd.Env = procenv.Sanitized()
+	output, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("read Go toolchain version: %w", err)
 	}
