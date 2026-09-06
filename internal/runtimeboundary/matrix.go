@@ -238,21 +238,28 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 	}
 
 	recoveryFixtureDoc, _ := lookup(doc("docs/V4-RENDERED-RECOVERY-FIXTURE.md"))
+	apiBoundaryDoc, _ := lookup(doc("docs/V4-RENDERED-RECOVERY-API-BOUNDARY.md"))
 	renderedUndoReload := Claim{
 		ID:         "rendered-recovery-undo-reload",
 		Category:   CategoryRendered,
 		Title:      "Rendered permission, undo, and fresh-process reload API boundary",
 		Setup:      "Deterministic rendered_recovery fixture: allow mutation, undo, then reload.",
-		Artifact:   "docs/V4-RENDERED-RECOVERY-FIXTURE.md plus automated API-boundary fixture test",
-		Provenance: "runbook present; automated end-to-end API boundary remains incomplete",
+		Artifact:   "docs/V4-RENDERED-RECOVERY-API-BOUNDARY.md",
+		Provenance: "automated API-boundary fixture test",
 		ObservedAt: observed,
 	}
-	if recoveryFixtureDoc {
+	switch {
+	case apiBoundaryDoc && recoveryFixtureDoc:
+		renderedUndoReload.Verdict = VerdictPass
+		renderedUndoReload.Reason = "deterministic allow→undo→reload API-boundary evidence is retained; browser DOM and live-provider remain outside this claim"
+	case recoveryFixtureDoc:
 		renderedUndoReload.Verdict = VerdictUnverified
-		renderedUndoReload.Reason = "recovery fixture runbook exists, but a complete automated allow→undo→reload API-boundary observation is not yet retained as matrix evidence"
-	} else {
+		renderedUndoReload.Reason = "recovery fixture runbook exists, but automated allow→undo→reload API-boundary evidence is missing"
+		renderedUndoReload.Provenance = "runbook only"
+	default:
 		renderedUndoReload.Verdict = VerdictUnverified
 		renderedUndoReload.Reason = "rendered recovery fixture documentation is missing"
+		renderedUndoReload.Provenance = "missing docs"
 	}
 
 	hostileChildEnvExists, _ := lookup(doc("docs/V4-SECURITY-CAMPAIGN.md"))

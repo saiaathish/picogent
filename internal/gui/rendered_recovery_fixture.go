@@ -83,38 +83,11 @@ func RunRenderedRecoveryFixture(ctx context.Context) error {
 		_ = os.Setenv("PICOGENT_NO_BROWSER", "1")
 	}
 
-	cfg := config.Default()
-	cfg.Provider = config.ProviderOllama
-	cfg.Model = "rendered-recovery-fixture"
-	cfg.Mode = config.ModeSafe
-	cfg.SetupComplete = true
-	cfg.Workspace = workspace
-
-	store := taskstate.NewStore(filepath.Join(home, "tasks", projects.IDForPath(workspace)))
-	client := renderedRecoveryFixtureClient(phase)
-	ag := agent.New(cfg, client, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeSafe, workspace, nil))
-	ag.SetTaskStore(store)
-	if err := ag.SetTaskSession(renderedRecoveryFixtureSession); err != nil {
-		return fmt.Errorf("load fixture task session: %w", err)
+	s, ag, err := newRenderedRecoveryFixtureServer(phase, home, workspace)
+	if err != nil {
+		return err
 	}
 	defer ag.Close()
-
-	var hist []llm.Message
-	if phase == "reload" {
-		loaded, loadErr := session.Load(renderedRecoveryFixtureSession)
-		if loadErr != nil {
-			return fmt.Errorf("load fixture transcript: %w", loadErr)
-		}
-		hist = loaded.Messages
-	}
-	s := &server{
-		cfg:       cfg,
-		ag:        ag,
-		hist:      hist,
-		sessionID: renderedRecoveryFixtureSession,
-		permCh:    make(chan perm.Decision, 1),
-	}
-	s.ensureProject()
 
 	addr := strings.TrimSpace(os.Getenv("PICOGENT_RENDERED_FIXTURE_ADDR"))
 	if addr == "" {
@@ -167,6 +140,46 @@ func RunRenderedRecoveryFixture(ctx context.Context) error {
 	fmt.Printf("picogent rendered recovery fixture workspace=%s session=%s\n", workspace, renderedRecoveryFixtureSession)
 
 	return serveContext(ctx, ln, s.Handler(), s.stopForShutdown)
+}
+
+// newRenderedRecoveryFixtureServer builds the real embedded GUI handler used by
+// both the browser fixture binary and the automated API-boundary test.
+func newRenderedRecoveryFixtureServer(phase, home, workspace string) (*server, *agent.Agent, error) {
+	cfg := config.Default()
+	cfg.Provider = config.ProviderOllama
+	cfg.Model = "rendered-recovery-fixture"
+	cfg.Mode = config.ModeSafe
+	cfg.SetupComplete = true
+	cfg.Workspace = workspace
+
+	store := taskstate.NewStore(filepath.Join(home, "tasks", projects.IDForPath(workspace)))
+	client := renderedRecoveryFixtureClient(phase)
+	ag := agent.New(cfg, client, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeSafe, workspace, nil))
+	ag.SetTaskStore(store)
+	if err := ag.SetTaskSession(renderedRecoveryFixtureSession); err != nil {
+		ag.Close()
+		return nil, nil, fmt.Errorf("load fixture task session: %w", err)
+	}
+
+	var hist []llm.Message
+	if phase == "reload" {
+		loaded, loadErr := session.Load(renderedRecoveryFixtureSession)
+		if loadErr != nil {
+			ag.Close()
+			return nil, nil, fmt.Errorf("load fixture transcript: %w", loadErr)
+		}
+		hist = loaded.Messages
+	}
+	s := &server{
+		cfg:                      cfg,
+		ag:                       ag,
+		hist:                     hist,
+		sessionID:                renderedRecoveryFixtureSession,
+		permCh:                   make(chan perm.Decision, 1),
+		suppressExtensionRebuild: true,
+	}
+	s.ensureProject()
+	return s, ag, nil
 }
 
 func renderedRecoveryFixturePaths(phase string) (string, string, error) {

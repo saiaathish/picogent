@@ -21,6 +21,7 @@ func TestRunEmitsMatrix(t *testing.T) {
 	write(t, workspace, "go.mod", "module example.test/runtimeboundary\n\ngo 1.25\n")
 	write(t, workspace, "docs/V4-RENDERED-LONG-HORIZON-EVIDENCE.md", "# rendered\n")
 	write(t, workspace, "docs/V4-RENDERED-RECOVERY-FIXTURE.md", "# recovery\n")
+	write(t, workspace, "docs/V4-RENDERED-RECOVERY-API-BOUNDARY.md", "# api-boundary\n")
 	write(t, workspace, "docs/V4-SECURITY-CAMPAIGN.md", "# security\n")
 	write(t, workspace, "docs/V4-LONG-HORIZON-OUTCOME.md", "# long horizon\n")
 	write(t, workspace, "docs/V4-RELEASE-AUDIT.md", "# audit\n")

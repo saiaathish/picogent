@@ -31,7 +31,7 @@ func TestCollectFailClosedWithoutLiveEvidence(t *testing.T) {
 		t.Fatalf("live verdict = %s", live.Verdict)
 	}
 	undoReload := claimByID(t, report, "rendered-recovery-undo-reload")
-	if undoReload.Verdict != VerdictUnverified {
+	if undoReload.Verdict != VerdictPass {
 		t.Fatalf("rendered undo/reload verdict = %s", undoReload.Verdict)
 	}
 	if report.Summary[string(VerdictUnverified)] < 1 {
@@ -90,6 +90,7 @@ func seedDocs(t *testing.T, workspace string) {
 	write(t, workspace, "go.mod", "module example.test/runtimeboundary\n\ngo 1.25\n")
 	write(t, workspace, "docs/V4-RENDERED-LONG-HORIZON-EVIDENCE.md", "# rendered\n")
 	write(t, workspace, "docs/V4-RENDERED-RECOVERY-FIXTURE.md", "# recovery\n")
+	write(t, workspace, "docs/V4-RENDERED-RECOVERY-API-BOUNDARY.md", "# api-boundary\n")
 	write(t, workspace, "docs/V4-SECURITY-CAMPAIGN.md", "# security\n")
 	write(t, workspace, "docs/V4-LONG-HORIZON-OUTCOME.md", "# long horizon\n")
 	write(t, workspace, "docs/V4-RELEASE-AUDIT.md", "# audit\n")
