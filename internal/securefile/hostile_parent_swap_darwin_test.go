@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,31 +28,33 @@ const (
 )
 
 type hostileParentSwapEvidence struct {
-	Schema                   string                        `json:"schema"`
-	CandidateSHA             string                        `json:"candidate_sha"`
-	OS                       string                        `json:"os"`
-	Architecture             string                        `json:"architecture"`
-	Environment              string                        `json:"environment"`
-	Package                  string                        `json:"package"`
-	AttackerConfirmed        bool                          `json:"attacker_confirmed"`
-	OutsideSentinelBefore    string                        `json:"outside_sentinel_before_sha256"`
-	OutsideSentinelAfter     string                        `json:"outside_sentinel_after_sha256"`
-	OutsideEscapeObserved    bool                          `json:"outside_escape_observed"`
-	Operations               []hostileParentSwapOpEvidence `json:"operations"`
-	Verdict                  string                        `json:"verdict"`
-	ObservedAt               string                        `json:"observed_at"`
-	BroadTOCTOUClaim         string                        `json:"broad_toctou_claim"`
-	SourceTreeModified       bool                          `json:"source_tree_modified"`
+	Schema                string                        `json:"schema"`
+	CandidateSHA          string                        `json:"candidate_sha"`
+	OS                    string                        `json:"os"`
+	Architecture          string                        `json:"architecture"`
+	Environment           string                        `json:"environment"`
+	Package               string                        `json:"package"`
+	AttackerConfirmed     bool                          `json:"attacker_confirmed"`
+	OutsideSentinelBefore string                        `json:"outside_sentinel_before_sha256"`
+	OutsideSentinelAfter  string                        `json:"outside_sentinel_after_sha256"`
+	OutsideTreeBefore     string                        `json:"outside_tree_before_sha256"`
+	OutsideTreeAfter      string                        `json:"outside_tree_after_sha256"`
+	OutsideEscapeObserved bool                          `json:"outside_escape_observed"`
+	Operations            []hostileParentSwapOpEvidence `json:"operations"`
+	Verdict               string                        `json:"verdict"`
+	ObservedAt            string                        `json:"observed_at"`
+	BroadTOCTOUClaim      string                        `json:"broad_toctou_claim"`
+	SourceTreeModified    bool                          `json:"source_tree_modified"`
 }
 
 type hostileParentSwapOpEvidence struct {
-	ID               string `json:"id"`
-	Attempts         int    `json:"attempts"`
-	Successes        int    `json:"successes"`
-	Errors           int    `json:"errors"`
-	AttackerSwaps    int    `json:"attacker_swaps"`
-	EscapeObserved   bool   `json:"escape_observed"`
-	Verdict          string `json:"verdict"`
+	ID             string `json:"id"`
+	Attempts       int    `json:"attempts"`
+	Successes      int    `json:"successes"`
+	Errors         int    `json:"errors"`
+	AttackerSwaps  int    `json:"attacker_swaps"`
+	EscapeObserved bool   `json:"escape_observed"`
+	Verdict        string `json:"verdict"`
 }
 
 func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
@@ -73,7 +76,20 @@ func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
 	if err := os.WriteFile(sentinelPath, sentinelContent, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Same-name markers make a redirected read observable. The full outside
+	// tree digest below also catches escaped creation, replacement, and
+	// deletion even when the named sentinel itself is untouched.
+	if err := os.WriteFile(filepath.Join(outside, "state.yaml"), []byte("outside-marker\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "remove-target.txt"), []byte("outside-remove\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	beforeDigest := sha256Hex(sentinelContent)
+	beforeTreeDigest, err := outsideTreeSHA256(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ops := []struct {
 		id   string
@@ -95,7 +111,7 @@ func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
 					} else {
 						errs++
 					}
-					if mutated, checkErr := outsideSentinelMutated(sentinelPath, beforeDigest); checkErr != nil {
+					if mutated, checkErr := outsideTreeMutated(outside, beforeTreeDigest); checkErr != nil {
 						t.Fatal(checkErr)
 					} else if mutated {
 						escape = true
@@ -128,7 +144,7 @@ func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
 					if escape {
 						break
 					}
-					if mutated, checkErr := outsideSentinelMutated(sentinelPath, beforeDigest); checkErr != nil {
+					if mutated, checkErr := outsideTreeMutated(outside, beforeTreeDigest); checkErr != nil {
 						t.Fatal(checkErr)
 					} else if mutated {
 						escape = true
@@ -154,7 +170,7 @@ func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
 					} else {
 						errs++
 					}
-					if mutated, checkErr := outsideSentinelMutated(sentinelPath, beforeDigest); checkErr != nil {
+					if mutated, checkErr := outsideTreeMutated(outside, beforeTreeDigest); checkErr != nil {
 						t.Fatal(checkErr)
 					} else if mutated {
 						escape = true
@@ -167,28 +183,22 @@ func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
 		{
 			id: "securefile-remove-file",
 			prep: func(parent string) error {
-				return nil
+				return os.WriteFile(filepath.Join(parent, "remove-target.txt"), []byte("inside-remove\n"), 0o600)
 			},
 			run: func(parent string) (int, int, bool) {
 				successes, errs := 0, 0
 				escape := false
 				for i := 0; i < hostileParentSwapAttempts; i++ {
-					name := filepath.Join(parent, fmt.Sprintf("remove-%d.txt", i))
-					_ = securefile.WriteAtomic(name, []byte("remove-me\n"), 0o600)
+					name := filepath.Join(parent, "remove-target.txt")
 					err := securefile.RemoveFile(name)
 					if err == nil {
 						successes++
 					} else {
 						errs++
 					}
-					if mutated, checkErr := outsideSentinelMutated(sentinelPath, beforeDigest); checkErr != nil {
+					if mutated, checkErr := outsideTreeMutated(outside, beforeTreeDigest); checkErr != nil {
 						t.Fatal(checkErr)
 					} else if mutated {
-						escape = true
-						break
-					}
-					// Outside sentinel must still exist and match.
-					if _, err := os.Stat(sentinelPath); err != nil {
 						escape = true
 						break
 					}
@@ -300,6 +310,14 @@ func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
 		anyEscape = true
 		t.Fatalf("outside sentinel mutated: before=%s after=%s", beforeDigest, afterDigest)
 	}
+	afterTreeDigest, err := outsideTreeSHA256(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterTreeDigest != beforeTreeDigest {
+		anyEscape = true
+		t.Fatalf("outside tree mutated: before=%s after=%s", beforeTreeDigest, afterTreeDigest)
+	}
 
 	overall := "PASS"
 	for _, op := range evidenceOps {
@@ -329,6 +347,8 @@ func TestDarwinSameUIDParentSwapConfinement(t *testing.T) {
 		AttackerConfirmed:     attackerConfirmed,
 		OutsideSentinelBefore: beforeDigest,
 		OutsideSentinelAfter:  afterDigest,
+		OutsideTreeBefore:     beforeTreeDigest,
+		OutsideTreeAfter:      afterTreeDigest,
 		OutsideEscapeObserved: anyEscape,
 		Operations:            evidenceOps,
 		Verdict:               overall,
@@ -453,12 +473,45 @@ func readSwapCount(t *testing.T, path string) int {
 	return n
 }
 
-func outsideSentinelMutated(path, beforeDigest string) (bool, error) {
-	data, err := os.ReadFile(path)
+func outsideTreeMutated(path, beforeDigest string) (bool, error) {
+	afterDigest, err := outsideTreeSHA256(path)
 	if err != nil {
 		return true, err
 	}
-	return sha256Hex(data) != beforeDigest, nil
+	return afterDigest != beforeDigest, nil
+}
+
+func outsideTreeSHA256(path string) (string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return "", err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	hash := sha256.New()
+	for _, entry := range entries {
+		entryPath := filepath.Join(path, entry.Name())
+		info, err := os.Lstat(entryPath)
+		if err != nil {
+			return "", err
+		}
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", entry.Name(), info.Mode().String())
+		switch {
+		case info.Mode().IsRegular():
+			data, err := os.ReadFile(entryPath)
+			if err != nil {
+				return "", err
+			}
+			_, _ = hash.Write(data)
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(entryPath)
+			if err != nil {
+				return "", err
+			}
+			_, _ = fmt.Fprint(hash, target)
+		}
+		_, _ = hash.Write([]byte{0})
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func sha256Hex(data []byte) string {

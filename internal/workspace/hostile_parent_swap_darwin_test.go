@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -45,6 +46,12 @@ func TestDarwinSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := sha256Hex(sentinel)
+	if err := os.WriteFile(filepath.Join(outside, "seed.txt"), []byte("workspace-outside-marker\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "write-target.txt"), []byte("outside-write\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	// Nested directory under the workspace that the attacker renames.
 	nested := filepath.Join(workspaceRoot, "nested")
@@ -53,6 +60,18 @@ func TestDarwinSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := workspace.WriteAtomic(workspaceRoot, "nested/seed.txt", []byte("seed\n")); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < hostileWorkspaceSwapAttempts; i++ {
+		if err := os.WriteFile(filepath.Join(nested, fmt.Sprintf("remove-%d.txt", i)), []byte("inside-remove\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(outside, fmt.Sprintf("remove-%d.txt", i)), []byte("outside-remove\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	beforeTree, err := outsideTreeSHA256(outside)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,13 +108,12 @@ func TestDarwinSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	removeOK, removeErr, removeEscape := 0, 0, false
 
 	for i := 0; i < hostileWorkspaceSwapAttempts; i++ {
-		path := fmt.Sprintf("nested/item-%d.txt", i)
-		if err := workspace.WriteAtomic(workspaceRoot, path, []byte("inside\n")); err == nil {
+		if err := workspace.WriteAtomic(workspaceRoot, "nested/write-target.txt", []byte("inside-write\n")); err == nil {
 			writeOK++
 		} else {
 			writeErr++
 		}
-		if mutated, err := sentinelMutated(sentinelPath, before); err != nil {
+		if mutated, err := outsideTreeMutated(outside, beforeTree); err != nil {
 			t.Fatal(err)
 		} else if mutated {
 			writeEscape = true
@@ -120,13 +138,13 @@ func TestDarwinSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 			readErr++
 		}
 
-		_ = workspace.WriteAtomic(workspaceRoot, path, []byte("inside\n"))
+		path := fmt.Sprintf("nested/remove-%d.txt", i)
 		if err := workspace.Remove(workspaceRoot, path); err == nil {
 			removeOK++
 		} else {
 			removeErr++
 		}
-		if mutated, err := sentinelMutated(sentinelPath, before); err != nil {
+		if mutated, err := outsideTreeMutated(outside, beforeTree); err != nil {
 			t.Fatal(err)
 		} else if mutated {
 			removeEscape = true
@@ -153,6 +171,13 @@ func TestDarwinSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	}
 	if sha256Hex(after) != before {
 		t.Fatalf("outside sentinel mutated")
+	}
+	afterTree, err := outsideTreeSHA256(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterTree != beforeTree {
+		t.Fatalf("outside tree mutated: before=%s after=%s", beforeTree, afterTree)
 	}
 
 	// Restore nested parent if needed.
@@ -263,12 +288,45 @@ func readWorkspaceSwapCount(t *testing.T, path string) int {
 	return n
 }
 
-func sentinelMutated(path, before string) (bool, error) {
-	data, err := os.ReadFile(path)
+func outsideTreeMutated(path, before string) (bool, error) {
+	after, err := outsideTreeSHA256(path)
 	if err != nil {
 		return true, err
 	}
-	return sha256Hex(data) != before, nil
+	return after != before, nil
+}
+
+func outsideTreeSHA256(path string) (string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return "", err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	hash := sha256.New()
+	for _, entry := range entries {
+		entryPath := filepath.Join(path, entry.Name())
+		info, err := os.Lstat(entryPath)
+		if err != nil {
+			return "", err
+		}
+		_, _ = fmt.Fprintf(hash, "%s\x00%s\x00", entry.Name(), info.Mode().String())
+		switch {
+		case info.Mode().IsRegular():
+			data, err := os.ReadFile(entryPath)
+			if err != nil {
+				return "", err
+			}
+			_, _ = hash.Write(data)
+		case info.Mode()&os.ModeSymlink != 0:
+			target, err := os.Readlink(entryPath)
+			if err != nil {
+				return "", err
+			}
+			_, _ = fmt.Fprint(hash, target)
+		}
+		_, _ = hash.Write([]byte{0})
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func sha256Hex(data []byte) string {
