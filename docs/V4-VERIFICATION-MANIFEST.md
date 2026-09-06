@@ -19,6 +19,12 @@ records a bounded, exact-head targeted check before the broader workspace
 suite. Omitting `--target` intentionally records the targeted stage as
 `SKIPPED`; it must not be interpreted as targeted coverage.
 
+For Go targets, the verifier adds `-cover` to the targeted test command and
+records the reported percentage in that check's coverage evidence. Missing,
+malformed, truncated, or multi-package coverage summaries remain
+`INCONCLUSIVE`/`UNVERIFIED`; the broader workspace suite does not collect
+coverage merely because it passes.
+
 The JSON artifact uses schema `picogent.verify.v1` and records:
 
 - exact `HEAD` and whether it matches the expected full commit ID;

@@ -177,7 +177,7 @@ func ManifestFromPipeline(result PipelineResult, provenance HeadEvidence) Manife
 				Passed:          nonNegativeInt(evidence.Passed),
 				Failed:          nonNegativeInt(evidence.Failed),
 				DurationNS:      nonNegativeDuration(evidence.Duration),
-				Coverage:        unverifiedCoverage(),
+				Coverage:        coverageFromResult(evidence),
 				OutputTruncated: evidence.OutputTruncated,
 				Reason:          boundedManifestString(evidence.Reason),
 			})
@@ -265,6 +265,9 @@ func classifyManifest(result PipelineResult, manifest Manifest) (ManifestStatus,
 			if check.OutputTruncated {
 				return ManifestUnverified, "verification output was truncated"
 			}
+			if check.Coverage.Status == ManifestInconclusive {
+				return ManifestInconclusive, firstReason(check.Coverage.Reason, "coverage is inconclusive")
+			}
 			if check.Coverage.Status != ManifestPass {
 				return ManifestUnverified, firstReason(check.Coverage.Reason, "required coverage is unverified")
 			}
@@ -312,8 +315,7 @@ func boundChecks(checks []CheckEvidence, truncated bool) ([]CheckEvidence, bool)
 		checks[i].Passed = nonNegativeInt(checks[i].Passed)
 		checks[i].Failed = nonNegativeInt(checks[i].Failed)
 		checks[i].Status = normalizeManifestStatus(checks[i].Status)
-		checks[i].Coverage.Reason = boundedManifestString(checks[i].Coverage.Reason)
-		checks[i].Coverage.Status = normalizeManifestStatus(checks[i].Coverage.Status)
+		checks[i].Coverage = boundedCoverage(checks[i].Coverage)
 	}
 	if len(checks) > maxManifestChecks {
 		checks = checks[:maxManifestChecks]
@@ -333,6 +335,32 @@ func normalizeManifestStatus(status ManifestStatus) ManifestStatus {
 
 func unverifiedCoverage() CoverageEvidence {
 	return CoverageEvidence{Status: ManifestUnverified, Reason: "coverage not collected"}
+}
+
+func coverageFromResult(result Result) CoverageEvidence {
+	if result.Coverage == nil {
+		return unverifiedCoverage()
+	}
+	return CoverageEvidence{
+		Status:  manifestStatus(result.Coverage.Status),
+		Percent: result.Coverage.Percent,
+		Reason:  boundedManifestString(result.Coverage.Reason),
+	}
+}
+
+func boundedCoverage(coverage CoverageEvidence) CoverageEvidence {
+	coverage.Status = normalizeManifestStatus(coverage.Status)
+	coverage.Reason = boundedManifestString(coverage.Reason)
+	if coverage.Percent != nil && (*coverage.Percent < 0 || *coverage.Percent > 100) {
+		coverage.Percent = nil
+		coverage.Status = ManifestUnverified
+		coverage.Reason = "coverage percentage is out of range"
+	}
+	if coverage.Status == ManifestPass && coverage.Percent == nil {
+		coverage.Status = ManifestUnverified
+		coverage.Reason = "coverage passed without a percentage"
+	}
+	return coverage
 }
 
 func manifestStatus(status Status) ManifestStatus {

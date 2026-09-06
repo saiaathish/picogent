@@ -74,6 +74,51 @@ func TestRunCommandZeroEvidenceIsInconclusive(t *testing.T) {
 	}
 }
 
+func TestRunCommandCollectsGoCoverage(t *testing.T) {
+	dir := t.TempDir()
+	writeVerifyFile(t, dir, "go.mod", "module example.test/coverage\n\ngo 1.25\n")
+	writeVerifyFile(t, dir, "coverage.go", "package coverage\n\nfunc add(a, b int) int { return a + b }\n")
+	writeVerifyFile(t, dir, "coverage_test.go", "package coverage\n\nimport \"testing\"\n\nfunc TestAdd(t *testing.T) { if add(1, 2) != 3 { t.Fatal(\"wrong sum\") } }\n")
+	result := runCommand(t.Context(), dir, Command{
+		Runner:   "go",
+		Display:  "go test -cover ./...",
+		Args:     []string{"test", "./..."},
+		Scope:    ScopeTargeted,
+		Coverage: true,
+	}, 1, 10*time.Second)
+	if result.Status != StatusPass || result.Coverage == nil || result.Coverage.Status != StatusPass || result.Coverage.Percent == nil {
+		t.Fatalf("coverage result = %+v", result)
+	}
+	if *result.Coverage.Percent <= 0 || *result.Coverage.Percent > 100 {
+		t.Fatalf("coverage percentage = %v", *result.Coverage.Percent)
+	}
+}
+
+func TestParseGoCoverageFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		output string
+		status Status
+		reason string
+	}{
+		{name: "missing", output: "ok example.test/coverage", status: StatusInconclusive, reason: "did not report"},
+		{name: "malformed", output: "coverage: many% of statements", status: StatusInconclusive, reason: "did not report"},
+		{name: "out of range", output: "coverage: 101.0% of statements", status: StatusInconclusive, reason: "invalid"},
+		{name: "multiple", output: "coverage: 80.0% of statements\ncoverage: 90.0% of statements", status: StatusInconclusive, reason: "multiple"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseGoCoverage(tc.output)
+			if got.Status != tc.status || !strings.Contains(got.Reason, tc.reason) {
+				t.Fatalf("coverage = %+v", got)
+			}
+		})
+	}
+	pass := parseGoCoverage("coverage: 72.5% of statements")
+	if pass.Status != StatusPass || pass.Percent == nil || *pass.Percent != 72.5 {
+		t.Fatalf("passing coverage = %+v", pass)
+	}
+}
+
 func TestRunCommandSanitizesEnvironment(t *testing.T) {
 	t.Setenv("VERIFY_TEST_SECRET_TOKEN", "must-not-cross")
 	t.Setenv("VERIFY_HELPER", "1")
@@ -245,6 +290,41 @@ func TestManifestPassRequiresCoverageEvidence(t *testing.T) {
 	}
 	if len(manifest.Checks) != 1 || manifest.Checks[0].Coverage.Status != ManifestUnverified {
 		t.Fatalf("coverage evidence = %+v", manifest.Checks)
+	}
+}
+
+func TestManifestPropagatesCoverageEvidence(t *testing.T) {
+	percent := 87.5
+	manifest := ManifestFromPipeline(PipelineResult{
+		Status: StatusPass,
+		Stages: []StageResult{{Scope: ScopeTargeted, Status: StatusPass, Evidence: []Result{{
+			Scope: ScopeTargeted, Runner: "go", Command: "go test -cover ./internal/verify", Status: StatusPass, Passed: 1,
+			Coverage: &CoverageResult{Status: StatusPass, Percent: &percent},
+		}}}},
+	}, HeadEvidence{
+		SHA: strings.Repeat("a", 40), ExpectedSHA: strings.Repeat("a", 40), Match: ManifestPass, Tree: "CLEAN",
+	})
+	if manifest.Status != ManifestPass || len(manifest.Checks) != 1 {
+		t.Fatalf("manifest = %+v", manifest)
+	}
+	coverage := manifest.Checks[0].Coverage
+	if coverage.Status != ManifestPass || coverage.Percent == nil || *coverage.Percent != percent {
+		t.Fatalf("coverage = %+v", coverage)
+	}
+}
+
+func TestManifestKeepsInconclusiveCoverageInconclusive(t *testing.T) {
+	manifest := ManifestFromPipeline(PipelineResult{
+		Status: StatusPass,
+		Stages: []StageResult{{Scope: ScopeTargeted, Status: StatusPass, Evidence: []Result{{
+			Scope: ScopeTargeted, Runner: "go", Command: "go test -cover ./internal/verify", Status: StatusPass, Passed: 1,
+			Coverage: &CoverageResult{Status: StatusInconclusive, Reason: "coverage output was truncated"},
+		}}}},
+	}, HeadEvidence{
+		SHA: strings.Repeat("a", 40), ExpectedSHA: strings.Repeat("a", 40), Match: ManifestPass, Tree: "CLEAN",
+	})
+	if manifest.Status != ManifestInconclusive || !strings.Contains(manifest.Reason, "truncated") {
+		t.Fatalf("manifest = %+v", manifest)
 	}
 }
 
@@ -437,7 +517,7 @@ func TestDetectPlanKeepsDottedDirectoryTargets(t *testing.T) {
 	writeVerifyFile(t, dir, "go.mod", "module x\n")
 	writeVerifyFile(t, dir, filepath.Join("internal", "v1.2", "feature.go"), "package feature\n")
 	plan := DetectPlan(dir, []string{filepath.Join("internal", "v1.2")})
-	if len(plan.Targeted) != 1 || strings.Join(plan.Targeted[0].Args, " ") != "test ./internal/v1.2" {
+	if len(plan.Targeted) != 1 || strings.Join(plan.Targeted[0].Args, " ") != "test ./internal/v1.2" || !plan.Targeted[0].Coverage {
 		t.Fatalf("dotted directory target = %+v", plan.Targeted)
 	}
 }
@@ -460,7 +540,7 @@ func TestDetectPlanTargetsGoPackageThenBroader(t *testing.T) {
 	dir := t.TempDir()
 	writeVerifyFile(t, dir, "go.mod", "module x\n")
 	plan := DetectPlan(dir, []string{"internal/auth/auth.go", "internal/auth/auth_test.go"})
-	if len(plan.Targeted) != 1 || plan.Targeted[0].Display != "go test ./internal/auth" {
+	if len(plan.Targeted) != 1 || plan.Targeted[0].Display != "go test -cover ./internal/auth" || !plan.Targeted[0].Coverage {
 		t.Fatalf("targeted: %+v", plan.Targeted)
 	}
 	if len(plan.Broader) != 1 || plan.Broader[0].Display != "go test ./..." {
@@ -482,7 +562,7 @@ func TestRunPipelinePassEvidenceOrder(t *testing.T) {
 	if result.Status != StatusPass {
 		t.Fatalf("%+v", result)
 	}
-	if strings.Join(commands, "|") != "go test ./internal/auth|go test ./..." {
+	if strings.Join(commands, "|") != "go test -cover ./internal/auth|go test ./..." {
 		t.Fatalf("commands: %v", commands)
 	}
 	if len(result.Stages) != 2 || result.Stages[0].Status != StatusPass || result.Stages[1].Status != StatusPass {

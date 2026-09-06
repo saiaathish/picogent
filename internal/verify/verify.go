@@ -47,18 +47,27 @@ const (
 
 // Result is a structured test run. Existing fields remain source-compatible.
 type Result struct {
-	OK              bool          `json:"ok"`
-	Status          Status        `json:"status"`
-	Scope           Scope         `json:"scope,omitempty"`
-	Runner          string        `json:"runner"`
-	Command         string        `json:"command"`
-	Passed          int           `json:"passed"`
-	Failed          int           `json:"failed"`
-	Output          string        `json:"output"`
-	OutputTruncated bool          `json:"output_truncated,omitempty"`
-	Reason          string        `json:"reason,omitempty"`
-	Duration        time.Duration `json:"duration"`
-	Attempt         int           `json:"attempt,omitempty"`
+	OK              bool            `json:"ok"`
+	Status          Status          `json:"status"`
+	Scope           Scope           `json:"scope,omitempty"`
+	Runner          string          `json:"runner"`
+	Command         string          `json:"command"`
+	Passed          int             `json:"passed"`
+	Failed          int             `json:"failed"`
+	Output          string          `json:"output"`
+	OutputTruncated bool            `json:"output_truncated,omitempty"`
+	Reason          string          `json:"reason,omitempty"`
+	Duration        time.Duration   `json:"duration"`
+	Attempt         int             `json:"attempt,omitempty"`
+	Coverage        *CoverageResult `json:"coverage,omitempty"`
+}
+
+// CoverageResult records coverage collected as part of one command. A nil
+// value means coverage was not requested or was not collected.
+type CoverageResult struct {
+	Status  Status   `json:"status"`
+	Percent *float64 `json:"percent,omitempty"`
+	Reason  string   `json:"reason,omitempty"`
 }
 
 // Detect picks the broad test command for the workspace.
@@ -111,7 +120,11 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 		defer cancel()
 	}
 
-	cmd := exec.CommandContext(ctx, command.Runner, command.Args...)
+	args := append([]string(nil), command.Args...)
+	if command.Coverage && command.Runner == "go" {
+		args = withGoCoverage(args)
+	}
+	cmd := exec.CommandContext(ctx, command.Runner, args...)
 	cmd.Dir = workspace
 	cmd.Env = procenv.Sanitized()
 	var buf boundedCapture
@@ -134,6 +147,13 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 		OutputTruncated: outputTruncated,
 		Duration:        duration,
 		Attempt:         attempt,
+	}
+	if command.Coverage {
+		if command.Runner == "go" {
+			res.Coverage = parseGoCoverage(out)
+		} else {
+			res.Coverage = &CoverageResult{Status: StatusInconclusive, Reason: "coverage unsupported for runner"}
+		}
 	}
 	if err == nil {
 		if failed > 0 {
@@ -218,6 +238,33 @@ func formatTruncatedOutput(output string) string {
 }
 
 var summaryCount = regexp.MustCompile(`(?i)(\d+)\s+(passed|failed)\b`)
+
+var goCoverageSummary = regexp.MustCompile(`(?m)\bcoverage:\s*([0-9]+(?:\.[0-9]+)?)%\s+of\s+statements\b`)
+
+func withGoCoverage(args []string) []string {
+	if len(args) == 0 || args[0] != "test" {
+		return args
+	}
+	withCoverage := make([]string, 0, len(args)+1)
+	withCoverage = append(withCoverage, "test", "-cover")
+	withCoverage = append(withCoverage, args[1:]...)
+	return withCoverage
+}
+
+func parseGoCoverage(output string) *CoverageResult {
+	matches := goCoverageSummary.FindAllStringSubmatch(output, -1)
+	if len(matches) == 0 {
+		return &CoverageResult{Status: StatusInconclusive, Reason: "go test did not report coverage"}
+	}
+	if len(matches) > 1 {
+		return &CoverageResult{Status: StatusInconclusive, Reason: "multiple coverage summaries require aggregation"}
+	}
+	percent, err := strconv.ParseFloat(matches[0][1], 64)
+	if err != nil || percent < 0 || percent > 100 {
+		return &CoverageResult{Status: StatusInconclusive, Reason: "coverage percentage is invalid"}
+	}
+	return &CoverageResult{Status: StatusPass, Percent: &percent}
+}
 
 func count(out string) (passed, failed int) {
 	for _, line := range strings.Split(out, "\n") {

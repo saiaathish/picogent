@@ -18,10 +18,11 @@ const (
 
 // Command is one executable verification step.
 type Command struct {
-	Runner  string   `json:"runner"`
-	Display string   `json:"display"`
-	Args    []string `json:"args,omitempty"`
-	Scope   Scope    `json:"scope"`
+	Runner   string   `json:"runner"`
+	Display  string   `json:"display"`
+	Args     []string `json:"args,omitempty"`
+	Scope    Scope    `json:"scope"`
+	Coverage bool     `json:"coverage,omitempty"`
 }
 
 // Plan describes detected targeted and broader verification without running it.
@@ -103,7 +104,7 @@ func DetectPlan(workspace string, targets []string) Plan {
 	case "go":
 		packages := goTargets(workspace, targets)
 		if len(packages) > 0 {
-			targeted = Command{Runner: "go", Args: append([]string{"test"}, packages...), Scope: ScopeTargeted}
+			targeted = Command{Runner: "go", Args: append([]string{"test"}, packages...), Scope: ScopeTargeted, Coverage: true}
 		}
 	case "npm", "pnpm", "yarn":
 		targeted = Command{Runner: runner, Args: append([]string{"test", "--silent", "--"}, targets...), Scope: ScopeTargeted}
@@ -114,6 +115,9 @@ func DetectPlan(workspace string, targets []string) Plan {
 	}
 	if targeted.Runner != "" {
 		targeted.Display = displayCommand(targeted.Runner, targeted.Args)
+		if targeted.Coverage {
+			targeted.Display = displayCommandWithCoverage(targeted.Runner, targeted.Args)
+		}
 		plan.Targeted = []Command{targeted}
 	}
 	return plan
@@ -411,4 +415,12 @@ func displayCommand(runner string, args []string) string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+func displayCommandWithCoverage(runner string, args []string) string {
+	if runner != "go" || len(args) == 0 || args[0] != "test" {
+		return displayCommand(runner, args)
+	}
+	withCoverage := append([]string{"test", "-cover"}, args[1:]...)
+	return displayCommand(runner, withCoverage)
 }
