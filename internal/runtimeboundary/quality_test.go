@@ -75,6 +75,17 @@ func TestLoadLiveProviderQualityEvidenceRejectsAdversarialArtifacts(t *testing.T
 		t.Fatal(err)
 	}
 
+	var promptMismatch map[string]any
+	if err := json.Unmarshal(validJSON, &promptMismatch); err != nil {
+		t.Fatal(err)
+	}
+	promptMismatchCases := promptMismatch["cases"].([]any)
+	promptMismatchCases[0].(map[string]any)["prompt_sha256"] = strings.Repeat("0", 64)
+	promptMismatchJSON, err := json.Marshal(promptMismatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	cases := []struct {
 		name string
 		data []byte
@@ -85,6 +96,7 @@ func TestLoadLiveProviderQualityEvidenceRejectsAdversarialArtifacts(t *testing.T
 		{name: "stale-sha", data: mustQualityJSON(t, validLiveProviderQualityEvidence(strings.Repeat("d", 40))), want: "candidate_sha"},
 		{name: "secret-shaped-unknown-field", data: secretJSON, want: "unknown field"},
 		{name: "missing-assertion", data: missingAssertionJSON, want: "explicitly assert"},
+		{name: "non-canonical-prompt-digest", data: promptMismatchJSON, want: "non-canonical prompt digest"},
 	}
 
 	for _, tc := range cases {
@@ -137,6 +149,13 @@ func TestLoadLiveProviderQualityEvidenceRejectsIncompletePass(t *testing.T) {
 }
 
 func validLiveProviderQualityEvidence(sha string) LiveProviderQualityEvidence {
+	promptDigest := func(id string) string {
+		digest, ok := fixedLiveProviderQualityPromptDigest(id)
+		if !ok {
+			panic("missing fixed live-provider quality prompt: " + id)
+		}
+		return digest
+	}
 	return LiveProviderQualityEvidence{
 		Schema:          LiveProviderQualityEvidenceSchema,
 		Campaign:        liveProviderQualityCampaign,
@@ -148,9 +167,9 @@ func validLiveProviderQualityEvidence(sha string) LiveProviderQualityEvidence {
 		ObservedAt:      "2026-09-06T12:00:00Z",
 		Verdict:         VerdictPass,
 		Cases: []LiveProviderQualityCaseEvidence{
-			{ID: "exact-token", PromptSHA256: strings.Repeat("1", 64), ResultSHA256: strings.Repeat("2", 64), LatencyMS: 100, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
-			{ID: "bounded-summary", PromptSHA256: strings.Repeat("3", 64), ResultSHA256: strings.Repeat("4", 64), LatencyMS: 300, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
-			{ID: "constraint-following", PromptSHA256: strings.Repeat("5", 64), ResultSHA256: strings.Repeat("6", 64), LatencyMS: 200, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
+			{ID: "exact-token", PromptSHA256: promptDigest("exact-token"), ResultSHA256: strings.Repeat("2", 64), LatencyMS: 100, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
+			{ID: "bounded-summary", PromptSHA256: promptDigest("bounded-summary"), ResultSHA256: strings.Repeat("4", 64), LatencyMS: 300, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
+			{ID: "constraint-following", PromptSHA256: promptDigest("constraint-following"), ResultSHA256: strings.Repeat("6", 64), LatencyMS: 200, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
 		},
 	}
 }

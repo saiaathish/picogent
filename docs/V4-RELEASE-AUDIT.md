@@ -4,7 +4,9 @@ Status: `INCONCLUSIVE` for release authorization. This is an independently
 rechecked evidence report, not a release approval or a supply-chain
 certification.
 
-Latest audit snapshot: 2026-09-06 UTC
+Historical audit snapshot: 2026-09-06 UTC
+The checkpoint named below is historical and is superseded by later `main`
+merges; it is not a current release-readiness snapshot.
 Latest checkpoint: post-[#459](https://github.com/saiaathish/picogent/pull/459)/[#463](https://github.com/saiaathish/picogent/pull/463)/[#465](https://github.com/saiaathish/picogent/pull/465)/[#466](https://github.com/saiaathish/picogent/pull/466) main `b00b88c15b310c05042ebb8debd876b221160389`
 Parent: [#316](https://github.com/saiaathish/picogent/issues/316)
 Broader parent: [#246](https://github.com/saiaathish/picogent/issues/246)
@@ -14,7 +16,11 @@ Historical snapshot: [#321](https://github.com/saiaathish/picogent/issues/321)
 “Independent” here means a fresh repository-side recheck of downloaded
 artifacts and the exact Git history. It does not mean a third-party audit.
 
-## Latest follow-up audit — exact current main after PR #459/#463/#465/#466
+Later runtime-boundary work is recorded in
+[V4-RUNTIME-BOUNDARY-MATRIX.md](V4-RUNTIME-BOUNDARY-MATRIX.md) and its linked
+evidence records. At the current checkpoint, #450 and #453 remain open.
+
+## Historical follow-up audit — exact current main after PR #459/#463/#465/#466
 
 Status: `INCONCLUSIVE` for release authorization. This refresh rechecks exact
 `main` after the runtime-boundary matrix (#459), rendered recovery API-boundary
@@ -24,6 +30,9 @@ does not authorize a release. Parent [#450](https://github.com/saiaathish/picoge
 is closed as completed; [#453](https://github.com/saiaathish/picogent/issues/453)
 remains open for live-provider, cross-platform rendered, and hostile TOCTOU
 observation.
+
+Current ledger note: [#450](https://github.com/saiaathishkarthik/picogent/issues/450)
+is open now; the closed state above belongs only to this historical audit.
 
 ### Candidate and hosted runs
 
@@ -86,10 +95,10 @@ Retained matrix unverified IDs: `hostile-filesystem-toctou`,
 `live-provider-quality`, `rendered-cross-platform`. Release authorization row
 is `INCONCLUSIVE`. This does **not** authorize a release.
 
-## Latest follow-up audit — exact current main after PR #445 and #447
+## Historical follow-up audit — exact main after PR #445 and #447
 
-This refresh rechecks the exact current `main` after security child-env
-sanitization (#445) and the post-#442 outcome-quality matrix refresh (#447).
+This historical refresh rechecked the then-current `main` after security
+child-env sanitization (#445) and the post-#442 outcome-quality matrix refresh (#447).
 It preserves the prior #440/#446, #420, and #419 observations below as
 historical evidence; no earlier artifact observation is rewritten
 retroactively. The result is an evidence report, not release authorization.
@@ -97,7 +106,7 @@ retroactively. The result is an evidence report, not release authorization.
 ### Candidate and hosted run
 
 - PR #447 source head: `c0543fcec92d8192bad22b76f59e690fbd29754c`.
-- Merge commit and current `main`: `a4a4de276091e8110576adb6bbf1f526ec007f5d`.
+- Historical merge checkpoint (then-current `main`): `a4a4de276091e8110576adb6bbf1f526ec007f5d`.
 - Immediate predecessors on `main`: #445 (`7e6ccea`), #446 (`dc628bd`),
   #444 (`821ae84`), #443 (`a493c2e`), #442 (`a6d3af3`), #441 (`923ce9a`).
 - PR #447 validation run: [34002680270](https://github.com/saiaathish/picogent/actions/runs/34002680270), all five required gates passed.
@@ -117,7 +126,7 @@ retroactively. The result is an evidence report, not release authorization.
 | `verification-manifest-a4a4de276091e8110576adb6bbf1f526ec007f5d` | `9980326421` | 991 bytes | present, unexpired |
 | `release-attestation-a4a4de276091e8110576adb6bbf1f526ec007f5d` | `9980326595` | 16,532 bytes | present, unexpired |
 
-### Current-head verdict
+### Historical-head verdict
 
 | Claim | Result | Boundary |
 | --- | --- | --- |
@@ -175,7 +184,7 @@ claim that every hostile runtime path is closed.
 | Child-environment leakage (non-interactive) | `BOUNDED` | #445 lands `procenv.Sanitized()` for rg/bash/OpenCode/GUI helper children with hostile coverage from #444; arbitrary same-UID TOCTOU and untrusted MCP prompt injection remain outside this boundary. |
 | Live-provider / rendered / SBOM claims | `UNVERIFIED` | Not exercised by this audit run. |
 
-### Current-head boundary
+### Historical-head boundary
 
 | Boundary | Result | Finding |
 | --- | --- | --- |
@@ -187,7 +196,8 @@ claim that every hostile runtime path is closed.
 | Hosted action immutability | `PASS` | All workflow action references inspected in `.github/workflows/ci.yml` resolve to full commit hashes. |
 | Live provider, rendered behavior, and hostile runtime | `UNVERIFIED` | These boundaries were not exercised by this evidence run. |
 
-This is the latest exact-head release-evidence checkpoint, not a release
+This was the latest exact-head release-evidence checkpoint at that historical
+time, not a release
 approval. Signed supply-chain scope is bounded to the observed hosted
 subjects; production packaging, SBOM, live-provider quality, rendered
 behavior, broader hostile runtime, targeted coverage, outcome-quality win
@@ -195,7 +205,7 @@ claims, and overall v4 readiness remain unverified or inconclusive. Parent
 #316 and broader parent #246 remain open until their scoped closeout records
 this exact-head terminus.
 
-### Current-head reproduction commands
+### Historical-head reproduction commands
 
 ```sh
 gh run download 34003534333 --repo saiaathish/picogent --dir <audit-dir>

@@ -190,8 +190,8 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 	live := Claim{
 		ID:         "live-provider-quality",
 		Category:   CategoryLiveProvider,
-		Title:      "Live provider quality on a real authenticated provider",
-		Setup:      "Task-owned live provider session running the fixed no-tool campaign with digest-only evidence.",
+		Title:      "Bounded live-provider quality observation (self-reported artifact)",
+		Setup:      "Task-owned live provider session running the fixed no-tool campaign with canonical prompt digests and digest-only evidence; provider identity and raw result semantics are not independently attested.",
 		Artifact:   "live-provider quality evidence JSON referenced by " + LiveQualityArtifactEnv,
 		Verdict:    VerdictUnverified,
 		Reason:     "no live-provider quality evidence artifact was supplied",
@@ -252,7 +252,7 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 				live.ObservedAt = evidence.ObservedAt
 				switch evidence.Verdict {
 				case VerdictPass:
-					live.Reason = "fixed no-tool quality campaign passed with complete bounded case evidence"
+					live.Reason = "self-reported fixed no-tool quality artifact passed canonical prompt-digest and bounded case checks; provider identity and raw result semantics are not independently attested"
 				case VerdictFail:
 					live.Reason = "fixed no-tool quality campaign recorded a failed case or safety assertion"
 				case VerdictInconclusive:
