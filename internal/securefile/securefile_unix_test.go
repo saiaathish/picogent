@@ -94,6 +94,39 @@ func TestRemoveMatchingLeavesReplacedTemporaryEntry(t *testing.T) {
 	}
 }
 
+func TestWriteExclusiveRejectsReplacedTarget(t *testing.T) {
+	parent := t.TempDir()
+	path := filepath.Join(parent, "artifact.json")
+	trustedPath := path + ".trusted"
+
+	err := writeExclusive(path, []byte("trusted\n"), 0o600, func(file *os.File, data []byte) error {
+		if err := writeAll(file, data); err != nil {
+			return err
+		}
+		if err := os.Rename(path, trustedPath); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("attacker\n"), 0o600)
+	})
+	if err == nil || !strings.Contains(err.Error(), "changed before publication") {
+		t.Fatalf("replaced exclusive target was accepted: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "attacker\n" {
+		t.Fatalf("replacement was removed or changed to %q", got)
+	}
+	trusted, err := os.ReadFile(trustedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(trusted) != "trusted\n" {
+		t.Fatalf("trusted opened entry changed to %q", trusted)
+	}
+}
+
 func TestWriteAtomicParentSwapNeverEscapesDescriptor(t *testing.T) {
 	root := t.TempDir()
 	outside := t.TempDir()

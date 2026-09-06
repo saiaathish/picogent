@@ -181,6 +181,29 @@ func (p *windowsParent) stat(name string) (secureEntry, error) {
 	return windowsEntry(h)
 }
 
+func (p *windowsParent) same(name string, source *os.File) (bool, error) {
+	if source == nil {
+		return false, errors.New("exclusive identity source is nil")
+	}
+	expected, err := windowsFileInfo(windows.Handle(source.Fd()))
+	if err != nil {
+		return false, fmt.Errorf("stat exclusive identity source: %w", err)
+	}
+	target, err := openWindowsFile(p.handle, name, windows.FILE_GENERIC_READ, windows.FILE_OPEN)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, translateWindowsError("stat exclusive identity", name, err)
+	}
+	defer windows.CloseHandle(target)
+	actual, err := windowsFileInfo(target)
+	if err != nil {
+		return false, fmt.Errorf("stat exclusive identity name: %w", err)
+	}
+	return sameWindowsFile(&expected, &actual), nil
+}
+
 func wrapWindowsFile(h windows.Handle, name string) (*os.File, error) {
 	if h == 0 || h == windows.InvalidHandle {
 		return nil, errors.New("invalid secure file handle")

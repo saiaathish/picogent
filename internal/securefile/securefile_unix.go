@@ -137,6 +137,24 @@ func (p *unixParent) stat(name string) (secureEntry, error) {
 	}
 }
 
+func (p *unixParent) same(name string, source *os.File) (bool, error) {
+	if source == nil {
+		return false, errors.New("exclusive identity source is nil")
+	}
+	var expected unix.Stat_t
+	if err := unix.Fstat(int(source.Fd()), &expected); err != nil {
+		return false, fmt.Errorf("stat exclusive identity source: %w", err)
+	}
+	var named unix.Stat_t
+	if err := unix.Fstatat(p.fd, name, &named, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		if errors.Is(err, unix.ENOENT) {
+			return false, nil
+		}
+		return false, fmt.Errorf("stat exclusive identity name: %w", err)
+	}
+	return sameUnixFile(&expected, &named), nil
+}
+
 func unixFile(fd int, name string) (*os.File, error) {
 	if fd < 0 {
 		return nil, errors.New("invalid secure file descriptor")

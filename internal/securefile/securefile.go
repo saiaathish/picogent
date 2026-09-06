@@ -155,6 +155,13 @@ func writeExclusive(path string, data []byte, mode os.FileMode, write func(*os.F
 	if err := file.Sync(); err != nil {
 		return fmt.Errorf("sync exclusive file: %w", err)
 	}
+	matched, err := root.same(name, file)
+	if err != nil {
+		return fmt.Errorf("verify exclusive file: %w", err)
+	}
+	if !matched {
+		return fmt.Errorf("exclusive file %q changed before publication", path)
+	}
 	removeEntry = false
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close exclusive file: %w", err)
@@ -389,6 +396,7 @@ type secureEntry struct {
 type secureParent interface {
 	Close() error
 	stat(name string) (secureEntry, error)
+	same(name string, source *os.File) (bool, error)
 	openRead(name string) (*os.File, error)
 	openLock(name string) (*os.File, error)
 	openExclusive(name string, mode os.FileMode) (*os.File, error)
