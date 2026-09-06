@@ -5,6 +5,7 @@ package workspace_test
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,7 +25,35 @@ import (
 const (
 	hostileWorkspaceSwapHelperEnv = "PICOGENT_HOSTILE_WORKSPACE_SWAP_HELPER"
 	hostileWorkspaceSwapAttempts  = 200
+	hostileWorkspaceEvidenceEnv   = "PICOGENT_HOSTILE_PARENT_SWAP_EVIDENCE_OUT"
+	hostileWorkspaceSourceEnv     = "PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA"
 )
+
+type hostileWorkspaceSwapEvidence struct {
+	Schema                string `json:"schema"`
+	CandidateSHA          string `json:"candidate_sha"`
+	OS                    string `json:"os"`
+	Architecture          string `json:"architecture"`
+	Environment           string `json:"environment"`
+	Package               string `json:"package"`
+	AttackerConfirmed     bool   `json:"attacker_confirmed"`
+	Attempts              int    `json:"attempts"`
+	AttackerSwaps         int    `json:"attacker_swaps"`
+	WriteSuccesses        int    `json:"write_successes"`
+	WriteErrors           int    `json:"write_errors"`
+	ReadSuccesses         int    `json:"read_successes"`
+	ReadErrors            int    `json:"read_errors"`
+	RemoveSuccesses       int    `json:"remove_successes"`
+	RemoveErrors          int    `json:"remove_errors"`
+	OutsideSentinelBefore string `json:"outside_sentinel_before_sha256"`
+	OutsideSentinelAfter  string `json:"outside_sentinel_after_sha256"`
+	OutsideTreeBefore     string `json:"outside_tree_before_sha256"`
+	OutsideTreeAfter      string `json:"outside_tree_after_sha256"`
+	OutsideEscapeObserved bool   `json:"outside_escape_observed"`
+	Verdict               string `json:"verdict"`
+	ObservedAt            string `json:"observed_at"`
+	BroadTOCTOUClaim      string `json:"broad_toctou_claim"`
+}
 
 func TestDarwinSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	if runtime.GOOS != "darwin" {
@@ -162,22 +191,21 @@ func TestDarwinSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	if swaps < 1 {
 		t.Fatalf("no confirmed attacker swaps (%d)", swaps)
 	}
-	if writeEscape || readEscape || removeEscape {
-		t.Fatalf("escape observed write=%v read=%v remove=%v", writeEscape, readEscape, removeEscape)
-	}
 	after, err := os.ReadFile(sentinelPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sha256Hex(after) != before {
-		t.Fatalf("outside sentinel mutated")
+	afterSentinelDigest := sha256Hex(after)
+	anyEscape := writeEscape || readEscape || removeEscape
+	if afterSentinelDigest != before {
+		anyEscape = true
 	}
 	afterTree, err := outsideTreeSHA256(outside)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if afterTree != beforeTree {
-		t.Fatalf("outside tree mutated: before=%s after=%s", beforeTree, afterTree)
+		anyEscape = true
 	}
 
 	// Restore nested parent if needed.
@@ -188,8 +216,59 @@ func TestDarwinSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 		_ = os.Rename(backup, nested)
 	}
 
-	t.Logf("workspace parent-swap swaps=%d write=%d/%d read=%d/%d remove=%d/%d",
-		swaps, writeOK, writeErr, readOK, readErr, removeOK, removeErr)
+	verdict := "PASS"
+	if anyEscape {
+		verdict = "FAIL"
+	}
+	sourceSHA := strings.TrimSpace(os.Getenv(hostileWorkspaceSourceEnv))
+	if sourceSHA == "" {
+		sourceSHA = "UNRECORDED"
+	}
+	evidence := hostileWorkspaceSwapEvidence{
+		Schema:                "picogent.v4.hostile-parent-swap-workspace-evidence.v1",
+		CandidateSHA:          sourceSHA,
+		OS:                    runtime.GOOS,
+		Architecture:          runtime.GOARCH,
+		Environment:           "task-owned-disposable",
+		Package:               "workspace",
+		AttackerConfirmed:     swaps > 0,
+		Attempts:              hostileWorkspaceSwapAttempts,
+		AttackerSwaps:         swaps,
+		WriteSuccesses:        writeOK,
+		WriteErrors:           writeErr,
+		ReadSuccesses:         readOK,
+		ReadErrors:            readErr,
+		RemoveSuccesses:       removeOK,
+		RemoveErrors:          removeErr,
+		OutsideSentinelBefore: before,
+		OutsideSentinelAfter:  afterSentinelDigest,
+		OutsideTreeBefore:     beforeTree,
+		OutsideTreeAfter:      afterTree,
+		OutsideEscapeObserved: anyEscape,
+		Verdict:               verdict,
+		ObservedAt:            time.Now().UTC().Format(time.RFC3339),
+		BroadTOCTOUClaim:      "UNVERIFIED",
+	}
+	payload, err := json.MarshalIndent(evidence, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload = append(payload, '\n')
+	evidencePath := filepath.Join(root, "hostile-parent-swap-workspace-evidence.json")
+	if err := os.WriteFile(evidencePath, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if dest := strings.TrimSpace(os.Getenv(hostileWorkspaceEvidenceEnv)); dest != "" {
+		if err := os.WriteFile(dest, payload, 0o600); err != nil {
+			t.Fatalf("retain evidence: %v", err)
+		}
+	}
+	t.Logf("workspace parent-swap evidence verdict=%s path=%s swaps=%d write=%d/%d read=%d/%d remove=%d/%d",
+		verdict, evidencePath, swaps, writeOK, writeErr, readOK, readErr, removeOK, removeErr)
+	if anyEscape {
+		t.Fatalf("escape observed write=%v read=%v remove=%v sentinel=%v tree=%v",
+			writeEscape, readEscape, removeEscape, afterSentinelDigest != before, afterTree != beforeTree)
+	}
 }
 
 func TestDarwinSameUIDWorkspaceParentSwapAttackerHelper(t *testing.T) {
