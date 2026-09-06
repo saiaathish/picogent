@@ -9,38 +9,62 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 // ValidateArtifactPath requires an absolute artifact path outside the clean
-// workspace. This is a lexical layout guard, not a hostile-filesystem claim.
+// workspace after resolving both trees. Symlinked parents are rejected by
+// RetainReport before creation; this helper remains the lexical/resolved
+// containment gate.
 func ValidateArtifactPath(workspace, artifactPath string) error {
+	workspaceAbs, artifactAbs, err := resolveArtifactPaths(workspace, artifactPath)
+	if err != nil {
+		return err
+	}
+	return ensureOutsideWorkspace(workspaceAbs, artifactAbs)
+}
+
+func resolveArtifactPaths(workspace, artifactPath string) (string, string, error) {
 	if workspace != strings.TrimSpace(workspace) {
-		return errors.New("runtime matrix workspace must not have surrounding whitespace")
+		return "", "", errors.New("runtime matrix workspace must not have surrounding whitespace")
 	}
 	if artifactPath != strings.TrimSpace(artifactPath) {
-		return errors.New("runtime matrix artifact path must not have surrounding whitespace")
+		return "", "", errors.New("runtime matrix artifact path must not have surrounding whitespace")
 	}
 	if workspace == "" {
-		return errors.New("runtime matrix workspace is required")
+		return "", "", errors.New("runtime matrix workspace is required")
 	}
 	if artifactPath == "" {
-		return errors.New("runtime matrix artifact path is required")
+		return "", "", errors.New("runtime matrix artifact path is required")
 	}
 	if !filepath.IsAbs(workspace) {
-		return errors.New("runtime matrix workspace must be absolute")
+		return "", "", errors.New("runtime matrix workspace must be absolute")
 	}
 	if !filepath.IsAbs(artifactPath) {
-		return errors.New("runtime matrix artifact path must be absolute")
+		return "", "", errors.New("runtime matrix artifact path must be absolute")
 	}
 
 	workspaceAbs, err := filepath.Abs(filepath.Clean(workspace))
 	if err != nil {
-		return fmt.Errorf("resolve runtime matrix workspace: %w", err)
+		return "", "", fmt.Errorf("resolve runtime matrix workspace: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(workspaceAbs); err == nil {
+		workspaceAbs = filepath.Clean(resolved)
 	}
 	artifactAbs, err := filepath.Abs(filepath.Clean(artifactPath))
 	if err != nil {
-		return fmt.Errorf("resolve runtime matrix artifact path: %w", err)
+		return "", "", fmt.Errorf("resolve runtime matrix artifact path: %w", err)
 	}
+	parent := filepath.Dir(artifactAbs)
+	base := filepath.Base(artifactAbs)
+	if resolvedParent, err := filepath.EvalSymlinks(parent); err == nil {
+		artifactAbs = filepath.Join(filepath.Clean(resolvedParent), base)
+	}
+	return workspaceAbs, artifactAbs, nil
+}
+
+func ensureOutsideWorkspace(workspaceAbs, artifactAbs string) error {
 	relative, err := filepath.Rel(workspaceAbs, artifactAbs)
 	if err != nil {
 		return fmt.Errorf("compare runtime matrix paths: %w", err)
@@ -51,10 +75,18 @@ func ValidateArtifactPath(workspace, artifactPath string) error {
 	return nil
 }
 
-// RetainReport writes a matrix report exclusively to an external artifact path.
-// Existing files fail closed so retained provenance cannot be silently replaced.
+// RetainReport writes a matrix report exclusively beneath a real parent
+// directory outside the workspace. Parents are created with securefile so
+// application-created symlink components are rejected; the exclusive create
+// is anchored through os.OpenRoot so a later parent pathname swap cannot
+// redirect the write after the directory handle is open. Existing files fail
+// closed. This is not a proof against every same-UID TOCTOU race on every OS.
 func RetainReport(workspace, artifactPath string, report Report) error {
-	if err := ValidateArtifactPath(workspace, artifactPath); err != nil {
+	workspaceAbs, artifactAbs, err := resolveArtifactPaths(workspace, artifactPath)
+	if err != nil {
+		return err
+	}
+	if err := ensureOutsideWorkspace(workspaceAbs, artifactAbs); err != nil {
 		return err
 	}
 	if err := validateRetainedReport(report, report.CandidateSHA); err != nil {
@@ -64,24 +96,97 @@ func RetainReport(workspace, artifactPath string, report Report) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o700); err != nil {
-		return fmt.Errorf("create runtime matrix artifact directory: %w", err)
+
+	// Use the caller-supplied absolute parent before symlink evaluation so a
+	// hostile symlink component is rejected by securefile instead of followed.
+	lexicalArtifact, err := filepath.Abs(filepath.Clean(artifactPath))
+	if err != nil {
+		return fmt.Errorf("resolve runtime matrix artifact path: %w", err)
 	}
-	file, err := os.OpenFile(artifactPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	parent := filepath.Dir(lexicalArtifact)
+	base := filepath.Base(lexicalArtifact)
+	if base == "." || base == string(filepath.Separator) || base == "" {
+		return errors.New("runtime matrix artifact basename is required")
+	}
+	if err := securefile.EnsureDir(parent, 0o700); err != nil {
+		return fmt.Errorf("prepare runtime matrix artifact directory: %w", err)
+	}
+	parentResolved, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		return fmt.Errorf("resolve runtime matrix artifact parent: %w", err)
+	}
+	parentResolved = filepath.Clean(parentResolved)
+	finalAbs := filepath.Join(parentResolved, base)
+	if err := ensureOutsideWorkspace(workspaceAbs, finalAbs); err != nil {
+		return err
+	}
+	if err := rejectSymlinkAncestors(parentResolved); err != nil {
+		return err
+	}
+
+	root, err := os.OpenRoot(parentResolved)
+	if err != nil {
+		return fmt.Errorf("open runtime matrix artifact parent: %w", err)
+	}
+	defer root.Close()
+
+	file, err := root.OpenFile(base, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("runtime matrix artifact %q already exists; refuse overwrite", artifactPath)
+			return fmt.Errorf("runtime matrix artifact %q already exists; refuse overwrite", finalAbs)
 		}
 		return fmt.Errorf("create runtime matrix artifact: %w", err)
 	}
 	if _, err := file.Write(data); err != nil {
 		_ = file.Close()
-		_ = os.Remove(artifactPath)
+		_ = root.Remove(base)
 		return fmt.Errorf("write runtime matrix artifact: %w", err)
 	}
 	if err := file.Close(); err != nil {
-		_ = os.Remove(artifactPath)
+		_ = root.Remove(base)
 		return fmt.Errorf("close runtime matrix artifact: %w", err)
+	}
+
+	info, err := root.Lstat(base)
+	if err != nil {
+		_ = root.Remove(base)
+		return fmt.Errorf("inspect retained runtime matrix artifact: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		_ = root.Remove(base)
+		return errors.New("retained runtime matrix artifact is not a regular file")
+	}
+	return nil
+}
+
+func rejectSymlinkAncestors(path string) error {
+	path = filepath.Clean(path)
+	volume := filepath.VolumeName(path)
+	rootPath := volume + string(filepath.Separator)
+	if rootPath == string(filepath.Separator) && strings.HasPrefix(path, string(filepath.Separator)) {
+		rootPath = string(filepath.Separator)
+	}
+	rest := strings.TrimPrefix(path, rootPath)
+	if rest == path && volume == "" {
+		return fmt.Errorf("runtime matrix parent %q is not absolute", path)
+	}
+	current := rootPath
+	info, err := os.Lstat(current)
+	if err != nil {
+		return fmt.Errorf("inspect runtime matrix parent root: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("runtime matrix parent root %q is not a real directory", current)
+	}
+	for _, part := range strings.FieldsFunc(rest, func(r rune) bool { return r == rune(filepath.Separator) }) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return fmt.Errorf("inspect runtime matrix parent %q: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("runtime matrix parent %q is not a real directory", current)
+		}
 	}
 	return nil
 }
