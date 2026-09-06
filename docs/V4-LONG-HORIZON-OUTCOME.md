@@ -88,6 +88,32 @@ observations, and explicit `UNVERIFIED` fields. The source SHA is intentionally
 read at runtime rather than copied into this document, so every report remains
 attached to the exact tree it measured.
 
+## Process-restart steering proof
+
+`TestSteeringAcrossProcessRestart` closes one narrower restart/steering gap
+with two deterministic child-process boundaries. The parent persists the
+initial task, starts a child that steers the interpretation to documentation,
+waits for that child to exit, then starts a second child that steers it to
+review. The parent reloads the durable task after each boundary and requires
+the original `Goal` and `DefinitionOfDone` to remain unchanged, each intent
+revision to advance, and each completed turn to bind the revision observed by
+that process.
+
+Run the proof from the exact source head:
+
+```sh
+go test ./internal/agent -run '^TestSteeringAcrossProcessRestart$' -count=1 -v
+```
+
+This proves only serialized task-state continuity through two clean
+`Agent.SetTaskSession`/`Run` child processes and the fail-closed rule that a
+changed interpretation does not replace the durable outcome. It does not prove
+abrupt termination during steering, active-turn recovery, live-provider
+quality, GUI/TUI/headless projection, rendered behavior, arbitrary crash
+windows, or release readiness. The test intentionally does not claim that the
+durable goal itself changes; steering is recorded as a bounded intent revision
+over that goal.
+
 The fixture does not measure live-provider quality, arbitrary crash windows,
 rendered GUI/TUI behavior, or release readiness. Its fresh-process boundary is
 a deterministic child test process and should not be interpreted as broad
