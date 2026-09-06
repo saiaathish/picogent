@@ -104,6 +104,21 @@ does not establish Windows reparse-point behavior, arbitrary same-UID races
 after every final identity check, or a cross-surface guarantee. Therefore the
 matrix row `hostile-filesystem-toctou` remains `UNVERIFIED`.
 
+## Target identity checkpoint
+
+PR #485 adds a second bounded publication check at source checkpoint
+`70397264f5cd0ceeffe7dbe4a8b31870f4b6ee05`. `securefile.WriteExclusive` now
+compares the opened descriptor/handle with the current target name after the
+payload is synced. If a same-UID writer has renamed the trusted entry and
+installed a replacement, the operation fails before reporting success and
+inode-aware cleanup leaves the replacement untouched.
+
+The Unix `TestWriteExclusiveRejectsReplacedTarget` test exercises that exact
+sequence and verifies both the attacker replacement and the trusted renamed
+entry. Windows and fallback implementations compile against the same identity
+contract and remain covered by hosted platform checks, but this record is not a
+Windows hostile-writer observation.
+
 ## Explicit limits
 
 This record does not prove:
