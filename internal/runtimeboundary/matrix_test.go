@@ -63,9 +63,13 @@ func TestCollectRejectsLiveFlagWithoutArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	live := claimByID(t, report, "live-provider-quality")
-	if live.Verdict != VerdictFail {
-		t.Fatalf("live verdict = %s reason=%s", live.Verdict, live.Reason)
+	connectivity := claimByID(t, report, "live-provider-connectivity")
+	if connectivity.Verdict != VerdictFail {
+		t.Fatalf("connectivity verdict = %s reason=%s", connectivity.Verdict, connectivity.Reason)
+	}
+	quality := claimByID(t, report, "live-provider-quality")
+	if quality.Verdict != VerdictUnverified {
+		t.Fatalf("quality verdict = %s reason=%s", quality.Verdict, quality.Reason)
 	}
 }
 

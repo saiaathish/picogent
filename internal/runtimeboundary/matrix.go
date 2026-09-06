@@ -20,12 +20,14 @@ import (
 )
 
 const (
-	Schema          = "picogent.v4.runtime-boundary-matrix.v1"
-	MaxReportBytes  = 48 << 10
-	MaxClaims       = 32
-	MaxTextBytes    = 512
-	LiveEvidenceEnv = "PICOGENT_LIVE_PROVIDER_EVIDENCE"
-	LiveArtifactEnv = "PICOGENT_LIVE_PROVIDER_ARTIFACT"
+	Schema                 = "picogent.v4.runtime-boundary-matrix.v1"
+	MaxReportBytes         = 48 << 10
+	MaxClaims              = 32
+	MaxTextBytes           = 512
+	LiveEvidenceEnv        = "PICOGENT_LIVE_PROVIDER_EVIDENCE"
+	LiveArtifactEnv        = "PICOGENT_LIVE_PROVIDER_ARTIFACT"
+	LiveQualityEvidenceEnv = LiveProviderQualityEvidenceEnv
+	LiveQualityArtifactEnv = LiveProviderQualityArtifactEnv
 )
 
 // Verdict is the fail-closed observation vocabulary for one claim.
@@ -189,10 +191,10 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 		ID:         "live-provider-quality",
 		Category:   CategoryLiveProvider,
 		Title:      "Live provider quality on a real authenticated provider",
-		Setup:      "Task-owned live provider session with explicit evidence artifact; credentials never inlined.",
-		Artifact:   "live-provider evidence JSON referenced by " + LiveArtifactEnv,
+		Setup:      "Task-owned live provider session running the fixed no-tool campaign with digest-only evidence.",
+		Artifact:   "live-provider quality evidence JSON referenced by " + LiveQualityArtifactEnv,
 		Verdict:    VerdictUnverified,
-		Reason:     "no live-provider evidence artifact was supplied",
+		Reason:     "no live-provider quality evidence artifact was supplied",
 		ObservedAt: observed,
 	}
 	if strings.TrimSpace(environ(LiveEvidenceEnv)) == "1" {
@@ -200,45 +202,68 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 		if artifact == "" {
 			liveConnectivity.Verdict = VerdictFail
 			liveConnectivity.Reason = "live evidence requested without " + LiveArtifactEnv
-			live.Verdict = VerdictFail
-			live.Reason = "live evidence requested without " + LiveArtifactEnv
 		} else if ok, err := lookup(artifact); err != nil {
 			liveConnectivity.Verdict = VerdictInconclusive
 			liveConnectivity.Reason = "live evidence artifact lookup failed"
-			live.Verdict = VerdictInconclusive
-			live.Reason = "live evidence artifact lookup failed"
 		} else if !ok {
 			liveConnectivity.Verdict = VerdictFail
 			liveConnectivity.Reason = "live evidence artifact is missing"
 			liveConnectivity.Artifact = artifact
-			live.Verdict = VerdictFail
-			live.Reason = "live evidence artifact is missing"
-			live.Artifact = artifact
 		} else {
 			evidence, digest, err := loadLiveProviderEvidence(workspace, artifact, sha)
 			if err != nil {
 				liveConnectivity.Verdict = VerdictFail
 				liveConnectivity.Reason = "live evidence validation failed: " + err.Error()
 				liveConnectivity.Artifact = artifact
-				live.Verdict = VerdictFail
-				live.Reason = "live evidence validation failed; provider quality remains unproven"
-				live.Artifact = artifact
 			} else {
 				liveConnectivity.Verdict = VerdictPass
 				liveConnectivity.Artifact = artifact
 				liveConnectivity.Provenance = "env:" + LiveEvidenceEnv + "+sha256:" + digest
 				liveConnectivity.ObservedAt = evidence.ObservedAt
 				liveConnectivity.Reason = "direct fixed-prompt provider response was recorded without tools or mutation"
-				live.Verdict = VerdictUnverified
-				live.Artifact = artifact
-				live.Reason = "provider connectivity is recorded; automated live-provider quality scoring is outside this matrix"
-				live.Provenance = liveConnectivity.Provenance
-				live.ObservedAt = evidence.ObservedAt
 			}
 		}
 	} else {
 		liveConnectivity.Provenance = "fail-closed default without " + LiveEvidenceEnv
-		live.Provenance = "fail-closed default without " + LiveEvidenceEnv
+	}
+	if strings.TrimSpace(environ(LiveQualityEvidenceEnv)) == "1" {
+		artifact := strings.TrimSpace(environ(LiveQualityArtifactEnv))
+		if artifact == "" {
+			live.Verdict = VerdictFail
+			live.Reason = "live-provider quality evidence requested without " + LiveQualityArtifactEnv
+		} else if ok, err := lookup(artifact); err != nil {
+			live.Verdict = VerdictInconclusive
+			live.Artifact = artifact
+			live.Reason = "live-provider quality evidence artifact lookup failed"
+		} else if !ok {
+			live.Verdict = VerdictFail
+			live.Artifact = artifact
+			live.Reason = "live-provider quality evidence artifact is missing"
+		} else {
+			evidence, digest, err := loadLiveProviderQualityEvidence(workspace, artifact, sha)
+			if err != nil {
+				live.Verdict = VerdictFail
+				live.Artifact = artifact
+				live.Reason = "live-provider quality evidence validation failed: " + err.Error()
+			} else {
+				live.Verdict = evidence.Verdict
+				live.Artifact = artifact
+				live.Provenance = "env:" + LiveQualityEvidenceEnv + "+sha256:" + digest
+				live.ObservedAt = evidence.ObservedAt
+				switch evidence.Verdict {
+				case VerdictPass:
+					live.Reason = "fixed no-tool quality campaign passed with complete bounded case evidence"
+				case VerdictFail:
+					live.Reason = "fixed no-tool quality campaign recorded a failed case or safety assertion"
+				case VerdictInconclusive:
+					live.Reason = "fixed no-tool quality campaign is inconclusive because provider availability or case coverage is incomplete"
+				default:
+					live.Reason = "fixed no-tool quality campaign remains unverified"
+				}
+			}
+		}
+	} else {
+		live.Provenance = "fail-closed default without " + LiveQualityEvidenceEnv
 	}
 
 	renderedPlatform, renderedArchitecture := currentRenderedPlatform()
