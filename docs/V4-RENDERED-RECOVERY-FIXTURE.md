@@ -61,3 +61,12 @@ The fixture uses the existing `server.Handler`, `/api/permission`, `/api/chat`,
 SSE events, task store, session store, checkpoint-backed undo, and fresh
 `SetTaskSession` load. No fixture-only route bypasses the user-facing recovery
 path.
+
+## Automated API-boundary coverage
+
+In addition to the browser runbook above, retain the deterministic HTTP
+observation documented in
+[V4-RENDERED-RECOVERY-API-BOUNDARY.md](V4-RENDERED-RECOVERY-API-BOUNDARY.md)
+via `TestRenderedRecoveryFixtureAPIBoundary`. That test proves
+allow→undo→reload at the GUI handler boundary only; browser DOM,
+live-provider, and unsupported-platform claims remain outside it.

@@ -36,9 +36,10 @@ then, this matrix does not auto-score provider quality as `PASS`.
 - Unsupported platforms and destructive hostile cases remain fail-closed.
 - A `PASS` on one deterministic or local-rendered claim does not upgrade
   cross-platform, live-provider, or overall release-authorization rows.
-- `rendered-recovery-undo-reload` stays `UNVERIFIED` until an automated
-  allow→undo→reload API-boundary observation is retained; the fixture runbook
-  alone is not treated as that proof.
+- `rendered-recovery-undo-reload` is `PASS` only when the automated
+  allow→undo→reload API-boundary evidence doc is present; the browser runbook
+  alone is not treated as that proof. Browser DOM, live-provider, and
+  unsupported-platform claims remain outside the row.
 - Parent [#450](https://github.com/saiaathish/picogent/issues/450) stays open
   until this matrix, hosted CI, and a fresh exact-head release audit close the
   remaining release-readiness boundaries.
