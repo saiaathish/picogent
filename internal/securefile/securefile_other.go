@@ -110,6 +110,24 @@ func (p *rootParent) stat(name string) (secureEntry, error) {
 	return secureEntry{kind: kind, mode: info.Mode().Perm()}, nil
 }
 
+func (p *rootParent) same(name string, source *os.File) (bool, error) {
+	if source == nil {
+		return false, errors.New("exclusive identity source is nil")
+	}
+	expected, err := source.Stat()
+	if err != nil {
+		return false, err
+	}
+	named, err := p.root.Lstat(name)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, err
+	}
+	return os.SameFile(expected, named), nil
+}
+
 func (p *rootParent) openRead(name string) (*os.File, error) {
 	return p.root.Open(name)
 }
