@@ -52,7 +52,7 @@ func TestCollectRecordsConnectivityWithoutClaimingQuality(t *testing.T) {
 	if quality.Verdict != VerdictUnverified {
 		t.Fatalf("quality verdict = %s reason=%s", quality.Verdict, quality.Reason)
 	}
-	if !strings.Contains(quality.Reason, "quality scoring") {
+	if !strings.Contains(quality.Reason, "no live-provider quality evidence artifact") {
 		t.Fatalf("quality reason = %q", quality.Reason)
 	}
 }
@@ -84,14 +84,93 @@ func TestCollectFailsClosedForMissingLiveArtifact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, id := range []string{"live-provider-connectivity", "live-provider-quality"} {
-		claim := claimByID(t, report, id)
-		if claim.Verdict != VerdictFail {
-			t.Fatalf("%s verdict = %s reason=%s", id, claim.Verdict, claim.Reason)
-		}
-		if !strings.Contains(claim.Reason, "missing") {
-			t.Fatalf("%s reason = %q", id, claim.Reason)
-		}
+	connectivity := claimByID(t, report, "live-provider-connectivity")
+	if connectivity.Verdict != VerdictFail || !strings.Contains(connectivity.Reason, "missing") {
+		t.Fatalf("connectivity claim = %+v", connectivity)
+	}
+	quality := claimByID(t, report, "live-provider-quality")
+	if quality.Verdict != VerdictUnverified {
+		t.Fatalf("quality verdict = %s reason=%s", quality.Verdict, quality.Reason)
+	}
+}
+
+func TestCollectProjectsQualitySeparatelyFromConnectivity(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("test requires a git checkout")
+	}
+	workspace := t.TempDir()
+	seedDocs(t, workspace)
+	sha := commitAll(t, workspace)
+	connectivityArtifact := filepath.Join(t.TempDir(), "live-provider.json")
+	qualityArtifact := filepath.Join(t.TempDir(), "live-provider-quality.json")
+	writeLiveEvidence(t, connectivityArtifact, validLiveEvidence(sha))
+	writeLiveProviderQualityEvidence(t, qualityArtifact, validLiveProviderQualityEvidence(sha))
+
+	report, err := Collect(Options{
+		Workspace:    workspace,
+		CandidateSHA: sha,
+		Environ: func(key string) string {
+			switch key {
+			case LiveEvidenceEnv, LiveQualityEvidenceEnv:
+				return "1"
+			case LiveArtifactEnv:
+				return connectivityArtifact
+			case LiveQualityArtifactEnv:
+				return qualityArtifact
+			default:
+				return ""
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectivity := claimByID(t, report, "live-provider-connectivity")
+	if connectivity.Verdict != VerdictPass {
+		t.Fatalf("connectivity claim = %+v", connectivity)
+	}
+	quality := claimByID(t, report, "live-provider-quality")
+	if quality.Verdict != VerdictPass {
+		t.Fatalf("quality claim = %+v", quality)
+	}
+	if !strings.Contains(quality.Provenance, LiveQualityEvidenceEnv) {
+		t.Fatalf("quality provenance = %q", quality.Provenance)
+	}
+}
+
+func TestCollectFailsClosedForMissingLiveQualityArtifact(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("test requires a git checkout")
+	}
+	workspace := t.TempDir()
+	seedDocs(t, workspace)
+	sha := commitAll(t, workspace)
+	artifact := filepath.Join(t.TempDir(), "missing-quality.json")
+
+	report, err := Collect(Options{
+		Workspace:    workspace,
+		CandidateSHA: sha,
+		Environ: func(key string) string {
+			switch key {
+			case LiveQualityEvidenceEnv:
+				return "1"
+			case LiveQualityArtifactEnv:
+				return artifact
+			default:
+				return ""
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	quality := claimByID(t, report, "live-provider-quality")
+	if quality.Verdict != VerdictFail || !strings.Contains(quality.Reason, "missing") {
+		t.Fatalf("quality claim = %+v", quality)
+	}
+	connectivity := claimByID(t, report, "live-provider-connectivity")
+	if connectivity.Verdict != VerdictUnverified {
+		t.Fatalf("connectivity claim = %+v", connectivity)
 	}
 }
 

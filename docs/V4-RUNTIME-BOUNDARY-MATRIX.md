@@ -31,7 +31,7 @@ artifact uses schema `picogent.v4.runtime-boundary-matrix.v1`.
 
 | Category | What it covers |
 | --- | --- |
-| `live_provider` | Authenticated live-provider connectivity and quality gap |
+| `live_provider` | Authenticated connectivity plus a bounded fixed no-tool quality campaign |
 | `rendered_platform` | Owned-browser / rendered fixture evidence and cross-platform gaps |
 | `hostile_runtime` | Child-env sanitization and broader filesystem TOCTOU |
 | `recovery_undo` | Deterministic restart, steering, undo, and recovery contracts |
@@ -40,8 +40,10 @@ artifact uses schema `picogent.v4.runtime-boundary-matrix.v1`.
 The connectivity row stays `UNVERIFIED` unless
 `PICOGENT_LIVE_PROVIDER_EVIDENCE=1` and
 `PICOGENT_LIVE_PROVIDER_ARTIFACT` points at a valid evidence file. The quality
-row remains `UNVERIFIED`; this matrix never auto-scores provider quality as
-`PASS`.
+row has a separate opt-in contract:
+`PICOGENT_LIVE_PROVIDER_QUALITY_EVIDENCE=1` and
+`PICOGENT_LIVE_PROVIDER_QUALITY_ARTIFACT` must point at a valid quality
+evidence file. Connectivity evidence never upgrades the quality row.
 
 ## Hostile-runtime evidence
 
@@ -65,9 +67,10 @@ The matrix separates one narrow claim from the broader quality claim:
 
 - `live-provider-connectivity` can become `PASS` when a real provider answers a
   fixed, no-tool prompt in a task-owned disposable home and workspace.
-- `live-provider-quality` remains `UNVERIFIED`. One successful response does
-  not measure answer quality, streaming, tool use, authentication refresh,
-  recovery, or sustained behavior.
+- `live-provider-quality` remains `UNVERIFIED` when only this connectivity
+  artifact is supplied. One successful response does not measure answer
+  quality, streaming, tool use, authentication refresh, recovery, or sustained
+  behavior.
 
 Run the probe with disposable paths and retain the record outside the checkout.
 For example, the provider probe may be run as:
@@ -120,6 +123,87 @@ This record proves only direct connectivity for the one fixed prompt on the
 observed host. It is not evidence of provider quality, authorization refresh,
 tool behavior, rendered UI behavior, cross-platform behavior, recovery, or
 release readiness.
+
+## Fixed live-provider quality evidence
+
+The quality row measures a small fixed no-tool campaign separately from the
+connectivity row. Its artifact uses schema
+`picogent.v4.live-provider-quality-evidence.v1` and campaign
+`fixed-no-tool-v1`. The campaign has three stable case identities:
+
+| Case | Prompt used for the digest-only observation |
+| --- | --- |
+| `exact-token` | `Reply with exactly LIVE_PROVIDER_QUALITY_OK. Do not call tools, inspect files, or modify anything.` |
+| `bounded-summary` | `In exactly one sentence, explain what Picogent is for. Do not call tools, inspect files, or modify anything.` |
+| `constraint-following` | `Return exactly three words: local first agent. Do not call tools, inspect files, or modify anything.` |
+
+The prompt text and provider result are not retained in the artifact. Each case
+retains only lowercase SHA-256 digests, a bounded latency measurement, its
+verdict, and explicit `tools_used` / `mutation_observed` assertions. A complete
+passing artifact has this shape:
+
+```json
+{
+  "schema": "picogent.v4.live-provider-quality-evidence.v1",
+  "campaign": "fixed-no-tool-v1",
+  "candidate_sha": "<full lowercase commit SHA>",
+  "provider": "codex",
+  "environment": "task-owned-disposable",
+  "latency_budget_ms": 5000,
+  "latency_max_ms": 300,
+  "observed_at": "2026-09-06T12:00:00Z",
+  "verdict": "PASS",
+  "cases": [
+    {
+      "id": "exact-token",
+      "prompt_sha256": "<64 lowercase hex characters>",
+      "result_sha256": "<64 lowercase hex characters>",
+      "latency_ms": 100,
+      "verdict": "PASS",
+      "tools_used": false,
+      "mutation_observed": false
+    },
+    {
+      "id": "bounded-summary",
+      "prompt_sha256": "<64 lowercase hex characters>",
+      "result_sha256": "<64 lowercase hex characters>",
+      "latency_ms": 300,
+      "verdict": "PASS",
+      "tools_used": false,
+      "mutation_observed": false
+    },
+    {
+      "id": "constraint-following",
+      "prompt_sha256": "<64 lowercase hex characters>",
+      "result_sha256": "<64 lowercase hex characters>",
+      "latency_ms": 200,
+      "verdict": "PASS",
+      "tools_used": false,
+      "mutation_observed": false
+    }
+  ]
+}
+```
+
+Run the campaign only with a task-owned disposable home and workspace, then
+retain the artifact outside the checkout:
+
+```sh
+PICOGENT_LIVE_PROVIDER_QUALITY_EVIDENCE=1 \
+PICOGENT_LIVE_PROVIDER_QUALITY_ARTIFACT=/private/tmp/picogent-live-quality-evidence.json \
+go run ./cmd/runtime-boundary-matrix \
+  --workspace . \
+  --candidate-sha "$(git rev-parse HEAD)"
+```
+
+`PASS` requires all three fixed cases exactly once, valid digests, every case
+within the declared latency budget, every case marked `PASS`, and explicit
+false no-tool/no-mutation assertions. A provider outage or incomplete campaign
+may remain `INCONCLUSIVE` or `UNVERIFIED`; the matrix does not infer either
+state as `PASS`. Malformed, stale-SHA, secret-shaped, trailing, oversized, or
+workspace-contained artifacts fail closed. This campaign does not prove
+streaming quality, authentication refresh, tool behavior, recovery, sustained
+sessions, rendered behavior, cross-platform behavior, or release readiness.
 
 ## Rendered-platform evidence
 
