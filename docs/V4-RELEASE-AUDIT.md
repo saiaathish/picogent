@@ -4,8 +4,8 @@ Status: `INCONCLUSIVE` for release authorization. This is an independently
 rechecked evidence report, not a release approval or a supply-chain
 certification.
 
-Latest audit snapshot: 2026-09-06 UTC (captured locally on 2026-09-05 EDT)
-Latest checkpoint: post-[#445](https://github.com/saiaathish/picogent/pull/445)/[#447](https://github.com/saiaathish/picogent/pull/447) main `a4a4de276091e8110576adb6bbf1f526ec007f5d`
+Latest audit snapshot: 2026-09-06 UTC
+Latest checkpoint: post-[#459](https://github.com/saiaathish/picogent/pull/459)/[#463](https://github.com/saiaathish/picogent/pull/463)/[#465](https://github.com/saiaathish/picogent/pull/465)/[#466](https://github.com/saiaathish/picogent/pull/466) main `b00b88c15b310c05042ebb8debd876b221160389`
 Parent: [#316](https://github.com/saiaathish/picogent/issues/316)
 Broader parent: [#246](https://github.com/saiaathish/picogent/issues/246)
 
@@ -13,6 +13,78 @@ Historical snapshot: [#321](https://github.com/saiaathish/picogent/issues/321)
 
 “Independent” here means a fresh repository-side recheck of downloaded
 artifacts and the exact Git history. It does not mean a third-party audit.
+
+## Latest follow-up audit — exact current main after PR #459/#463/#465/#466
+
+Status: `INCONCLUSIVE` for release authorization. This refresh rechecks exact
+`main` after the runtime-boundary matrix (#459), rendered recovery API-boundary
+fixture (#463), evidence-contract consolidation (#465), and exact-SHA matrix
+retention (#466). It preserves earlier audits below as historical evidence and
+does not authorize a release. Parent [#450](https://github.com/saiaathish/picogent/issues/450)
+is closed as completed; [#453](https://github.com/saiaathish/picogent/issues/453)
+remains open for live-provider, cross-platform rendered, and hostile TOCTOU
+observation.
+
+### Candidate and hosted runs
+
+- PR #459 merge: `563a865f74f866569de2403bd2869022f5c327bc`.
+- PR #463 merge: `e6c5bb9486870a08642996f2d5e2deb62714764c`.
+- PR #465 merge: `ccb2c505538c04934afbe581d947c2efbe09d438`.
+- PR #466 merge / current `main`: `b00b88c15b310c05042ebb8debd876b221160389`.
+- Post-merge CI: [34010511135](https://github.com/saiaathish/picogent/actions/runs/34010511135), `push`, conclusion `success`.
+- Post-merge release-artifacts: [34010511126](https://github.com/saiaathish/picogent/actions/runs/34010511126), `push`, conclusion `success`.
+
+| Job | Job ID | Result |
+| --- | ---: | --- |
+| `security` | `101425394269` | `success` |
+| `test (ubuntu-latest)` | `101425394200` | `success` |
+| `test (windows-latest)` | `101425394338` | `success` |
+| `test (macos-latest)` | `101425394271` | `success` |
+| `release-evidence` | `101426239399` | `success` |
+| `production-artifacts` | `101425394188` | `success` |
+
+| Artifact | Artifact ID | Size | GitHub artifact digest |
+| --- | ---: | ---: | --- |
+| `verification-manifest-b00b88c15b310c05042ebb8debd876b221160389` | `9982412615` | 9,498 bytes | `sha256:2ced37b24c4832aafac7d4410a42d282b4033002b041b5831c9b24d44830adab` |
+| `release-attestation-b00b88c15b310c05042ebb8debd876b221160389` | `9982412773` | 16,442 bytes | `sha256:052e26a07d447d19dae41ca9791c542816db4190a1e3787ea2d7fe0c2c9929e2` |
+| `release-artifacts-b00b88c15b310c05042ebb8debd876b221160389` | `9982314801` | 57,890,810 bytes | `sha256:9966da5c471cb3aae12d766d05c68204d019844d4899a62a47372564f68b01ad` |
+
+### Current-head verdict
+
+| Claim | Result | Boundary |
+| --- | --- | --- |
+| All required hosted CI jobs passed at the exact candidate | `CONFIRMED` | Security, Ubuntu, Windows, macOS, and dependent release-evidence jobs completed with `success`. |
+| The release-gates ledger is valid | `CONFIRMED` | Local `release-gates` validation returned `release gates PASS: 2 required job(s) for push` for the downloaded ledger. |
+| Exact candidate provenance is clean | `CONFIRMED` | Manifest `head.match: PASS`, `head.tree: CLEAN`, SHA `b00b88c15b310c05042ebb8debd876b221160389`. |
+| Targeted verification evidence is present | `CONFIRMED` | Targeted `internal/verify` check `PASS` with coverage `79.72027972027972%`. |
+| Hosted attestations verify for the exact candidate | `CONFIRMED` | Both subjects re-verified under predicate `https://github.com/saiaathish/picogent/attestation/release-evidence/v1`, signer `…/ci.yml@refs/heads/main`, source ref `refs/heads/main`; Rekor timestamp `2026-09-06T04:12:16Z`. |
+| Deterministic production binaries/SBOM lane completed | `CONFIRMED` | Production-artifacts job succeeded and uploaded the release-artifacts bundle for this SHA. Bound artifact evidence only. |
+| Runtime-boundary matrix retained outside checkout | `CONFIRMED` | Hosted artifact includes `runtime-boundary-matrix.json` (`picogent.v4.runtime-boundary-matrix.v1`) bound to `b00b88c…` with summary `PASS:4`, `INCONCLUSIVE:1`, `UNVERIFIED:3`. |
+| Rendered recovery allow→undo→reload API boundary | `CONFIRMED` | Matrix row `rendered-recovery-undo-reload` is `PASS` for the deterministic fixture; not browser-DOM or live-provider proof. |
+| The verification manifest proves complete release readiness | `INCONCLUSIVE` | Broader `go test ./...` is `INCONCLUSIVE` (`signal: killed` after ~90.02s, 9 passed); overall manifest `INCONCLUSIVE`. |
+| Live-provider quality | `UNVERIFIED` | Matrix row `live-provider-quality` remains `UNVERIFIED`. |
+| Cross-platform rendered behavior | `UNVERIFIED` | Matrix row `rendered-cross-platform` remains `UNVERIFIED`. |
+| Hostile filesystem TOCTOU | `UNVERIFIED` | Matrix row `hostile-filesystem-toctou` remains `UNVERIFIED`. |
+| Overall release authorization | `INCONCLUSIVE` | Green CI, attestations, SBOM, matrix retention, and API-boundary evidence do not close the live/hostile/authorization gaps. |
+
+### Independent artifact recheck
+
+Downloaded `verification-manifest.json` reports schema `picogent.verify.v1`,
+matching candidate/expected SHA `b00b88c15b310c05042ebb8debd876b221160389`,
+`head.match: PASS`, `head.tree: CLEAN`, targeted `PASS` with measured coverage
+`79.72027972027972%`, broader `INCONCLUSIVE` with reason `signal: killed`, and
+overall status `INCONCLUSIVE`.
+
+Local SHA-256 recomputation matched the signed predicate:
+
+| Subject | SHA-256 |
+| --- | --- |
+| `release-gates.json` | `d43e78837dc4fe04bd2202f2bd88d33356e57011716095875b3e811f8a42fa37` |
+| `verification-manifest.json` | `02681c9253b6e087fbf7ad3484acee68b36baa21c39c9a44358d0281706340df` |
+
+Retained matrix unverified IDs: `hostile-filesystem-toctou`,
+`live-provider-quality`, `rendered-cross-platform`. Release authorization row
+is `INCONCLUSIVE`. This does **not** authorize a release.
 
 ## Latest follow-up audit — exact current main after PR #445 and #447
 
