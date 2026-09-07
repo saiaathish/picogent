@@ -31,9 +31,9 @@ matrix validation at a clean `18dc4a1…` checkout projected
 checkouts must still supply that aggregate against candidate SHA `18dc4a1…`
 (or recollect all three platforms at a later tip). Non-docs tips `#524` and
 `#527` broke live/local-rendered `--behavior-sha` continuity from `18dc4a1…`;
-behavior tip `251171f…` refreshed Darwin/Linux locally
-([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-251171F.md),
-[Linux](V4-RENDERED-LINUX-EVIDENCE-251171F.md)) without a tip Windows
+behavior tip `37d9206…` refreshed Darwin/Linux locally
+([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-37D9206.md),
+[Linux](V4-RENDERED-LINUX-EVIDENCE-37D9206.md)) without a tip Windows
 recollection, so tip matrix runs keep `rendered-cross-platform=UNVERIFIED`.
 Hostile TOCTOU and release authorization stay unchanged.
 
