@@ -217,6 +217,9 @@ func releaseAuthorizationManifest(manifest Manifest, expectedSHA string) (Manife
 		if check.OutputTruncated {
 			return ManifestUnverified, "verification check output is truncated"
 		}
+		if !coverageRequiredForManifest(check) {
+			continue
+		}
 		if status, reason := manifestEvidenceStatus(check.Coverage.Status, "verification check coverage is not PASS"); status != ManifestPass {
 			return status, reason
 		}

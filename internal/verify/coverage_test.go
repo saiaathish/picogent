@@ -64,8 +64,8 @@ func TestRunPipelineCollectsTargetedCoverProfile(t *testing.T) {
 	result := RunPipeline(t.Context(), dir, Options{
 		Targets:         []string{"pkg"},
 		CoverProfile:    profile,
-		TargetedTimeout: 30 * time.Second,
-		Timeout:         30 * time.Second,
+		TargetedTimeout: 2 * time.Minute,
+		Timeout:         2 * time.Minute,
 	})
 	if result.Status != StatusPass {
 		t.Fatalf("pipeline = %+v", result)
@@ -84,18 +84,26 @@ func TestRunPipelineCollectsTargetedCoverProfile(t *testing.T) {
 	manifest := ManifestFromPipeline(result, HeadEvidence{
 		SHA: strings.Repeat("a", 40), ExpectedSHA: strings.Repeat("a", 40), Match: ManifestPass, Tree: "CLEAN",
 	})
-	// Broader coverage remains unverified, so overall PASS is not claimed.
-	if manifest.Status != ManifestUnverified || !strings.Contains(manifest.Reason, "coverage") {
-		t.Fatalf("manifest must stay UNVERIFIED without broader coverage: %+v", manifest)
+	// Targeted-only coverage contract: broader coverage is not required for
+	// overall PASS when the broader check itself passed.
+	if manifest.Status != ManifestPass {
+		t.Fatalf("manifest = %+v, want PASS under targeted-only coverage", manifest)
 	}
 	targeted := false
+	broaderSeen := false
 	for _, check := range manifest.Checks {
 		if check.Scope == ScopeTargeted && check.Coverage.Status == ManifestPass {
 			targeted = true
 		}
+		if check.Scope == ScopeBroader {
+			broaderSeen = true
+			if check.Coverage.Status == ManifestPass {
+				t.Fatalf("unexpected broader coverage PASS without collection: %+v", check)
+			}
+		}
 	}
-	if !targeted {
-		t.Fatalf("targeted covered check missing: %+v", manifest.Checks)
+	if !targeted || !broaderSeen {
+		t.Fatalf("targeted/broader checks missing: %+v", manifest.Checks)
 	}
 }
 

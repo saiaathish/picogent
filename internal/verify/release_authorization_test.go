@@ -5,6 +5,27 @@ import (
 	"testing"
 )
 
+func TestEvaluateReleaseAuthorizationAcceptsTargetedOnlyCoverage(t *testing.T) {
+	const candidateSHA = "0123456789abcdef0123456789abcdef01234567"
+	input := releaseAuthorizationFixture(candidateSHA)
+	input.Manifest.Checks = []CheckEvidence{
+		{
+			Scope:    ScopeTargeted,
+			Status:   ManifestPass,
+			Coverage: CoverageEvidence{Status: ManifestPass},
+		},
+		{
+			Scope:    ScopeBroader,
+			Status:   ManifestPass,
+			Coverage: CoverageEvidence{Status: ManifestUnverified, Reason: "coverage not collected"},
+		},
+	}
+	result := EvaluateReleaseAuthorization(input, candidateSHA)
+	if result.Status != ManifestPass || !result.Authorized {
+		t.Fatalf("result = %+v, want PASS under targeted-only coverage", result)
+	}
+}
+
 func TestEvaluateReleaseAuthorizationRequiresCompleteEvidence(t *testing.T) {
 	const candidateSHA = "0123456789abcdef0123456789abcdef01234567"
 	result := EvaluateReleaseAuthorization(releaseAuthorizationFixture(candidateSHA), candidateSHA)
@@ -13,6 +34,30 @@ func TestEvaluateReleaseAuthorizationRequiresCompleteEvidence(t *testing.T) {
 	}
 	if len(result.Blockers) != 0 || result.Reason != "" {
 		t.Fatalf("passing result carried blockers: %+v", result)
+	}
+}
+
+func TestEvaluateReleaseAuthorizationRequiresTargetedCoverage(t *testing.T) {
+	const candidateSHA = "0123456789abcdef0123456789abcdef01234567"
+	input := releaseAuthorizationFixture(candidateSHA)
+	input.Manifest.Checks = []CheckEvidence{
+		{
+			Scope:    ScopeTargeted,
+			Status:   ManifestPass,
+			Coverage: CoverageEvidence{Status: ManifestUnverified, Reason: "coverage not collected"},
+		},
+		{
+			Scope:    ScopeBroader,
+			Status:   ManifestPass,
+			Coverage: CoverageEvidence{Status: ManifestUnverified, Reason: "coverage not collected"},
+		},
+	}
+	result := EvaluateReleaseAuthorization(input, candidateSHA)
+	if result.Status != ManifestUnverified || result.Authorized {
+		t.Fatalf("result = %+v, want UNVERIFIED without targeted coverage", result)
+	}
+	if !strings.Contains(result.Reason, "coverage") {
+		t.Fatalf("reason = %q, want coverage blocker", result.Reason)
 	}
 }
 

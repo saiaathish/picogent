@@ -4,6 +4,51 @@ Status: `INCONCLUSIVE` for release authorization. This is an independently
 rechecked evidence report, not a release approval or a supply-chain
 certification.
 
+## Exact-head dry-run audit — main `cddb184cc90de13423749aeb021440f016194a33`
+
+Status: `INCONCLUSIVE` for release authorization. This dry-run rechecks tip
+`cddb184…` after [#541](https://github.com/saiaathish/picogent/pull/541)
+(Windows rendered collector diagnostics). It does **not** authorize a release
+and does not supply operator approval.
+
+### Candidate
+
+- Exact tip / merge of #541: `cddb184cc90de13423749aeb021440f016194a33`.
+- Behavior SHA for live/local-rendered docs-only continuity remains
+  `37d9206f4512be61fe1b751359c176af85ff6646` from the prior tip rebind
+  ([#539](https://github.com/saiaathish/picogent/pull/539)).
+
+### EvaluateReleaseAuthorization dry-run (no operator approval)
+
+Inputs treated as available or residual at this tip:
+
+| Input | Dry-run observation | Notes |
+| --- | --- | --- |
+| Event / ref | Assumed `push` / `refs/heads/main` for tip audit | Predicate requires these exact values. |
+| Verification manifest | Targeted-only coverage policy now allows overall `PASS` when broader `go test ./...` passes without whole-repo coverage | Broader kill remains fail-closed `INCONCLUSIVE`. |
+| Release gates | Required `test` + `security` from hosted CI | Confirm at exact tip after post-merge jobs finish. |
+| Runtime-boundary matrix | Tip matrix still carries residual gaps | After #542, bounded `hostile-parent-swap-confinement` can PASS while residual `hostile-filesystem-toctou=UNVERIFIED`; tip `rendered-cross-platform` may remain `UNVERIFIED` until tip-bound aggregate; live/local-rendered may be behavior-SHA continuous. |
+| Attestation | Hosted release-evidence attestation at tip | Confirm after post-merge `release-evidence` succeeds. |
+| Operator approval | **Absent** | Explicit human gate; dry-run keeps `authorized: false`. |
+
+Dry-run result: **`INCONCLUSIVE` / `authorized: false`**. Even if matrix residuals
+are later narrowed and hosted gates are green, missing operator approval alone
+keeps the predicate unauthorized (`UNVERIFIED` blocker: explicit operator
+approval is missing).
+
+Operator checklist: see [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
+Parents [#450](https://github.com/saiaathish/picogent/issues/450) and
+[#453](https://github.com/saiaathish/picogent/issues/453) remain open.
+
+Postscript: after this dry-run draft,
+[#542](https://github.com/saiaathish/picogent/pull/542) merged as
+`b1124c3d174047f62cff6799c1fee3d58289363a`, narrowing hostile-runtime to
+`hostile-parent-swap-confinement` while keeping residual
+`hostile-filesystem-toctou=UNVERIFIED`. Tip authorization remains unauthorized
+without operator approval and tip-bound rendered-cross-platform completeness.
+
+---
+
 ## Exact-head follow-up audit — main `92391e53a8f3958d99ecfff3dcfd66070f85e4cf`
 
 Status: `INCONCLUSIVE` for release authorization. This refresh rechecks exact
