@@ -1,8 +1,14 @@
 # v4 rendered cross-platform evidence contract
 
-Status: contract plus packaging helper, with tip digest-only aggregate PASS at
-exact candidate SHA `423d0471c1864651473c2f1828b67066885f79bd`, and a prior
-acceptance aggregate PASS at `18dc4a1ca1137ab78dfd0102848eb99c417653cc` (issue
+Status: contract plus packaging helper. **Current `main` tip `f8a78c6…`
+(`#551`) three-platform owned-browser aggregate is `PASS`** at exact candidate
+SHA `f8a78c646877164009953401772acdb4d346175d` with digest
+`5123c9cc1b024088c495322a56bee81462b3154949029d1887a65b6f76c708cd`. See
+[V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md). `#551` invalidated
+behavior-SHA retention from `423d047…`; this package rebinds darwin+linux+windows
+at tip. Historical tip digest-only aggregate PASS remains on record at
+`423d0471c1864651473c2f1828b67066885f79bd`, plus a prior acceptance aggregate
+PASS at `18dc4a1ca1137ab78dfd0102848eb99c417653cc` (issue
 [#507](https://github.com/saiaathish/picogent/issues/507) closed on that
 acceptance). This record belongs to
 [#500](https://github.com/saiaathish/picogent/issues/500) under parent
@@ -14,27 +20,36 @@ below is a real task-owned Playwright Chromium observation, not an API-boundary
 substitute.
 
 Tip three-platform collection at behavior SHA
-`423d0471c1864651473c2f1828b67066885f79bd`:
+`f8a78c646877164009953401772acdb4d346175d`:
 
 - Darwin: direct Playwright Chromium observation `PASS`, recorded in
-  [the Darwin evidence record](V4-RENDERED-RECOVERY-EVIDENCE-423D047.md).
+  [the Darwin evidence record](V4-RENDERED-RECOVERY-EVIDENCE-F8A78C6.md).
 - Linux: direct task-owned Chromium observation `PASS`, recorded in
-  [the Linux evidence record](V4-RENDERED-LINUX-EVIDENCE-423D047.md).
+  [the Linux evidence record](V4-RENDERED-LINUX-EVIDENCE-F8A78C6.md).
 - Windows: direct task-owned Playwright Chromium observation `PASS`, recorded in
-  [the Windows evidence record](V4-RENDERED-WINDOWS-EVIDENCE-423D047.md).
+  [the Windows evidence record](V4-RENDERED-WINDOWS-EVIDENCE-F8A78C6.md)
+  (GHA Run 12
+  [34112789982](https://github.com/saiaathish/picogent/actions/runs/34112789982)).
 
-The three-input packager retained tip aggregate
+The three-input packager published tip aggregate
 `rendered-cross-platform-evidence.json` with `verdict=PASS` and digest
-`d5e55136fa1af5c00b37b22d6f06d1b31752e66abe027626c23243ecc3b4702f`. Exact-SHA
-matrix validation at a clean `423d047…` checkout projected
-`rendered-cross-platform=PASS`. Docs-only descendants retain that aggregate with
-`--behavior-sha 423d0471c1864651473c2f1828b67066885f79bd`; later non-docs tips
+`5123c9cc1b024088c495322a56bee81462b3154949029d1887a65b6f76c708cd`. Exact-SHA
+matrix validation at a clean `f8a78c6…` checkout projected
+`rendered-cross-platform=PASS` (PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3).
+Docs-only descendants retain that aggregate with
+`--behavior-sha f8a78c646877164009953401772acdb4d346175d`; later non-docs tips
 must recollect all three platforms (or keep `UNVERIFIED`). Hostile TOCTOU and
 release authorization stay unchanged.
 
+Historical tip aggregate at behavior SHA
+`423d0471c1864651473c2f1828b67066885f79bd` remains on record with digest
+`d5e55136fa1af5c00b37b22d6f06d1b31752e66abe027626c23243ecc3b4702f`
+([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-423D047.md),
+[Linux](V4-RENDERED-LINUX-EVIDENCE-423D047.md),
+[Windows](V4-RENDERED-WINDOWS-EVIDENCE-423D047.md)).
+
 Historical interim tip aggregate at behavior SHA
-`cddb184cc90de13423749aeb021440f016194a33` (post-#541; superseded as tip by
-`423d047…`) remains on record with digest
+`cddb184cc90de13423749aeb021440f016194a33` remains on record with digest
 `b9c4f7ad364c0f2c191c568ee7aea971a3a540a718785f84bb7a4583e6b5151b`
 ([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-CDDB184.md),
 [Linux](V4-RENDERED-LINUX-EVIDENCE-CDDB184.md),
@@ -45,9 +60,7 @@ Historical three-platform collection at behavior SHA
 ([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md),
 [Linux](V4-RENDERED-LINUX-EVIDENCE-18DC4A1.md),
 [Windows](V4-RENDERED-WINDOWS-EVIDENCE-18DC4A1.md)) with aggregate digest
-`e519f22aa878c33479ee7e85282a8e00e4767d68560a9ff537601c1803a23ef5`. Non-docs
-tips `#524`/`#527`/`#542`/`#544` broke continuity from that acceptance and from
-interim tip rebinds (`37d9206…`, `cddb184…`) until this `423d047…` recollection.
+`e519f22aa878c33479ee7e85282a8e00e4767d68560a9ff537601c1803a23ef5`.
 
 ## Matrix projection
 
