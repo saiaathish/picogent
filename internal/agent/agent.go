@@ -931,7 +931,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				if p := strings.TrimSpace(ex.req.Path); p != "" {
 					changed[p] = struct{}{}
 					successfulWrites = append(successfulWrites, p)
-					a.noteTaskChanged(p, ev)
+					a.noteTaskChanged(p, durablePrompt, ev)
 				}
 				verificationCurrent = false
 			}

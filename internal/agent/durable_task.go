@@ -242,9 +242,9 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) (bool, error) {
 }
 
 // beginDurableTaskWithFallback normally keeps task inference conservative, but
-// a real blocked side effect must still have a durable owner even when the
-// original user wording looked informational. The fallback is only used after
-// execution reaches that boundary.
+// a real blocked or successful side effect must still have a durable owner
+// even when the original user wording looked informational. The fallback is
+// only used after execution reaches that boundary.
 func (a *Agent) beginDurableTaskWithFallback(prompt string, ev EventHandler, fallback bool) (bool, error) {
 	a.taskMu.Lock()
 	if a.TaskStore == nil || a.TaskSession == "" {
@@ -347,7 +347,16 @@ func (a *Agent) taskPromptSuffix() string {
 	return context
 }
 
-func (a *Agent) noteTaskChanged(path string, ev EventHandler) {
+func (a *Agent) noteTaskChanged(path, prompt string, ev EventHandler) {
+	// A prompt can be intentionally informational while the model still
+	// reaches a real, approved file mutation. Preserve the same durable
+	// changed-file projection used by task-like prompts once that boundary is
+	// crossed, without creating tasks for read-only turns.
+	if a.TaskSnapshot() == nil {
+		if failed, _ := a.beginDurableTaskWithFallback(prompt, ev, true); failed {
+			return
+		}
+	}
 	a.mutateTask(ev, func(task *taskstate.Task) error {
 		task.RecordChanged(path)
 		for current := task.Current(); current != nil && !strings.Contains(strings.ToLower(current.Description), "verif"); current = task.Current() {
