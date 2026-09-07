@@ -1,7 +1,8 @@
 # v4 rendered cross-platform evidence contract
 
-Status: contract plus packaging helper, with a digest-only aggregate PASS at
-exact candidate SHA `18dc4a1ca1137ab78dfd0102848eb99c417653cc` (issue
+Status: contract plus packaging helper, with tip digest-only aggregate PASS at
+exact candidate SHA `423d0471c1864651473c2f1828b67066885f79bd`, and a prior
+acceptance aggregate PASS at `18dc4a1ca1137ab78dfd0102848eb99c417653cc` (issue
 [#507](https://github.com/saiaathish/picogent/issues/507) closed on that
 acceptance). This record belongs to
 [#500](https://github.com/saiaathish/picogent/issues/500) under parent
@@ -12,30 +13,33 @@ hosted CI alone are not cross-platform owned-browser proof. The Windows row
 below is a real task-owned Playwright Chromium observation, not an API-boundary
 substitute.
 
-Historical three-platform collection at behavior SHA
-`18dc4a1ca1137ab78dfd0102848eb99c417653cc`:
+Tip three-platform collection at behavior SHA
+`423d0471c1864651473c2f1828b67066885f79bd`:
 
-- Darwin: direct BrowserOS neo observation `PASS`, recorded in
-  [the Darwin evidence record](V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md).
+- Darwin: direct Playwright Chromium observation `PASS`, recorded in
+  [the Darwin evidence record](V4-RENDERED-RECOVERY-EVIDENCE-423D047.md).
 - Linux: direct task-owned Chromium observation `PASS`, recorded in
-  [the Linux evidence record](V4-RENDERED-LINUX-EVIDENCE-18DC4A1.md).
+  [the Linux evidence record](V4-RENDERED-LINUX-EVIDENCE-423D047.md).
 - Windows: direct task-owned Playwright Chromium observation `PASS`, recorded in
-  [the Windows evidence record](V4-RENDERED-WINDOWS-EVIDENCE-18DC4A1.md).
+  [the Windows evidence record](V4-RENDERED-WINDOWS-EVIDENCE-423D047.md).
 
-The three-input packager retained aggregate
-`rendered-cross-platform-evidence.json` with
-`verdict=PASS` and digest
-`e519f22aa878c33479ee7e85282a8e00e4767d68560a9ff537601c1803a23ef5`. Exact-SHA
-matrix validation at a clean `18dc4a1…` checkout projected
-`rendered-cross-platform=PASS`. The row remains exact-candidate bound: tip
-checkouts must still supply that aggregate against candidate SHA `18dc4a1…`
-(or recollect all three platforms at a later tip). Non-docs tips `#524` and
-`#527` broke live/local-rendered `--behavior-sha` continuity from `18dc4a1…`;
-behavior tip `37d9206…` refreshed Darwin/Linux locally
-([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-37D9206.md),
-[Linux](V4-RENDERED-LINUX-EVIDENCE-37D9206.md)) without a tip Windows
-recollection, so tip matrix runs keep `rendered-cross-platform=UNVERIFIED`.
-Hostile TOCTOU and release authorization stay unchanged.
+The three-input packager retained tip aggregate
+`rendered-cross-platform-evidence.json` with `verdict=PASS` and digest
+`d5e55136fa1af5c00b37b22d6f06d1b31752e66abe027626c23243ecc3b4702f`. Exact-SHA
+matrix validation at a clean `423d047…` checkout projected
+`rendered-cross-platform=PASS`. Docs-only descendants retain that aggregate with
+`--behavior-sha 423d0471c1864651473c2f1828b67066885f79bd`; later non-docs tips
+must recollect all three platforms (or keep `UNVERIFIED`). Hostile TOCTOU and
+release authorization stay unchanged.
+
+Historical three-platform collection at behavior SHA
+`18dc4a1ca1137ab78dfd0102848eb99c417653cc` remains on record
+([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md),
+[Linux](V4-RENDERED-LINUX-EVIDENCE-18DC4A1.md),
+[Windows](V4-RENDERED-WINDOWS-EVIDENCE-18DC4A1.md)) with aggregate digest
+`e519f22aa878c33479ee7e85282a8e00e4767d68560a9ff537601c1803a23ef5`. Non-docs
+tips `#524`/`#527`/`#542`/`#544` broke continuity from that acceptance and from
+interim tip rebinds (`37d9206…`, `cddb184…`) until this `423d047…` recollection.
 
 ## Matrix projection
 
