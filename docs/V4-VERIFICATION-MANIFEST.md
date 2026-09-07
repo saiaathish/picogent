@@ -29,8 +29,14 @@ go run ./cmd/verify-manifest \
   --target internal/verify \
   --coverprofile /tmp/picogent-release-evidence/verification-coverage.out \
   --targeted-timeout 45s \
-  --timeout 90s
+  --timeout 15m
 ```
+
+Hosted `release-evidence` uses the same `15m` broader bound so full
+`go test ./...` can finish. A kill under that bound remains fail-closed
+`INCONCLUSIVE` (`signal: killed`); the previous `90s` bound was shorter than
+typical ubuntu wall-clock for the suite and produced killed `INCONCLUSIVE`
+observations even when the matrix `go test ./...` job later passed.
 
 The JSON artifact uses schema `picogent.verify.v1` and records:
 
@@ -76,7 +82,10 @@ These artifacts are review evidence for the exact tested tree; they are not, by
 themselves, a release approval. In particular, the verification manifest can
 remain `INCONCLUSIVE` or `UNVERIFIED` when the broader suite is killed or when
 broader coverage is not collected, while the required CI gate ledger still fails
-closed on a missing or failed job.
+closed on a missing or failed job. Broader verification is plain
+`go test ./...` (no `-race`); Linux race packages and dedicated hostile
+parent-swap evidence stay in separate CI steps and are not silently upgraded by
+a broader PASS.
 
 ## Local benchmark evidence
 

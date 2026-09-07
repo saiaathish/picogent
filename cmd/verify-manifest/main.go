@@ -39,7 +39,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	workspaceFlag := flags.String("workspace", ".", "workspace to verify")
 	expectedSHA := flags.String("expected-sha", "", "expected full Git commit ID")
 	coverProfile := flags.String("coverprofile", "", "absolute path for the targeted Go coverprofile artifact")
-	timeoutFlag := flags.String("timeout", "90s", "per-command timeout for broader verification")
+	timeoutFlag := flags.String("timeout", "15m", "per-command timeout for broader verification")
 	targetedTimeoutFlag := flags.String("targeted-timeout", "45s", "per-command timeout for targeted verification")
 	var targets stringList
 	flags.Var(&targets, "target", "workspace-relative file or directory for targeted verification (repeatable)")
