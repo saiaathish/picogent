@@ -7,7 +7,7 @@ import { once } from "node:events";
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 
-const candidateSHA = flag("--candidate-sha");
+const candidateSHAInput = flag("--candidate-sha");
 const fixtureBinary = flag("--binary");
 const outputDirectory = flag("--out-dir");
 const browserPath = flag("--browser-path") || process.env.PICOGENT_RENDERED_WINDOWS_BROWSER_PATH || "";
@@ -15,9 +15,10 @@ const browserPath = flag("--browser-path") || process.env.PICOGENT_RENDERED_WIND
 if (process.platform !== "win32") {
   fail("this collector must run on Windows");
 }
-if (!/^[0-9a-f]{40}$/i.test(candidateSHA)) {
+if (!/^[0-9a-f]{40}$/i.test(candidateSHAInput)) {
   fail("--candidate-sha must be a full 40-character commit SHA");
 }
+const candidateSHA = candidateSHAInput.toLowerCase();
 if (!fixtureBinary || !path.isAbsolute(fixtureBinary)) {
   fail("--binary must be an absolute fixture binary path");
 }
@@ -36,7 +37,13 @@ let seed;
 let reload;
 
 try {
+  const realCheckout = await fsp.realpath(checkout);
+  await assertOutputOutsideCheckout(realCheckout, resolvedOutput);
   await fsp.mkdir(resolvedOutput, { recursive: true });
+  const realOutput = await fsp.realpath(resolvedOutput);
+  if (isInside(realCheckout, realOutput)) {
+    fail("--out-dir resolves inside the source checkout");
+  }
   const fixtureRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "picogent-rendered-windows-"));
   const fixtureHome = path.join(fixtureRoot, "home");
   const fixtureWorkspace = path.join(fixtureHome, "workspace");
@@ -55,7 +62,8 @@ try {
 
   seed = startFixture("seed", seedManifestPath, fixtureEnvironment, fixtureHome, fixtureWorkspace);
   const seedURL = await seed.url;
-  const seedManifest = await readManifest(seedManifestPath);
+  const seedManifestRecord = await readManifest(seedManifestPath);
+  const seedManifest = seedManifestRecord.manifest;
 
   const launchOptions = { headless: true };
   if (browserPath) {
@@ -105,7 +113,8 @@ try {
 
   reload = startFixture("reload", reloadManifestPath, fixtureEnvironment, fixtureHome, fixtureWorkspace);
   const reloadURL = await reload.url;
-  const reloadManifest = await readManifest(reloadManifestPath);
+  const reloadManifestRecord = await readManifest(reloadManifestPath);
+  const reloadManifest = reloadManifestRecord.manifest;
   await page.goto(reloadURL, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.locator("#prompt").waitFor({ state: "visible", timeout: 60000 });
   await waitForPageText(page, "Changed files (1)");
@@ -123,6 +132,8 @@ try {
 
   assertManifest(seedManifest, "seed");
   assertManifest(reloadManifest, "reload");
+  await writeExclusive(path.join(resolvedOutput, "windows-seed-manifest.json"), seedManifestRecord.data);
+  await writeExclusive(path.join(resolvedOutput, "windows-reload-manifest.json"), reloadManifestRecord.data);
   const observedAt = new Date().toISOString();
   const observation = {
     schema: "picogent.v4.rendered-recovery-observation.v1",
@@ -142,6 +153,10 @@ try {
       probe_absent_after_reload: !fs.existsSync(probePath),
       source_sha_verified: true,
       source_tree_modified: false,
+    },
+    provenance: {
+      seed_manifest_sha256: digest(seedManifestRecord.data),
+      reload_manifest_sha256: digest(reloadManifestRecord.data),
     },
   };
   const observationData = `${JSON.stringify(observation, null, 2)}\n`;
@@ -195,6 +210,29 @@ function fail(message) {
 function isInside(parent, candidate) {
   const relative = path.relative(parent, candidate);
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+async function assertOutputOutsideCheckout(realCheckout, candidate) {
+  const existingAncestor = await nearestExistingPath(candidate);
+  const realAncestor = await fsp.realpath(existingAncestor);
+  if (isInside(realCheckout, realAncestor)) {
+    fail("--out-dir resolves inside the source checkout");
+  }
+}
+
+async function nearestExistingPath(candidate) {
+  let current = candidate;
+  while (true) {
+    try {
+      await fsp.lstat(current);
+      return current;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      current = parent;
+    }
+  }
 }
 
 function sanitizeIdentifier(value) {
@@ -270,7 +308,8 @@ async function waitForFile(filePath, shouldExist) {
 
 async function readManifest(manifestPath) {
   await waitForFile(manifestPath, true);
-  return JSON.parse(await fsp.readFile(manifestPath, "utf8"));
+  const data = await fsp.readFile(manifestPath);
+  return { manifest: JSON.parse(data.toString("utf8")), data };
 }
 
 function assertManifest(manifest, phase) {
@@ -281,9 +320,14 @@ function assertManifest(manifest, phase) {
 
 async function stopFixture(child) {
   if (!child || child.exitCode !== null) return;
+  const exited = once(child, "exit").then(() => true);
   child.kill();
-  await Promise.race([once(child, "exit"), delay(10000)]);
-  if (child.exitCode === null) child.kill();
+  if (await Promise.race([exited, delay(10000).then(() => false)])) return;
+  if (child.exitCode !== null) return;
+  child.kill("SIGKILL");
+  if (!(await Promise.race([exited, delay(10000).then(() => false)])) && child.exitCode === null) {
+    throw new Error("fixture process did not exit after termination");
+  }
 }
 
 async function writeExclusive(filePath, data) {

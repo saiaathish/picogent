@@ -33,8 +33,10 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
         run: |
+          if ($env:CANDIDATE_SHA -notmatch '^[0-9a-fA-F]{40}$') { throw "candidate_sha must be a full 40-character commit SHA" }
+          $expectedSHA = $env:CANDIDATE_SHA.ToLowerInvariant()
           $actual = (git rev-parse HEAD).Trim()
-          if ($actual -ne $env:CANDIDATE_SHA) { throw "checked out $actual instead of $env:CANDIDATE_SHA" }
+          if ($actual -ne $expectedSHA) { throw "checked out $actual instead of $expectedSHA" }
           $status = (git status --porcelain | Out-String).Trim()
           if ($status -ne "") { throw "candidate checkout is dirty: $status" }
 
@@ -84,15 +86,26 @@ jobs:
           PICOGENT_RENDERED_PLATFORM_EVIDENCE: "1"
           PICOGENT_RENDERED_PLATFORM_ARTIFACT: ${{ runner.temp }}\picogent-rendered-windows-evidence\windows-rendered-platform.json
         run: |
-          go run ./cmd/runtime-boundary-matrix `
+          $candidateSHA = $env:CANDIDATE_SHA.ToLowerInvariant()
+          $matrixPath = Join-Path $env:EVIDENCE_DIR "windows-runtime-boundary-matrix.json"
+          $matrixJSON = (go run ./cmd/runtime-boundary-matrix `
             --workspace $env:GITHUB_WORKSPACE `
-            --candidate-sha $env:CANDIDATE_SHA `
-            --out (Join-Path $env:EVIDENCE_DIR "windows-runtime-boundary-matrix.json")
+            --candidate-sha $candidateSHA `
+            --out $matrixPath | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { throw "runtime-boundary-matrix failed: $matrixJSON" }
+          $matrix = $matrixJSON | ConvertFrom-Json
+          $renderedClaim = @($matrix.claims | Where-Object { $_.id -eq "rendered-platform-local" }) | Select-Object -First 1
+          if ($null -eq $renderedClaim -or $renderedClaim.verdict -ne "PASS") {
+            $verdict = if ($null -eq $renderedClaim) { "missing" } else { $renderedClaim.verdict }
+            throw "rendered-platform-local did not reach PASS: $verdict"
+          }
 
-      - name: Upload digest-only Windows evidence
+      - name: Upload Windows rendered evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: rendered-windows-evidence-${{ inputs.candidate_sha }}
-          path: ${{ runner.temp }}/picogent-rendered-windows-evidence/*.json
+          path: |
+            ${{ runner.temp }}/picogent-rendered-windows-evidence/*.json
+            ${{ runner.temp }}/picogent-rendered-windows-evidence/*.png
           if-no-files-found: error
