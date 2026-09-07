@@ -192,12 +192,14 @@ sentinel/tree digests. The bounded harness required successful in-tree
 operations, rejected dirty or stale source identity, cleaned up attacker
 helpers, and hashed nested outside-tree entries without following symlinks.
 
-Issue [#523](https://github.com/saiaathish/picogent/issues/523) extends the
-same Linux harness to sealed checkpoint `Restore`
+Issue [#523](https://github.com/saiaathish/picogent/issues/523) /
+PR [#526](https://github.com/saiaathish/picogent/pull/526) extends the same
+Linux harness to sealed checkpoint `Restore`
 (`TestLinuxSameUIDCheckpointParentSwapConfinement`), mirroring Darwin [#519](https://github.com/saiaathish/picogent/pull/519).
-Hosted Ubuntu CI retains `checkpoint.json` beside the securefile/workspace
-artifacts. Digest-only evidence keeps `BroadTOCTOUClaim: UNVERIFIED`. The row
-`hostile-filesystem-toctou` stays `UNVERIFIED`.
+Post-merge Ubuntu CI on `5d4496b88a8ed2d86d1bee8705eff86c14763483` retained
+`checkpoint.json` with overall `PASS` and
+`artifact-sha256=7ee2ee5f6c7da728a7a17f0f6831884de2495284471ca63a1a6dfa89935a9914`.
+Digest-only evidence keeps `BroadTOCTOUClaim: UNVERIFIED`.
 
 The row `hostile-filesystem-toctou` stays `UNVERIFIED` until a broader
 evidence record exists.

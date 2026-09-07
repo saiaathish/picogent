@@ -75,20 +75,42 @@ verdict=PASS
 
 ## Checkpoint restore campaign
 
-Issue [#523](https://github.com/saiaathish/picogent/issues/523) extends the
-Linux parent-swap harness to sealed checkpoint `Restore`, mirroring the Darwin
+Issue [#523](https://github.com/saiaathish/picogent/issues/523) /
+PR [#526](https://github.com/saiaathish/picogent/pull/526) extends the Linux
+parent-swap harness to sealed checkpoint `Restore`, mirroring the Darwin
 checkpoint harness from [#519](https://github.com/saiaathish/picogent/pull/519).
 The digest-only schema remains
 `picogent.v4.hostile-parent-swap-checkpoint-evidence.v1` with explicit
 `BroadTOCTOUClaim: UNVERIFIED`.
 
-Hosted Linux CI retains the checkpoint evidence beside the securefile and
-workspace artifacts under `hostile-parent-swap-linux-<sha>`. Confirmed
-parent-swap activity with unchanged outside sentinel and outside-tree digests
-is required for `PASS`. Missing swaps are `INCONCLUSIVE`; outside mutation is
-`FAIL`.
+Hosted Linux CI retains `checkpoint.json` beside the securefile and workspace
+artifacts under `hostile-parent-swap-linux-<sha>`. Confirmed parent-swap
+activity with unchanged outside sentinel and outside-tree digests is required
+for `PASS`. Missing swaps are `INCONCLUSIVE`; outside mutation is `FAIL`.
+Rejected restore attempts during the parent-swap interval are confinement
+successes for this harness; they are not proof of universal race resistance.
 
-This campaign does **not** upgrade matrix row `hostile-filesystem-toctou`.
+### Exact-current-main checkpoint
+
+After PR #526 merged, hosted Ubuntu CI on
+`5d4496b88a8ed2d86d1bee8705eff86c14763483` retained:
+
+| Operation | Attempts | Successes | Errors | Attacker swaps | Escape | Verdict |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `checkpoint-restore-existing` | 200 | 0 | 200 | 2354 | no | `PASS` |
+| `checkpoint-restore-remove-created` | 200 | 49 | 151 | 2818 | no | `PASS` |
+
+```text
+workflow=https://github.com/saiaathish/picogent/actions/runs/34080039917
+outside-sentinel=7e3486aa7f0e2440c892ec9f9209b4544d994f370f2482c25ecdec38e718af4d
+outside-tree=2d59bb122ca5a9b93844f9c5cd937869ad46fed7c75279e922c419892252e8df
+artifact-sha256=7ee2ee5f6c7da728a7a17f0f6831884de2495284471ca63a1a6dfa89935a9914
+verdict=PASS
+BroadTOCTOUClaim=UNVERIFIED
+```
+
+This exact-main observation refreshes the checkpoint campaign only. It does
+**not** upgrade matrix row `hostile-filesystem-toctou`.
 
 ## Explicit limits
 
