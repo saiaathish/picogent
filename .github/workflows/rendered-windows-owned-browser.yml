@@ -1,0 +1,135 @@
+# Collect real Windows owned-browser rendered-recovery evidence for #507.
+# Builds the fixture from an exact clean behavior SHA (default 18dc4a1), drives
+# Playwright Chromium through allow → undo → fresh-process reload, and uploads
+# digest-only platform/observation artifacts. Fail closed: job fails unless
+# verdict=PASS with source_sha_verified=true.
+name: rendered-windows-owned-browser
+
+on:
+  workflow_dispatch:
+    inputs:
+      behavior_sha:
+        description: Exact clean behavior SHA for fixture build and artifact binding
+        required: true
+        default: "18dc4a1ca1137ab78dfd0102848eb99c417653cc"
+  pull_request:
+    paths:
+      - ".github/workflows/rendered-windows-owned-browser.yml"
+      - "scripts/rendered-windows/**"
+  push:
+    branches:
+      - "codex/v4-rendered-windows-507"
+    paths:
+      - ".github/workflows/rendered-windows-owned-browser.yml"
+      - "scripts/rendered-windows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  windows-owned-browser:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      BEHAVIOR_SHA: ${{ github.event.inputs.behavior_sha || '18dc4a1ca1137ab78dfd0102848eb99c417653cc' }}
+      EVIDENCE_DIR: ${{ runner.temp }}/picogent-windows-rendered-evidence
+      FIXTURE_HOME_ROOT: ${{ runner.temp }}/picogent-rendered-windows-507
+    steps:
+      - name: Checkout collector scripts
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+
+      - name: Checkout exact behavior SHA (clean fixture source)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ env.BEHAVIOR_SHA }}
+          path: behavior-src
+          fetch-depth: 0
+
+      - name: Verify clean exact behavior checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/behavior-src"
+          head_sha="$(git rev-parse HEAD)"
+          if [[ "$head_sha" != "$BEHAVIOR_SHA" ]]; then
+            echo "behavior checkout HEAD $head_sha != $BEHAVIOR_SHA" >&2
+            exit 1
+          fi
+          if [[ -n "$(git status --porcelain)" ]]; then
+            echo "behavior checkout is dirty" >&2
+            git status --porcelain >&2
+            exit 1
+          fi
+          echo "behavior_sha=$head_sha tree=CLEAN"
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25.x"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4bdc1e3ccb85e822695 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Build rendered fixture from exact behavior SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/behavior-src"
+          go build -buildvcs=true -tags rendered_fixture \
+            -o "$RUNNER_TEMP/picogent-rendered-fixture.exe" \
+            ./cmd/picogent-rendered-fixture
+          go version -m "$RUNNER_TEMP/picogent-rendered-fixture.exe" | tee "$RUNNER_TEMP/fixture-buildinfo.txt"
+          if ! grep -q "vcs.revision=$BEHAVIOR_SHA" "$RUNNER_TEMP/fixture-buildinfo.txt"; then
+            echo "fixture missing vcs.revision=$BEHAVIOR_SHA" >&2
+            cat "$RUNNER_TEMP/fixture-buildinfo.txt" >&2
+            exit 1
+          fi
+          if grep -q "vcs.modified=true" "$RUNNER_TEMP/fixture-buildinfo.txt"; then
+            echo "fixture reports vcs.modified=true" >&2
+            exit 1
+          fi
+
+      - name: Install Playwright Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install 'playwright==1.51.0'
+          python -m playwright install chromium
+
+      - name: Collect Windows owned-browser evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          python scripts/rendered-windows/collect_rendered_recovery.py \
+            --sha "$BEHAVIOR_SHA" \
+            --fixture-bin "$RUNNER_TEMP/picogent-rendered-fixture.exe" \
+            --out "$EVIDENCE_DIR" \
+            --home-root "$FIXTURE_HOME_ROOT"
+          echo "---- collection summary ----"
+          cat "$EVIDENCE_DIR/windows-collection-summary.json"
+          echo "---- platform artifact ----"
+          cat "$EVIDENCE_DIR/windows-rendered-platform-evidence.json"
+          echo "---- digests ----"
+          (
+            cd "$EVIDENCE_DIR"
+            for f in *.json; do
+              printf '%s  %s\n' "$(sha256sum "$f" | awk '{print $1}')" "$f"
+            done
+          )
+
+      - name: Upload Windows rendered evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rendered-windows-owned-browser-${{ env.BEHAVIOR_SHA }}
+          path: |
+            ${{ env.EVIDENCE_DIR }}/*.json
+            ${{ env.EVIDENCE_DIR }}/*.png
+            ${{ runner.temp }}/fixture-buildinfo.txt
+          if-no-files-found: warn
