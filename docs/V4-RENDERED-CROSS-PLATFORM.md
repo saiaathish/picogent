@@ -10,6 +10,18 @@ This record belongs to
 A single darwin BrowserOS observation, the HTTP API-boundary fixture, and
 hosted CI alone are not cross-platform owned-browser proof.
 
+Current collection status at behavior SHA
+`d1298998cc000c40ad2fdaf71a24e17649e09e19`:
+
+- Darwin: direct BrowserOS neo observation `PASS`, recorded in
+  [the Darwin evidence record](V4-RENDERED-RECOVERY-EVIDENCE-D129899.md).
+- Linux: direct task-owned Chromium observation `PASS`, recorded in
+  [the Linux evidence record](V4-RENDERED-LINUX-EVIDENCE-D129899.md).
+- Windows: `UNVERIFIED`; no owned-browser observation exists.
+
+Consequently, no three-platform aggregate exists and the runtime boundary
+remains `UNVERIFIED`.
+
 ## Matrix projection
 
 ```sh
