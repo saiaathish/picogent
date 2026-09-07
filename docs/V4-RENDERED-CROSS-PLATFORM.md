@@ -32,6 +32,14 @@ matrix validation at a clean `423d047…` checkout projected
 must recollect all three platforms (or keep `UNVERIFIED`). Hostile TOCTOU and
 release authorization stay unchanged.
 
+Historical interim tip aggregate at behavior SHA
+`cddb184cc90de13423749aeb021440f016194a33` (post-#541; superseded as tip by
+`423d047…`) remains on record with digest
+`b9c4f7ad364c0f2c191c568ee7aea971a3a540a718785f84bb7a4583e6b5151b`
+([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-CDDB184.md),
+[Linux](V4-RENDERED-LINUX-EVIDENCE-CDDB184.md),
+[Windows](V4-RENDERED-WINDOWS-EVIDENCE-CDDB184.md)).
+
 Historical three-platform collection at behavior SHA
 `18dc4a1ca1137ab78dfd0102848eb99c417653cc` remains on record
 ([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md),

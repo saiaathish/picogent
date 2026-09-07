@@ -108,6 +108,13 @@ acceptance remains on record
 release-authorization rows remain independently evidence-bound and are not
 upgraded by either aggregate.
 
+Historical interim tip aggregate at `cddb184…` (post-#541; digest
+`b9c4f7ad364c0f2c191c568ee7aea971a3a540a718785f84bb7a4583e6b5151b`) remains on
+record ([live](V4-LIVE-PROVIDER-EVIDENCE-CDDB184.md),
+[Darwin](V4-RENDERED-RECOVERY-EVIDENCE-CDDB184.md),
+[Linux](V4-RENDERED-LINUX-EVIDENCE-CDDB184.md),
+[Windows](V4-RENDERED-WINDOWS-EVIDENCE-CDDB184.md)); it is not the current tip.
+
 ## Hostile-runtime evidence
 
 The hostile rows separate deterministic controls, bounded parent-swap
