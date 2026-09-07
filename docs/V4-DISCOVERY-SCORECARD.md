@@ -16,10 +16,11 @@ and #447 merged. The bounded release-evidence audit remains tracked in issue
 below.
 
 The remote `main` tip for the latest independent release-evidence recheck is
-`b00b88c15b310c05042ebb8debd876b221160389` (post-#459/#463/#465/#466). Its
-fresh audit is recorded at the exact head in `docs/V4-RELEASE-AUDIT.md` and
-remains `INCONCLUSIVE` for release authorization; this scorecard's
-feature/state observations remain bound to their named source heads.
+`92391e53a8f3958d99ecfff3dcfd66070f85e4cf` (behavior SHA
+`18dc4a1ca1137ab78dfd0102848eb99c417653cc`). Its fresh audit is recorded at
+the exact head in `docs/V4-RELEASE-AUDIT.md` and remains `INCONCLUSIVE` for
+release authorization; this scorecard's feature/state observations remain
+bound to their named source heads. Historical tip `b00b88c…` is superseded.
 
 The exact-head v3-versus-v4 outcome-quality matrix is refreshed in
 `docs/V4-OUTCOME-QUALITY-COMPARISON.md` and
