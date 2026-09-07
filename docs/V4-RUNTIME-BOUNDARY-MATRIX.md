@@ -87,24 +87,24 @@ row has a separate opt-in contract:
 evidence file. Connectivity evidence never upgrades the quality row.
 
 The latest tip-bound Codex observation at exact merged `main`
-`18dc4a1ca1137ab78dfd0102848eb99c417653cc` is recorded in
-[V4-LIVE-PROVIDER-EVIDENCE-18DC4A1.md](V4-LIVE-PROVIDER-EVIDENCE-18DC4A1.md)
+`21153f3a5626e727a5b29f9cacb351fcf4ae4e7f` is recorded in
+[V4-LIVE-PROVIDER-EVIDENCE-21153F3.md](V4-LIVE-PROVIDER-EVIDENCE-21153F3.md)
 for [#453](https://github.com/saiaathish/picogent/issues/453). With the matching
 digest-only artifacts supplied, it projects both
 `live-provider-connectivity=PASS` and `live-provider-quality=PASS` for the
 fixed no-tool campaign after canonical prompt-digest and bounded-shape checks;
 provider identity and raw result semantics are not independently attested. The
 matching rendered allow→undo→reload observation is
-[V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md](V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md).
+[V4-RENDERED-RECOVERY-EVIDENCE-21153F3.md](V4-RENDERED-RECOVERY-EVIDENCE-21153F3.md).
 Historical quality-only records such as
 [V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md)
-remain unchanged. The matching Windows owned-browser observation and
-three-platform aggregate at the same SHA are recorded in
+remain unchanged. The Windows owned-browser observation and three-platform
+aggregate remain exact-candidate bound to `18dc4a1…` in
 [V4-RENDERED-WINDOWS-EVIDENCE-18DC4A1.md](V4-RENDERED-WINDOWS-EVIDENCE-18DC4A1.md)
-and [V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md): exact-SHA
-validation at `18dc4a1…` projects `rendered-cross-platform=PASS`. Hostile
-TOCTOU and release-authorization rows remain independently evidence-bound and
-are not upgraded by that aggregate.
+and [V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md): tip matrix
+runs without a tip-bound aggregate keep `rendered-cross-platform=UNVERIFIED`.
+Hostile TOCTOU and release-authorization rows remain independently
+evidence-bound and are not upgraded by that historical aggregate.
 
 ## Hostile-runtime evidence
 
@@ -285,10 +285,11 @@ The rendered rows are also split by claim size:
   platform record cannot stand in for the other supported platforms.
 
 The latest direct current-main local observation is recorded in
-[V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md](V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md)
+[V4-RENDERED-RECOVERY-EVIDENCE-21153F3.md](V4-RENDERED-RECOVERY-EVIDENCE-21153F3.md)
 for [#453](https://github.com/saiaathish/picogent/issues/453). Matching Darwin
-and Linux records exist at that behavior SHA, but Windows is still missing, so
-cross-platform behavior remains `UNVERIFIED`.
+and Linux records exist at that tip SHA; tip Windows was not recollected, so tip
+`rendered-cross-platform` remains `UNVERIFIED` while the historical aggregate
+PASS stays bound to `18dc4a1…`.
 
 Enable the narrow local row with an evidence artifact outside the checkout:
 
