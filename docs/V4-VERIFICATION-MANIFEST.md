@@ -51,10 +51,12 @@ The JSON artifact uses schema `picogent.verify.v1` and records:
 Raw command output is intentionally omitted. The manifest is bounded to
 `24 KiB`; check overflow is reported as `checks_truncated`. A passing pipeline
 still produces `UNVERIFIED` when exact SHA, clean provenance, complete output,
-or required coverage is not proven. Targeted coverprofile collection for
-`internal/verify` does not authorize whole-repository coverage or upgrade a
-killed broader `go test ./...` observation to `PASS`. `UNVERIFIED` exists only
-in this evidence projection and is not an existing verifier status.
+or required targeted coverage is not proven. Targeted coverprofile collection
+for `internal/verify` does not authorize whole-repository coverage or upgrade
+a killed broader `go test ./...` observation to `PASS`. When the broader check
+itself is `PASS`, missing broader coverage no longer keeps the overall
+manifest `UNVERIFIED`. `UNVERIFIED` exists only in this evidence projection and
+is not an existing verifier status.
 
 Verification command output is bounded to `8 KiB`. If a command exits
 successfully but its evidence is truncated, the verifier reports
@@ -80,10 +82,10 @@ dependency cannot silently turn into a skipped evidence job. The job uploads
 
 These artifacts are review evidence for the exact tested tree; they are not, by
 themselves, a release approval. In particular, the verification manifest can
-remain `INCONCLUSIVE` or `UNVERIFIED` when the broader suite is killed or when
-broader coverage is not collected, while the required CI gate ledger still fails
-closed on a missing or failed job. Broader verification is plain
-`go test ./...` (no `-race`); Linux race packages and dedicated hostile
+remain `INCONCLUSIVE` when the broader suite is killed, or `UNVERIFIED` when
+targeted coverage or provenance is incomplete, while the required CI gate
+ledger still fails closed on a missing or failed job. Broader verification is
+plain `go test ./...` (no `-race`); Linux race packages and dedicated hostile
 parent-swap evidence stay in separate CI steps and are not silently upgraded by
 a broader PASS.
 

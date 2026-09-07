@@ -223,7 +223,41 @@ func TestCollectProvenanceDisablesRepositoryFsmonitor(t *testing.T) {
 	}
 }
 
-func TestManifestPassRequiresCoverageEvidence(t *testing.T) {
+func TestManifestPassRequiresTargetedCoverageEvidence(t *testing.T) {
+	pipeline := PipelineResult{
+		Status: StatusPass,
+		Stages: []StageResult{
+			{
+				Scope:  ScopeTargeted,
+				Status: StatusPass,
+				Evidence: []Result{{
+					Scope: ScopeTargeted, Runner: "go", Command: "go test ./pkg", Status: StatusPass, Passed: 1,
+				}},
+			},
+			{
+				Scope:  ScopeBroader,
+				Status: StatusPass,
+				Evidence: []Result{{
+					Scope: ScopeBroader, Runner: "go", Command: "go test ./...", Status: StatusPass, Passed: 1,
+				}},
+			},
+		},
+	}
+	manifest := ManifestFromPipeline(pipeline, HeadEvidence{
+		SHA:         strings.Repeat("a", 40),
+		ExpectedSHA: strings.Repeat("a", 40),
+		Match:       ManifestPass,
+		Tree:        "CLEAN",
+	})
+	if manifest.Status != ManifestUnverified || !strings.Contains(manifest.Reason, "coverage") {
+		t.Fatalf("manifest = %+v", manifest)
+	}
+	if len(manifest.Checks) != 2 || manifest.Checks[0].Coverage.Status != ManifestUnverified {
+		t.Fatalf("coverage evidence = %+v", manifest.Checks)
+	}
+}
+
+func TestManifestPassAllowsBroaderWithoutCoverage(t *testing.T) {
 	pipeline := PipelineResult{
 		Status: StatusPass,
 		Stages: []StageResult{{
@@ -240,8 +274,8 @@ func TestManifestPassRequiresCoverageEvidence(t *testing.T) {
 		Match:       ManifestPass,
 		Tree:        "CLEAN",
 	})
-	if manifest.Status != ManifestUnverified || !strings.Contains(manifest.Reason, "coverage") {
-		t.Fatalf("manifest = %+v", manifest)
+	if manifest.Status != ManifestPass {
+		t.Fatalf("broader-only manifest = %+v, want PASS under targeted-only coverage", manifest)
 	}
 	if len(manifest.Checks) != 1 || manifest.Checks[0].Coverage.Status != ManifestUnverified {
 		t.Fatalf("coverage evidence = %+v", manifest.Checks)

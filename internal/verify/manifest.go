@@ -265,7 +265,7 @@ func classifyManifest(result PipelineResult, manifest Manifest) (ManifestStatus,
 			if check.OutputTruncated {
 				return ManifestUnverified, "verification output was truncated"
 			}
-			if check.Coverage.Status != ManifestPass {
+			if coverageRequiredForManifest(check) && check.Coverage.Status != ManifestPass {
 				return ManifestUnverified, firstReason(check.Coverage.Reason, "required coverage is unverified")
 			}
 		}
@@ -273,6 +273,14 @@ func classifyManifest(result PipelineResult, manifest Manifest) (ManifestStatus,
 	default:
 		return ManifestUnverified, "pipeline returned an unknown status"
 	}
+}
+
+func coverageRequiredForManifest(check CheckEvidence) bool {
+	// Hosted release-evidence collects a coverprofile for the targeted stage
+	// only. Broader go test ./... remains a pass/fail observation without
+	// whole-repository coverage; missing broader coverage must not keep a
+	// otherwise PASS pipeline UNVERIFIED forever.
+	return check.Scope == ScopeTargeted
 }
 
 func boundedManifest(manifest Manifest) Manifest {
