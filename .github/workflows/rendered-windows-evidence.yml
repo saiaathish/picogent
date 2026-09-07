@@ -51,7 +51,10 @@ jobs:
           New-Item -ItemType Directory -Force $nodeRoot | Out-Null
           $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
           npm install --prefix $nodeRoot --no-save --no-package-lock playwright@1.55.0
-          "NODE_PATH=$(Join-Path $nodeRoot 'node_modules')" >> $env:GITHUB_ENV
+          Copy-Item `
+            (Join-Path $env:GITHUB_WORKSPACE "scripts\rendered-recovery\windows-evidence.mjs") `
+            (Join-Path $nodeRoot "windows-evidence.mjs")
+          "PLAYWRIGHT_COLLECTOR=$(Join-Path $nodeRoot 'windows-evidence.mjs')" >> $env:GITHUB_ENV
 
       - name: Run direct Windows owned-browser recovery flow
         shell: pwsh
@@ -66,7 +69,7 @@ jobs:
           ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
           if (-not $chrome) { throw "task-owned Chrome executable was not found" }
           New-Item -ItemType Directory -Force $env:EVIDENCE_DIR | Out-Null
-          node scripts/rendered-recovery/windows-evidence.mjs `
+          node $env:PLAYWRIGHT_COLLECTOR `
             --candidate-sha $env:CANDIDATE_SHA `
             --binary $env:PICOGENT_RENDERED_FIXTURE_BINARY `
             --browser-path $chrome `
