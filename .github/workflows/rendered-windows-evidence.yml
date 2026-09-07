@@ -1,0 +1,98 @@
+name: rendered-windows-evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact clean candidate SHA to observe
+        required: true
+        type: string
+
+jobs:
+  collect:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25.x"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22.x"
+
+      - name: Verify exact clean source
+        shell: pwsh
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $env:CANDIDATE_SHA) { throw "checked out $actual instead of $env:CANDIDATE_SHA" }
+          $status = (git status --porcelain | Out-String).Trim()
+          if ($status -ne "") { throw "candidate checkout is dirty: $status" }
+
+      - name: Build rendered fixture from candidate
+        shell: pwsh
+        run: |
+          $fixture = Join-Path $env:RUNNER_TEMP "picogent-rendered-fixture.exe"
+          go build -buildvcs=true -tags rendered_fixture -o $fixture ./cmd/picogent-rendered-fixture
+          "PICOGENT_RENDERED_FIXTURE_BINARY=$fixture" >> $env:GITHUB_ENV
+
+      - name: Install pinned browser driver
+        shell: pwsh
+        run: |
+          $nodeRoot = Join-Path $env:RUNNER_TEMP "picogent-playwright"
+          New-Item -ItemType Directory -Force $nodeRoot | Out-Null
+          $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
+          npm install --prefix $nodeRoot --no-save --no-package-lock playwright@1.55.0
+          Copy-Item `
+            (Join-Path $env:GITHUB_WORKSPACE "scripts\rendered-recovery\windows-evidence.mjs") `
+            (Join-Path $nodeRoot "windows-evidence.mjs")
+          "PLAYWRIGHT_COLLECTOR=$(Join-Path $nodeRoot 'windows-evidence.mjs')" >> $env:GITHUB_ENV
+
+      - name: Run direct Windows owned-browser recovery flow
+        shell: pwsh
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}\picogent-rendered-windows-evidence
+        run: |
+          $chrome = @(
+            (Join-Path ${env:ProgramFiles} "Google\Chrome\Application\chrome.exe"),
+            (Join-Path ${env:ProgramFiles(x86)} "Google\Chrome\Application\chrome.exe"),
+            (Join-Path ${env:LOCALAPPDATA} "Google\Chrome\Application\chrome.exe")
+          ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+          if (-not $chrome) { throw "task-owned Chrome executable was not found" }
+          New-Item -ItemType Directory -Force $env:EVIDENCE_DIR | Out-Null
+          node $env:PLAYWRIGHT_COLLECTOR `
+            --candidate-sha $env:CANDIDATE_SHA `
+            --binary $env:PICOGENT_RENDERED_FIXTURE_BINARY `
+            --browser-path $chrome `
+            --out-dir $env:EVIDENCE_DIR
+
+      - name: Validate Windows platform evidence through the matrix
+        shell: pwsh
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}\picogent-rendered-windows-evidence
+          PICOGENT_RENDERED_PLATFORM_EVIDENCE: "1"
+          PICOGENT_RENDERED_PLATFORM_ARTIFACT: ${{ runner.temp }}\picogent-rendered-windows-evidence\windows-rendered-platform.json
+        run: |
+          go run ./cmd/runtime-boundary-matrix `
+            --workspace $env:GITHUB_WORKSPACE `
+            --candidate-sha $env:CANDIDATE_SHA `
+            --out (Join-Path $env:EVIDENCE_DIR "windows-runtime-boundary-matrix.json")
+
+      - name: Upload digest-only Windows evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rendered-windows-evidence-${{ inputs.candidate_sha }}
+          path: ${{ runner.temp }}/picogent-rendered-windows-evidence/*.json
+          if-no-files-found: error
