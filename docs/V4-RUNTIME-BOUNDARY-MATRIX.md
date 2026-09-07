@@ -86,16 +86,16 @@ row has a separate opt-in contract:
 `PICOGENT_LIVE_PROVIDER_QUALITY_ARTIFACT` must point at a valid quality
 evidence file. Connectivity evidence never upgrades the quality row.
 
-The latest tip-bound Codex observation at exact merged `main`
-`21153f3a5626e727a5b29f9cacb351fcf4ae4e7f` is recorded in
-[V4-LIVE-PROVIDER-EVIDENCE-21153F3.md](V4-LIVE-PROVIDER-EVIDENCE-21153F3.md)
+The latest tip-bound Codex observation at exact behavior tip
+`251171f2972cc3a28b03cf35c222e77134cb65b4` is recorded in
+[V4-LIVE-PROVIDER-EVIDENCE-251171F.md](V4-LIVE-PROVIDER-EVIDENCE-251171F.md)
 for [#453](https://github.com/saiaathish/picogent/issues/453). With the matching
 digest-only artifacts supplied, it projects both
 `live-provider-connectivity=PASS` and `live-provider-quality=PASS` for the
 fixed no-tool campaign after canonical prompt-digest and bounded-shape checks;
 provider identity and raw result semantics are not independently attested. The
 matching rendered allow→undo→reload observation is
-[V4-RENDERED-RECOVERY-EVIDENCE-21153F3.md](V4-RENDERED-RECOVERY-EVIDENCE-21153F3.md).
+[V4-RENDERED-RECOVERY-EVIDENCE-251171F.md](V4-RENDERED-RECOVERY-EVIDENCE-251171F.md).
 Historical quality-only records such as
 [V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md)
 remain unchanged. The Windows owned-browser observation and three-platform
@@ -285,7 +285,7 @@ The rendered rows are also split by claim size:
   platform record cannot stand in for the other supported platforms.
 
 The latest direct current-main local observation is recorded in
-[V4-RENDERED-RECOVERY-EVIDENCE-21153F3.md](V4-RENDERED-RECOVERY-EVIDENCE-21153F3.md)
+[V4-RENDERED-RECOVERY-EVIDENCE-251171F.md](V4-RENDERED-RECOVERY-EVIDENCE-251171F.md)
 for [#453](https://github.com/saiaathish/picogent/issues/453). Matching Darwin
 and Linux records exist at that tip SHA; tip Windows was not recollected, so tip
 `rendered-cross-platform` remains `UNVERIFIED` while the historical aggregate
