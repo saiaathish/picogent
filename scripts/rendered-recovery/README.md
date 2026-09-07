@@ -1,6 +1,6 @@
-# Windows owned-browser rendered recovery collector
+# Owned-browser rendered recovery collector
 
-Task-owned Windows evidence helper for [#507](https://github.com/saiaathish/picogent/issues/507).
+Task-owned desktop evidence helper for [#507](https://github.com/saiaathish/picogent/issues/507).
 
 ## What it proves
 
@@ -16,16 +16,17 @@ publishing PASS.
 Build the fixture from a clean checkout at the exact behavior SHA, then:
 
 ```sh
-python scripts/rendered-windows/collect_rendered_recovery.py \
+python scripts/rendered-recovery/collect_owned_browser.py \
+  --platform windows \
   --sha 18dc4a1ca1137ab78dfd0102848eb99c417653cc \
   --fixture-bin /path/to/picogent-rendered-fixture.exe \
   --out /absolute/path/outside/checkout/windows-evidence \
   --home-root "$TEMP/picogent-rendered-windows-507"
 ```
 
-The GitHub Actions workflow
-`.github/workflows/rendered-windows-owned-browser.yml` performs that flow on
-`windows-latest` and uploads digest-only JSON plus operator screenshots.
+Pass `--platform linux` or `--platform darwin` for the corresponding owned
+desktop runtime. The GitHub Actions workflows perform the Windows and Linux
+flows on fresh hosted runners and upload digest-only JSON plus screenshots.
 
 ## Fail-closed rules
 
@@ -33,5 +34,7 @@ The GitHub Actions workflow
 - Missing, dirty, or contradictory observations exit non-zero
 - Output and disposable-home paths must be absolute, outside the checkout,
   and free of symbolic-link components
+- Platform must be one of `darwin`, `linux`, or `windows`; the artifact name
+  and record platform are derived from that explicit value
 - The rendered runtime matrix must report `rendered-platform-local=PASS`
 - Never synthesize a Windows PASS placeholder

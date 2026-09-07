@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Collect Windows owned-browser rendered-recovery evidence.
+"""Collect owned-browser rendered-recovery evidence on a desktop platform.
 
 Drives a real Chromium (Playwright) through allow → undo → fresh-process
 reload against the rendered_fixture binary. Emits digest-only platform and
@@ -19,6 +19,16 @@ import stat
 import subprocess
 import sys
 import time
+
+SUPPORTED_PLATFORMS = frozenset({"darwin", "linux", "windows"})
+
+
+def normalize_platform(raw: str) -> str:
+    platform = raw.strip().lower()
+    if platform not in SUPPORTED_PLATFORMS:
+        supported = ", ".join(sorted(SUPPORTED_PLATFORMS))
+        raise SystemExit(f"platform must be one of {supported}: {raw!r}")
+    return platform
 
 
 def sha256_file(path: pathlib.Path) -> str:
@@ -70,8 +80,12 @@ def prepare_output_directory(raw_path: pathlib.Path, workspace: pathlib.Path) ->
     return output
 
 
-def prepare_fixture_home(raw_path: pathlib.Path | None, temp_root: pathlib.Path) -> pathlib.Path:
-    home_root = raw_path or (temp_root / "picogent-rendered-windows-507")
+def prepare_fixture_home(
+    raw_path: pathlib.Path | None,
+    temp_root: pathlib.Path,
+    platform_name: str = "windows",
+) -> pathlib.Path:
+    home_root = raw_path or (temp_root / f"picogent-rendered-{platform_name}-507")
     if not home_root.is_absolute():
         raise SystemExit("--home-root must be an absolute directory below the temp directory")
     home_root = pathlib.Path(os.path.abspath(os.fspath(home_root)))
@@ -214,6 +228,11 @@ def sanitize_browser_id(raw: str) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--platform",
+        default="windows",
+        help="desktop platform recorded in the evidence (default: windows)",
+    )
     parser.add_argument("--sha", required=True, help="exact clean behavior/candidate SHA")
     parser.add_argument("--fixture-bin", required=True, type=pathlib.Path)
     parser.add_argument("--out", required=True, type=pathlib.Path)
@@ -225,6 +244,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    platform_name = normalize_platform(args.platform)
     sha = args.sha.strip().lower()
     if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
         raise SystemExit("sha must be a full lowercase commit id")
@@ -239,12 +259,12 @@ def main() -> int:
     temp_root = pathlib.Path(
         os.path.realpath(os.path.abspath(os.environ.get("TEMP") or os.environ.get("TMP") or "/tmp"))
     )
-    home_root_candidate = args.home_root or (temp_root / "picogent-rendered-windows-507")
+    home_root_candidate = args.home_root or (temp_root / f"picogent-rendered-{platform_name}-507")
     if home_root_candidate.is_absolute():
         home_root_candidate = pathlib.Path(os.path.abspath(os.fspath(home_root_candidate)))
         if is_inside(home_root_candidate, out) or is_inside(out, home_root_candidate):
             raise SystemExit("--out and --home-root must be separate directories")
-    home_root = prepare_fixture_home(args.home_root, temp_root)
+    home_root = prepare_fixture_home(args.home_root, temp_root, platform_name)
     home = home_root / "home"
     workspace = home / "workspace"
     probe = workspace / "rendered-recovery-probe.txt"
@@ -287,7 +307,7 @@ def main() -> int:
             page.wait_for_selector("#prompt:not([disabled])", timeout=30000)
             undo = page.locator("#undo-turn")
             observed["initial_undo_visible"] = undo.is_enabled()
-            screenshots["initial"] = screenshot_root / "windows-initial.png"
+            screenshots["initial"] = screenshot_root / f"{platform_name}-initial.png"
             page.screenshot(path=str(screenshots["initial"]), full_page=True)
 
             page.fill("#prompt", "Run the rendered recovery fixture.")
@@ -298,7 +318,7 @@ def main() -> int:
                 buttons.nth(i).is_visible() for i in range(min(4, buttons.count()))
             )
             observed["probe_absent_before_allow"] = not probe.exists()
-            screenshots["permission"] = screenshot_root / "windows-permission.png"
+            screenshots["permission"] = screenshot_root / f"{platform_name}-permission.png"
             page.screenshot(path=str(screenshots["permission"]), full_page=True)
 
             page.click("#perm button[data-allow='1']")
@@ -316,7 +336,7 @@ def main() -> int:
             observed["changed_files_one_visible_after_allow"] = "Changed files (1)" in body_after_allow
             observed["undo_visible_after_allow"] = page.locator("#undo-turn").is_enabled()
             observed["probe_sha256_after_allow"] = sha256_file(probe)
-            screenshots["allowed"] = screenshot_root / "windows-allowed.png"
+            screenshots["allowed"] = screenshot_root / f"{platform_name}-allowed.png"
             page.screenshot(path=str(screenshots["allowed"]), full_page=True)
 
             page.click("#undo-turn")
@@ -330,7 +350,7 @@ def main() -> int:
             observed["probe_absent_after_undo"] = not probe.exists()
             observed["undo_visible_after_undo"] = page.locator("#undo-turn").is_enabled()
             observed["changed_files_one_visible_after_undo"] = "Changed files (1)" in body_after_undo
-            screenshots["undone"] = screenshot_root / "windows-undone.png"
+            screenshots["undone"] = screenshot_root / f"{platform_name}-undone.png"
             page.screenshot(path=str(screenshots["undone"]), full_page=True)
 
             seed_shutdown = stop_fixture(seed_proc, "seed")
@@ -352,7 +372,7 @@ def main() -> int:
                 observed["changed_files_one_visible_after_reload"] = "Changed files (1)" in body_reload
                 observed["undo_visible_after_reload"] = page.locator("#undo-turn").is_enabled()
                 observed["probe_absent_after_reload"] = not probe.exists()
-                screenshots["reload"] = screenshot_root / "windows-reload.png"
+                screenshots["reload"] = screenshot_root / f"{platform_name}-reload.png"
                 page.screenshot(path=str(screenshots["reload"]), full_page=True)
             finally:
                 reload_shutdown = stop_fixture(reload_proc, "reload")
@@ -410,7 +430,7 @@ def main() -> int:
             observation = {
                 "schema": "picogent.v4.rendered-recovery-observation.v1",
                 "candidate_sha": sha,
-                "platform": "windows",
+                "platform": platform_name,
                 "architecture": architecture,
                 "browser": browser_id,
                 "fixture": "rendered-recovery",
@@ -432,18 +452,18 @@ def main() -> int:
                 "screenshot_set_sha256": screenshot_set_sha,
                 "verdict": verdict,
             }
-            observation_path = out / "windows-rendered-recovery-observation.json"
+            observation_path = out / f"{platform_name}-rendered-recovery-observation.json"
             observation_data = (json.dumps(observation, indent=2, sort_keys=True) + "\n").encode(
                 "utf-8"
             )
             write_exclusive(observation_path, observation_data)
-            write_exclusive(out / "windows-rendered-seed-manifest.json", seed_manifest_data)
-            write_exclusive(out / "windows-rendered-reload-manifest.json", reload_manifest_data)
+            write_exclusive(out / f"{platform_name}-rendered-seed-manifest.json", seed_manifest_data)
+            write_exclusive(out / f"{platform_name}-rendered-reload-manifest.json", reload_manifest_data)
 
             platform = {
                 "schema": "picogent.v4.rendered-platform-evidence.v1",
                 "candidate_sha": sha,
-                "platform": "windows",
+                "platform": platform_name,
                 "architecture": architecture,
                 "environment": "task-owned-disposable",
                 "browser": browser_id,
@@ -454,7 +474,7 @@ def main() -> int:
                 "verdict": verdict,
                 "source_tree_modified": observation["source_tree_modified"],
             }
-            platform_path = out / "windows-rendered-platform-evidence.json"
+            platform_path = out / f"{platform_name}-rendered-platform-evidence.json"
             write_exclusive(
                 platform_path,
                 (json.dumps(platform, indent=2, sort_keys=True) + "\n").encode("utf-8"),
@@ -481,7 +501,7 @@ def main() -> int:
                 "required_checks": required,
             }
             write_exclusive(
-                out / "windows-collection-summary.json",
+                out / f"{platform_name}-collection-summary.json",
                 (json.dumps(summary, indent=2, sort_keys=True) + "\n").encode("utf-8"),
             )
             print(json.dumps(summary, sort_keys=True))

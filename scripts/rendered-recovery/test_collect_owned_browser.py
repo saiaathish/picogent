@@ -12,14 +12,26 @@ import tempfile
 import unittest
 
 
-SCRIPT = pathlib.Path(__file__).with_name("collect_rendered_recovery.py")
-SPEC = importlib.util.spec_from_file_location("collect_rendered_recovery", SCRIPT)
+SCRIPT = pathlib.Path(__file__).with_name("collect_owned_browser.py")
+SPEC = importlib.util.spec_from_file_location("collect_owned_browser", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 COLLECTOR = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(COLLECTOR)
 
 
 class CollectorBoundaryTests(unittest.TestCase):
+    def test_platform_is_explicit_and_bounded(self) -> None:
+        self.assertEqual(COLLECTOR.normalize_platform("linux"), "linux")
+        self.assertEqual(COLLECTOR.normalize_platform(" DARWIN "), "darwin")
+        with self.assertRaisesRegex(SystemExit, "platform must be one of"):
+            COLLECTOR.normalize_platform("android")
+
+    def test_default_home_root_uses_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            temp_root = pathlib.Path(os.path.realpath(temporary))
+            home_root = COLLECTOR.prepare_fixture_home(None, temp_root, "linux")
+            self.assertEqual(home_root, temp_root / "picogent-rendered-linux-507")
+
     def test_output_directory_must_be_outside_checkout_without_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(os.path.realpath(temporary))

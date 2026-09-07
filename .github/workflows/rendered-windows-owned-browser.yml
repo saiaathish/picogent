@@ -15,13 +15,13 @@ on:
   pull_request:
     paths:
       - ".github/workflows/rendered-windows-owned-browser.yml"
-      - "scripts/rendered-windows/**"
+      - "scripts/rendered-recovery/**"
   push:
     branches:
       - "codex/v4-rendered-windows-507"
     paths:
       - ".github/workflows/rendered-windows-owned-browser.yml"
-      - "scripts/rendered-windows/**"
+      - "scripts/rendered-recovery/**"
 
 permissions:
   contents: read
@@ -126,7 +126,8 @@ jobs:
           # explicitly can change its drive-root interpretation on Windows.
           EVIDENCE_DIR="$RUNNER_TEMP/picogent-windows-rendered-evidence"
           mkdir -p "$EVIDENCE_DIR"
-          python scripts/rendered-windows/collect_rendered_recovery.py \
+          python scripts/rendered-recovery/collect_owned_browser.py \
+            --platform windows \
             --sha "$BEHAVIOR_SHA" \
             --fixture-bin "$RUNNER_TEMP/picogent-rendered-fixture.exe" \
             --out "$EVIDENCE_DIR"
