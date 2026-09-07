@@ -98,9 +98,70 @@ func TestCollectPassesBoundedHostileFilesystemWithoutTOCTOU(t *testing.T) {
 	if !strings.Contains(deterministic.Reason, "same-UID filesystem TOCTOU") {
 		t.Fatalf("deterministic hostile-filesystem reason = %q", deterministic.Reason)
 	}
+	parentSwap := claimByID(t, report, "hostile-parent-swap-confinement")
+	if parentSwap.Verdict != VerdictUnverified {
+		t.Fatalf("parent-swap verdict = %s reason=%s", parentSwap.Verdict, parentSwap.Reason)
+	}
 	toctou := claimByID(t, report, "hostile-filesystem-toctou")
 	if toctou.Verdict != VerdictUnverified {
 		t.Fatalf("TOCTOU verdict = %s reason=%s", toctou.Verdict, toctou.Reason)
+	}
+}
+
+func TestCollectPassesBoundedParentSwapConfinementWithoutBroadTOCTOU(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	workspace := t.TempDir()
+	seedDocs(t, workspace)
+	write(t, workspace, "docs/V4-HOSTILE-RUNTIME-EVIDENCE.md", "# bounded hostile runtime evidence\n")
+	write(t, workspace, "docs/V4-HOSTILE-PARENT-SWAP-DARWIN.md", "# darwin parent-swap\n")
+	write(t, workspace, "docs/V4-HOSTILE-PARENT-SWAP-LINUX.md", "# linux parent-swap\n")
+	sha := commitAll(t, workspace)
+
+	report, err := Collect(Options{
+		Workspace:    workspace,
+		CandidateSHA: sha,
+		Now:          time.Unix(1700000000, 0).UTC(),
+		Environ:      func(string) string { return "" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentSwap := claimByID(t, report, "hostile-parent-swap-confinement")
+	if parentSwap.Verdict != VerdictPass {
+		t.Fatalf("parent-swap verdict = %s reason=%s", parentSwap.Verdict, parentSwap.Reason)
+	}
+	if !strings.Contains(parentSwap.Reason, "arbitrary same-UID TOCTOU remains outside this claim") {
+		t.Fatalf("parent-swap reason = %q", parentSwap.Reason)
+	}
+	toctou := claimByID(t, report, "hostile-filesystem-toctou")
+	if toctou.Verdict != VerdictUnverified {
+		t.Fatalf("TOCTOU verdict = %s reason=%s", toctou.Verdict, toctou.Reason)
+	}
+}
+
+func TestCollectMarksPartialParentSwapConfinementInconclusive(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	workspace := t.TempDir()
+	seedDocs(t, workspace)
+	write(t, workspace, "docs/V4-HOSTILE-PARENT-SWAP-DARWIN.md", "# darwin parent-swap\n")
+	sha := commitAll(t, workspace)
+
+	report, err := Collect(Options{
+		Workspace:    workspace,
+		CandidateSHA: sha,
+		Now:          time.Unix(1700000000, 0).UTC(),
+		Environ:      func(string) string { return "" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parentSwap := claimByID(t, report, "hostile-parent-swap-confinement")
+	if parentSwap.Verdict != VerdictInconclusive {
+		t.Fatalf("parent-swap verdict = %s reason=%s", parentSwap.Verdict, parentSwap.Reason)
 	}
 }
 

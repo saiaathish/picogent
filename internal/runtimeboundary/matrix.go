@@ -455,6 +455,29 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		hostileFilesystem.Reason = "bounded hostile-runtime evidence doc is missing"
 	}
 
+	darwinParentSwap, _ := lookup(doc("docs/V4-HOSTILE-PARENT-SWAP-DARWIN.md"))
+	linuxParentSwap, _ := lookup(doc("docs/V4-HOSTILE-PARENT-SWAP-LINUX.md"))
+	parentSwap := Claim{
+		ID:         "hostile-parent-swap-confinement",
+		Category:   CategoryHostile,
+		Title:      "Bounded same-UID parent-swap confinement",
+		Setup:      "Separate-process Darwin/Linux parent-swap harnesses for securefile, workspace, and checkpoint restore.",
+		Artifact:   "docs/V4-HOSTILE-PARENT-SWAP-DARWIN.md and docs/V4-HOSTILE-PARENT-SWAP-LINUX.md",
+		Provenance: "bounded hostile parent-swap confinement evidence",
+		ObservedAt: observed,
+	}
+	switch {
+	case darwinParentSwap && linuxParentSwap:
+		parentSwap.Verdict = VerdictPass
+		parentSwap.Reason = "bounded Darwin and Linux parent-swap confinement evidence is documented; arbitrary same-UID TOCTOU remains outside this claim"
+	case darwinParentSwap || linuxParentSwap:
+		parentSwap.Verdict = VerdictInconclusive
+		parentSwap.Reason = "parent-swap confinement evidence is incomplete across Darwin and Linux"
+	default:
+		parentSwap.Verdict = VerdictUnverified
+		parentSwap.Reason = "bounded parent-swap confinement evidence docs are missing"
+	}
+
 	hostileTOCTOU := Claim{
 		ID:         "hostile-filesystem-toctou",
 		Category:   CategoryHostile,
@@ -462,8 +485,8 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		Setup:      "Hostile writer between final check and mutate/exec across surfaces.",
 		Artifact:   "cross-surface hostile TOCTOU stress evidence",
 		Verdict:    VerdictUnverified,
-		Provenance: "explicit audit boundary",
-		Reason:     "broader filesystem race proof is not claimed by current deterministic coverage",
+		Provenance: "explicit residual audit boundary",
+		Reason:     "broad same-UID TOCTOU remains UNVERIFIED; only bounded parent-swap confinement is claimed separately",
 		ObservedAt: observed,
 	}
 
@@ -502,14 +525,14 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		release.Reason = "release audit document is missing"
 	case sbomDoc:
 		release.Verdict = VerdictInconclusive
-		release.Reason = "production artifacts and audits exist, but overall release authorization remains inconclusive while live/rendered/hostile gaps persist"
+		release.Reason = "production artifacts and audits exist, but overall release authorization remains inconclusive while live/rendered gaps and residual broad TOCTOU persist"
 		release.Provenance = "audit+sbom lane at " + candidateSHA[:12]
 	default:
 		release.Verdict = VerdictInconclusive
 		release.Reason = "release audit exists without claiming authorization"
 	}
 
-	return []Claim{liveConnectivity, live, renderedLocal, rendered, renderedCross, renderedUndoReload, hostile, hostileFilesystem, hostileTOCTOU, recovery, release}
+	return []Claim{liveConnectivity, live, renderedLocal, rendered, renderedCross, renderedUndoReload, hostile, hostileFilesystem, parentSwap, hostileTOCTOU, recovery, release}
 }
 
 func boundClaim(claim Claim) Claim {

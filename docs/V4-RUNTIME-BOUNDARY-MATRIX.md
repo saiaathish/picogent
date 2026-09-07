@@ -108,19 +108,28 @@ evidence-bound and are not upgraded by that historical aggregate.
 
 ## Hostile-runtime evidence
 
-The hostile rows separate deterministic controls from the broader race claim:
+The hostile rows separate deterministic controls, bounded parent-swap
+confinement, and the broader race residual:
 
 - `hostile-filesystem-deterministic` can become `PASS` when the exact-head
   [bounded hostile-runtime evidence](V4-HOSTILE-RUNTIME-EVIDENCE.md) is present.
   It covers the deterministic securefile, procenv, and workspace test families
   named by that record.
-- `hostile-filesystem-toctou` remains `UNVERIFIED`. Descriptor/handle-anchored
-  operations and bounded ancestor-swap tests do not prove arbitrary same-UID
-  writers cannot race every cross-surface pathname boundary.
+- `hostile-parent-swap-confinement` can become `PASS` when both
+  [Darwin](V4-HOSTILE-PARENT-SWAP-DARWIN.md) and
+  [Linux](V4-HOSTILE-PARENT-SWAP-LINUX.md) same-UID parent-swap confinement
+  evidence records are present. Partial single-platform evidence stays
+  `INCONCLUSIVE`. This row is the hostile-runtime release gate for bounded
+  confinement; it is not a universal TOCTOU proof.
+- `hostile-filesystem-toctou` remains `UNVERIFIED` as an explicit residual.
+  Descriptor/handle-anchored operations and bounded ancestor-swap tests do not
+  prove arbitrary same-UID writers cannot race every cross-surface pathname
+  boundary. The release-authorization predicate does not require this residual
+  row to become `PASS`.
 
-The deterministic row is a narrower observation and does not authorize a
-release, upgrade the live-provider or rendered rows, or change the explicit
-limits in the evidence record.
+The deterministic and parent-swap rows are narrower observations and do not
+authorize a release, upgrade the live-provider or rendered rows, or change the
+explicit limits in the evidence records.
 
 ## Live-provider connectivity evidence
 

@@ -49,6 +49,7 @@ The runtime-boundary matrix projects this record as:
 | Claim | Verdict | Meaning |
 | --- | --- | --- |
 | `hostile-filesystem-deterministic` | `PASS` | The named deterministic test families are recorded at an exact source checkpoint. |
+| `hostile-parent-swap-confinement` | `PASS` when both Darwin and Linux parent-swap evidence docs are present | Bounded same-UID parent-swap confinement only. |
 | `hostile-filesystem-toctou` | `UNVERIFIED` | The broader same-UID race claim is deliberately not established. |
 
 The matrix row is enabled by the presence of this exact-head evidence record.
@@ -132,9 +133,10 @@ This record does not prove:
 - a security certification, production safety guarantee, or release
   authorization.
 
-The broader `hostile-filesystem-toctou` row remains `UNVERIFIED` until a
-separate evidence record establishes that larger claim without treating these
-deterministic tests as a substitute.
+The residual `hostile-filesystem-toctou` row remains `UNVERIFIED`. Bounded
+parent-swap confinement is claimed separately by
+`hostile-parent-swap-confinement` when both Darwin and Linux evidence records
+are present; that narrowed PASS does not substitute for the broader residual.
 
 ## macOS same-UID parent-swap harness checkpoint
 
@@ -153,8 +155,10 @@ were collected at exact source `effe52a21f770bc435bbb1596df1452339cbd82a`:
 - workspace artifact: `8dfe6a54f26bc664e5972e85ebb0180a896111ebeb8b33953cfd9b44c6da03ce`.
 
 They include same-name outside read markers, complete outside-tree digests,
-operation counts, attacker activity, and Darwin/arm64 provenance. It still
-does **not** upgrade `hostile-filesystem-toctou`.
+operation counts, attacker activity, and Darwin/arm64 provenance. Together with
+the Linux parent-swap evidence record, they enable
+`hostile-parent-swap-confinement=PASS`. They still do **not** upgrade
+`hostile-filesystem-toctou`.
 
 The exercised attacker presents a symlink after renaming the trusted parent.
 Replacement with an ordinary attacker-owned directory between permission
