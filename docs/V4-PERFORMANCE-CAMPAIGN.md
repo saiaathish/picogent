@@ -1,15 +1,53 @@
 # V4 performance campaign
 
 Status: historical comparison captured on 2026-08-25, with current-head
-refreshes through 2026-09-05. This document records deterministic local
+refreshes through 2026-09-07. This document records deterministic local
 controls; it does not claim live-provider quality or end-to-end product
 performance.
 
 The measurements below retain the exact historical heads named in each
-section. Current merged `main` is now
-`38b45ff99af0221f4b5dcbe16d356f78ff2b71a9`; older refreshes are intentionally
+section. Current merged `main` at the tip refresh below is
+`cddb184cc90de13423749aeb021440f016194a33`; older refreshes are intentionally
 not relabeled.
 Issue #302 tracks the current scripted-edit performance follow-up.
+
+## Exact tip refresh — main `cddb184` (2026-09-07)
+
+Local deterministic controls were rerun on Apple M3 arm64 macOS with Go
+`go1.26.6` at exact tip `cddb184cc90de13423749aeb021440f016194a33` (merge of
+[#541](https://github.com/saiaathish/picogent/pull/541)). Commands match the
+campaign defaults (`-benchtime=100ms -benchmem -count=3`; scripted edit
+`-benchtime=1x`). Ranges are the three observed runs. This refresh records
+honest gains and regressions versus the prior documented tip
+`38b45ff99af0221f4b5dcbe16d356f78ff2b71a9`; it is not a product SLA.
+
+| Operation | Tip `cddb184` time | Tip `cddb184` memory / allocs | vs prior tip `38b45ff` |
+| --- | ---: | ---: | --- |
+| Context manage, working set | 79.013–94.242 µs | 172,559–172,567 B / 495 | slower and heavier (prior ~38–39 µs / ~67 KB / 185) |
+| Context manage, context-heavy | 2.726–3.314 ms | 1,068,572–1,069,920 B / 2,399–2,401 | slower and heavier (prior ~2.4–2.6 ms / ~486 KB / 658–660) |
+| Repo-map inspect | 26.195–34.722 ms | 125,168–127,834 B / 346–349 | overlapping / slightly slower; allocs remain elevated vs early v4 |
+| Repo-map format | 28.506–29.674 µs | 2,542–2,551 B / 20 | matches later format cost (~20 allocs); not the early ~2.8 µs / 12 allocs row |
+| Repo-map capture | 25.953–85.654 ms | 127,610–130,576 B / 354 | wide FS variance; no latency claim |
+| Session metadata list, 60 records | 100.302–120.649 ms | 249,944–268,472 B / 3,070–3,072 | slower and heavier than prior ~9–23 ms / ~183 KB |
+| Session load, canonical | 1.463–2.320 ms | 6,040–6,905 B / 92 | slower than prior ~0.49–0.91 ms / 37 allocs |
+| Session load, legacy history | 2.687–4.162 ms | 725,296–729,111 B / 2,033–2,035 | retained full-history path cost |
+| Verification plan | 2.076–2.305 µs | 864 B / 15 | roughly flat |
+| Verification evidence status | 3.893–5.057 µs | 1,792 B / 1 | roughly flat / slightly slower |
+| Verification manifest | 5.240–5.458 µs | 3,669 B / 7; 1,001 bytes/op | roughly flat |
+| Scripted edit turn | 11.329–246.031 ms | 139,512–141,816 B / 1,476–1,511 | first run cold outlier; warm pair 11.329–21.899 ms still slower than prior ~0.76–0.99 ms |
+
+Binary / startup snapshot at the same tip (`go build -o … ./cmd/picogent`):
+
+| Signal | Tip `cddb184` |
+| --- | ---: |
+| Binary size | 18,376,802 B |
+| `picogent version`, first observed invocation | 1,300.198 ms |
+| `picogent version`, four warm observed invocations | 6.962–9.806 ms |
+
+Interpretation: several deterministic controls are slower and/or heavier than
+the 2026-09-05 `38b45ff` checkpoint on this host. No fake gains are claimed.
+Filesystem-backed session and repo-map ranges remain high-variance. This does
+not authorize release, close #302, or establish live-provider / GUI budgets.
 
 ## Comparison
 
