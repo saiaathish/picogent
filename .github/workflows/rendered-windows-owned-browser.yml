@@ -32,8 +32,6 @@ jobs:
     timeout-minutes: 45
     env:
       BEHAVIOR_SHA: ${{ github.event.inputs.behavior_sha || '18dc4a1ca1137ab78dfd0102848eb99c417653cc' }}
-      EVIDENCE_DIR: ${{ runner.temp }}/picogent-windows-rendered-evidence
-      FIXTURE_HOME_ROOT: ${{ runner.temp }}/picogent-rendered-windows-507
     steps:
       - name: Checkout collector scripts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -105,6 +103,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          EVIDENCE_DIR="$RUNNER_TEMP/picogent-windows-rendered-evidence"
+          FIXTURE_HOME_ROOT="$RUNNER_TEMP/picogent-rendered-windows-507"
           mkdir -p "$EVIDENCE_DIR"
           python scripts/rendered-windows/collect_rendered_recovery.py \
             --sha "$BEHAVIOR_SHA" \
@@ -122,6 +122,8 @@ jobs:
               printf '%s  %s\n' "$(sha256sum "$f" | awk '{print $1}')" "$f"
             done
           )
+          # Persist path for the upload step on Windows runners.
+          echo "EVIDENCE_DIR=$EVIDENCE_DIR" >> "$GITHUB_ENV"
 
       - name: Upload Windows rendered evidence
         if: always()
@@ -129,7 +131,6 @@ jobs:
         with:
           name: rendered-windows-owned-browser-${{ env.BEHAVIOR_SHA }}
           path: |
-            ${{ env.EVIDENCE_DIR }}/*.json
-            ${{ env.EVIDENCE_DIR }}/*.png
+            ${{ runner.temp }}/picogent-windows-rendered-evidence/*
             ${{ runner.temp }}/fixture-buildinfo.txt
           if-no-files-found: warn
