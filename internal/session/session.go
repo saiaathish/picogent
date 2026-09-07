@@ -82,19 +82,29 @@ type Meta struct {
 // message history out of this decode avoids running the full retention and
 // redaction pipeline when a caller only needs a session summary.
 type sessionMeta struct {
-	ID        string              `json:"id"`
-	Title     string              `json:"title"`
-	Workspace string              `json:"workspace"`
-	Updated   time.Time           `json:"updated"`
-	Messages  sessionMessagesJSON `json:"messages"`
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	Workspace string    `json:"workspace"`
+	Updated   time.Time `json:"updated"`
 }
 
-// sessionMessagesJSON validates the outer shape of the persisted message
+// validateSessionMessagesShape checks the outer shape of the persisted message
 // history without materializing that history for metadata-only operations.
 // Load still performs the complete typed decode and normalization.
-type sessionMessagesJSON struct{}
+func validateSessionMessagesShape(data []byte) error {
+	raw, ok, err := topLevelJSONField(data, messagesJSONField)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	return validateSessionMessagesArray(raw)
+}
 
-func (sessionMessagesJSON) UnmarshalJSON(data []byte) error {
+const messagesJSONField = "messages"
+
+func validateSessionMessagesArray(data []byte) error {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) == 4 && trimmed[0] == 'n' && trimmed[1] == 'u' && trimmed[2] == 'l' && trimmed[3] == 'l' {
 		return nil
@@ -133,6 +143,111 @@ func (sessionMessagesJSON) UnmarshalJSON(data []byte) error {
 		}
 		index++
 	}
+}
+
+// topLevelJSONField returns a subslice of data for a top-level object field
+// without copying the field value. Missing fields return ok=false.
+func topLevelJSONField(data []byte, field string) (value []byte, ok bool, err error) {
+	index := skipJSONSpace(data, 0)
+	if index >= len(data) || data[index] != '{' {
+		return nil, false, errors.New("session record must be an object")
+	}
+	index++
+	for {
+		index = skipJSONSpace(data, index)
+		if index >= len(data) {
+			return nil, false, errors.New("session record has an unterminated object")
+		}
+		if data[index] == '}' {
+			return nil, false, nil
+		}
+		keyStart, keyEnd, next, keyErr := scanJSONStringBounds(data, index)
+		if keyErr != nil {
+			return nil, false, keyErr
+		}
+		index = skipJSONSpace(data, next)
+		if index >= len(data) || data[index] != ':' {
+			return nil, false, errors.New("session record has an invalid object field")
+		}
+		index = skipJSONSpace(data, index+1)
+		if index >= len(data) {
+			return nil, false, errors.New("session record has an invalid object field")
+		}
+		start := index
+		switch data[index] {
+		case '{', '[':
+			index = skipJSONComposite(data, index)
+			if index < 0 {
+				return nil, false, errors.New("session record has an unterminated value")
+			}
+		case '"':
+			_, _, index, err = scanJSONStringBounds(data, index)
+			if err != nil {
+				return nil, false, err
+			}
+		default:
+			for index < len(data) {
+				switch data[index] {
+				case ',', '}', ' ', '\t', '\n', '\r':
+					goto valueEnd
+				default:
+					index++
+				}
+			}
+		valueEnd:
+		}
+		if jsonFieldNameEquals(data[keyStart:keyEnd], field) {
+			return data[start:index], true, nil
+		}
+		index = skipJSONSpace(data, index)
+		if index >= len(data) {
+			return nil, false, errors.New("session record has an unterminated object")
+		}
+		if data[index] == '}' {
+			return nil, false, nil
+		}
+		if data[index] != ',' {
+			return nil, false, errors.New("session record must be comma-separated")
+		}
+		index++
+	}
+}
+
+func scanJSONStringBounds(data []byte, index int) (start, end, next int, err error) {
+	if index >= len(data) || data[index] != '"' {
+		return -1, -1, -1, errors.New("session record has an invalid string")
+	}
+	start = index + 1
+	escaped := false
+	for index = start; index < len(data); index++ {
+		char := data[index]
+		if escaped {
+			escaped = false
+			continue
+		}
+		if char == '\\' {
+			escaped = true
+			continue
+		}
+		if char == '"' {
+			// Field names used here are plain ASCII identifiers, so the raw
+			// slice is enough without unescaping.
+			return start, index, index + 1, nil
+		}
+	}
+	return -1, -1, -1, errors.New("session record has an unterminated string")
+}
+
+func jsonFieldNameEquals(raw []byte, field string) bool {
+	if len(raw) != len(field) {
+		return false
+	}
+	for i := 0; i < len(field); i++ {
+		if raw[i] != field[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func skipJSONSpace(data []byte, index int) int {
@@ -300,8 +415,7 @@ func ListMeta(workspace string) ([]Meta, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, err = os.ReadDir(dir)
-	if err != nil {
+	if _, err := os.Stat(dir); err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
@@ -320,7 +434,19 @@ func listMetaLocked(dir, workspace string, limit int) ([]Meta, error) {
 	if err != nil {
 		return nil, err
 	}
-	ws, _ := filepath.Abs(workspace)
+	absCache := make(map[string]string, 8)
+	cachedAbs := func(path string) string {
+		if path == "" {
+			return ""
+		}
+		if abs, ok := absCache[path]; ok {
+			return abs
+		}
+		abs, _ := filepath.Abs(path)
+		absCache[path] = abs
+		return abs
+	}
+	ws := cachedAbs(workspace)
 	var out []Meta
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
@@ -331,7 +457,7 @@ func listMetaLocked(dir, workspace string, limit int) ([]Meta, error) {
 		if err != nil {
 			continue
 		}
-		sw, _ := filepath.Abs(meta.Workspace)
+		sw := cachedAbs(meta.Workspace)
 		if ws != "" && sw != ws {
 			continue
 		}
@@ -537,6 +663,9 @@ func loadMetaLocked(path, id string) (sessionMeta, error) {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return sessionMeta{}, err
 	}
+	if err := validateSessionMessagesShape(data); err != nil {
+		return sessionMeta{}, err
+	}
 	if meta.ID != id {
 		return sessionMeta{}, errors.New("session id mismatch")
 	}
@@ -546,12 +675,11 @@ func loadMetaLocked(path, id string) (sessionMeta, error) {
 	meta.Title = sessionText(meta.Title, maxSessionTitleBytes)
 	if meta.Title == "" {
 		// Preserve the legacy title fallback without paying the full history
-		// decode cost for normal sessions that already have a title.
+		// decode cost for normal sessions that already have a title. Skip
+		// boundSession here: list views only need the first user line, and
+		// retention/redaction already ran when the record was saved.
 		var s Session
 		if err := json.Unmarshal(data, &s); err != nil {
-			return sessionMeta{}, err
-		}
-		if err := boundSession(&s); err != nil {
 			return sessionMeta{}, err
 		}
 		meta.Title = deriveTitle(s.Messages)
