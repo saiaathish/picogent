@@ -98,8 +98,13 @@ matching rendered allow→undo→reload observation is
 [V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md](V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md).
 Historical quality-only records such as
 [V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md)
-remain unchanged. Hostile-TOCTOU, cross-platform rendered, and
-release-authorization rows remain independently evidence-bound.
+remain unchanged. The matching Windows owned-browser observation and
+three-platform aggregate at the same SHA are recorded in
+[V4-RENDERED-WINDOWS-EVIDENCE-18DC4A1.md](V4-RENDERED-WINDOWS-EVIDENCE-18DC4A1.md)
+and [V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md): exact-SHA
+validation at `18dc4a1…` projects `rendered-cross-platform=PASS`. Hostile
+TOCTOU and release-authorization rows remain independently evidence-bound and
+are not upgraded by that aggregate.
 
 ## Hostile-runtime evidence
 
