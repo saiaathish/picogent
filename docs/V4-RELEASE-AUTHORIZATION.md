@@ -22,6 +22,13 @@ Missing evidence is `UNVERIFIED`; an incomplete observation is
 `INCONCLUSIVE`; contradictory, malformed, stale, dirty, or failed evidence is
 `FAIL`. Any non-`PASS` result has `authorized: false`.
 
+The `hostile_runtime` category is complete when the bounded hostile claims
+required by the matrix are `PASS`, including
+`hostile-parent-swap-confinement` when that row is present. The residual
+`hostile-filesystem-toctou` row may remain `UNVERIFIED` without blocking the
+predicate; it is an explicit residual audit boundary, not an unreachable
+universal PASS gate.
+
 The `live_provider` category is complete only when both its connectivity and
 fixed live-provider quality rows are `PASS`. The quality row is the bounded,
 self-reported `fixed-no-tool-v1` campaign documented in the runtime-boundary

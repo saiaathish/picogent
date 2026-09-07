@@ -7,7 +7,9 @@ under parent [#453](https://github.com/saiaathish/picogent/issues/453). It
 complements the Darwin harness from
 [#496](https://github.com/saiaathish/picogent/issues/496).
 
-It does **not** upgrade `hostile-filesystem-toctou`.
+It does **not** upgrade `hostile-filesystem-toctou`. It does enable the
+narrowed matrix row `hostile-parent-swap-confinement` when the matching Darwin
+evidence record is also present.
 
 ## Provenance
 

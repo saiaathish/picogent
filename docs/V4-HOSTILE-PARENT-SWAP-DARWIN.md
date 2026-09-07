@@ -6,8 +6,10 @@ record belongs to [#496](https://github.com/saiaathish/picogent/issues/496),
 [#517](https://github.com/saiaathish/picogent/issues/517), and related
 children under parent [#453](https://github.com/saiaathish/picogent/issues/453).
 
-It does **not** upgrade the broad runtime-boundary row
-`hostile-filesystem-toctou`. That claim remains `UNVERIFIED`.
+It does **not** upgrade the residual runtime-boundary row
+`hostile-filesystem-toctou`. That claim remains `UNVERIFIED`. It does enable
+the narrowed matrix row `hostile-parent-swap-confinement` when the matching
+Linux evidence record is also present.
 
 The attacker protocol exercised here renames the trusted parent, presents a
 symlink to the outside directory at the original name, and restores the

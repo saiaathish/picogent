@@ -33,12 +33,12 @@ func TestEvaluateReleaseAuthorizationKeepsMissingEvidenceBounded(t *testing.T) {
 			want:   "live-provider-quality",
 		},
 		{
-			name: "hostile result is inconclusive",
+			name: "hostile parent-swap is inconclusive",
 			mutate: func(input *ReleaseAuthorizationInput) {
 				input.Matrix.Claims[2].Verdict = "INCONCLUSIVE"
 			},
 			status: ManifestInconclusive,
-			want:   "hostile-filesystem-toctou",
+			want:   "hostile-parent-swap-confinement",
 		},
 		{
 			name: "operator approval is absent",
@@ -78,6 +78,21 @@ func TestEvaluateReleaseAuthorizationKeepsMissingEvidenceBounded(t *testing.T) {
 				t.Fatalf("reason = %q, want substring %q; blockers = %v", result.Reason, tt.want, result.Blockers)
 			}
 		})
+	}
+}
+
+func TestEvaluateReleaseAuthorizationIgnoresResidualBroadTOCTOU(t *testing.T) {
+	const candidateSHA = "0123456789abcdef0123456789abcdef01234567"
+	input := releaseAuthorizationFixture(candidateSHA)
+	input.Matrix.Claims = append(input.Matrix.Claims, ReleaseAuthorizationClaim{
+		ID:         "hostile-filesystem-toctou",
+		Category:   "hostile_runtime",
+		Verdict:    "UNVERIFIED",
+		Provenance: "explicit residual audit boundary",
+	})
+	result := EvaluateReleaseAuthorization(input, candidateSHA)
+	if result.Status != ManifestPass || !result.Authorized {
+		t.Fatalf("result = %+v, want PASS and authorized with residual TOCTOU UNVERIFIED", result)
 	}
 }
 
@@ -178,7 +193,7 @@ func releaseAuthorizationFixture(candidateSHA string) ReleaseAuthorizationInput 
 			Claims: []ReleaseAuthorizationClaim{
 				{ID: "live-provider-quality", Category: "live_provider", Verdict: "PASS", Provenance: "owned provider evidence"},
 				{ID: "rendered-cross-platform", Category: "rendered_platform", Verdict: "PASS", Provenance: "owned browser evidence"},
-				{ID: "hostile-filesystem-toctou", Category: "hostile_runtime", Verdict: "PASS", Provenance: "hostile writer evidence"},
+				{ID: "hostile-parent-swap-confinement", Category: "hostile_runtime", Verdict: "PASS", Provenance: "bounded parent-swap evidence"},
 				{ID: "restart-steer-undo-recovery", Category: "recovery_undo", Verdict: "PASS", Provenance: "fresh-process evidence"},
 				{ID: "release-authorization", Category: "release_authorization", Verdict: "INCONCLUSIVE", Provenance: "separate release predicate"},
 			},
