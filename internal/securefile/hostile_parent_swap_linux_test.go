@@ -509,9 +509,11 @@ func TestLinuxSameUIDParentSwapAttackerHelper(t *testing.T) {
 		_ = os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600)
 		_ = os.Remove(parent)
 		_ = os.Rename(backup, parent)
-		// Yield once so the victim can make progress without adding a long
-		// trusted window that would weaken the parent-swap race.
-		runtime.Gosched()
+		// Yield briefly to the victim without sleeping or adding a long trusted
+		// window that would weaken the parent-swap race.
+		for i := 0; i < 8; i++ {
+			runtime.Gosched()
+		}
 	}
 	if err := os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
