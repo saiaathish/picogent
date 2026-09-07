@@ -95,7 +95,10 @@ func validateRenderedPlatformEvidence(evidence RenderedPlatformEvidence, expecte
 	if !validRenderedPlatform(evidence.Platform) || evidence.Platform != expectedPlatform {
 		return errors.New("rendered-platform evidence platform does not match the observed host")
 	}
-	if !validEvidenceIdentifier(evidence.Architecture) || evidence.Architecture != expectedArchitecture {
+	if !validEvidenceIdentifier(evidence.Architecture) {
+		return errors.New("rendered-platform evidence architecture is invalid")
+	}
+	if expectedArchitecture != "" && evidence.Architecture != expectedArchitecture {
 		return errors.New("rendered-platform evidence architecture does not match the observed host")
 	}
 	if evidence.Environment != "task-owned-disposable" {
