@@ -108,19 +108,20 @@ are in `docs/V4-RENDERED-LONG-HORIZON-FIXTURE.md`.
 
 The direct observation record is in
 `docs/V4-RENDERED-LONG-HORIZON-EVIDENCE.md` for [#370](https://github.com/saiaathish/picogent/issues/370).
-It was captured against exact merge/current `main` SHA
-`993258f4b97d196fd7c44cca78c235080fd062e9` using a clean VCS-stamped fixture
-binary. Both seed and reload manifests verified the source SHA and reported a
-clean source tree. The task-owned BrowserOS session directly observed Safe-mode
-permission, mutation visibility, inconclusive verification, deterministic
-workspace verification, steering invalidation, reload continuity, and the
-post-reload fail-closed state.
+The tip-bound recollection is against exact `origin/main`
+`22b1b1ba7e1aec45d57172b6be480297e57637de` using a clean VCS-stamped fixture
+binary (`vcs.revision` match, `vcs.modified=false`). Both seed and reload
+manifests verified the source SHA. A local Playwright Chromium session
+directly observed Safe-mode mutation, deterministic verification, steering
+invalidation, undo availability, fresh-process reload continuity, and the
+post-reload fail-closed state. Digests and artifact paths are in the evidence
+doc. Historical BrowserOS neo observation at `993258f4…` is retained there as
+superseded non-tip provenance.
 
-This closes only the bounded direct-observation checkpoint. Browser screenshots
-were captured inline by the task-owned session, but no persisted path was
-exposed, so the screenshot path remains `UNRECORDED`. Live-provider quality,
-cross-platform rendered behavior, arbitrary hostile writers, broader crash
-windows, and release authorization remain `UNVERIFIED`.
+This closes only the bounded Darwin direct-observation checkpoint.
+Live-provider quality, cross-platform rendered long-horizon behavior, arbitrary
+hostile writers, broader crash windows, and release authorization remain
+`UNVERIFIED`.
 
 ## Remaining evidence limits
 

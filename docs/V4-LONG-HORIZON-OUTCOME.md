@@ -105,6 +105,11 @@ Run the proof from the exact source head:
 go test ./internal/agent -run '^TestSteeringAcrossProcessRestart$' -count=1 -v
 ```
 
+Tip reconfirm on `22b1b1ba7e1aec45d57172b6be480297e57637de` (with
+`TestLongHorizonResumeAfterProcessExit` /
+`TestLongHorizonResumeAfterProcessKill`): exit `0`. Companion rendered tip
+package: [V4-RENDERED-LONG-HORIZON-EVIDENCE.md](V4-RENDERED-LONG-HORIZON-EVIDENCE.md).
+
 This proves only serialized task-state continuity through two clean
 `Agent.SetTaskSession`/`Run` child processes and the fail-closed rule that a
 changed interpretation does not replace the durable outcome. It does not prove
