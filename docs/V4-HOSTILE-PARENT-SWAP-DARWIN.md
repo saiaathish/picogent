@@ -2,8 +2,9 @@
 
 Status: bounded Darwin-only `PASS` for descriptor/handle-anchored parent
 replacement confinement under a separate same-UID attacker process. This
-record belongs to [#496](https://github.com/saiaathish/picogent/issues/496)
-under parent [#453](https://github.com/saiaathish/picogent/issues/453).
+record belongs to [#496](https://github.com/saiaathish/picogent/issues/496),
+[#517](https://github.com/saiaathish/picogent/issues/517), and related
+children under parent [#453](https://github.com/saiaathish/picogent/issues/453).
 
 It does **not** upgrade the broad runtime-boundary row
 `hostile-filesystem-toctou`. That claim remains `UNVERIFIED`.
@@ -22,6 +23,7 @@ source:     effe52a21f770bc435bbb1596df1452339cbd82a
 runtime:    go1.26.6 darwin/arm64
 harness:    TestDarwinSameUIDParentSwapConfinement
             TestDarwinSameUIDWorkspaceParentSwapConfinement
+            TestDarwinSameUIDCheckpointParentSwapConfinement
 observed:   2026-09-06T12:23:24Z securefile / 2026-09-06T12:23:44Z workspace
 ```
 
@@ -36,7 +38,11 @@ PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA="$(git rev-parse HEAD)" \
 PICOGENT_HOSTILE_PARENT_SWAP_EVIDENCE_OUT=/absolute/path/outside/checkout/hostile-workspace-parent-swap-evidence.json \
   go test ./internal/workspace -run '^TestDarwinSameUIDWorkspaceParentSwapConfinement$' -count=1
 
-go test -race ./internal/securefile ./internal/workspace -run 'TestDarwinSameUID' -count=1
+PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA="$(git rev-parse HEAD)" \
+PICOGENT_HOSTILE_PARENT_SWAP_EVIDENCE_OUT=/absolute/path/outside/checkout/hostile-checkpoint-parent-swap-evidence.json \
+  go test ./internal/checkpoint -run '^TestDarwinSameUIDCheckpointParentSwapConfinement$' -count=1
+
+go test -race ./internal/securefile ./internal/workspace ./internal/checkpoint -run 'TestDarwinSameUID' -count=1
 ```
 
 Unsupported platforms skip these Darwin-tagged tests. Missing attacker
@@ -89,6 +95,31 @@ tree-before=a85c5826be93a55b91348e51a239116121669afd139fce0eb3553258d69ac593
 tree-after=a85c5826be93a55b91348e51a239116121669afd139fce0eb3553258d69ac593
 artifact-sha256=8dfe6a54f26bc664e5972e85ebb0180a896111ebeb8b33953cfd9b44c6da03ce
 ```
+
+## Checkpoint restore campaign
+
+Issue [#517](https://github.com/saiaathish/picogent/issues/517) adds a
+Darwin-only, separate-process parent-swap harness for sealed checkpoint
+`Restore` writes and deletes. Turn capture and seal complete before the
+attacker interval; only descriptor-anchored restore publication runs while
+the nested workspace parent is swapped.
+
+| Operation | Attempts | Successes | Errors | Attacker swaps | Escape | Verdict |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `checkpoint-restore-existing` | 200 | 14 | 186 | 6488 | no | `PASS` |
+| `checkpoint-restore-remove-created` | 200 | 93 | 107 | 6370 | no | `PASS` |
+
+Outside sentinel and complete outside-tree digests were unchanged:
+
+```text
+sentinel=7e3486aa7f0e2440c892ec9f9209b4544d994f370f2482c25ecdec38e718af4d
+tree-before=2d59bb122ca5a9b93844f9c5cd937869ad46fed7c75279e922c419892252e8df
+tree-after=2d59bb122ca5a9b93844f9c5cd937869ad46fed7c75279e922c419892252e8df
+artifact-sha256=14ab897e1ddd528c5118baed7346034bb455cecb7f7e7dfed11a6a23c55806a7
+```
+
+Restore errors during the hostile interval are expected confinement behavior,
+not escapes. This record still does not upgrade `hostile-filesystem-toctou`.
 
 ## Explicit limits
 

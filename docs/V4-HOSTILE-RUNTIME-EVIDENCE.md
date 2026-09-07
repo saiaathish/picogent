@@ -162,6 +162,16 @@ approval and file-tool execution is covered by the separate workspace-root
 identity binding work under [#502](https://github.com/saiaathish/picogent/issues/502).
 Broad arbitrary same-UID TOCTOU across every surface remains `UNVERIFIED`.
 
+Issue [#517](https://github.com/saiaathish/picogent/issues/517) extends the
+Darwin parent-swap harness to sealed checkpoint `Restore`. The digest-only
+contract and commands live in
+[V4-HOSTILE-PARENT-SWAP-DARWIN.md](V4-HOSTILE-PARENT-SWAP-DARWIN.md#checkpoint-restore-campaign).
+Local Darwin validation at pre-merge source recorded `PASS` with unchanged
+outside sentinel/tree digests and confirmed attacker swaps for both restore
+write and restore-delete operations. The checkpoint artifact SHA256 is
+`14ab897e1ddd528c5118baed7346034bb455cecb7f7e7dfed11a6a23c55806a7`.
+`hostile-filesystem-toctou` stays `UNVERIFIED`.
+
 ## Linux same-UID parent-swap harness checkpoint
 
 Issue [#504](https://github.com/saiaathish/picogent/issues/504) extends the
