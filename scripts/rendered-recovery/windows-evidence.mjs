@@ -47,7 +47,6 @@ try {
   const fixtureRoot = await fsp.mkdtemp(path.join(os.tmpdir(), "picogent-rendered-windows-"));
   const fixtureHome = path.join(fixtureRoot, "home");
   const fixtureWorkspace = path.join(fixtureHome, "workspace");
-  await fsp.mkdir(fixtureWorkspace, { recursive: true });
 
   const seedManifestPath = path.join(fixtureHome, "seed-manifest.json");
   const reloadManifestPath = path.join(fixtureHome, "reload-manifest.json");
