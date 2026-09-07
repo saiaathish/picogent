@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCollectKeepsCrossPlatformUnverifiedWithoutArtifact(t *testing.T) {
@@ -176,6 +177,110 @@ func TestLoadRenderedCrossPlatformEvidenceRejectsIncompleteAndMalformed(t *testi
 	}
 	if got.Verdict != VerdictUnverified {
 		t.Fatalf("incomplete verdict = %s", got.Verdict)
+	}
+}
+
+func TestAggregateRenderedCrossPlatformEvidenceUsesValidatedDigests(t *testing.T) {
+	workspace := t.TempDir()
+	artifactDir := t.TempDir()
+	sha := strings.Repeat("a", 40)
+	artifacts := make(map[string]string, len(requiredRenderedCrossPlatforms))
+	for _, platform := range requiredRenderedCrossPlatforms {
+		architecture := "amd64"
+		if platform == "darwin" {
+			architecture = "arm64"
+		}
+		path := filepath.Join(artifactDir, platform+".json")
+		writeRenderedEvidence(t, path, validAggregatePlatformEvidence(sha, platform, architecture, VerdictPass))
+		artifacts[platform] = path
+	}
+
+	evidence, err := AggregateRenderedCrossPlatformEvidence(workspace, sha, artifacts, time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Verdict != VerdictPass || len(evidence.Platforms) != len(requiredRenderedCrossPlatforms) {
+		t.Fatalf("aggregate = %+v", evidence)
+	}
+	if evidence.ObservedAt != "2026-09-07T00:00:00Z" {
+		t.Fatalf("aggregate observed_at = %q", evidence.ObservedAt)
+	}
+
+	out := filepath.Join(t.TempDir(), "rendered-cross-platform.json")
+	if err := RetainRenderedCrossPlatformEvidence(workspace, out, evidence); err != nil {
+		t.Fatal(err)
+	}
+	loaded, digest, err := LoadRenderedCrossPlatformEvidence(workspace, out, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Verdict != VerdictPass || len(digest) != 64 {
+		t.Fatalf("loaded aggregate = %+v digest=%q", loaded, digest)
+	}
+	if err := RetainRenderedCrossPlatformEvidence(workspace, out, evidence); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("second retain error = %v", err)
+	}
+}
+
+func TestAggregateRenderedCrossPlatformEvidenceRejectsMissingStaleAndContradictoryInputs(t *testing.T) {
+	workspace := t.TempDir()
+	artifactDir := t.TempDir()
+	sha := strings.Repeat("b", 40)
+	validPaths := make(map[string]string, len(requiredRenderedCrossPlatforms))
+	for _, platform := range requiredRenderedCrossPlatforms {
+		path := filepath.Join(artifactDir, platform+".json")
+		writeRenderedEvidence(t, path, validAggregatePlatformEvidence(sha, platform, "amd64", VerdictPass))
+		validPaths[platform] = path
+	}
+
+	cases := []struct {
+		name      string
+		artifacts map[string]string
+		want      string
+	}{
+		{name: "missing-platform", artifacts: map[string]string{
+			"darwin": validPaths["darwin"], "linux": validPaths["linux"],
+		}, want: "exactly one artifact"},
+		{name: "unsupported-platform", artifacts: map[string]string{
+			"darwin": validPaths["darwin"], "linux": validPaths["linux"],
+			"freebsd": validPaths["darwin"],
+		}, want: "unsupported platform"},
+		{name: "stale-sha", artifacts: map[string]string{
+			"darwin": validPaths["darwin"], "linux": validPaths["linux"],
+			"windows": filepath.Join(artifactDir, "stale.json"),
+		}, want: "candidate_sha"},
+		{name: "contradictory-fixture", artifacts: validPaths, want: "contradictory fixtures"},
+	}
+
+	stale := validAggregatePlatformEvidence(strings.Repeat("c", 40), "windows", "amd64", VerdictPass)
+	writeRenderedEvidence(t, cases[2].artifacts["windows"], stale)
+	contradictory := validAggregatePlatformEvidence(sha, "windows", "amd64", VerdictPass)
+	contradictory.Fixture = "other-fixture"
+	writeRenderedEvidence(t, cases[3].artifacts["windows"], contradictory)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := AggregateRenderedCrossPlatformEvidence(workspace, sha, tc.artifacts, time.Time{}); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func validAggregatePlatformEvidence(sha, platform, architecture string, verdict Verdict) RenderedPlatformEvidence {
+	return RenderedPlatformEvidence{
+		Schema:             RenderedEvidenceSchema,
+		CandidateSHA:       sha,
+		Platform:           platform,
+		Architecture:       architecture,
+		Environment:        "task-owned-disposable",
+		Browser:            "browseros-neo",
+		Fixture:            "rendered-recovery",
+		ObservationSHA256:  strings.Repeat("3", 64),
+		ScreenshotSHA256:   "UNRECORDED",
+		ObservedAt:         "2026-09-07T00:00:00Z",
+		Verdict:            verdict,
+		SourceTreeModified: false,
 	}
 }
 

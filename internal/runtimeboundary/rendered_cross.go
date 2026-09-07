@@ -25,14 +25,14 @@ var requiredRenderedCrossPlatforms = []string{"darwin", "linux", "windows"}
 // RenderedCrossPlatformEvidence aggregates per-platform rendered observations
 // bound to one candidate SHA. PASS requires every required desktop platform.
 type RenderedCrossPlatformEvidence struct {
-	Schema             string                              `json:"schema"`
-	CandidateSHA       string                              `json:"candidate_sha"`
-	Environment        string                              `json:"environment"`
-	RequiredPlatforms  []string                            `json:"required_platforms"`
+	Schema             string                               `json:"schema"`
+	CandidateSHA       string                               `json:"candidate_sha"`
+	Environment        string                               `json:"environment"`
+	RequiredPlatforms  []string                             `json:"required_platforms"`
 	Platforms          []RenderedCrossPlatformEntryEvidence `json:"platforms"`
-	ObservedAt         string                              `json:"observed_at"`
-	Verdict            Verdict                             `json:"verdict"`
-	SourceTreeModified bool                                `json:"source_tree_modified"`
+	ObservedAt         string                               `json:"observed_at"`
+	Verdict            Verdict                              `json:"verdict"`
+	SourceTreeModified bool                                 `json:"source_tree_modified"`
 }
 
 // RenderedCrossPlatformEntryEvidence is one platform's digest-only observation.
@@ -78,6 +78,159 @@ func loadRenderedCrossPlatformEvidence(workspace, artifactPath, expectedSHA stri
 	}
 	digest := sha256.Sum256(data)
 	return evidence, hex.EncodeToString(digest[:]), nil
+}
+
+// LoadRenderedPlatformEvidence validates one platform observation for use by
+// the cross-platform evidence aggregator. An empty expectedArchitecture keeps
+// the producer-declared architecture while still requiring a valid bounded
+// identifier; callers that independently know the expected architecture can
+// pass it to enforce an exact match.
+func LoadRenderedPlatformEvidence(workspace, artifactPath, expectedSHA, expectedPlatform, expectedArchitecture string) (RenderedPlatformEvidence, string, error) {
+	return loadRenderedPlatformEvidence(workspace, artifactPath, expectedSHA, expectedPlatform, expectedArchitecture)
+}
+
+// LoadRenderedCrossPlatformEvidence validates a retained aggregate artifact
+// against the clean workspace boundary and exact candidate SHA.
+func LoadRenderedCrossPlatformEvidence(workspace, artifactPath, expectedSHA string) (RenderedCrossPlatformEvidence, string, error) {
+	return loadRenderedCrossPlatformEvidence(workspace, artifactPath, expectedSHA)
+}
+
+// AggregateRenderedCrossPlatformEvidence combines exactly one validated
+// producer artifact for each required desktop platform. It packages digests
+// and bounded identity fields only; it never creates an observation.
+func AggregateRenderedCrossPlatformEvidence(workspace, candidateSHA string, artifacts map[string]string, now time.Time) (RenderedCrossPlatformEvidence, error) {
+	candidateSHA = strings.TrimSpace(candidateSHA)
+	if !validCommitSHA(candidateSHA) {
+		return RenderedCrossPlatformEvidence{}, errors.New("candidate_sha must be a full commit id")
+	}
+	if len(artifacts) != len(requiredRenderedCrossPlatforms) {
+		return RenderedCrossPlatformEvidence{}, errors.New("rendered-cross-platform aggregation requires exactly one artifact per required platform")
+	}
+	for platform, path := range artifacts {
+		if _, ok := requiredPlatformSet()[platform]; !ok {
+			return RenderedCrossPlatformEvidence{}, fmt.Errorf("rendered-cross-platform artifact has unsupported platform %q", platform)
+		}
+		if strings.TrimSpace(path) == "" {
+			return RenderedCrossPlatformEvidence{}, fmt.Errorf("rendered-cross-platform artifact for %q is required", platform)
+		}
+	}
+
+	entries := make([]RenderedCrossPlatformEntryEvidence, 0, len(requiredRenderedCrossPlatforms))
+	fixture := ""
+	for _, platform := range requiredRenderedCrossPlatforms {
+		path, ok := artifacts[platform]
+		if !ok {
+			return RenderedCrossPlatformEvidence{}, fmt.Errorf("rendered-cross-platform artifact for %q is required", platform)
+		}
+		observation, _, err := loadRenderedPlatformEvidence(workspace, path, candidateSHA, platform, "")
+		if err != nil {
+			return RenderedCrossPlatformEvidence{}, fmt.Errorf("load %s rendered-platform evidence: %w", platform, err)
+		}
+		if fixture == "" {
+			fixture = observation.Fixture
+		} else if fixture != observation.Fixture {
+			return RenderedCrossPlatformEvidence{}, errors.New("rendered-cross-platform artifacts use contradictory fixtures")
+		}
+		entries = append(entries, RenderedCrossPlatformEntryEvidence{
+			Platform:          observation.Platform,
+			Architecture:      observation.Architecture,
+			Browser:           observation.Browser,
+			Fixture:           observation.Fixture,
+			ObservationSHA256: observation.ObservationSHA256,
+			ScreenshotSHA256:  observation.ScreenshotSHA256,
+			ObservedAt:        observation.ObservedAt,
+			Verdict:           observation.Verdict,
+		})
+	}
+
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	evidence := RenderedCrossPlatformEvidence{
+		Schema:             RenderedCrossEvidenceSchema,
+		CandidateSHA:       candidateSHA,
+		Environment:        "task-owned-disposable",
+		RequiredPlatforms:  append([]string{}, requiredRenderedCrossPlatforms...),
+		Platforms:          entries,
+		ObservedAt:         now.UTC().Format(time.RFC3339),
+		Verdict:            aggregateRenderedVerdict(entries),
+		SourceTreeModified: false,
+	}
+	if err := validateRenderedCrossPlatformEvidence(evidence, candidateSHA); err != nil {
+		return RenderedCrossPlatformEvidence{}, err
+	}
+	return evidence, nil
+}
+
+func aggregateRenderedVerdict(entries []RenderedCrossPlatformEntryEvidence) Verdict {
+	verdict := VerdictPass
+	for _, entry := range entries {
+		switch entry.Verdict {
+		case VerdictFail:
+			return VerdictFail
+		case VerdictInconclusive:
+			verdict = VerdictInconclusive
+		case VerdictUnverified:
+			if verdict == VerdictPass {
+				verdict = VerdictUnverified
+			}
+		}
+	}
+	return verdict
+}
+
+// RetainRenderedCrossPlatformEvidence writes one aggregate artifact
+// exclusively outside the workspace. Existing files and symlinked parents
+// fail closed through the shared secure publication primitive.
+func RetainRenderedCrossPlatformEvidence(workspace, artifactPath string, evidence RenderedCrossPlatformEvidence) error {
+	workspaceAbs, artifactAbs, err := resolveArtifactPaths(workspace, artifactPath)
+	if err != nil {
+		return err
+	}
+	if err := ensureOutsideWorkspace(workspaceAbs, artifactAbs); err != nil {
+		return err
+	}
+	if err := validateRenderedCrossPlatformEvidence(evidence, evidence.CandidateSHA); err != nil {
+		return err
+	}
+	data, err := encodeRenderedCrossPlatformEvidence(evidence)
+	if err != nil {
+		return err
+	}
+	if err := securefile.WriteExclusive(artifactPath, data, 0o600); err != nil {
+		return fmt.Errorf("retain rendered cross-platform evidence: %w", err)
+	}
+	return nil
+}
+
+// WriteRenderedCrossPlatformEvidence writes a size-bounded aggregate record
+// for command output. It performs the same schema validation used for
+// retained artifacts.
+func WriteRenderedCrossPlatformEvidence(w io.Writer, evidence RenderedCrossPlatformEvidence) error {
+	if w == nil {
+		return errors.New("rendered cross-platform evidence writer is nil")
+	}
+	if err := validateRenderedCrossPlatformEvidence(evidence, evidence.CandidateSHA); err != nil {
+		return err
+	}
+	data, err := encodeRenderedCrossPlatformEvidence(evidence)
+	if err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
+}
+
+func encodeRenderedCrossPlatformEvidence(evidence RenderedCrossPlatformEvidence) ([]byte, error) {
+	data, err := json.MarshalIndent(evidence, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode rendered cross-platform evidence: %w", err)
+	}
+	data = append(data, '\n')
+	if len(data) > MaxRenderedCrossEvidenceBytes {
+		return nil, errors.New("rendered-cross-platform evidence exceeds size limit")
+	}
+	return data, nil
 }
 
 func requireRenderedCrossAssertions(data []byte) error {
