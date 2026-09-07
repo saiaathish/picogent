@@ -120,6 +120,166 @@ func TestCollectRejectsDirtyTree(t *testing.T) {
 	}
 }
 
+func TestCollectAcceptsBehaviorArtifactsAtDocsOnlyDescendant(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	workspace := t.TempDir()
+	seedDocs(t, workspace)
+	behaviorSHA := commitAll(t, workspace)
+	liveArtifact := filepath.Join(t.TempDir(), "live-provider.json")
+	qualityArtifact := filepath.Join(t.TempDir(), "live-provider-quality.json")
+	renderedArtifact := filepath.Join(t.TempDir(), "rendered-platform.json")
+	renderedCrossArtifact := filepath.Join(t.TempDir(), "rendered-cross-platform.json")
+	writeLiveEvidence(t, liveArtifact, validLiveEvidence(behaviorSHA))
+	writeLiveProviderQualityEvidence(t, qualityArtifact, validLiveProviderQualityEvidence(behaviorSHA))
+	writeRenderedEvidence(t, renderedArtifact, validRenderedEvidence(behaviorSHA))
+	writeRenderedCrossEvidence(t, renderedCrossArtifact, validRenderedCrossEvidence(behaviorSHA, VerdictPass))
+	write(t, workspace, "docs/V4-TIP-EVIDENCE.md", "# evidence only\n")
+	candidateSHA := commitAll(t, workspace)
+
+	report, err := Collect(Options{
+		Workspace:    workspace,
+		CandidateSHA: candidateSHA,
+		BehaviorSHA:  behaviorSHA,
+		Environ: func(key string) string {
+			switch key {
+			case LiveEvidenceEnv, LiveQualityEvidenceEnv, RenderedEvidenceEnv, RenderedCrossEvidenceEnv:
+				return "1"
+			case LiveArtifactEnv:
+				return liveArtifact
+			case LiveQualityArtifactEnv:
+				return qualityArtifact
+			case RenderedArtifactEnv:
+				return renderedArtifact
+			case RenderedCrossArtifactEnv:
+				return renderedCrossArtifact
+			default:
+				return ""
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.BehaviorProvenance != BehaviorProvenanceDocsOnlyDescendant {
+		t.Fatalf("behavior provenance = %q", report.BehaviorProvenance)
+	}
+	if got := claimByID(t, report, "live-provider-connectivity").Verdict; got != VerdictPass {
+		t.Fatalf("live-provider-connectivity = %s", got)
+	}
+	if got := claimByID(t, report, "live-provider-quality").Verdict; got != VerdictPass {
+		t.Fatalf("live-provider-quality = %s", got)
+	}
+	if got := claimByID(t, report, "rendered-platform-local").Verdict; got != VerdictPass {
+		t.Fatalf("rendered-platform-local = %s", got)
+	}
+	if got := claimByID(t, report, "rendered-cross-platform").Verdict; got != VerdictFail {
+		t.Fatalf("rendered-cross-platform = %s", got)
+	}
+	if got := claimByID(t, report, "release-authorization").Verdict; got != VerdictInconclusive {
+		t.Fatalf("release-authorization = %s", got)
+	}
+}
+
+func TestCollectRejectsNonDocsChangeAfterBehaviorSHA(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	workspace := t.TempDir()
+	seedDocs(t, workspace)
+	behaviorSHA := commitAll(t, workspace)
+	write(t, workspace, "main.go", "package main\n")
+	candidateSHA := commitAll(t, workspace)
+
+	_, err := Collect(Options{
+		Workspace:    workspace,
+		CandidateSHA: candidateSHA,
+		BehaviorSHA:  behaviorSHA,
+	})
+	if err == nil || !strings.Contains(err.Error(), "non-docs path") {
+		t.Fatalf("expected non-docs provenance failure, got %v", err)
+	}
+}
+
+func TestCollectRejectsRevertedNonDocsHistoryAfterBehaviorSHA(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	workspace := t.TempDir()
+	seedDocs(t, workspace)
+	behaviorSHA := commitAll(t, workspace)
+	write(t, workspace, "main.go", "package main\n")
+	_ = commitAll(t, workspace)
+	git(t, workspace, "rm", "--quiet", "main.go")
+	git(t, workspace, "commit", "--quiet", "-m", "revert code")
+	write(t, workspace, "docs/V4-TIP-EVIDENCE.md", "# evidence only\n")
+	candidateSHA := commitAll(t, workspace)
+
+	_, err := Collect(Options{
+		Workspace:    workspace,
+		CandidateSHA: candidateSHA,
+		BehaviorSHA:  behaviorSHA,
+	})
+	if err == nil || !strings.Contains(err.Error(), "non-docs path") {
+		t.Fatalf("expected reverted non-docs history failure, got %v", err)
+	}
+}
+
+func TestCollectRejectsArtifactBoundToWrongSHAAtDocsOnlyDescendant(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	workspace := t.TempDir()
+	seedDocs(t, workspace)
+	behaviorSHA := commitAll(t, workspace)
+	write(t, workspace, "docs/V4-TIP-EVIDENCE.md", "# evidence only\n")
+	candidateSHA := commitAll(t, workspace)
+	artifact := filepath.Join(t.TempDir(), "live-provider.json")
+	writeLiveEvidence(t, artifact, validLiveEvidence(candidateSHA))
+
+	report, err := Collect(Options{
+		Workspace:    workspace,
+		CandidateSHA: candidateSHA,
+		BehaviorSHA:  behaviorSHA,
+		Environ: func(key string) string {
+			switch key {
+			case LiveEvidenceEnv:
+				return "1"
+			case LiveArtifactEnv:
+				return artifact
+			default:
+				return ""
+			}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	connectivity := claimByID(t, report, "live-provider-connectivity")
+	if connectivity.Verdict != VerdictFail || !strings.Contains(connectivity.Reason, "candidate_sha") {
+		t.Fatalf("expected wrong artifact SHA failure, got %+v", connectivity)
+	}
+}
+
+func TestCollectRejectsWrongBehaviorSHA(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	workspace := t.TempDir()
+	seedDocs(t, workspace)
+	candidateSHA := commitAll(t, workspace)
+
+	_, err := Collect(Options{
+		Workspace:    workspace,
+		CandidateSHA: candidateSHA,
+		BehaviorSHA:  strings.Repeat("b", 40),
+	})
+	if err == nil || !strings.Contains(err.Error(), "not a proven ancestor") {
+		t.Fatalf("expected wrong behavior SHA failure, got %v", err)
+	}
+}
+
 func seedDocs(t *testing.T, workspace string) {
 	t.Helper()
 	write(t, workspace, "go.mod", "module example.test/runtimeboundary\n\ngo 1.25\n")

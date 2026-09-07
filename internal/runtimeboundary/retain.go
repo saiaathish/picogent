@@ -87,6 +87,7 @@ func RetainReport(workspace, artifactPath string, report Report) error {
 	if err := ensureOutsideWorkspace(workspaceAbs, artifactAbs); err != nil {
 		return err
 	}
+	report = normalizeReportBehavior(report)
 	if err := validateRetainedReport(report, report.CandidateSHA); err != nil {
 		return err
 	}
@@ -138,10 +139,21 @@ func LoadReport(artifactPath, expectedSHA string) (Report, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return Report{}, errors.New("runtime matrix artifact has trailing JSON")
 	}
+	report = normalizeReportBehavior(report)
 	if err := validateRetainedReport(report, expectedSHA); err != nil {
 		return Report{}, err
 	}
 	return report, nil
+}
+
+func normalizeReportBehavior(report Report) Report {
+	// Reports produced before behavior-SHA continuity were exact-head-only.
+	// Treat absence of both additive fields as that stricter legacy contract.
+	if report.BehaviorSHA == "" && report.BehaviorProvenance == "" {
+		report.BehaviorSHA = report.CandidateSHA
+		report.BehaviorProvenance = BehaviorProvenanceExact
+	}
+	return report
 }
 
 func encodeReport(report Report) ([]byte, error) {
@@ -166,6 +178,21 @@ func validateRetainedReport(report Report, expectedSHA string) error {
 	expectedSHA = strings.TrimSpace(expectedSHA)
 	if report.CandidateSHA != expectedSHA {
 		return fmt.Errorf("runtime matrix candidate_sha %q does not match expected %q", report.CandidateSHA, expectedSHA)
+	}
+	if !validCommitSHA(report.BehaviorSHA) {
+		return errors.New("runtime matrix behavior_sha must be a full commit id")
+	}
+	switch report.BehaviorProvenance {
+	case BehaviorProvenanceExact:
+		if report.BehaviorSHA != report.CandidateSHA {
+			return errors.New("runtime matrix exact behavior provenance requires matching candidate and behavior SHAs")
+		}
+	case BehaviorProvenanceDocsOnlyDescendant:
+		if report.BehaviorSHA == report.CandidateSHA {
+			return errors.New("runtime matrix docs-only behavior provenance requires distinct candidate and behavior SHAs")
+		}
+	default:
+		return fmt.Errorf("runtime matrix behavior provenance %q is invalid", report.BehaviorProvenance)
 	}
 	if report.HeadMatch != "PASS" {
 		return fmt.Errorf("runtime matrix head.match must be PASS, got %q", report.HeadMatch)

@@ -27,6 +27,47 @@ See [V4-RUNTIME-BOUNDARY-MATRIX-RETENTION.md](V4-RUNTIME-BOUNDARY-MATRIX-RETENTI
 The workspace must be clean and `HEAD` must equal `--candidate-sha`. The JSON
 artifact uses schema `picogent.v4.runtime-boundary-matrix.v1`.
 
+## Behavior-SHA continuity across evidence docs
+
+Live connectivity, live quality, and local rendered-platform artifacts may
+remain bound to an earlier behavior revision when the current candidate is a
+docs-only descendant:
+
+```sh
+go run ./cmd/runtime-boundary-matrix \
+  --workspace . \
+  --candidate-sha "$(git rev-parse HEAD)" \
+  --behavior-sha <artifact-source-full-commit-id>
+```
+
+The matrix still requires a clean worktree and exact
+`HEAD == --candidate-sha`. It proves with Git that `--behavior-sha` is an
+ancestor and that every path touched by every intervening commit is under
+`docs/` (a later revert does not erase a non-docs touch). The report records both SHAs and
+`behavior_provenance=DOCS_ONLY_DESCENDANT`; omitting `--behavior-sha` preserves
+the exact-head contract and records `EXACT_HEAD`.
+
+Any code, test, workflow, build, or other non-`docs/` path change after the
+behavior SHA rejects collection. A missing/non-ancestor SHA, unavailable or
+oversized Git diff, malformed artifact, artifact SHA mismatch, or dirty tree
+also fails closed. The exception applies only to:
+
+- `live-provider-connectivity`
+- `live-provider-quality`
+- `rendered-platform-local`
+
+It does not rebind or upgrade `rendered-cross-platform`,
+`hostile-filesystem-toctou`, the verification manifest, production artifacts,
+release attestations, or `release-authorization`; those remain exact-candidate
+or independently evidence-bound.
+
+The historical `264fbde2b45609e6e85e175efe216e8f63509ab8` artifacts cannot be
+attached to the merge containing this contract because this contract itself
+changes Go code and tests after that SHA. The clean continuation path is one
+fresh observation at the merged contract SHA. Its evidence documentation may
+then advance `main` without invalidating those artifacts, provided all
+intervening commits remain confined to `docs/`.
+
 ## Claim categories
 
 | Category | What it covers |

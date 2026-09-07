@@ -106,3 +106,11 @@ Explicitly unchanged boundaries:
 
 This artifact is bound to the pre-documentation source SHA above and must not
 be silently rebound to a later merge SHA.
+
+Under the behavior-SHA continuity contract, these artifacts may be supplied
+with `--behavior-sha 264fbde...` only when the candidate is a docs-only
+descendant. They are not eligible at the merge that introduces that contract,
+because Go code and tests changed after `264fbde`. Re-observe once at the
+contract merge SHA; subsequent evidence-documentation commits can reuse that
+new behavior-bound observation while their entire intervening diff stays under
+`docs/`.
