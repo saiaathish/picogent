@@ -351,6 +351,53 @@ func TestRenderedPermissionPersistsDecisionAndMutation(t *testing.T) {
 	}
 }
 
+func TestRenderedPermissionFallbackTracksApprovedNonTaskMutation(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	fixture := newRenderedPermissionAgent(t)
+	fixture.prompt = "Apply the permission-protected rendered probe mutation."
+	defer fixture.agent.Close()
+
+	runCh := runRenderedPermissionTurn(fixture)
+	waitForRenderedPermission(t, fixture.server)
+	postRenderedPermission(t, fixture.server, true)
+	select {
+	case run := <-runCh:
+		if run.err != nil {
+			t.Fatal(run.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("non-task mutation turn did not finish")
+	}
+
+	task := fixture.agent.TaskSnapshot()
+	if task == nil || task.Goal != fixture.prompt || !containsString(task.ChangedFiles, "rendered-probe.txt") {
+		t.Fatalf("fallback task = %#v, want prompt and changed probe", task)
+	}
+	state := readRenderedState(t, fixture.server)
+	stateTask, ok := state["task"].(map[string]any)
+	if !ok {
+		t.Fatalf("rendered fallback task projection = %#v", state["task"])
+	}
+	if got := renderedTaskChangedFiles(stateTask); !containsString(got, "rendered-probe.txt") {
+		t.Fatalf("rendered fallback changed files = %#v, want probe", got)
+	}
+
+	events := drainRenderedEvents(fixture.events)
+	changeIndex := -1
+	changedTaskIndex := -1
+	for index, event := range events {
+		if event.Type == "change" && event.Path == "rendered-probe.txt" {
+			changeIndex = index
+		}
+		if event.Type == "task_progress" && event.Task != nil && containsString(event.Task.ChangedFiles, "rendered-probe.txt") {
+			changedTaskIndex = index
+		}
+	}
+	if changeIndex < 0 || changedTaskIndex <= changeIndex {
+		t.Fatalf("fallback event order = change:%d changed_task:%d events=%#v", changeIndex, changedTaskIndex, eventTypes(events))
+	}
+}
+
 func TestRenderedPermissionRepeatedAndStateIsolated(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	for iteration := 0; iteration < 8; iteration++ {
@@ -438,6 +485,7 @@ type renderedPermissionFixture struct {
 	handler   *guiHandler
 	store     *taskstate.Store
 	events    chan event
+	prompt    string
 	workspace string
 	path      string
 }
@@ -484,6 +532,7 @@ func newRenderedPermissionAgent(t *testing.T) renderedPermissionFixture {
 		handler:   h,
 		store:     store,
 		events:    events,
+		prompt:    "create the permission-protected rendered probe file",
 		workspace: workspace,
 		path:      filepath.Join(workspace, "rendered-probe.txt"),
 	}
@@ -500,7 +549,7 @@ func runRenderedPermissionTurn(fixture renderedPermissionFixture) <-chan struct 
 	go func() {
 		_, result, err := fixture.agent.RunWithOptions(context.Background(), nil, llm.Message{
 			Role:    "user",
-			Content: "create the permission-protected rendered probe file",
+			Content: fixture.prompt,
 		}, fixture.handler, agent.RunOptions{})
 		runCh <- struct {
 			result agent.Result
