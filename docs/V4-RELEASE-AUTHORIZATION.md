@@ -43,7 +43,11 @@ The tip-bound operator decision checklist (evidence to review, residual
 acceptance, and what stays blocked after approval) is
 [V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md). The
 matching tip-bound final release + hostile residual packet is
-[V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
+[V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md). Formal residual
+acceptance for `hostile-filesystem-toctou=UNVERIFIED` is
+[V4-HOSTILE-TOCTOU-RESIDUAL.md](V4-HOSTILE-TOCTOU-RESIDUAL.md)
+([acceptance stub](V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md)); that package
+does not claim TOCTOU `PASS`.
 
 Operator approval is the remaining human gate after matrix, manifest,
 attestation, and release-gate inputs are otherwise ready. Before supplying

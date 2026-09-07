@@ -7,6 +7,9 @@ does **not** set `authorized: true`, and does **not** close
 
 Tip-bound evidence packet:
 [V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
+Formal TOCTOU residual-acceptance package:
+[V4-HOSTILE-TOCTOU-RESIDUAL.md](V4-HOSTILE-TOCTOU-RESIDUAL.md)
+([acceptance record stub](V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md)).
 Predicate contract (including the shorter approval list from
 [#544](https://github.com/saiaathish/picogent/pull/544)):
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
@@ -59,7 +62,10 @@ Operator-local retained roots (outside checkout):
 
 If the operator authorizes while
 `hostile-filesystem-toctou` remains `UNVERIFIED`, that acceptance must be
-conscious and recorded as a residual audit boundary:
+conscious and recorded as a residual audit boundary. Bind the formal package
+[V4-HOSTILE-TOCTOU-RESIDUAL.md](V4-HOSTILE-TOCTOU-RESIDUAL.md) and complete
+[V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md](V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md)
+(or an equivalent out-of-tree copy):
 
 - Parent-swap confinement `PASS` does **not** upgrade TOCTOU.
 - The predicate may allow residual TOCTOU without blocking; that is an
