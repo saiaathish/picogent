@@ -36,11 +36,14 @@ let browser;
 let seed;
 let reload;
 let currentStage = "collector startup";
+let seedShutdown;
+let reloadShutdown;
 
 try {
   const realCheckout = await fsp.realpath(checkout);
   await assertOutputOutsideCheckout(realCheckout, resolvedOutput);
   await fsp.mkdir(resolvedOutput, { recursive: true });
+  await assertNoSymlinkComponents(resolvedOutput);
   const realOutput = await fsp.realpath(resolvedOutput);
   if (isInside(realCheckout, realOutput)) {
     fail("--out-dir resolves inside the source checkout");
@@ -114,7 +117,7 @@ try {
   if (!(await page.locator("#undo-turn").isDisabled())) {
     throw new Error("undo control remained enabled after restoration");
   }
-  await stopFixture(seed.child);
+  seedShutdown = await stopFixture(seed.child, "seed");
   seed = null;
 
   markStage("reload fixture startup");
@@ -135,15 +138,20 @@ try {
     throw new Error("fresh reload exposed stale undo availability");
   }
 
-  const screenshotPath = path.join(resolvedOutput, "windows-rendered-recovery.png");
+  const screenshotPath = path.join(fixtureRoot, "windows-rendered-recovery.png");
   await page.screenshot({ path: screenshotPath, fullPage: true });
-  await stopFixture(reload.child);
+  const retainedScreenshotPath = path.join(resolvedOutput, "windows-rendered-recovery.png");
+  reloadShutdown = await stopFixture(reload.child, "reload");
   reload = null;
 
   assertManifest(seedManifest, "seed");
   assertManifest(reloadManifest, "reload");
   await writeExclusive(path.join(resolvedOutput, "windows-seed-manifest.json"), seedManifestRecord.data);
   await writeExclusive(path.join(resolvedOutput, "windows-reload-manifest.json"), reloadManifestRecord.data);
+  await writeExclusive(retainedScreenshotPath, await fsp.readFile(screenshotPath));
+  if (!seedShutdown?.exited || !reloadShutdown?.exited) {
+    fail("fixture process shutdown was not verified");
+  }
   const observedAt = new Date().toISOString();
   const observation = {
     schema: "picogent.v4.rendered-recovery-observation.v1",
@@ -167,6 +175,8 @@ try {
     provenance: {
       seed_manifest_sha256: digest(seedManifestRecord.data),
       reload_manifest_sha256: digest(reloadManifestRecord.data),
+      seed_fixture_exit_verified: seedShutdown.exited,
+      reload_fixture_exit_verified: reloadShutdown.exited,
     },
   };
   const observationData = `${JSON.stringify(observation, null, 2)}\n`;
@@ -181,7 +191,7 @@ try {
     browser: browserID,
     fixture: "rendered-recovery",
     observation_sha256: digest(Buffer.from(observationData)),
-    screenshot_sha256: await digestFile(screenshotPath),
+    screenshot_sha256: await digestFile(retainedScreenshotPath),
     observed_at: observedAt,
     verdict: "PASS",
     source_tree_modified: false,
@@ -203,9 +213,20 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 } finally {
-  if (seed) await stopFixture(seed.child);
-  if (reload) await stopFixture(reload.child);
+  const cleanupErrors = [];
+  for (const [phase, fixture] of [["seed", seed], ["reload", reload]]) {
+    if (!fixture) continue;
+    try {
+      await stopFixture(fixture.child, phase);
+    } catch (error) {
+      cleanupErrors.push(`${phase}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   if (browser) await browser.close().catch(() => {});
+  if (cleanupErrors.length > 0) {
+    process.exitCode = 1;
+    console.error(`fixture cleanup failed: ${cleanupErrors.join("; ")}`);
+  }
 }
 
 function flag(name) {
@@ -223,10 +244,32 @@ function isInside(parent, candidate) {
 }
 
 async function assertOutputOutsideCheckout(realCheckout, candidate) {
+  await assertNoSymlinkComponents(candidate);
   const existingAncestor = await nearestExistingPath(candidate);
   const realAncestor = await fsp.realpath(existingAncestor);
   if (isInside(realCheckout, realAncestor)) {
     fail("--out-dir resolves inside the source checkout");
+  }
+}
+
+async function assertNoSymlinkComponents(candidate) {
+  let current = path.resolve(candidate);
+  while (true) {
+    try {
+      const entry = await fsp.lstat(current);
+      if (entry.isSymbolicLink()) {
+        fail("--out-dir must not contain symbolic-link components");
+      }
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      const parent = path.dirname(current);
+      if (parent === current) return;
+      current = parent;
+      continue;
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return;
+    current = parent;
   }
 }
 
@@ -335,16 +378,39 @@ function assertManifest(manifest, phase) {
   }
 }
 
-async function stopFixture(child) {
-  if (!child || child.exitCode !== null) return;
-  const exited = once(child, "exit").then(() => true);
-  child.kill();
-  if (await Promise.race([exited, delay(10000).then(() => false)])) return;
-  if (child.exitCode !== null) return;
-  child.kill("SIGKILL");
-  if (!(await Promise.race([exited, delay(10000).then(() => false)])) && child.exitCode === null) {
-    throw new Error("fixture process did not exit after termination");
+async function stopFixture(child, phase) {
+  if (!child) return { exited: false, exitCode: null, signalCode: null };
+  if (childExited(child)) {
+    return { exited: true, exitCode: child.exitCode, signalCode: child.signalCode };
   }
+
+  const exited = once(child, "exit").then(([exitCode, signalCode]) => ({
+    exited: true,
+    exitCode,
+    signalCode,
+  }));
+  try {
+    child.kill();
+  } catch (error) {
+    if (error?.code !== "ESRCH") throw error;
+  }
+  let result = await Promise.race([exited, delay(10000).then(() => null)]);
+  if (!result && !childExited(child)) {
+    try {
+      child.kill("SIGKILL");
+    } catch (error) {
+      if (error?.code !== "ESRCH") throw error;
+    }
+    result = await Promise.race([exited, delay(10000).then(() => null)]);
+  }
+  if (!result && !childExited(child)) {
+    throw new Error(`fixture process did not exit after termination (phase=${phase})`);
+  }
+  return result || { exited: true, exitCode: child.exitCode, signalCode: child.signalCode };
+}
+
+function childExited(child) {
+  return child.exitCode !== null || child.signalCode !== null;
 }
 
 async function writeExclusive(filePath, data) {
