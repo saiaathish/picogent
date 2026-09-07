@@ -73,27 +73,35 @@ type Claim struct {
 	ObservedAt string   `json:"observed_at,omitempty"`
 }
 
-// Report is the exact-SHA-bound matrix artifact.
+// Report binds the matrix itself to CandidateSHA while allowing selected
+// runtime artifacts to remain bound to BehaviorSHA when the candidate is a
+// clean, docs-only descendant.
 type Report struct {
-	Schema       string         `json:"schema"`
-	CandidateSHA string         `json:"candidate_sha"`
-	HeadMatch    string         `json:"head_match"`
-	Tree         string         `json:"tree"`
-	HostOS       string         `json:"host_os"`
-	HostArch     string         `json:"host_arch"`
-	GoVersion    string         `json:"go_version"`
-	GeneratedAt  string         `json:"generated_at"`
-	Claims       []Claim        `json:"claims"`
-	Summary      map[string]int `json:"summary"`
-	Unverified   []string       `json:"unverified,omitempty"`
-	Reason       string         `json:"reason,omitempty"`
+	Schema             string         `json:"schema"`
+	CandidateSHA       string         `json:"candidate_sha"`
+	BehaviorSHA        string         `json:"behavior_sha"`
+	BehaviorProvenance string         `json:"behavior_provenance"`
+	HeadMatch          string         `json:"head_match"`
+	Tree               string         `json:"tree"`
+	HostOS             string         `json:"host_os"`
+	HostArch           string         `json:"host_arch"`
+	GoVersion          string         `json:"go_version"`
+	GeneratedAt        string         `json:"generated_at"`
+	Claims             []Claim        `json:"claims"`
+	Summary            map[string]int `json:"summary"`
+	Unverified         []string       `json:"unverified,omitempty"`
+	Reason             string         `json:"reason,omitempty"`
 }
 
 // Options configures one matrix collection.
 type Options struct {
 	Workspace    string
 	CandidateSHA string
-	Now          time.Time
+	// BehaviorSHA is the source revision recorded by live and local-rendered
+	// artifacts. Empty means CandidateSHA. A distinct value is accepted only
+	// when CandidateSHA is its docs-only descendant.
+	BehaviorSHA string
+	Now         time.Time
 	// Lookup lets tests stub filesystem existence checks.
 	Lookup func(path string) (bool, error)
 	// Environ lets tests stub environment lookups.
@@ -105,6 +113,7 @@ func Collect(opts Options) (Report, error) {
 	report := Report{
 		Schema:       Schema,
 		CandidateSHA: strings.TrimSpace(opts.CandidateSHA),
+		BehaviorSHA:  strings.TrimSpace(opts.BehaviorSHA),
 		HostOS:       runtime.GOOS,
 		HostArch:     runtime.GOARCH,
 		GoVersion:    runtime.Version(),
@@ -112,6 +121,12 @@ func Collect(opts Options) (Report, error) {
 	}
 	if !validCommitSHA(report.CandidateSHA) {
 		return report, errors.New("candidate_sha must be a full commit id")
+	}
+	if report.BehaviorSHA == "" {
+		report.BehaviorSHA = report.CandidateSHA
+	}
+	if !validCommitSHA(report.BehaviorSHA) {
+		return report, errors.New("behavior_sha must be a full commit id")
 	}
 	workspace, err := filepath.Abs(strings.TrimSpace(opts.Workspace))
 	if err != nil {
@@ -134,6 +149,11 @@ func Collect(opts Options) (Report, error) {
 		report.Reason = "workspace is not clean"
 		return report, errors.New(report.Reason)
 	}
+	report.BehaviorProvenance, err = verifyBehaviorProvenance(workspace, report.BehaviorSHA, report.CandidateSHA)
+	if err != nil {
+		report.Reason = err.Error()
+		return report, fmt.Errorf("behavior provenance: %s", report.Reason)
+	}
 
 	lookup := opts.Lookup
 	if lookup == nil {
@@ -153,7 +173,7 @@ func Collect(opts Options) (Report, error) {
 		environ = os.Getenv
 	}
 
-	claims := defaultClaims(workspace, report.CandidateSHA, now, lookup, environ)
+	claims := defaultClaims(workspace, report.CandidateSHA, report.BehaviorSHA, now, lookup, environ)
 	if len(claims) > MaxClaims {
 		return report, errors.New("runtime boundary matrix exceeds claim cap")
 	}
@@ -173,7 +193,7 @@ func Collect(opts Options) (Report, error) {
 	return report, nil
 }
 
-func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bool, error), environ func(string) string) []Claim {
+func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, lookup func(string) (bool, error), environ func(string) string) []Claim {
 	observed := now.UTC().Format(time.RFC3339)
 	doc := func(rel string) string { return filepath.Join(workspace, filepath.FromSlash(rel)) }
 
@@ -210,7 +230,7 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 			liveConnectivity.Reason = "live evidence artifact is missing"
 			liveConnectivity.Artifact = artifact
 		} else {
-			evidence, digest, err := loadLiveProviderEvidence(workspace, artifact, sha)
+			evidence, digest, err := loadLiveProviderEvidence(workspace, artifact, behaviorSHA)
 			if err != nil {
 				liveConnectivity.Verdict = VerdictFail
 				liveConnectivity.Reason = "live evidence validation failed: " + err.Error()
@@ -240,7 +260,7 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 			live.Artifact = artifact
 			live.Reason = "live-provider quality evidence artifact is missing"
 		} else {
-			evidence, digest, err := loadLiveProviderQualityEvidence(workspace, artifact, sha)
+			evidence, digest, err := loadLiveProviderQualityEvidence(workspace, artifact, behaviorSHA)
 			if err != nil {
 				live.Verdict = VerdictFail
 				live.Artifact = artifact
@@ -290,7 +310,7 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 			renderedLocal.Artifact = artifact
 			renderedLocal.Reason = "rendered evidence artifact is missing"
 		} else {
-			evidence, digest, loadErr := loadRenderedPlatformEvidence(workspace, artifact, sha, renderedPlatform, renderedArchitecture)
+			evidence, digest, loadErr := loadRenderedPlatformEvidence(workspace, artifact, behaviorSHA, renderedPlatform, renderedArchitecture)
 			if loadErr != nil {
 				renderedLocal.Verdict = VerdictFail
 				renderedLocal.Artifact = artifact
@@ -348,7 +368,7 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 			renderedCross.Artifact = artifact
 			renderedCross.Reason = "rendered-cross-platform evidence artifact is missing"
 		} else {
-			evidence, digest, loadErr := loadRenderedCrossPlatformEvidence(workspace, artifact, sha)
+			evidence, digest, loadErr := loadRenderedCrossPlatformEvidence(workspace, artifact, candidateSHA)
 			if loadErr != nil {
 				renderedCross.Verdict = VerdictFail
 				renderedCross.Artifact = artifact
@@ -483,7 +503,7 @@ func defaultClaims(workspace, sha string, now time.Time, lookup func(string) (bo
 	case sbomDoc:
 		release.Verdict = VerdictInconclusive
 		release.Reason = "production artifacts and audits exist, but overall release authorization remains inconclusive while live/rendered/hostile gaps persist"
-		release.Provenance = "audit+sbom lane at " + sha[:12]
+		release.Provenance = "audit+sbom lane at " + candidateSHA[:12]
 	default:
 		release.Verdict = VerdictInconclusive
 		release.Reason = "release audit exists without claiming authorization"

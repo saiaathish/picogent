@@ -119,3 +119,10 @@ release-authorization=INCONCLUSIVE
 
 Linux and Windows owned-browser artifacts do not exist at this SHA, so
 `rendered-cross-platform` remains `UNVERIFIED`.
+
+The behavior-SHA continuity rule can accept this local rendered artifact only
+at a docs-only descendant of `264fbde`; it does not upgrade the cross-platform
+row. The merge introducing that rule contains Go and test changes, so this
+historical artifact cannot attach there. One fresh local observation at the
+contract merge SHA is required; later docs-only evidence commits can then keep
+that local artifact valid with `--behavior-sha`.

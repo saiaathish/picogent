@@ -95,6 +95,41 @@ func TestRunRetainsExternalArtifact(t *testing.T) {
 	}
 }
 
+func TestRunAcceptsBehaviorSHAForDocsOnlyDescendant(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	workspace := t.TempDir()
+	write(t, workspace, "go.mod", "module example.test/runtimeboundary\n\ngo 1.25\n")
+	git(t, workspace, "init", "--quiet")
+	git(t, workspace, "config", "user.name", "Picogent Test")
+	git(t, workspace, "config", "user.email", "picogent@example.test")
+	git(t, workspace, "add", ".")
+	git(t, workspace, "commit", "--quiet", "-m", "behavior")
+	behaviorSHA := strings.TrimSpace(git(t, workspace, "rev-parse", "HEAD"))
+	write(t, workspace, "docs/evidence.md", "# evidence\n")
+	git(t, workspace, "add", ".")
+	git(t, workspace, "commit", "--quiet", "-m", "docs")
+	candidateSHA := strings.TrimSpace(git(t, workspace, "rev-parse", "HEAD"))
+
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{
+		"--workspace", workspace,
+		"--candidate-sha", candidateSHA,
+		"--behavior-sha", behaviorSHA,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+	}
+	var report runtimeboundary.Report
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.BehaviorSHA != behaviorSHA || report.BehaviorProvenance != runtimeboundary.BehaviorProvenanceDocsOnlyDescendant {
+		t.Fatalf("behavior provenance = %+v", report)
+	}
+}
+
 func write(t *testing.T, root, name, content string) {
 	t.Helper()
 	path := filepath.Join(root, filepath.FromSlash(name))

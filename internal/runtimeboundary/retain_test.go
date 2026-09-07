@@ -160,14 +160,16 @@ func TestLoadReportRejectsSymlinkParent(t *testing.T) {
 
 func sampleReport(sha string) Report {
 	return Report{
-		Schema:       Schema,
-		CandidateSHA: sha,
-		HeadMatch:    "PASS",
-		Tree:         "CLEAN",
-		HostOS:       "darwin",
-		HostArch:     "arm64",
-		GoVersion:    "go1.25",
-		GeneratedAt:  time.Unix(1700000000, 0).UTC().Format(time.RFC3339),
+		Schema:             Schema,
+		CandidateSHA:       sha,
+		BehaviorSHA:        sha,
+		BehaviorProvenance: BehaviorProvenanceExact,
+		HeadMatch:          "PASS",
+		Tree:               "CLEAN",
+		HostOS:             "darwin",
+		HostArch:           "arm64",
+		GoVersion:          "go1.25",
+		GeneratedAt:        time.Unix(1700000000, 0).UTC().Format(time.RFC3339),
 		Claims: []Claim{{
 			ID:       "live-provider-quality",
 			Category: CategoryLiveProvider,

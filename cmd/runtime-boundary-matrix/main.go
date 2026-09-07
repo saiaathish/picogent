@@ -23,6 +23,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	workspace := flags.String("workspace", ".", "clean source workspace")
 	candidateSHA := flags.String("candidate-sha", "", "exact full commit id")
+	behaviorSHA := flags.String("behavior-sha", "", "artifact source commit; defaults to candidate-sha and may differ only across docs-only descendants")
 	outPath := flags.String("out", "", "optional absolute artifact path outside the workspace")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -39,6 +40,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	report, err := runtimeboundary.Collect(runtimeboundary.Options{
 		Workspace:    abs,
 		CandidateSHA: strings.TrimSpace(*candidateSHA),
+		BehaviorSHA:  strings.TrimSpace(*behaviorSHA),
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, "runtime-boundary-matrix:", err)

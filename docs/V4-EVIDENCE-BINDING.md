@@ -36,3 +36,20 @@ It cannot detect an external A-to-B-to-A rewrite when the final digest and
 identity are indistinguishable, and an empty target set is deliberately not
 fresh evidence. It does not add a watcher, recursive tree hash, criterion-level
 authority, hypothesis graph, or diagnosis engine.
+
+## Runtime artifact behavior SHA
+
+The runtime-boundary matrix has a separate, narrow continuity rule for
+externally retained live-provider and local rendered-platform artifacts. The
+matrix artifact and release candidate remain bound to clean exact `HEAD`.
+When `--behavior-sha` differs from `--candidate-sha`, Git must prove that the
+behavior SHA is an ancestor and that every intervening commit touches only
+paths under `docs/`; a later revert does not hide a non-docs change. The selected live/local-rendered artifact loaders
+then validate their embedded `candidate_sha` against that proven behavior SHA.
+
+This is acceptance of unchanged behavior provenance, not rebinding: the
+external artifact keeps its original SHA and digest. Wrong artifact SHAs,
+dirty trees, non-docs descendants, missing ancestry/diff provenance, malformed
+records, and unsafe artifact paths reject. Cross-platform rendered evidence,
+hostile-filesystem TOCTOU, production artifacts, verification manifests,
+attestations, and release authorization do not inherit this allowance.
