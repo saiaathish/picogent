@@ -17,6 +17,7 @@ source:     bace7ecbf4da0118c543066beacdbff6a058f857
 runtime:    Go 1.25.x linux/amd64 (GitHub Actions ubuntu-24.04)
 harness:    TestLinuxSameUIDParentSwapConfinement
             TestLinuxSameUIDWorkspaceParentSwapConfinement
+            TestLinuxSameUIDCheckpointParentSwapConfinement
  observed:   2026-09-06T14:02:06Z
 workflow:   https://github.com/saiaathish/picogent/actions/runs/34037551757
 ```
@@ -32,7 +33,11 @@ PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA="$(git rev-parse HEAD)" \
 PICOGENT_HOSTILE_PARENT_SWAP_EVIDENCE_OUT=/absolute/path/outside/checkout/hostile-workspace-parent-swap-linux.json \
   go test ./internal/workspace -run '^TestLinuxSameUIDWorkspaceParentSwapConfinement$' -count=1
 
-go test -race ./internal/securefile ./internal/workspace -run 'TestLinuxSameUID' -count=1
+PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA="$(git rev-parse HEAD)" \
+PICOGENT_HOSTILE_PARENT_SWAP_EVIDENCE_OUT=/absolute/path/outside/checkout/hostile-checkpoint-parent-swap-linux.json \
+  go test ./internal/checkpoint -run '^TestLinuxSameUIDCheckpointParentSwapConfinement$' -count=1
+
+go test -race ./internal/securefile ./internal/workspace ./internal/checkpoint -run 'TestLinuxSameUID' -count=1
 ```
 
 Non-Linux platforms skip these build-tagged tests. Missing attacker activity
@@ -67,6 +72,23 @@ outside-tree=a85c5826be93a55b91348e51a239116121669afd139fce0eb3553258d69ac593
 artifact-sha256=c1b4758ebbd97f27e18dc034e4a48345a6bdc7b31bb169b86ac868f04d675756
 verdict=PASS
 ```
+
+## Checkpoint restore campaign
+
+Issue [#523](https://github.com/saiaathish/picogent/issues/523) extends the
+Linux parent-swap harness to sealed checkpoint `Restore`, mirroring the Darwin
+checkpoint harness from [#519](https://github.com/saiaathish/picogent/pull/519).
+The digest-only schema remains
+`picogent.v4.hostile-parent-swap-checkpoint-evidence.v1` with explicit
+`BroadTOCTOUClaim: UNVERIFIED`.
+
+Hosted Linux CI retains the checkpoint evidence beside the securefile and
+workspace artifacts under `hostile-parent-swap-linux-<sha>`. Confirmed
+parent-swap activity with unchanged outside sentinel and outside-tree digests
+is required for `PASS`. Missing swaps are `INCONCLUSIVE`; outside mutation is
+`FAIL`.
+
+This campaign does **not** upgrade matrix row `hostile-filesystem-toctou`.
 
 ## Explicit limits
 
