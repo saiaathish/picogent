@@ -1,8 +1,9 @@
 # v4 rendered cross-platform evidence contract
 
-Status: contract only. The runtime-boundary row `rendered-cross-platform`
-stays `UNVERIFIED` until a digest-only aggregation artifact proves PASS for
-darwin, linux, and windows at one exact candidate SHA. This record belongs to
+Status: contract plus packaging helper. The runtime-boundary row
+`rendered-cross-platform` stays `UNVERIFIED` until a digest-only aggregation
+artifact proves PASS for darwin, linux, and windows at one exact candidate SHA.
+This record belongs to
 [#500](https://github.com/saiaathish/picogent/issues/500) under parent
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
@@ -20,6 +21,55 @@ PICOGENT_RENDERED_CROSS_PLATFORM_ARTIFACT=/absolute/path/outside/checkout/render
 ```
 
 The artifact schema is `picogent.v4.rendered-cross-platform-evidence.v1`.
+
+## Produce the aggregate artifact
+
+Collect one `picogent.v4.rendered-platform-evidence.v1` record per platform
+only after the direct owned-browser flow in
+[the recovery fixture runbook](V4-RENDERED-RECOVERY-FIXTURE.md) completes on
+that platform. Keep each record outside the checkout. The producer must bind
+the record to the exact clean candidate SHA, task-owned disposable environment,
+platform/architecture, browser/fixture identity, UTC observation time, and
+observation/screenshot digests. Do not copy DOM, screenshots, URLs,
+credentials, or browser transcripts into the record.
+
+After all three observations exist, run the packaging command from a clean
+checkout at the same candidate SHA:
+
+```sh
+candidate_sha="$(git rev-parse HEAD)"
+go run ./cmd/rendered-cross-platform-evidence \
+  --workspace "$PWD" \
+  --candidate-sha "$candidate_sha" \
+  --darwin /absolute/path/outside/checkout/darwin-rendered-platform.json \
+  --linux /absolute/path/outside/checkout/linux-rendered-platform.json \
+  --windows /absolute/path/outside/checkout/windows-rendered-platform.json \
+  --out /absolute/path/outside/checkout/rendered-cross-platform-evidence.json
+```
+
+The command validates every input, rejects stale/malformed/dirty or
+contradictory records, and publishes the aggregate exclusively. It packages
+producer-declared architecture values but does not attest that a platform run
+actually happened; that provenance belongs to each real task-owned browser
+observation. Reusing one platform record under another platform flag fails
+closed.
+
+Validate the aggregate through the exact-SHA matrix:
+
+```sh
+PICOGENT_RENDERED_CROSS_PLATFORM_EVIDENCE=1 \
+PICOGENT_RENDERED_CROSS_PLATFORM_ARTIFACT=/absolute/path/outside/checkout/rendered-cross-platform-evidence.json \
+  go run ./cmd/runtime-boundary-matrix \
+    --workspace . \
+    --candidate-sha "$candidate_sha" \
+    --out /absolute/path/outside/checkout/runtime-boundary-matrix.json
+```
+
+If any platform observation is missing, use the matrix without the
+cross-platform flag and retain `UNVERIFIED`; never synthesize a placeholder
+artifact to make the aggregate pass. A successful aggregate still does not
+authorize release or close
+[#507](https://github.com/saiaathishkarthik/picogent/issues/507).
 
 ## PASS requirements
 
