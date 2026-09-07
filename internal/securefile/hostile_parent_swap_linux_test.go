@@ -26,6 +26,7 @@ const (
 	hostileParentSwapEvidenceEnv = "PICOGENT_HOSTILE_PARENT_SWAP_EVIDENCE_OUT"
 	hostileParentSwapSourceEnv   = "PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA"
 	hostileParentSwapAttempts    = 250
+	hostileParentSwapPause       = 100 * time.Microsecond
 )
 
 type hostileParentSwapEvidence struct {
@@ -509,6 +510,9 @@ func TestLinuxSameUIDParentSwapAttackerHelper(t *testing.T) {
 		_ = os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600)
 		_ = os.Remove(parent)
 		_ = os.Rename(backup, parent)
+		// Leave the trusted parent present briefly so victim operations can
+		// complete while the attacker continues exercising the swap boundary.
+		time.Sleep(hostileParentSwapPause)
 	}
 	if err := os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600); err != nil {
 		t.Fatal(err)
