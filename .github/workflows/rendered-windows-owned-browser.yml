@@ -141,12 +141,6 @@ jobs:
               printf '%s  %s\n' "$(sha256sum "$f" | awk '{print $1}')" "$f"
             done
           )
-          # Copy into RUNNER_TEMP for the upload-artifact step.
-          UPLOAD_DIR="$RUNNER_TEMP/picogent-windows-rendered-evidence"
-          rm -rf "$UPLOAD_DIR"
-          mkdir -p "$UPLOAD_DIR"
-          cp -a "$EVIDENCE_DIR"/. "$UPLOAD_DIR"/
-
       - name: Validate Windows rendered evidence through runtime matrix
         shell: bash
         env:
