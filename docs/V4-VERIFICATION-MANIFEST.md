@@ -87,7 +87,9 @@ targeted coverage or provenance is incomplete, while the required CI gate
 ledger still fails closed on a missing or failed job. Broader verification is
 plain `go test ./...` (no `-race`); Linux race packages and dedicated hostile
 parent-swap evidence stay in separate CI steps and are not silently upgraded by
-a broader PASS.
+a broader PASS. For the tip-bound authorization packet and human gates, see
+[V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md) and
+[V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).
 
 ## Local benchmark evidence
 

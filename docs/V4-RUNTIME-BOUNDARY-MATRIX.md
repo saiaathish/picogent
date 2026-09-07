@@ -315,7 +315,12 @@ aggregate is supplied; docs-only descendants retain it with
 `--behavior-sha 423d0471c1864651473c2f1828b67066885f79bd`. With the
 Darwin/Linux parent-swap docs present, `hostile-parent-swap-confinement`
 projects `PASS`; residual `hostile-filesystem-toctou` stays `UNVERIFIED` and
-`release-authorization` stays `INCONCLUSIVE` without operator approval.
+`release-authorization` stays `INCONCLUSIVE` without operator approval. The
+tip-bound final release + hostile residual packet and operator decision
+checklist are
+[V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md) and
+[V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md); they do
+not authorize a release.
 
 Enable the narrow local row with an evidence artifact outside the checkout:
 

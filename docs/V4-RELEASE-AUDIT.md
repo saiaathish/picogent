@@ -4,6 +4,11 @@ Status: `INCONCLUSIVE` for release authorization. This is an independently
 rechecked evidence report, not a release approval or a supply-chain
 certification.
 
+Tip-bound packet at docs tip `70dba64` / behavior `423d047` (PASS 10 /
+INCONCLUSIVE 1 / UNVERIFIED 1; `authorized: false`):
+[V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md). Operator decision
+checklist: [V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).
+
 ## Exact-head dry-run audit — main `cddb184cc90de13423749aeb021440f016194a33`
 
 Status: `INCONCLUSIVE` for release authorization. This dry-run rechecks tip
