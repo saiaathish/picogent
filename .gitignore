@@ -11,3 +11,6 @@ coverage.out
 .idea/
 .vscode/
 *.log
+
+__pycache__/
+*.py[cod]
