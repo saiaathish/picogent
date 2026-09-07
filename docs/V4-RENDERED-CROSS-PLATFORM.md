@@ -1,14 +1,15 @@
 # v4 rendered cross-platform evidence contract
 
-Status: contract plus packaging helper. The runtime-boundary row
-`rendered-cross-platform` stays `UNVERIFIED` until a digest-only aggregation
-artifact proves PASS for darwin, linux, and windows at one exact candidate SHA.
-This record belongs to
-[#500](https://github.com/saiaathish/picogent/issues/500) under parent
+Status: contract plus packaging helper, with a digest-only aggregate PASS at
+exact candidate SHA `18dc4a1ca1137ab78dfd0102848eb99c417653cc`. This record
+belongs to [#500](https://github.com/saiaathish/picogent/issues/500) /
+[#507](https://github.com/saiaathish/picogent/issues/507) under parent
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
 A single darwin BrowserOS observation, the HTTP API-boundary fixture, and
-hosted CI alone are not cross-platform owned-browser proof.
+hosted CI alone are not cross-platform owned-browser proof. The Windows row
+below is a real task-owned Playwright Chromium observation, not an API-boundary
+substitute.
 
 Current collection status at behavior SHA
 `18dc4a1ca1137ab78dfd0102848eb99c417653cc`:
@@ -17,10 +18,18 @@ Current collection status at behavior SHA
   [the Darwin evidence record](V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md).
 - Linux: direct task-owned Chromium observation `PASS`, recorded in
   [the Linux evidence record](V4-RENDERED-LINUX-EVIDENCE-18DC4A1.md).
-- Windows: `UNVERIFIED`; no owned-browser observation exists.
+- Windows: direct task-owned Playwright Chromium observation `PASS`, recorded in
+  [the Windows evidence record](V4-RENDERED-WINDOWS-EVIDENCE-18DC4A1.md).
 
-Consequently, no three-platform aggregate exists and the runtime boundary
-remains `UNVERIFIED`.
+The three-input packager retained aggregate
+`rendered-cross-platform-evidence.json` with
+`verdict=PASS` and digest
+`e519f22aa878c33479ee7e85282a8e00e4767d68560a9ff537601c1803a23ef5`. Exact-SHA
+matrix validation at a clean `18dc4a1…` checkout projected
+`rendered-cross-platform=PASS`. The row remains exact-candidate bound: tip
+checkouts must still supply that aggregate against candidate SHA `18dc4a1…`
+(or recollect all three platforms at a later tip). Hostile TOCTOU and release
+authorization stay unchanged.
 
 ## Matrix projection
 
@@ -95,6 +104,7 @@ authorize release or close
 
 ## Explicit non-claims
 
-- does not invent Windows/Linux BrowserOS observations
+- does not invent placeholder Windows/Linux BrowserOS observations
 - does not treat `TestRenderedRecoveryFixtureAPIBoundary` as owned-browser proof
 - does not upgrade live-provider, hostile-TOCTOU, or release-authorization rows
+- the aggregate PASS at `18dc4a1…` does not by itself authorize a release
