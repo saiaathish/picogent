@@ -51,7 +51,10 @@ jobs:
           PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA="$CANDIDATE_SHA" \
           PICOGENT_HOSTILE_PARENT_SWAP_EVIDENCE_OUT="$EVIDENCE_DIR/workspace.json" \
             go test -v ./internal/workspace -run '^TestLinuxSameUIDWorkspaceParentSwapConfinement$' -count=1
-          go test -race ./internal/securefile ./internal/workspace -run 'TestLinuxSameUID' -count=1
+          PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA="$CANDIDATE_SHA" \
+          PICOGENT_HOSTILE_PARENT_SWAP_EVIDENCE_OUT="$EVIDENCE_DIR/checkpoint.json" \
+            go test -v ./internal/checkpoint -run '^TestLinuxSameUIDCheckpointParentSwapConfinement$' -count=1
+          go test -race ./internal/securefile ./internal/workspace ./internal/checkpoint -run 'TestLinuxSameUID' -count=1
           sha256sum "$EVIDENCE_DIR"/*.json
       - name: Upload Linux hostile parent-swap evidence
         if: always() && matrix.os == 'ubuntu-latest'
