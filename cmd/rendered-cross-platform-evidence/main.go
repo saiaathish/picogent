@@ -25,9 +25,21 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	workspace := flags.String("workspace", ".", "clean source workspace used for artifact containment checks")
 	candidateSHA := flags.String("candidate-sha", "", "exact full commit id shared by all observations")
-	darwin := flags.String("darwin", "", "darwin rendered-platform evidence artifact")
-	linux := flags.String("linux", "", "linux rendered-platform evidence artifact")
-	windows := flags.String("windows", "", "windows rendered-platform evidence artifact")
+	var darwin, linux, windows string
+	seenPlatformFlags := make(map[string]struct{}, 3)
+	inputFlag := func(platform string, target *string) func(string) error {
+		return func(value string) error {
+			if _, seen := seenPlatformFlags[platform]; seen {
+				return fmt.Errorf("%s input specified more than once", platform)
+			}
+			seenPlatformFlags[platform] = struct{}{}
+			*target = value
+			return nil
+		}
+	}
+	flags.Func("darwin", "darwin rendered-platform evidence artifact", inputFlag("darwin", &darwin))
+	flags.Func("linux", "linux rendered-platform evidence artifact", inputFlag("linux", &linux))
+	flags.Func("windows", "windows rendered-platform evidence artifact", inputFlag("windows", &windows))
 	outPath := flags.String("out", "", "required absolute aggregate artifact path outside the workspace")
 	if err := flags.Parse(args); err != nil {
 		return 2
@@ -55,9 +67,9 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		absWorkspace,
 		strings.TrimSpace(*candidateSHA),
 		map[string]string{
-			"darwin":  *darwin,
-			"linux":   *linux,
-			"windows": *windows,
+			"darwin":  darwin,
+			"linux":   linux,
+			"windows": windows,
 		},
 		time.Time{},
 	)

@@ -93,6 +93,13 @@ func TestRunRequiresAggregateOutput(t *testing.T) {
 	}
 }
 
+func TestRunRejectsDuplicatePlatformInput(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run(context.Background(), []string{"--darwin", "first.json", "--darwin", "second.json"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "specified more than once") {
+		t.Fatalf("run code/stdout/stderr = %d / %q / %q", code, stdout.String(), stderr.String())
+	}
+}
+
 func writeInput(t *testing.T, path string, evidence runtimeboundary.RenderedPlatformEvidence) {
 	t.Helper()
 	data, err := json.MarshalIndent(evidence, "", "  ")
