@@ -14,47 +14,52 @@ Formal TOCTOU residual-acceptance package:
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
+Current tip evidence packet:
+[V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Anchors (docs tip `70dba64` / behavior `423d047`)
+## Anchors (docs tip `4d0c507` / behavior `f8a78c6`)
 
 | Anchor | Value |
 | --- | --- |
-| Docs / remote tip SHA (`origin/main`, merge of [#547](https://github.com/saiaathish/picogent/pull/547)) | `70dba64efe9f96bce27ec6c1d2fb6f9109e5de33` |
-| Prior docs tip ([#546](https://github.com/saiaathish/picogent/pull/546)) | `9ac2675fcc8b9bb62e60ba0f4cd85542623530b5` |
-| Behavior SHA (matrix / aggregate / live+rendered evidence) | `423d0471c1864651473c2f1828b67066885f79bd` ([#545](https://github.com/saiaathish/picogent/pull/545)) |
-| Docs-only delta `423d047..70dba64` | `DOCS_ONLY_DESCENDANT` (10 files under `docs/` only) |
+| Docs / remote tip SHA (`origin/main`, merge of [#553](https://github.com/saiaathish/picogent/pull/553)) | `4d0c5074e5fa3a2ca473ea0efb6d9b951970799b` |
+| Prior docs tip ([#552](https://github.com/saiaathish/picogent/pull/552)) | `71c31cadf0538610bd1637621a028f9b4cbb4bda` |
+| Behavior SHA (matrix / aggregate / live+rendered evidence) | `f8a78c646877164009953401772acdb4d346175d` ([#551](https://github.com/saiaathish/picogent/pull/551)) |
+| Docs-only lineage `f8a78c6` â†’ `71c31ca` â†’ `4d0c507` | `DOCS_ONLY_DESCENDANT` (docs/ only) |
 | Exact-SHA matrix summary | **PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1** |
-| Exact-SHA matrix artifact digest (SHA-256 of retained JSON) | `48cbd34752aabfbd8dea385b7ca13e4c1c343baea1738d096a1b4c8a4c8af748` |
-| Three-platform aggregate SHA-256 | `d5e55136fa1af5c00b37b22d6f06d1b31752e66abe027626c23243ecc3b4702f` |
-| Hosted Windows collect (SUCCEEDED) | [34090755069](https://github.com/saiaathish/picogent/actions/runs/34090755069) |
-| Windows zip SHA-256 | `4750b1ae1685aa1d208b65a55d46a0a6a947d2dc812942ef58a0bd0095d3f321` |
-| Tip evidence root (operator-local, outside checkout) | `/private/tmp/picogent-evidence-423d047/` |
-| Docs-tip retention root | `/private/tmp/picogent-evidence-docs-tip-70dba64/` |
+| Exact-SHA matrix artifact digest (SHA-256 of retained JSON) | `f0b4bca1ac62â€¦` (`aggregate/runtime-boundary-matrix-full.json`) |
+| Three-platform aggregate SHA-256 | `5123c9cc1b024088c495322a56bee81462b3154949029d1887a65b6f76c708cd` |
+| Hosted Windows collect (SUCCEEDED) | [34112789982](https://github.com/saiaathish/picogent/actions/runs/34112789982) |
+| Tip evidence root (operator-local, outside checkout) | `/private/tmp/picogent-evidence-f8a78c6/` |
+
+Historical (do **not** treat as current tip): docs tip `70dba64` /
+behavior `423d047` and `/private/tmp/picogent-evidence-docs-tip-70dba64/`.
 
 Related landings that shape this packet:
 
-- [#542](https://github.com/saiaathish/picogent/pull/542) — split bounded
+- [#542](https://github.com/saiaathish/picogent/pull/542) â€” split bounded
   `hostile-parent-swap-confinement` from residual `hostile-filesystem-toctou`
-- [#544](https://github.com/saiaathish/picogent/pull/544) — targeted-only
+- [#544](https://github.com/saiaathish/picogent/pull/544) â€” targeted-only
   coverage + operator-approval checklist in the release-auth predicate
-- [#545](https://github.com/saiaathish/picogent/pull/545) — tip benchmark
-  evidence refresh (honest regressions; no fake gains)
-- [#546](https://github.com/saiaathish/picogent/pull/546) — tip Windows +
-  three-platform aggregate PASS docs at behavior `423d047`
-- [#547](https://github.com/saiaathish/picogent/pull/547) — historical
-  `cddb184` three-platform PASS docs retained on tip
+- [#549](https://github.com/saiaathish/picogent/pull/549) â€” formal TOCTOU
+  residual-acceptance package + unsigned stub
+- [#551](https://github.com/saiaathish/picogent/pull/551) â€” behavior tip
+  alloc cuts (ValueAwareWindow / ListMeta); invalidates prior behavior-SHA
+  retention from `423d047`
+- [#552](https://github.com/saiaathish/picogent/pull/552) / [#553](https://github.com/saiaathish/picogent/pull/553)
+  â€” docs-only tip packaging of cross-platform + live-provider PASS at
+  behavior `f8a78c6`
 
-## Exact-SHA full matrix at behavior `423d047`
+## Exact-SHA full matrix at behavior `f8a78c6`
 
 Authoritative retained artifact:
 
-`/private/tmp/picogent-evidence-docs-tip-70dba64/runtime-boundary-matrix-exact-423d047.json`
+`/private/tmp/picogent-evidence-f8a78c6/aggregate/runtime-boundary-matrix-full.json`
 
 | Field | Value |
 | --- | --- |
-| `candidate_sha` / `behavior_sha` | `423d0471c1864651473c2f1828b67066885f79bd` |
+| `candidate_sha` / `behavior_sha` | `f8a78c646877164009953401772acdb4d346175d` |
 | `behavior_provenance` | `EXACT_HEAD` |
-| Summary | **PASS 10 · INCONCLUSIVE 1 · UNVERIFIED 1** |
+| Summary | **PASS 10 Â· INCONCLUSIVE 1 Â· UNVERIFIED 1** |
 
 | Claim | Verdict |
 | --- | --- |
@@ -73,23 +78,24 @@ Authoritative retained artifact:
 
 Aggregate evidence for `rendered-cross-platform=PASS`:
 
-`/private/tmp/picogent-evidence-423d047/aggregate/rendered-cross-platform-evidence.json`
+`/private/tmp/picogent-evidence-f8a78c6/aggregate/rendered-cross-platform-evidence.json`
 
-- SHA-256: `d5e55136fa1af5c00b37b22d6f06d1b31752e66abe027626c23243ecc3b4702f`
-- `verdict=PASS` for darwin / linux / windows at exact candidate `423d047…`
+- SHA-256: `5123c9cc1b024088c495322a56bee81462b3154949029d1887a65b6f76c708cd`
+- `verdict=PASS` for darwin / linux / windows at exact candidate `f8a78c6â€¦`
 - Platform records:
-  [Darwin](V4-RENDERED-RECOVERY-EVIDENCE-423D047.md),
-  [Linux](V4-RENDERED-LINUX-EVIDENCE-423D047.md),
-  [Windows](V4-RENDERED-WINDOWS-EVIDENCE-423D047.md),
-  [cross-platform](V4-RENDERED-CROSS-PLATFORM.md)
+  [Darwin](V4-RENDERED-RECOVERY-EVIDENCE-F8A78C6.md),
+  [Linux](V4-RENDERED-LINUX-EVIDENCE-F8A78C6.md),
+  [Windows](V4-RENDERED-WINDOWS-EVIDENCE-F8A78C6.md),
+  [cross-platform](V4-RENDERED-CROSS-PLATFORM.md),
+  [live](V4-LIVE-PROVIDER-EVIDENCE-F8A78C6.md)
 
-## Docs-tip retention honesty (`70dba64` + `--behavior-sha 423d047`)
+## Docs-tip retention honesty (`4d0c507` + `--behavior-sha f8a78c6`)
 
 | Mode | Summary | Notes |
 | --- | --- | --- |
-| Exact-SHA at behavior `423d047` | PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1 | Authority for `rendered-cross-platform=PASS` |
-| Docs tip `70dba64`, behavior `423d047`, no cross env | PASS 9 / INCONCLUSIVE 1 / UNVERIFIED 2 | Live + local rendered PASS; `rendered-cross-platform=UNVERIFIED` (exact-candidate claim deferred) |
-| Docs tip `70dba64` with `423d047` aggregate as cross env | `rendered-cross-platform=FAIL` | Expected: aggregate `candidate_sha` must match matrix candidate; docs-only descendant does not project that PASS |
+| Exact-SHA at behavior `f8a78c6` | PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1 | Authority for `rendered-cross-platform=PASS` |
+| Docs tip `4d0c507`, behavior `f8a78c6`, no cross env | PASS 9 / INCONCLUSIVE 1 / UNVERIFIED 2 | Live + local rendered PASS; `rendered-cross-platform=UNVERIFIED` (exact-candidate claim deferred) |
+| Docs tip `4d0c507` with `f8a78c6` aggregate as cross env | `rendered-cross-platform=FAIL` | Expected: aggregate `candidate_sha` must match matrix candidate; docs-only descendant does not project that PASS |
 
 Prefer the exact-SHA matrix / aggregate as the tip full-matrix authority for
 cross-platform PASS. Do not treat a docs-tip candidate SHA as carrying the
@@ -97,7 +103,7 @@ behavior-bound aggregate.
 
 ## What is proved (PASS)
 
-Foundations at behavior `423d047` that this packet treats as proved for the
+Foundations at behavior `f8a78c6` that this packet treats as proved for the
 non-residual matrix lanes:
 
 - Local-first Safe/Fast permission gate, checkpoint/undo, criterion-bound
@@ -109,7 +115,9 @@ non-residual matrix lanes:
 - Bounded same-UID parent-swap confinement on Darwin + Linux (`PASS` via
   [#542](https://github.com/saiaathish/picogent/pull/542)).
 - Hosted Windows owned-browser collect SUCCEEDED
-  ([34090755069](https://github.com/saiaathish/picogent/actions/runs/34090755069)).
+  ([34112789982](https://github.com/saiaathish/picogent/actions/runs/34112789982)).
+- `#551` alloc gains **PROVED** (ValueAwareWindow / ListMeta); broader
+  outcome-quality gains remain UNPROVED.
 
 ## Hostile residual (explicitly open)
 
@@ -133,33 +141,30 @@ for that record.
 | Input | Dry-run observation |
 | --- | --- |
 | Event / ref | Assumed `push` / `refs/heads/main` for tip audit only |
-| Exact-SHA matrix (non-residual lanes) | PASS rows as above at behavior `423d047` |
+| Exact-SHA matrix (non-residual lanes) | PASS rows as above at behavior `f8a78c6` |
 | Residual TOCTOU | Remains `UNVERIFIED` (allowed residual; not a fake PASS) |
 | Operator approval for scope `v4-release` | **Absent** |
 | Predicate result | **`INCONCLUSIVE` / `authorized: false`** |
 
-Closing tip `rendered-cross-platform` and landing [#546](https://github.com/saiaathish/picogent/pull/546) /
-[#547](https://github.com/saiaathish/picogent/pull/547) do **not** authorize
+Closing tip `rendered-cross-platform` and landing [#552](https://github.com/saiaathish/picogent/pull/552) /
+[#553](https://github.com/saiaathish/picogent/pull/553) do **not** authorize
 release. Missing operator approval alone keeps the predicate unauthorized.
 
 ## Benchmark / outcome-quality honesty
 
-Per [#545](https://github.com/saiaathish/picogent/pull/545) /
+Per [#551](https://github.com/saiaathish/picogent/pull/551) /
 [V4-PERFORMANCE-CAMPAIGN.md](V4-PERFORMANCE-CAMPAIGN.md):
 
-- Tip microbenchmark refreshes record **regressions** vs prior tip `38b45ff`
-  (context manage, session metadata list, session load, warm scripted-edit).
-- **No benchmark gains are proved.** Explicit: “No fake gains are claimed.”
-- Outcome-quality comparison remains `inconclusive` (no comparable structured
-  v3 telemetry for a product win claim).
-
-Do **not** treat flat microbenchmark rows or missing v3 telemetry as a v4.0
-performance exit criterion.
+- Alloc columns: ValueAwareWindow / ListMeta cuts are **PROVED** at behavior
+  `f8a78c6`.
+- Broader outcome-quality comparison remains open / inconclusive where v3
+  telemetry is missing.
+- Do **not** invent fake microbenchmark gains beyond the proved alloc rows.
 
 ## Parents remain open
 
-- [#450](https://github.com/saiaathish/picogent/issues/450) — **OPEN**
-- [#453](https://github.com/saiaathish/picogent/issues/453) — **OPEN**
+- [#450](https://github.com/saiaathish/picogent/issues/450) â€” **OPEN**
+- [#453](https://github.com/saiaathish/picogent/issues/453) â€” **OPEN**
 
 Keep both open until residual TOCTOU is closed or formally accepted and an
 operator release decision is recorded. This packet does not merge, close, or
@@ -169,8 +174,8 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-Proved tip-bound foundations at behavior `423d047` (including
-`rendered-cross-platform=PASS`) sit under a clean docs tip `70dba64`. Residual
+Proved tip-bound foundations at behavior `f8a78c6` (including
+`rendered-cross-platform=PASS`) sit under a clean docs tip `4d0c507`. Residual
 `hostile-filesystem-toctou=UNVERIFIED` and `release-authorization=INCONCLUSIVE`
-(`authorized: false`) remain. Benchmark gains stay **UNPROVED**. Human
-operator review is required before any authorization claim.
+(`authorized: false`) remain. Human operator review is required before any
+authorization claim.
