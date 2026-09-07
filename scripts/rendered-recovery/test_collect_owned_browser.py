@@ -26,6 +26,12 @@ class CollectorBoundaryTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "platform must be one of"):
             COLLECTOR.normalize_platform("android")
 
+    def test_default_home_root_uses_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            temp_root = pathlib.Path(os.path.realpath(temporary))
+            home_root = COLLECTOR.prepare_fixture_home(None, temp_root, "linux")
+            self.assertEqual(home_root, temp_root / "picogent-rendered-linux-507")
+
     def test_output_directory_must_be_outside_checkout_without_symlinks(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(os.path.realpath(temporary))

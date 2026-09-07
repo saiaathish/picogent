@@ -80,8 +80,12 @@ def prepare_output_directory(raw_path: pathlib.Path, workspace: pathlib.Path) ->
     return output
 
 
-def prepare_fixture_home(raw_path: pathlib.Path | None, temp_root: pathlib.Path) -> pathlib.Path:
-    home_root = raw_path or (temp_root / "picogent-rendered-windows-507")
+def prepare_fixture_home(
+    raw_path: pathlib.Path | None,
+    temp_root: pathlib.Path,
+    platform_name: str = "windows",
+) -> pathlib.Path:
+    home_root = raw_path or (temp_root / f"picogent-rendered-{platform_name}-507")
     if not home_root.is_absolute():
         raise SystemExit("--home-root must be an absolute directory below the temp directory")
     home_root = pathlib.Path(os.path.abspath(os.fspath(home_root)))
@@ -260,7 +264,7 @@ def main() -> int:
         home_root_candidate = pathlib.Path(os.path.abspath(os.fspath(home_root_candidate)))
         if is_inside(home_root_candidate, out) or is_inside(out, home_root_candidate):
             raise SystemExit("--out and --home-root must be separate directories")
-    home_root = prepare_fixture_home(args.home_root, temp_root)
+    home_root = prepare_fixture_home(args.home_root, temp_root, platform_name)
     home = home_root / "home"
     workspace = home / "workspace"
     probe = workspace / "rendered-recovery-probe.txt"
