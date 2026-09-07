@@ -1,9 +1,10 @@
 # v4 rendered cross-platform evidence contract
 
 Status: contract plus packaging helper, with a digest-only aggregate PASS at
-exact candidate SHA `18dc4a1ca1137ab78dfd0102848eb99c417653cc`. This record
-belongs to [#500](https://github.com/saiaathish/picogent/issues/500) /
-[#507](https://github.com/saiaathish/picogent/issues/507) under parent
+exact candidate SHA `18dc4a1ca1137ab78dfd0102848eb99c417653cc` (issue
+[#507](https://github.com/saiaathish/picogent/issues/507) closed on that
+acceptance). This record belongs to
+[#500](https://github.com/saiaathish/picogent/issues/500) under parent
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
 A single darwin BrowserOS observation, the HTTP API-boundary fixture, and
@@ -11,7 +12,7 @@ hosted CI alone are not cross-platform owned-browser proof. The Windows row
 below is a real task-owned Playwright Chromium observation, not an API-boundary
 substitute.
 
-Current collection status at behavior SHA
+Historical three-platform collection at behavior SHA
 `18dc4a1ca1137ab78dfd0102848eb99c417653cc`:
 
 - Darwin: direct BrowserOS neo observation `PASS`, recorded in
@@ -28,8 +29,13 @@ The three-input packager retained aggregate
 matrix validation at a clean `18dc4a1…` checkout projected
 `rendered-cross-platform=PASS`. The row remains exact-candidate bound: tip
 checkouts must still supply that aggregate against candidate SHA `18dc4a1…`
-(or recollect all three platforms at a later tip). Hostile TOCTOU and release
-authorization stay unchanged.
+(or recollect all three platforms at a later tip). Non-docs tip `#524` broke
+live/local-rendered `--behavior-sha` continuity from `18dc4a1…`; tip
+`21153f3…` refreshed Darwin/Linux locally
+([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-21153F3.md),
+[Linux](V4-RENDERED-LINUX-EVIDENCE-21153F3.md)) without a tip Windows
+recollection, so tip matrix runs keep `rendered-cross-platform=UNVERIFIED`.
+Hostile TOCTOU and release authorization stay unchanged.
 
 ## Matrix projection
 
@@ -89,8 +95,8 @@ PICOGENT_RENDERED_CROSS_PLATFORM_ARTIFACT=/absolute/path/outside/checkout/render
 If any platform observation is missing, use the matrix without the
 cross-platform flag and retain `UNVERIFIED`; never synthesize a placeholder
 artifact to make the aggregate pass. A successful aggregate still does not
-authorize release or close
-[#507](https://github.com/saiaathishkarthik/picogent/issues/507).
+authorize release. [#507](https://github.com/saiaathish/picogent/issues/507)
+is closed on the `18dc4a1…` three-platform acceptance.
 
 ## PASS requirements
 
