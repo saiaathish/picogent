@@ -6,7 +6,10 @@ Task-owned Windows evidence helper for [#507](https://github.com/saiaathish/pico
 
 A real Chromium process (Playwright, disposable profile) drives the normal
 embedded GUI through allow → undo → fresh fixture-process reload. Hosted
-API-only tests are not substitutes.
+API-only tests are not substitutes. The collector retains the seed/reload
+manifests and screenshot outside the checkout, with SHA-256 links in the
+observation artifact, and verifies both fixture processes exited before
+publishing PASS.
 
 ## Local / CI usage
 
@@ -28,4 +31,7 @@ The GitHub Actions workflow
 
 - Fixture must embed `vcs.revision=<exact SHA>` and `vcs.modified=false`
 - Missing, dirty, or contradictory observations exit non-zero
+- Output and disposable-home paths must be absolute, outside the checkout,
+  and free of symbolic-link components
+- The rendered runtime matrix must report `rendered-platform-local=PASS`
 - Never synthesize a Windows PASS placeholder

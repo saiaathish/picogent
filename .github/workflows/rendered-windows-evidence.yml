@@ -14,10 +14,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Normalize candidate SHA
+        id: normalize-candidate-sha
+        shell: pwsh
+        env:
+          RAW_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          if ($env:RAW_CANDIDATE_SHA -notmatch '^[0-9a-fA-F]{40}$') { throw "candidate_sha must be a full 40-character commit SHA" }
+          $candidateSHA = $env:RAW_CANDIDATE_SHA.ToLowerInvariant()
+          "candidate_sha=$candidateSHA" >> $env:GITHUB_OUTPUT
+
       - name: Checkout exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          ref: ${{ inputs.candidate_sha }}
+          ref: ${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
           fetch-depth: 0
 
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
@@ -31,10 +41,9 @@ jobs:
       - name: Verify exact clean source
         shell: pwsh
         env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CANDIDATE_SHA: ${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
         run: |
-          if ($env:CANDIDATE_SHA -notmatch '^[0-9a-fA-F]{40}$') { throw "candidate_sha must be a full 40-character commit SHA" }
-          $expectedSHA = $env:CANDIDATE_SHA.ToLowerInvariant()
+          $expectedSHA = $env:CANDIDATE_SHA
           $actual = (git rev-parse HEAD).Trim()
           if ($actual -ne $expectedSHA) { throw "checked out $actual instead of $expectedSHA" }
           $status = (git status --porcelain | Out-String).Trim()
@@ -62,7 +71,7 @@ jobs:
       - name: Run direct Windows owned-browser recovery flow
         shell: pwsh
         env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CANDIDATE_SHA: ${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
           EVIDENCE_DIR: ${{ runner.temp }}\picogent-rendered-windows-evidence
         run: |
           $chrome = @(
@@ -81,7 +90,7 @@ jobs:
       - name: Validate Windows platform evidence through the matrix
         shell: pwsh
         env:
-          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          CANDIDATE_SHA: ${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
           EVIDENCE_DIR: ${{ runner.temp }}\picogent-rendered-windows-evidence
           PICOGENT_RENDERED_PLATFORM_EVIDENCE: "1"
           PICOGENT_RENDERED_PLATFORM_ARTIFACT: ${{ runner.temp }}\picogent-rendered-windows-evidence\windows-rendered-platform.json
@@ -104,7 +113,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: rendered-windows-evidence-${{ inputs.candidate_sha }}
+          name: rendered-windows-evidence-${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
           path: |
             ${{ runner.temp }}/picogent-rendered-windows-evidence/*.json
             ${{ runner.temp }}/picogent-rendered-windows-evidence/*.png

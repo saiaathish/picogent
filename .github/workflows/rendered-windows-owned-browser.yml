@@ -30,8 +30,6 @@ jobs:
   windows-owned-browser:
     runs-on: windows-latest
     timeout-minutes: 45
-    env:
-      BEHAVIOR_SHA: ${{ github.event.inputs.behavior_sha || '18dc4a1ca1137ab78dfd0102848eb99c417653cc' }}
     steps:
       - name: Checkout collector scripts
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -39,16 +37,32 @@ jobs:
           repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
 
+      - name: Normalize exact behavior SHA
+        id: normalize-behavior-sha
+        shell: bash
+        env:
+          RAW_BEHAVIOR_SHA: ${{ github.event.inputs.behavior_sha || '18dc4a1ca1137ab78dfd0102848eb99c417653cc' }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RAW_BEHAVIOR_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "behavior_sha must be a full 40-character commit SHA" >&2
+            exit 1
+          fi
+          behavior_sha="${RAW_BEHAVIOR_SHA,,}"
+          echo "behavior_sha=$behavior_sha" >> "$GITHUB_OUTPUT"
+
       - name: Checkout exact behavior SHA (clean fixture source)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           repository: ${{ github.repository }}
-          ref: ${{ env.BEHAVIOR_SHA }}
+          ref: ${{ steps.normalize-behavior-sha.outputs.behavior_sha }}
           path: behavior-src
           fetch-depth: 0
 
       - name: Verify clean exact behavior checkout
         shell: bash
+        env:
+          BEHAVIOR_SHA: ${{ steps.normalize-behavior-sha.outputs.behavior_sha }}
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/behavior-src"
@@ -74,6 +88,8 @@ jobs:
 
       - name: Build rendered fixture from exact behavior SHA
         shell: bash
+        env:
+          BEHAVIOR_SHA: ${{ steps.normalize-behavior-sha.outputs.behavior_sha }}
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE/behavior-src"
@@ -101,19 +117,19 @@ jobs:
 
       - name: Collect Windows owned-browser evidence
         shell: bash
+        env:
+          BEHAVIOR_SHA: ${{ steps.normalize-behavior-sha.outputs.behavior_sha }}
         run: |
           set -euo pipefail
-          # Fixture home must be under Go os.TempDir() (Local\Temp on Windows).
-          # RUNNER_TEMP is often D:\a\_temp and is rejected by the fixture.
-          TEMP_ROOT="${TEMP:-${LOCALAPPDATA}/Temp}"
-          EVIDENCE_DIR="${TEMP_ROOT}/picogent-windows-rendered-evidence"
-          FIXTURE_HOME_ROOT="${TEMP_ROOT}/picogent-rendered-windows-507"
+          # Let the collector derive the disposable fixture home from the
+          # native Python/Go temp-root environment. Passing a Git-Bash path
+          # explicitly can change its drive-root interpretation on Windows.
+          EVIDENCE_DIR="$RUNNER_TEMP/picogent-windows-rendered-evidence"
           mkdir -p "$EVIDENCE_DIR"
           python scripts/rendered-windows/collect_rendered_recovery.py \
             --sha "$BEHAVIOR_SHA" \
             --fixture-bin "$RUNNER_TEMP/picogent-rendered-fixture.exe" \
-            --out "$EVIDENCE_DIR" \
-            --home-root "$FIXTURE_HOME_ROOT"
+            --out "$EVIDENCE_DIR"
           echo "---- collection summary ----"
           cat "$EVIDENCE_DIR/windows-collection-summary.json"
           echo "---- platform artifact ----"
@@ -125,17 +141,37 @@ jobs:
               printf '%s  %s\n' "$(sha256sum "$f" | awk '{print $1}')" "$f"
             done
           )
-          # Copy into RUNNER_TEMP for the upload-artifact step.
+      - name: Validate Windows rendered evidence through runtime matrix
+        shell: bash
+        env:
+          BEHAVIOR_SHA: ${{ steps.normalize-behavior-sha.outputs.behavior_sha }}
+          PICOGENT_RENDERED_PLATFORM_EVIDENCE: "1"
+        run: |
+          set -euo pipefail
           UPLOAD_DIR="$RUNNER_TEMP/picogent-windows-rendered-evidence"
-          rm -rf "$UPLOAD_DIR"
-          mkdir -p "$UPLOAD_DIR"
-          cp -a "$EVIDENCE_DIR"/. "$UPLOAD_DIR"/
+          PLATFORM_PATH="$UPLOAD_DIR/windows-rendered-platform-evidence.json"
+          MATRIX_PATH="$UPLOAD_DIR/windows-runtime-boundary-matrix.json"
+          if [[ ! -f "$PLATFORM_PATH" ]]; then
+            echo "Windows rendered platform evidence is missing" >&2
+            exit 1
+          fi
+          cd "$GITHUB_WORKSPACE/behavior-src"
+          matrix_json="$(PICOGENT_RENDERED_PLATFORM_ARTIFACT="$PLATFORM_PATH" go run ./cmd/runtime-boundary-matrix \
+            --workspace "$PWD" \
+            --candidate-sha "$BEHAVIOR_SHA" \
+            --out "$MATRIX_PATH")"
+          verdict="$(printf '%s' "$matrix_json" | python -c 'import json, sys; report = json.load(sys.stdin); claims = [claim for claim in report.get("claims", []) if claim.get("id") == "rendered-platform-local"]; print(claims[0].get("verdict", "missing") if claims else "missing")')"
+          if [[ "$verdict" != "PASS" ]]; then
+            echo "rendered-platform-local did not reach PASS: $verdict" >&2
+            exit 1
+          fi
+          echo "rendered-platform-local=$verdict"
 
       - name: Upload Windows rendered evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: rendered-windows-owned-browser-${{ env.BEHAVIOR_SHA }}
+          name: rendered-windows-owned-browser-${{ steps.normalize-behavior-sha.outputs.behavior_sha }}
           path: |
             ${{ runner.temp }}/picogent-windows-rendered-evidence/*
             ${{ runner.temp }}/fixture-buildinfo.txt
