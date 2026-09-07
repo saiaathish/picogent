@@ -121,17 +121,15 @@ jobs:
           BEHAVIOR_SHA: ${{ steps.normalize-behavior-sha.outputs.behavior_sha }}
         run: |
           set -euo pipefail
-          # Fixture home must be under Go os.TempDir() (Local\Temp on Windows).
-          # RUNNER_TEMP is often D:\a\_temp and is rejected by the fixture.
-          TEMP_ROOT="${TEMP:-${LOCALAPPDATA}/Temp}"
-          EVIDENCE_DIR="${TEMP_ROOT}/picogent-windows-rendered-evidence"
-          FIXTURE_HOME_ROOT="${TEMP_ROOT}/picogent-rendered-windows-507"
+          # Let the collector derive the disposable fixture home from the
+          # native Python/Go temp-root environment. Passing a Git-Bash path
+          # explicitly can change its drive-root interpretation on Windows.
+          EVIDENCE_DIR="$RUNNER_TEMP/picogent-windows-rendered-evidence"
           mkdir -p "$EVIDENCE_DIR"
           python scripts/rendered-windows/collect_rendered_recovery.py \
             --sha "$BEHAVIOR_SHA" \
             --fixture-bin "$RUNNER_TEMP/picogent-rendered-fixture.exe" \
-            --out "$EVIDENCE_DIR" \
-            --home-root "$FIXTURE_HOME_ROOT"
+            --out "$EVIDENCE_DIR"
           echo "---- collection summary ----"
           cat "$EVIDENCE_DIR/windows-collection-summary.json"
           echo "---- platform artifact ----"
