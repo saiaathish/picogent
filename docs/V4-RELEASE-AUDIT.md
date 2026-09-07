@@ -7,7 +7,7 @@ certification.
 Historical audit snapshot: 2026-09-06 UTC
 The checkpoint named below is historical and is superseded by later `main`
 merges; it is not a current release-readiness snapshot.
-Latest checkpoint: post-[#459](https://github.com/saiaathish/picogent/pull/459)/[#463](https://github.com/saiaathish/picogent/pull/463)/[#465](https://github.com/saiaathish/picogent/pull/465)/[#466](https://github.com/saiaathish/picogent/pull/466) main `b00b88c15b310c05042ebb8debd876b221160389`
+Latest checkpoint: exact `main` tip `92391e53a8f3958d99ecfff3dcfd66070f85e4cf` (docs-only descendant of behavior SHA `18dc4a1ca1137ab78dfd0102848eb99c417653cc` / PR #519). Prior historical checkpoint `b00b88c…` remains below.
 Parent: [#316](https://github.com/saiaathish/picogent/issues/316)
 Broader parent: [#246](https://github.com/saiaathish/picogent/issues/246)
 
@@ -19,6 +19,99 @@ artifacts and the exact Git history. It does not mean a third-party audit.
 Later runtime-boundary work is recorded in
 [V4-RUNTIME-BOUNDARY-MATRIX.md](V4-RUNTIME-BOUNDARY-MATRIX.md) and its linked
 evidence records. At the current checkpoint, #450 and #453 remain open.
+
+## Exact-head release-readiness audit — main `92391e53` (behavior SHA `18dc4a1`)
+
+Status: `INCONCLUSIVE` for release authorization. This refresh rechecks exact
+`origin/main` tip `92391e53a8f3958d99ecfff3dcfd66070f85e4cf` after
+[#519](https://github.com/saiaathish/picogent/pull/519) (Darwin checkpoint
+parent-swap confinement), [#521](https://github.com/saiaathish/picogent/pull/521)
+(Darwin post-merge evidence), and [#520](https://github.com/saiaathish/picogent/pull/520)
+(tip-bound live/rendered docs). It preserves earlier audits below as historical
+evidence and does **not** authorize a release. Parents
+[#450](https://github.com/saiaathish/picogent/issues/450) and
+[#453](https://github.com/saiaathish/picogent/issues/453) remain open.
+
+Behavior continuity: `git` proves `18dc4a1…` is an ancestor of `92391e53…` and
+every intervening path is under `docs/` (`behavior_provenance` may be
+`DOCS_ONLY_DESCENDANT` when collecting tip-bound live/rendered artifacts).
+
+### Candidate and hosted runs
+
+- Behavior SHA (PR #519 merge): `18dc4a1ca1137ab78dfd0102848eb99c417653cc`.
+- Current `main` tip (PR #520 merge): `92391e53a8f3958d99ecfff3dcfd66070f85e4cf`.
+- Post-merge CI: [34077000527](https://github.com/saiaathish/picogent/actions/runs/34077000527), `push`, conclusion `success`.
+- Post-merge release-artifacts: [34077000448](https://github.com/saiaathish/picogent/actions/runs/34077000448), `push`, conclusion `success`.
+
+| Job | Job ID | Result |
+| --- | ---: | --- |
+| `security` | `101604994542` | `success` |
+| `test (ubuntu-latest)` | `101604994705` | `success` |
+| `test (windows-latest)` | `101604994654` | `success` |
+| `test (macos-latest)` | `101604994721` | `success` |
+| `release-evidence` | `101606172039` | `success` |
+| `production-artifacts` | `101604994175` | `success` |
+
+| Artifact | Artifact ID | Size | GitHub artifact digest |
+| --- | ---: | ---: | --- |
+| `verification-manifest-92391e53…` | `10002575244` | 11,077 bytes | `sha256:15a193642d06f64e1e1ee0129d128d18dea1751ef5343bbdc0f2dcc947d9f47e` |
+| `release-attestation-92391e53…` | `10002575493` | 16,711 bytes | `sha256:2aad6ed225b933b0b0f344d20b42eeaa31cd0d71133610c18b72ab4416ddfe02` |
+| `hostile-parent-swap-linux-92391e53…` | `10002530520` | 1,323 bytes | `sha256:970b236c472ba1f0a48abdf025df8bd5dea60348a94f4a62188a8b4d28ca8fa9` |
+| `release-artifacts-92391e53…` | `10002424160` | 57,902,642 bytes | `sha256:a2679e986e2b73aeb31e727137009328ace6697b5045e8b0fdb2582e76cf7cca` |
+
+### Current-head verdict
+
+| Claim | Result | Boundary |
+| --- | --- | --- |
+| All required hosted CI jobs passed at the exact candidate | `CONFIRMED` | Security, Ubuntu, Windows, macOS, release-evidence, and production-artifacts completed with `success`. |
+| The release-gates ledger is valid | `CONFIRMED` | Local `release-gates` validation returned `release gates PASS: 2 required job(s) for push` for the downloaded ledger. |
+| Exact candidate provenance is clean | `CONFIRMED` | Manifest `head.match: PASS`, `head.tree: CLEAN`, SHA `92391e53a8f3958d99ecfff3dcfd66070f85e4cf`. |
+| Targeted verification evidence is present | `CONFIRMED` | Targeted `internal/verify` check `PASS` with coverage `78.24310520939734%`. |
+| Hosted attestations verify for the exact candidate | `CONFIRMED` | Both subjects re-verified under predicate `https://github.com/saiaathish/picogent/attestation/release-evidence/v1` (`gh attestation verify` exit 0); predicate binds matching subject digests below. |
+| Deterministic production binaries/SBOM lane completed | `CONFIRMED` | Production-artifacts job succeeded and uploaded the release-artifacts bundle for this SHA. Bound artifact evidence only. |
+| Hosted runtime-boundary matrix retained | `CONFIRMED` | Exact-head matrix artifact summary `PASS:5`, `INCONCLUSIVE:1`, `UNVERIFIED:5` (`behavior_provenance=EXACT_HEAD`). |
+| Tip-bound live/rendered docs at behavior SHA | `DOCUMENTED` | [#520](https://github.com/saiaathish/picogent/pull/520) records PASS:8 / INCONCLUSIVE:1 / UNVERIFIED:2 when tip-bound artifacts are supplied at behavior SHA `18dc4a1…`; this audit did not re-supply those live/browser artifacts. |
+| The verification manifest proves complete release readiness | `INCONCLUSIVE` | Broader `go test ./...` is `INCONCLUSIVE` (`signal: killed` after ~90.02s, 10 passed); overall manifest `INCONCLUSIVE`. |
+| Live-provider connectivity/quality (hosted exact-head, no artifacts) | `UNVERIFIED` | Fail-closed without supplied evidence files. |
+| Cross-platform rendered behavior | `UNVERIFIED` | Windows owned-browser evidence still absent (#507 / #522). |
+| Hostile filesystem TOCTOU | `UNVERIFIED` | Bounded parent-swap confinement harnesses do not upgrade this row. |
+| Overall release authorization | `INCONCLUSIVE` | Green CI, attestations, SBOM, and matrix retention do not close live/hostile/operator-approval gaps. |
+
+### Independent artifact recheck
+
+Downloaded `verification-manifest.json` reports schema `picogent.verify.v1`,
+matching candidate/expected SHA `92391e53a8f3958d99ecfff3dcfd66070f85e4cf`,
+`head.match: PASS`, `head.tree: CLEAN`, targeted `PASS` with measured coverage
+`78.24310520939734%`, broader `INCONCLUSIVE` with reason `signal: killed`, and
+overall status `INCONCLUSIVE`.
+
+Local SHA-256 recomputation matched the signed predicate subjects:
+
+| Subject | SHA-256 |
+| --- | --- |
+| `release-gates.json` | `717e59488740865a80e7daa5058a4f0f635f8980684164b09e01950704ba53d3` |
+| `verification-manifest.json` | `90a8f8a96ff0d8381dba7ba137f42afc2fb3b0c7f75302286c73c0b535bdf96e` |
+
+Retained exact-head matrix unverified IDs: `hostile-filesystem-toctou`,
+`live-provider-connectivity`, `live-provider-quality`,
+`rendered-cross-platform`, `rendered-platform-local`. Release-authorization
+row is `INCONCLUSIVE`. Local matrix digests (task-owned, outside checkout):
+
+| Matrix | SHA-256 |
+| --- | --- |
+| exact-head | `8188ecb6714f140c5a632584d690771a1930a221a5f5f3f9e614d2448c29edf1` |
+| behavior-sha `18dc4a1…` (no live artifacts) | `6cf4acb5b654533bcb815ce4ab92fbf50413263b4e4318471897e238d2995724` |
+
+This does **not** authorize a release.
+
+### Remaining blockers (attestation gaps)
+
+- Broader `go test ./...` remains killed/`INCONCLUSIVE` in the verification manifest.
+- `hostile-filesystem-toctou` remains `UNVERIFIED` (bounded confinement ≠ broad TOCTOU).
+- Windows owned-browser rendered evidence absent → `rendered-cross-platform` `UNVERIFIED`.
+- Operator approval / complete live+hostile category PASSes required by
+  `EvaluateReleaseAuthorization` are not satisfied.
+- Release-authorization predicate therefore stays `INCONCLUSIVE` / unauthorized.
 
 ## Historical follow-up audit — exact current main after PR #459/#463/#465/#466
 
