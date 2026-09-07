@@ -39,6 +39,12 @@ or cross-platform evidence.
 
 ## Operator approval checklist
 
+The tip-bound operator decision checklist (evidence to review, residual
+acceptance, and what stays blocked after approval) is
+[V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md). The
+matching tip-bound final release + hostile residual packet is
+[V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
+
 Operator approval is the remaining human gate after matrix, manifest,
 attestation, and release-gate inputs are otherwise ready. Before supplying
 `OperatorApproval{Approved: true, Scope: "v4-release", ...}`:
