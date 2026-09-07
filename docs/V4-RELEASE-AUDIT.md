@@ -4,6 +4,81 @@ Status: `INCONCLUSIVE` for release authorization. This is an independently
 rechecked evidence report, not a release approval or a supply-chain
 certification.
 
+## Exact-head follow-up audit — main `92391e53a8f3958d99ecfff3dcfd66070f85e4cf`
+
+Status: `INCONCLUSIVE` for release authorization. This refresh rechecks exact
+current `main` tip `92391e53a8f3958d99ecfff3dcfd66070f85e4cf` after
+[#520](https://github.com/saiaathish/picogent/pull/520) recorded post-519
+live/rendered evidence. It preserves earlier audits below as historical
+evidence and does **not** authorize a release. Parent
+[#453](https://github.com/saiaathish/picogent/issues/453) remains open while
+hostile-filesystem TOCTOU stays `UNVERIFIED` and release authorization stays
+`INCONCLUSIVE`.
+
+### Candidate and hosted runs
+
+- Exact tip / merge of #520: `92391e53a8f3958d99ecfff3dcfd66070f85e4cf`.
+- Behavior SHA for live/local-rendered docs-only continuity:
+  `18dc4a1ca1137ab78dfd0102848eb99c417653cc`.
+- Post-merge CI: [34077000527](https://github.com/saiaathish/picogent/actions/runs/34077000527),
+  `push`, conclusion `success`.
+- Post-merge release-artifacts:
+  [34077000448](https://github.com/saiaathish/picogent/actions/runs/34077000448),
+  `push`, conclusion `success`.
+
+| Job | Job ID | Result |
+| --- | ---: | --- |
+| `security` | `101604994542` | `success` |
+| `test (ubuntu-latest)` | `101604994705` | `success` |
+| `test (windows-latest)` | `101604994654` | `success` |
+| `test (macos-latest)` | `101604994721` | `success` |
+| `release-evidence` | `101606172039` | `success` |
+| `production-artifacts` | `101604994175` | `success` |
+
+| Artifact | Artifact ID | Size | GitHub artifact digest |
+| --- | ---: | ---: | --- |
+| `verification-manifest-92391e53…` | `10002575244` | 11,077 bytes | `sha256:15a193642d06f64e1e1ee0129d128d18dea1751ef5343bbdc0f2dcc947d9f47e` |
+| `release-attestation-92391e53…` | `10002575493` | 16,711 bytes | `sha256:2aad6ed225b933b0b0f344d20b42eeaa31cd0d71133610c18b72ab4416ddfe02` |
+| `release-artifacts-92391e53…` | `10002424160` | 57,902,642 bytes | `sha256:a2679e986e2b73aeb31e727137009328ace6697b5045e8b0fdb2582e76cf7cca` |
+
+### Current-head verdict
+
+| Claim | Result | Boundary |
+| --- | --- | --- |
+| All required hosted CI jobs passed at the exact candidate | `CONFIRMED` | Security, Ubuntu, Windows, macOS, and dependent release-evidence jobs completed with `success`. |
+| The release-gates ledger is valid | `CONFIRMED` | Downloaded `release-gates.json` binds candidate `92391e53…` with required `test` and `security` gates `PASS`. |
+| Exact candidate provenance is clean | `CONFIRMED` | Manifest `head.match: PASS`, `head.tree: CLEAN`, SHA `92391e53a8f3958d99ecfff3dcfd66070f85e4cf`. |
+| Targeted verification evidence is present | `CONFIRMED` | Targeted `internal/verify` check `PASS` with coverage `78.24310520939734%`. |
+| Hosted attestations are present for the exact candidate | `CONFIRMED` | Predicate schema `picogent.release-attestation.v1` binds the tip SHA, run `34077000527`, and matching subject digests below. |
+| Deterministic production binaries/SBOM lane completed | `CONFIRMED` | Production-artifacts job succeeded and uploaded the release-artifacts bundle for this SHA. Bound artifact evidence only. |
+| The verification manifest proves complete release readiness | `INCONCLUSIVE` | Broader `go test ./...` is `INCONCLUSIVE` (`signal: killed` after ~90.02s, 10 passed); overall manifest `INCONCLUSIVE`. |
+| Live-provider connectivity/quality at behavior SHA | `CONFIRMED` (behavior-bound) | Tip docs-only matrix with `--behavior-sha 18dc4a1…` can project both live rows `PASS`; not an exact-tip live re-observation in this audit. |
+| Cross-platform rendered behavior | `INCONCLUSIVE` for this tip audit | Hosted tip matrix without the three-platform aggregate still leaves the row open here; a separate exact-`18dc4a1…` aggregate PASS is documented under #507 and does not by itself authorize release. |
+| Hostile filesystem TOCTOU | `UNVERIFIED` | Explicit remaining gap. |
+| Overall release authorization | `INCONCLUSIVE` | Green CI, attestations, SBOM, and partial runtime evidence do not close hostile TOCTOU or overall authorization. |
+
+### Independent artifact recheck
+
+Downloaded `verification-manifest.json` reports schema `picogent.verify.v1`,
+matching tip SHA `92391e53a8f3958d99ecfff3dcfd66070f85e4cf`,
+`head.match: PASS`, `head.tree: CLEAN`, targeted `PASS` with measured coverage
+`78.24310520939734%`, broader `INCONCLUSIVE` with reason `signal: killed`, and
+overall status `INCONCLUSIVE`.
+
+Local SHA-256 recomputation:
+
+| Subject | SHA-256 |
+| --- | --- |
+| `release-gates.json` | `717e59488740865a80e7daa5058a4f0f635f8980684164b09e01950704ba53d3` |
+| `verification-manifest.json` | `90a8f8a96ff0d8381dba7ba137f42afc2fb3b0c7f75302286c73c0b535bdf96e` |
+| `release-attestation-predicate.json` | `62ee048ee5207b8221876d4e043efcd8ac5768c86102c30f7c73c9ec5d4be070` |
+
+Predicate `release_gates_sha256` and `verification_manifest_sha256` match the
+local recomputation. This audit remains `INCONCLUSIVE` for release
+authorization and does **not** authorize a release.
+
+---
+
 Historical audit snapshot: 2026-09-06 UTC
 The checkpoint named below is historical and is superseded by later `main`
 merges; it is not a current release-readiness snapshot.
