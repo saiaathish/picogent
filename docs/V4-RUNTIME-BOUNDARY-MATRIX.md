@@ -5,14 +5,18 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Tip note (`f8a78c6` / `#551`):** behavior tip changed (`retention.go`,
-`session.go`). Prior exact-SHA / retention matrices at `423d047…` are
-**historical only**. Tip full matrix with three-platform aggregate: digest
-`85847718b56306f38ef2f78cf5a7d5b425f28917429b458944ae2e9cce2f856d` —
-PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3; `rendered-cross-platform=PASS`
-(aggregate `5123c9cc…`). Live-provider rows and
-`hostile-filesystem-toctou` remain UNVERIFIED; `release-authorization`
-stays INCONCLUSIVE. See
+**Tip note (behavior `f8a78c6` / `#551`; docs tip `71c31ca` / `#552`):**
+behavior tip changed (`retention.go`, `session.go`). Prior exact-SHA /
+retention matrices at `423d047…` are **historical only**. Tip full matrix
+with three-platform aggregate **and** live-provider artifacts: digest
+`f0b4bca1ac626fd559bcfacb4a6e414d70c3eecef8b51dd056dd6f82fa574710` —
+PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1; `rendered-cross-platform=PASS`
+(aggregate `5123c9cc…`); `live-provider-connectivity=PASS` and
+`live-provider-quality=PASS`
+([V4-LIVE-PROVIDER-EVIDENCE-F8A78C6.md](V4-LIVE-PROVIDER-EVIDENCE-F8A78C6.md)).
+`hostile-filesystem-toctou` remains UNVERIFIED; `release-authorization`
+stays INCONCLUSIVE. Docs-only tip `71c31ca…` retains with
+`--behavior-sha f8a78c646877164009953401772acdb4d346175d`. See
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
 ## Command

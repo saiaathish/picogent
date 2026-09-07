@@ -6,7 +6,8 @@ does **not** set `authorized: true`, and does **not** close
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
 Tip-bound evidence packet:
-[V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
+[V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md) (historical anchors;
+prefer tip packet [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md)).
 Formal TOCTOU residual-acceptance package:
 [V4-HOSTILE-TOCTOU-RESIDUAL.md](V4-HOSTILE-TOCTOU-RESIDUAL.md)
 ([acceptance record stub](V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md)).
@@ -20,8 +21,9 @@ Before supplying
 `OperatorApproval{Approved: true, Scope: "v4-release", ...}` to a trusted
 workflow, confirm all of the following bind to the **same** intended release
 candidate (today: behavior evidence at
-`423d0471c1864651473c2f1828b67066885f79bd`; docs tip
-`70dba64efe9f96bce27ec6c1d2fb6f9109e5de33` is a docs-only descendant):
+`f8a78c646877164009953401772acdb4d346175d`; docs tip
+`71c31cadf0538610bd1637621a028f9b4cbb4bda` is a docs-only descendant — use
+`--behavior-sha f8a78c646877164009953401772acdb4d346175d` for retention):
 
 1. Exact `main` tip identity for the release decision SHA, clean worktree, and
    verification-manifest `head.match=PASS`.
@@ -43,15 +45,22 @@ are green.
 
 | Evidence | Where / digest | What to confirm |
 | --- | --- | --- |
-| Final release + hostile residual packet | [V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md) | Packet stays **NOT COMPLETE**; no completion claim |
-| Exact-SHA matrix at behavior `423d047` | digest `48cbd34752aabfbd8dea385b7ca13e4c1c343baea1738d096a1b4c8a4c8af748`; summary PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1 | `rendered-cross-platform=PASS`; residuals unchanged |
-| Three-platform aggregate | SHA-256 `d5e55136fa1af5c00b37b22d6f06d1b31752e66abe027626c23243ecc3b4702f` | darwin/linux/windows `PASS` at `423d047` only |
-| Windows collect | [GHA 34090755069](https://github.com/saiaathish/picogent/actions/runs/34090755069); zip `4750b1ae…` | Hosted SUCCEEDED collect matches tip Windows docs |
+| Tip rebound packet | [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md) | Packet stays **NOT COMPLETE**; no completion claim |
+| Exact-SHA matrix at behavior `f8a78c6` | digest `f0b4bca1…`; summary PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1 | `rendered-cross-platform=PASS`; live PASS; TOCTOU UNVERIFIED |
+| Three-platform aggregate | SHA-256 `5123c9cc1b024088c495322a56bee81462b3154949029d1887a65b6f76c708cd` | darwin/linux/windows `PASS` at `f8a78c6` only |
+| Live provider | [V4-LIVE-PROVIDER-EVIDENCE-F8A78C6.md](V4-LIVE-PROVIDER-EVIDENCE-F8A78C6.md) · `df823bd9…` / `2123344d…` | Connectivity + fixed-no-tool quality PASS |
+| Windows collect | [GHA 34112789982](https://github.com/saiaathish/picogent/actions/runs/34112789982) | Hosted SUCCEEDED collect at tip behavior |
 | Hostile split | [#542](https://github.com/saiaathish/picogent/pull/542) + parent-swap docs | Parent-swap PASS ≠ TOCTOU PASS |
-| Perf honesty | [#545](https://github.com/saiaathish/picogent/pull/545) / [V4-PERFORMANCE-CAMPAIGN.md](V4-PERFORMANCE-CAMPAIGN.md) | Gains **UNPROVED**; tip regressions recorded |
-| Tip evidence docs | [#546](https://github.com/saiaathish/picogent/pull/546), [#547](https://github.com/saiaathish/picogent/pull/547) | Docs landings do not authorize release |
+| Perf honesty | [#551](https://github.com/saiaathish/picogent/pull/551) / [V4-PERFORMANCE-CAMPAIGN.md](V4-PERFORMANCE-CAMPAIGN.md) | Alloc gains **PROVED**; outcome-quality gains remain UNPROVED |
+| Tip evidence docs | [#552](https://github.com/saiaathish/picogent/pull/552) + this live package | Docs landings do not authorize release |
 
 Operator-local retained roots (outside checkout):
+
+```text
+/private/tmp/picogent-evidence-f8a78c6/
+```
+
+Historical (do not project onto tip):
 
 ```text
 /private/tmp/picogent-evidence-423d047/
@@ -83,17 +92,17 @@ does **not**, by itself:
 | `UpdateGoal complete` / “v4.0 complete” | Goal completion is a separate human product decision |
 | Closing [#450](https://github.com/saiaathish/picogent/issues/450) / [#453](https://github.com/saiaathish/picogent/issues/453) | Keep open until residuals accepted **and** release decision recorded |
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
-| Benchmark / outcome-quality “gains” | Remain **UNPROVED** / inconclusive per [#545](https://github.com/saiaathish/picogent/pull/545) |
+| Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating docs-tip `rendered-cross-platform=PASS` at candidate `70dba64` | Aggregate is exact-candidate-bound to `423d047` |
+| Fabricating docs-tip `rendered-cross-platform=PASS` at candidate `71c31ca` | Aggregate is exact-candidate-bound to `f8a78c6` |
 
 ## Current dry-run posture (no approval observed)
 
 | Field | Value |
 | --- | --- |
-| Docs tip | `70dba64efe9f96bce27ec6c1d2fb6f9109e5de33` |
-| Behavior SHA | `423d0471c1864651473c2f1828b67066885f79bd` |
-| Matrix | PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1 |
+| Docs tip | `71c31cadf0538610bd1637621a028f9b4cbb4bda` |
+| Behavior SHA | `f8a78c646877164009953401772acdb4d346175d` |
+| Matrix (exact head) | PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1 |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
 | Operator approval | **Absent — do not auto-sign** |
