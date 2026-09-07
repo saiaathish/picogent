@@ -1,0 +1,153 @@
+# Collect real Linux owned-browser rendered-recovery evidence for #507.
+# The fixture source is checked out at one exact clean candidate SHA; the
+# collector and all retained artifacts stay outside that source checkout.
+name: rendered-linux-evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: Exact clean candidate SHA to observe
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout collection lane
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Normalize candidate SHA
+        id: normalize-candidate-sha
+        shell: bash
+        env:
+          RAW_CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RAW_CANDIDATE_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "candidate_sha must be a full 40-character commit SHA" >&2
+            exit 1
+          fi
+          candidate_sha="${RAW_CANDIDATE_SHA,,}"
+          echo "candidate_sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact candidate source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
+          path: behavior-src
+          fetch-depth: 0
+
+      - name: Verify exact clean candidate source
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/behavior-src"
+          [[ "$(git rev-parse HEAD)" == "$CANDIDATE_SHA" ]]
+          [[ -z "$(git status --porcelain)" ]]
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25.x"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+
+      - name: Build rendered fixture from exact candidate
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/behavior-src"
+          go build -buildvcs=true -tags rendered_fixture \
+            -o "$RUNNER_TEMP/picogent-rendered-fixture" \
+            ./cmd/picogent-rendered-fixture
+          go version -m "$RUNNER_TEMP/picogent-rendered-fixture" | tee "$RUNNER_TEMP/fixture-buildinfo.txt"
+          grep -q "vcs.revision=$CANDIDATE_SHA" "$RUNNER_TEMP/fixture-buildinfo.txt"
+          grep -q "vcs.modified=false" "$RUNNER_TEMP/fixture-buildinfo.txt"
+
+      - name: Run collector boundary tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/rendered-recovery/test_collect_owned_browser.py
+
+      - name: Install Playwright Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install 'playwright==1.51.0'
+          python -m playwright install --with-deps chromium
+
+      - name: Run direct Linux owned-browser recovery flow
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/picogent-linux-rendered-evidence"
+          python scripts/rendered-recovery/collect_owned_browser.py \
+            --platform linux \
+            --sha "$CANDIDATE_SHA" \
+            --fixture-bin "$RUNNER_TEMP/picogent-rendered-fixture" \
+            --out "$evidence_dir" \
+            --home-root "/tmp/picogent-rendered-linux-507"
+
+      - name: Validate Linux platform evidence through runtime matrix
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
+          PICOGENT_RENDERED_PLATFORM_EVIDENCE: "1"
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/picogent-linux-rendered-evidence"
+          platform_path="$evidence_dir/linux-rendered-platform-evidence.json"
+          matrix_path="$evidence_dir/linux-runtime-boundary-matrix.json"
+          [[ -f "$platform_path" ]]
+          cd "$GITHUB_WORKSPACE/behavior-src"
+          matrix_json="$(PICOGENT_RENDERED_PLATFORM_ARTIFACT="$platform_path" go run ./cmd/runtime-boundary-matrix \
+            --workspace "$PWD" \
+            --candidate-sha "$CANDIDATE_SHA" \
+            --out "$matrix_path")"
+          verdict="$(printf '%s' "$matrix_json" | python -c 'import json, sys; report = json.load(sys.stdin); claims = [claim for claim in report.get("claims", []) if claim.get("id") == "rendered-platform-local"]; print(claims[0].get("verdict", "missing") if claims else "missing")')"
+          [[ "$verdict" == "PASS" ]]
+          echo "rendered-platform-local=$verdict"
+
+      - name: Print digest-only Linux evidence summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/picogent-linux-rendered-evidence"
+          if [[ -d "$evidence_dir" ]]; then
+            for file in "$evidence_dir"/*.json; do
+              [[ -f "$file" ]] || continue
+              printf '%s\n' "--- $(basename "$file")"
+              jq -c 'with_entries(select(.key | IN("schema", "candidate_sha", "platform", "architecture", "browser", "fixture", "verdict", "source_tree_modified", "observation_sha256", "screenshot_sha256")))' "$file" || true
+            done
+            sha256sum "$evidence_dir"/*.json || true
+          fi
+
+      - name: Upload Linux rendered evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rendered-linux-owned-browser-${{ steps.normalize-candidate-sha.outputs.candidate_sha }}
+          path: |
+            ${{ runner.temp }}/picogent-linux-rendered-evidence/*
+            ${{ runner.temp }}/fixture-buildinfo.txt
+          if-no-files-found: warn
