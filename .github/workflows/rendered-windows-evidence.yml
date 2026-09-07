@@ -35,7 +35,8 @@ jobs:
         run: |
           $actual = (git rev-parse HEAD).Trim()
           if ($actual -ne $env:CANDIDATE_SHA) { throw "checked out $actual instead of $env:CANDIDATE_SHA" }
-          if ((git status --porcelain) -ne "") { throw "candidate checkout is dirty" }
+          $status = (git status --porcelain | Out-String).Trim()
+          if ($status -ne "") { throw "candidate checkout is dirty: $status" }
 
       - name: Build rendered fixture from candidate
         shell: pwsh
