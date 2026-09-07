@@ -104,6 +104,9 @@ Darwin-only, separate-process parent-swap harness for sealed checkpoint
 attacker interval; only descriptor-anchored restore publication runs while
 the nested workspace parent is swapped.
 
+The retained PR #519 artifact was produced at source checkpoint
+`ef6d1a2c6e89199ddbe20e38b83487d6388c665b` and reported:
+
 | Operation | Attempts | Successes | Errors | Attacker swaps | Escape | Verdict |
 | --- | ---: | ---: | ---: | ---: | --- | --- |
 | `checkpoint-restore-existing` | 200 | 14 | 186 | 6488 | no | `PASS` |
@@ -120,6 +123,35 @@ artifact-sha256=14ab897e1ddd528c5118baed7346034bb455cecb7f7e7dfed11a6a23c55806a7
 
 Restore errors during the hostile interval are expected confinement behavior,
 not escapes. This record still does not upgrade `hostile-filesystem-toctou`.
+
+## Exact-current-main checkpoint
+
+After PR #519 merged, the same Darwin checkpoint harness was rerun three times
+from clean exact `main` `18dc4a1ca1137ab78dfd0102848eb99c417653cc` on
+`go1.26.6 darwin/arm64`. The source SHA was passed explicitly through
+`PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA`; the final retained digest-only
+artifact was observed at `2026-09-07T02:11:36Z`.
+
+| Operation | Attempts | Successes | Errors | Attacker swaps | Escape | Verdict |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `checkpoint-restore-existing` | 200 | 7 | 193 | 2639 | no | `PASS` |
+| `checkpoint-restore-remove-created` | 200 | 95 | 105 | 6477 | no | `PASS` |
+
+The final run confirmed attacker activity, no outside escape, and unchanged
+sentinel/tree digests:
+
+```text
+candidate-sha=18dc4a1ca1137ab78dfd0102848eb99c417653cc
+sentinel-before=7e3486aa7f0e2440c892ec9f9209b4544d994f370f2482c25ecdec38e718af4d
+sentinel-after=7e3486aa7f0e2440c892ec9f9209b4544d994f370f2482c25ecdec38e718af4d
+tree-before=2d59bb122ca5a9b93844f9c5cd937869ad46fed7c75279e922c419892252e8df
+tree-after=2d59bb122ca5a9b93844f9c5cd937869ad46fed7c75279e922c419892252e8df
+artifact-sha256=4edd7eeec1d4f3205f36ef7773540a8aa10dc09bd3efdb8769d30dc6ba84f322
+```
+
+This exact-main rerun refreshes the checkpoint observation only. It does not
+upgrade `hostile-filesystem-toctou`, add Linux or Windows coverage, or
+authorize a release.
 
 ## Explicit limits
 
