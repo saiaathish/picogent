@@ -87,15 +87,15 @@ row has a separate opt-in contract:
 evidence file. Connectivity evidence never upgrades the quality row.
 
 The latest tip-bound Codex observation at exact merged `main`
-`e7c5f04d227c12eede0456d11a5ddcbb6636cee4` is recorded in
-[V4-LIVE-PROVIDER-EVIDENCE-E7C5F04.md](V4-LIVE-PROVIDER-EVIDENCE-E7C5F04.md)
-for [#497](https://github.com/saiaathish/picogent/issues/497). With the matching
+`18dc4a1ca1137ab78dfd0102848eb99c417653cc` is recorded in
+[V4-LIVE-PROVIDER-EVIDENCE-18DC4A1.md](V4-LIVE-PROVIDER-EVIDENCE-18DC4A1.md)
+for [#453](https://github.com/saiaathish/picogent/issues/453). With the matching
 digest-only artifacts supplied, it projects both
 `live-provider-connectivity=PASS` and `live-provider-quality=PASS` for the
 fixed no-tool campaign after canonical prompt-digest and bounded-shape checks;
 provider identity and raw result semantics are not independently attested. The
 matching rendered allow→undo→reload observation is
-[V4-RENDERED-RECOVERY-EVIDENCE-E7C5F04.md](V4-RENDERED-RECOVERY-EVIDENCE-E7C5F04.md).
+[V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md](V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md).
 Historical quality-only records such as
 [V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md)
 remain unchanged. Hostile-TOCTOU, cross-platform rendered, and
@@ -280,10 +280,10 @@ The rendered rows are also split by claim size:
   platform record cannot stand in for the other supported platforms.
 
 The latest direct current-main local observation is recorded in
-[V4-RENDERED-RECOVERY-CURRENT-MAIN-EVIDENCE.md](V4-RENDERED-RECOVERY-CURRENT-MAIN-EVIDENCE.md)
-for [#492](https://github.com/saiaathish/picogent/issues/492). It proves only
-the `darwin/arm64` rendered recovery path; cross-platform behavior remains
-`UNVERIFIED`.
+[V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md](V4-RENDERED-RECOVERY-EVIDENCE-18DC4A1.md)
+for [#453](https://github.com/saiaathish/picogent/issues/453). Matching Darwin
+and Linux records exist at that behavior SHA, but Windows is still missing, so
+cross-platform behavior remains `UNVERIFIED`.
 
 Enable the narrow local row with an evidence artifact outside the checkout:
 
