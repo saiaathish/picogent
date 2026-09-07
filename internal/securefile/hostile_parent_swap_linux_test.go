@@ -507,6 +507,12 @@ func TestLinuxSameUIDParentSwapAttackerHelper(t *testing.T) {
 		}
 		swaps++
 		_ = os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600)
+		// Schedule the victim while the hostile symlink is installed. Bounded
+		// Gosched turns create a real observation window without adding a timed
+		// trusted-parent interval that would weaken the parent-swap race.
+		for i := 0; i < 8; i++ {
+			runtime.Gosched()
+		}
 		_ = os.Remove(parent)
 		_ = os.Rename(backup, parent)
 	}
