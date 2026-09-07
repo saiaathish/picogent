@@ -35,6 +35,7 @@ if (isInside(checkout, resolvedOutput)) {
 let browser;
 let seed;
 let reload;
+let currentStage = "collector startup";
 
 try {
   const realCheckout = await fsp.realpath(checkout);
@@ -59,8 +60,10 @@ try {
     PICOGENT_RENDERED_FIXTURE_SOURCE_SHA: candidateSHA,
   };
 
+  markStage("seed fixture startup");
   seed = startFixture("seed", seedManifestPath, fixtureEnvironment, fixtureHome, fixtureWorkspace);
   const seedURL = await seed.url;
+  markStage("seed manifest publication");
   const seedManifestRecord = await readManifest(seedManifestPath);
   const seedManifest = seedManifestRecord.manifest;
 
@@ -76,6 +79,7 @@ try {
   const browserContext = await browser.newContext();
   const page = await browserContext.newPage();
 
+  markStage("seed browser initial page");
   await openFixture(page, seedURL);
   const seedInitialUndoDisabled = await page.locator("#undo-turn").isDisabled();
   if (!seedInitialUndoDisabled) {
@@ -84,12 +88,14 @@ try {
 
   await page.locator("#prompt").fill("Apply the rendered recovery fixture mutation.");
   await page.locator("#send").click();
+  markStage("seed browser permission prompt");
   await page.locator("#perm.is-on").waitFor({ state: "visible", timeout: 60000 });
   const permissionText = await page.locator("#perm-text").innerText();
   if (!permissionText.includes("rendered-recovery-probe.txt")) {
     throw new Error("permission prompt did not identify the recovery probe");
   }
 
+  markStage("seed browser allow result");
   await page.locator('#perm [data-allow="1"]').click();
   await page.locator("#undo-turn:not([disabled])").waitFor({ state: "visible", timeout: 60000 });
   await waitForPageText(page, "Edited 1 file");
@@ -101,8 +107,9 @@ try {
     throw new Error("allow mutation produced unexpected probe content");
   }
 
+  markStage("seed browser undo restoration");
   await page.locator("#undo-turn").click();
-  await waitFor(async () => (await page.locator("#turn-recovery").evaluate((element) => element.hidden)) === true);
+  await waitFor(async () => (await page.locator("#turn-recovery").evaluate((element) => element.hidden)) === true, "recovery banner to be hidden");
   await waitForFile(probePath, false);
   if (!(await page.locator("#undo-turn").isDisabled())) {
     throw new Error("undo control remained enabled after restoration");
@@ -110,14 +117,18 @@ try {
   await stopFixture(seed.child);
   seed = null;
 
+  markStage("reload fixture startup");
   reload = startFixture("reload", reloadManifestPath, fixtureEnvironment, fixtureHome, fixtureWorkspace);
   const reloadURL = await reload.url;
+  markStage("reload manifest publication");
   const reloadManifestRecord = await readManifest(reloadManifestPath);
   const reloadManifest = reloadManifestRecord.manifest;
+  markStage("reload browser durable history");
   await page.goto(reloadURL, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.locator("#prompt").waitFor({ state: "visible", timeout: 60000 });
   await waitForPageText(page, "Changed files (1)");
-  await waitFor(async () => (await page.locator("#turn-recovery").evaluate((element) => element.hidden)) === true);
+  markStage("reload browser recovery state");
+  await waitFor(async () => (await page.locator("#turn-recovery").evaluate((element) => element.hidden)) === true, "recovery banner to be hidden");
   await waitForFile(probePath, false);
   const reloadUndoDisabled = await page.locator("#undo-turn").isDisabled();
   if (!reloadUndoDisabled) {
@@ -289,20 +300,27 @@ async function openFixture(page, url) {
 }
 
 async function waitForPageText(page, expected) {
-  await waitFor(async () => (await page.locator("body").innerText()).includes(expected));
+  await waitFor(async () => (await page.locator("body").innerText()).includes(expected), `page text ${JSON.stringify(expected)}`);
 }
 
-async function waitFor(predicate, timeout = 60000) {
+function markStage(stage) {
+  currentStage = stage;
+}
+
+async function waitFor(predicate, condition, timeout = 60000) {
+  const startedAt = Date.now();
+  const stage = currentStage;
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (await predicate()) return;
     await delay(100);
   }
-  throw new Error("timed out waiting for rendered recovery state");
+  throw new Error(`timed out waiting for ${condition} (stage=${stage}, elapsed_ms=${Date.now() - startedAt})`);
 }
 
 async function waitForFile(filePath, shouldExist) {
-  await waitFor(() => fs.existsSync(filePath) === shouldExist);
+  const state = shouldExist ? "to exist" : "to be absent";
+  await waitFor(() => fs.existsSync(filePath) === shouldExist, `file ${JSON.stringify(path.basename(filePath))} ${state}`);
 }
 
 async function readManifest(manifestPath) {
