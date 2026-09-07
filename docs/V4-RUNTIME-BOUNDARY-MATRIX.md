@@ -5,6 +5,16 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
+**Tip note (`f8a78c6` / `#551`):** behavior tip changed (`retention.go`,
+`session.go`). Prior exact-SHA / retention matrices at `423d047…` are
+**historical only**. Tip full matrix with three-platform aggregate: digest
+`85847718b56306f38ef2f78cf5a7d5b425f28917429b458944ae2e9cce2f856d` —
+PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3; `rendered-cross-platform=PASS`
+(aggregate `5123c9cc…`). Live-provider rows and
+`hostile-filesystem-toctou` remain UNVERIFIED; `release-authorization`
+stays INCONCLUSIVE. See
+[V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
+
 ## Command
 
 ```sh
