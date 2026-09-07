@@ -8,6 +8,9 @@ review. It does **not** authorize a release, does **not** claim
 
 Operator decision checklist:
 [V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).
+Formal TOCTOU residual-acceptance package:
+[V4-HOSTILE-TOCTOU-RESIDUAL.md](V4-HOSTILE-TOCTOU-RESIDUAL.md)
+([acceptance record stub](V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md)).
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
@@ -120,7 +123,10 @@ The release-authorization predicate may treat residual TOCTOU as an explicit
 audit boundary rather than a hard universal PASS gate
 ([V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md)). That does **not**
 make TOCTOU PASS, and operator acceptance of the residual must be recorded
-consciously if authorization is later granted.
+consciously if authorization is later granted. Use the formal package
+[V4-HOSTILE-TOCTOU-RESIDUAL.md](V4-HOSTILE-TOCTOU-RESIDUAL.md) and fillable
+stub [V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md](V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md)
+for that record.
 
 ## Release-authorization dry-run (no operator approval)
 

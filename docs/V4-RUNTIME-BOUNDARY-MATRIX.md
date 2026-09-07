@@ -134,7 +134,10 @@ confinement, and the broader race residual:
   Descriptor/handle-anchored operations and bounded ancestor-swap tests do not
   prove arbitrary same-UID writers cannot race every cross-surface pathname
   boundary. The release-authorization predicate does not require this residual
-  row to become `PASS`.
+  row to become `PASS`. Formal residual-acceptance packaging for operators is
+  [V4-HOSTILE-TOCTOU-RESIDUAL.md](V4-HOSTILE-TOCTOU-RESIDUAL.md)
+  ([acceptance stub](V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md)); it does not
+  upgrade this row to `PASS`.
 
 The deterministic and parent-swap rows are narrower observations and do not
 authorize a release, upgrade the live-provider or rendered rows, or change the
@@ -319,7 +322,9 @@ projects `PASS`; residual `hostile-filesystem-toctou` stays `UNVERIFIED` and
 tip-bound final release + hostile residual packet and operator decision
 checklist are
 [V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md) and
-[V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md); they do
+[V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md); formal
+TOCTOU residual acceptance is
+[V4-HOSTILE-TOCTOU-RESIDUAL.md](V4-HOSTILE-TOCTOU-RESIDUAL.md). They do
 not authorize a release.
 
 Enable the narrow local row with an evidence artifact outside the checkout:
