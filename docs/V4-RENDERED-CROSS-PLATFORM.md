@@ -29,11 +29,11 @@ The three-input packager retained aggregate
 matrix validation at a clean `18dc4a1…` checkout projected
 `rendered-cross-platform=PASS`. The row remains exact-candidate bound: tip
 checkouts must still supply that aggregate against candidate SHA `18dc4a1…`
-(or recollect all three platforms at a later tip). Non-docs tip `#524` broke
-live/local-rendered `--behavior-sha` continuity from `18dc4a1…`; tip
-`21153f3…` refreshed Darwin/Linux locally
-([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-21153F3.md),
-[Linux](V4-RENDERED-LINUX-EVIDENCE-21153F3.md)) without a tip Windows
+(or recollect all three platforms at a later tip). Non-docs tips `#524` and
+`#527` broke live/local-rendered `--behavior-sha` continuity from `18dc4a1…`;
+behavior tip `251171f…` refreshed Darwin/Linux locally
+([Darwin](V4-RENDERED-RECOVERY-EVIDENCE-251171F.md),
+[Linux](V4-RENDERED-LINUX-EVIDENCE-251171F.md)) without a tip Windows
 recollection, so tip matrix runs keep `rendered-cross-platform=UNVERIFIED`.
 Hostile TOCTOU and release authorization stay unchanged.
 
