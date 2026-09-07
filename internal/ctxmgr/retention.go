@@ -252,12 +252,14 @@ func contextSplitTurns(messages []llm.Message) [][]llm.Message {
 	start := 0
 	for index := 1; index < len(messages); index++ {
 		if messages[index].Role == "user" {
-			turns = append(turns, append([]llm.Message(nil), messages[start:index]...))
+			// Share the input backing array; ValueAwareWindow does not mutate
+			// candidate message contents before flattening the selected window.
+			turns = append(turns, messages[start:index])
 			start = index
 		}
 	}
 	if start < len(messages) {
-		turns = append(turns, append([]llm.Message(nil), messages[start:]...))
+		turns = append(turns, messages[start:])
 	}
 	return turns
 }
@@ -284,7 +286,8 @@ func contextMessageUnits(messages []llm.Message) [][]llm.Message {
 				end++
 			}
 		}
-		units = append(units, append([]llm.Message(nil), messages[index:end]...))
+		// Share the turn backing array; callers only read unit contents.
+		units = append(units, messages[index:end])
 		index = end
 	}
 	return units

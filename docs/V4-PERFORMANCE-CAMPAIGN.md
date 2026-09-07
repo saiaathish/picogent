@@ -49,6 +49,40 @@ the 2026-09-05 `38b45ff` checkpoint on this host. No fake gains are claimed.
 Filesystem-backed session and repo-map ranges remain high-variance. This does
 not authorize release, close #302, or establish live-provider / GUI budgets.
 
+## Allocation repair at tip `22b1b1b` (2026-09-07)
+
+Re-measurement on the same Apple M3 arm64 host with Go `go1.26.6` showed that
+exact tip `38b45ff` already matched the heavy context-manage shape
+(~172 KB / 495 allocs working-set). The lighter ~67 KB / 185 figures attributed
+to that tip in the `cddb184` refresh belong to the earlier pre-value-aware
+compaction path (`9ba07f7^`), not to `38b45ff`.
+
+Root causes addressed here (semantics preserved):
+
+1. `ValueAwareWindow` copied every turn/unit slice while projecting candidates.
+   Candidate windows now share the input backing array and only allocate the
+   final selected flat transcript.
+2. `ListMeta` forced `encoding/json` to materialize the `messages` field for
+   shape validation, readdir'd the sessions directory twice, recomputed
+   `filepath.Abs` per record, and ran `boundSession` on legacy empty-title
+   fallbacks. Metadata decode now skips materializing history, validates the
+   messages array in-place, uses `Stat` for existence, caches abs paths, and
+   derives legacy titles without retention rebinding.
+
+Same-host before/after (fixed-iteration runs; alloc columns are the reliable
+signal; filesystem latency remains high-variance):
+
+| Operation | Before (tip / `38b45ff`) | After (this branch) |
+| --- | ---: | ---: |
+| Context manage, working set | 172,561–172,592 B / 495 allocs | 154,109–154,141 B / 399 allocs |
+| Context manage, context-heavy | 1,067,190–1,069,759 B / 2,396–2,401 allocs | 973,936–975,463 B / 1,914–1,917 allocs |
+| Live retention window (value-aware) | 65,632–65,659 B / 226 allocs | 55,328–55,354 B / 159 allocs |
+| Session metadata list, 60 records | 232,732–236,485 B / 3,069 allocs | 225,469–229,196 B / 2,938 allocs |
+
+Scripted-edit warm turns were rechecked; allocs stayed ~1,476–1,512 with the
+existing safety-boundary cost. No scripted-edit latency claim is made, and
+#302 remains open.
+
 ## Comparison
 
 - Host: Apple M3 arm64 macOS
