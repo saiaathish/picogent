@@ -55,6 +55,8 @@ func TestReleaseEvidenceWorkflowUsesExternalArtifactDirectory(t *testing.T) {
 		"> \"$ARTIFACT_DIR/verification-manifest.json\"",
 		"--target internal/verify",
 		"--coverprofile \"$ARTIFACT_DIR/verification-coverage.out\"",
+		"--timeout 15m",
+		"timeout-minutes: 45",
 		"verification-coverage.out",
 		"subject-checksums: ${{ runner.temp }}/picogent-release-evidence/release-evidence.sha256",
 		"predicate-path: ${{ runner.temp }}/picogent-release-evidence/release-attestation-predicate.json",
@@ -62,6 +64,9 @@ func TestReleaseEvidenceWorkflowUsesExternalArtifactDirectory(t *testing.T) {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("release workflow is missing required external-artifact contract %q", required)
 		}
+	}
+	if strings.Contains(workflow, "--timeout 90s") {
+		t.Fatal("release-evidence broader verify-manifest timeout must not regress to 90s")
 	}
 	if strings.Contains(workflow, "artifacts/") {
 		t.Fatal("release workflow still contains a checkout-relative artifacts/ path")

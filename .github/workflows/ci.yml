@@ -125,6 +125,10 @@ jobs:
     needs: [test, security]
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    # Broader verify-manifest re-runs go test ./... after the matrix; keep the
+    # job bound above the per-command broader timeout with headroom for
+    # targeted coverage, matrix retention, and attestation steps.
+    timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
@@ -210,7 +214,7 @@ jobs:
             --target internal/verify \
             --coverprofile "$ARTIFACT_DIR/verification-coverage.out" \
             --targeted-timeout 45s \
-            --timeout 90s \
+            --timeout 15m \
             > "$ARTIFACT_DIR/verification-manifest.json"
       - name: Retain runtime-boundary matrix
         env:
