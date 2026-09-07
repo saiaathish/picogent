@@ -27,7 +27,7 @@ Inputs treated as available or residual at this tip:
 | Event / ref | Assumed `push` / `refs/heads/main` for tip audit | Predicate requires these exact values. |
 | Verification manifest | Targeted-only coverage policy now allows overall `PASS` when broader `go test ./...` passes without whole-repo coverage | Broader kill remains fail-closed `INCONCLUSIVE`. |
 | Release gates | Required `test` + `security` from hosted CI | Confirm at exact tip after post-merge jobs finish. |
-| Runtime-boundary matrix | Tip matrix still carries residual gaps | `hostile-filesystem-toctou=UNVERIFIED`; tip `rendered-cross-platform` may remain `UNVERIFIED` until tip-bound aggregate; live/local-rendered may be behavior-SHA continuous. |
+| Runtime-boundary matrix | Tip matrix still carries residual gaps | After #542, bounded `hostile-parent-swap-confinement` can PASS while residual `hostile-filesystem-toctou=UNVERIFIED`; tip `rendered-cross-platform` may remain `UNVERIFIED` until tip-bound aggregate; live/local-rendered may be behavior-SHA continuous. |
 | Attestation | Hosted release-evidence attestation at tip | Confirm after post-merge `release-evidence` succeeds. |
 | Operator approval | **Absent** | Explicit human gate; dry-run keeps `authorized: false`. |
 
@@ -39,6 +39,13 @@ approval is missing).
 Operator checklist: see [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Parents [#450](https://github.com/saiaathish/picogent/issues/450) and
 [#453](https://github.com/saiaathish/picogent/issues/453) remain open.
+
+Postscript: after this dry-run draft,
+[#542](https://github.com/saiaathish/picogent/pull/542) merged as
+`b1124c3d174047f62cff6799c1fee3d58289363a`, narrowing hostile-runtime to
+`hostile-parent-swap-confinement` while keeping residual
+`hostile-filesystem-toctou=UNVERIFIED`. Tip authorization remains unauthorized
+without operator approval and tip-bound rendered-cross-platform completeness.
 
 ---
 
