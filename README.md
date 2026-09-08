@@ -162,6 +162,6 @@ Subagents, skills marketplace, plugins, embedding indexes.
 - Product spec: [docs/PRD.md](docs/PRD.md)
 - v0.2 finish-the-loop guide: [docs/V0.2.md](docs/V0.2.md)
 - v4 rendered cross-platform evidence contract: [docs/V4-RENDERED-CROSS-PLATFORM.md](docs/V4-RENDERED-CROSS-PLATFORM.md)
-- Current exact-head evidence packet: [docs/V4-TIP-EVIDENCE-1531850.md](docs/V4-TIP-EVIDENCE-1531850.md)
+- Current exact-head evidence packet: [docs/V4-TIP-EVIDENCE-CURRENT.md](docs/V4-TIP-EVIDENCE-CURRENT.md)
 - Last retained rendered evidence (historical behavior tip): [docs/V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](docs/V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md)
 - License: MIT
