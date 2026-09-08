@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saiaathishkarthik/picogent/internal/securefile"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 const (
