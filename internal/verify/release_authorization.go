@@ -14,6 +14,49 @@ const (
 	releaseAuthorizationScope        = "v4-release"
 )
 
+const (
+	releaseCategoryLiveProvider  = "live_provider"
+	releaseCategoryRendered      = "rendered_platform"
+	releaseCategoryHostile       = "hostile_runtime"
+	releaseCategoryRecovery      = "recovery_undo"
+	releaseCategoryAuthorization = "release_authorization"
+)
+
+type releaseAuthorizationClaimRule struct {
+	category         string
+	residual         bool
+	authorizationRow bool
+}
+
+// The matrix schema is intentionally closed for release consumption. The
+// runtime collector may expose optional rows, but a category-only check would
+// let an invented PASS row stand in for the evidence row that the predicate
+// actually requires.
+var releaseAuthorizationClaimRules = map[string]releaseAuthorizationClaimRule{
+	"live-provider-connectivity":       {category: releaseCategoryLiveProvider},
+	"live-provider-quality":            {category: releaseCategoryLiveProvider},
+	"rendered-platform-local":          {category: releaseCategoryRendered},
+	"rendered-long-horizon-local":      {category: releaseCategoryRendered},
+	"rendered-cross-platform":          {category: releaseCategoryRendered},
+	"rendered-recovery-undo-reload":    {category: releaseCategoryRendered},
+	"hostile-child-env-sanitization":   {category: releaseCategoryHostile},
+	"hostile-filesystem-deterministic": {category: releaseCategoryHostile},
+	"hostile-parent-swap-confinement":  {category: releaseCategoryHostile},
+	"hostile-filesystem-toctou":        {category: releaseCategoryHostile, residual: true},
+	"restart-steer-undo-recovery":      {category: releaseCategoryRecovery},
+	"release-authorization":            {category: releaseCategoryAuthorization, authorizationRow: true},
+}
+
+var requiredReleaseAuthorizationClaims = []string{
+	"live-provider-connectivity",
+	"live-provider-quality",
+	"rendered-cross-platform",
+	"hostile-child-env-sanitization",
+	"hostile-filesystem-deterministic",
+	"hostile-parent-swap-confinement",
+	"restart-steer-undo-recovery",
+}
+
 // ReleaseAuthorizationClaim is the bounded, package-local projection of one
 // runtime-boundary matrix row. It intentionally avoids importing
 // internal/runtimeboundary, which already depends on this package.
@@ -253,7 +296,6 @@ func releaseAuthorizationMatrix(matrix ReleaseAuthorizationMatrix, expectedSHA s
 		return ManifestUnverified, "runtime-boundary matrix has no claims"
 	}
 	seen := make(map[string]struct{}, len(matrix.Claims))
-	categories := make(map[string]struct{}, len(matrix.Claims))
 	for _, claim := range matrix.Claims {
 		id := strings.TrimSpace(claim.ID)
 		category := strings.TrimSpace(claim.Category)
@@ -264,28 +306,44 @@ func releaseAuthorizationMatrix(matrix ReleaseAuthorizationMatrix, expectedSHA s
 			return ManifestFail, fmt.Sprintf("runtime-boundary matrix claim %q is duplicated", id)
 		}
 		seen[id] = struct{}{}
-		if category == "release_authorization" {
-			// This row is intentionally consumed by this separate predicate;
-			// requiring it to already be PASS would make the contract recursive.
-			continue
+		rule, known := releaseAuthorizationClaimRules[id]
+		if !known {
+			return ManifestFail, fmt.Sprintf("runtime-boundary matrix claim %q is unsupported", id)
 		}
-		if id == "hostile-filesystem-toctou" {
-			// Residual broad TOCTOU row stays visible in the matrix but is not
-			// an unreachable universal PASS gate. Hostile category completeness
-			// is carried by bounded claims such as parent-swap confinement.
-			continue
+		if category != rule.category {
+			return ManifestFail, fmt.Sprintf("runtime-boundary matrix claim %q has category %q, want %q", id, category, rule.category)
 		}
 		if strings.TrimSpace(claim.Provenance) == "" {
-			return ManifestUnverified, fmt.Sprintf("runtime-boundary matrix claim %q has no provenance", id)
+			return ManifestFail, fmt.Sprintf("runtime-boundary matrix claim %q has no provenance", id)
 		}
-		if status, reason := manifestEvidenceStatus(ManifestStatus(strings.TrimSpace(claim.Verdict)), fmt.Sprintf("runtime-boundary matrix claim %q in category %q is not PASS", id, category)); status != ManifestPass {
+		verdict := ManifestStatus(strings.TrimSpace(claim.Verdict))
+		if verdict != ManifestPass && verdict != ManifestFail && verdict != ManifestInconclusive && verdict != ManifestUnverified {
+			return ManifestFail, fmt.Sprintf("runtime-boundary matrix claim %q has invalid verdict %q", id, claim.Verdict)
+		}
+		if rule.authorizationRow {
+			// This row is intentionally consumed by this separate predicate;
+			// requiring it to already be PASS would make the contract recursive.
+			if verdict == ManifestFail {
+				return ManifestFail, "runtime-boundary matrix release-authorization claim is FAIL"
+			}
+			continue
+		}
+		if rule.residual {
+			// Residual broad TOCTOU stays visible but is not an unreachable
+			// universal PASS gate. A recorded FAIL is still contradictory;
+			// UNVERIFIED and INCONCLUSIVE remain explicit accepted boundaries.
+			if verdict == ManifestFail {
+				return ManifestFail, "runtime-boundary matrix claim \"hostile-filesystem-toctou\" is FAIL"
+			}
+			continue
+		}
+		if status, reason := manifestEvidenceStatus(verdict, fmt.Sprintf("runtime-boundary matrix claim %q in category %q is not PASS", id, category)); status != ManifestPass {
 			return status, reason
 		}
-		categories[category] = struct{}{}
 	}
-	for _, category := range []string{"live_provider", "rendered_platform", "hostile_runtime", "recovery_undo"} {
-		if _, exists := categories[category]; !exists {
-			return ManifestUnverified, fmt.Sprintf("runtime-boundary matrix category %q is missing", category)
+	for _, id := range requiredReleaseAuthorizationClaims {
+		if _, exists := seen[id]; !exists {
+			return ManifestUnverified, fmt.Sprintf("runtime-boundary matrix claim %q is missing", id)
 		}
 	}
 	return ManifestPass, ""
