@@ -3,7 +3,6 @@
 package securefile_test
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
