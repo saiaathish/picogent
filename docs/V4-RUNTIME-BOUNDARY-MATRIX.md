@@ -5,20 +5,19 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact-tip note (behavior `1ce2059` / `#567`):**
+**Current exact-tip note (candidate `3f5543d` / PR `#570`):**
 The latest clean `main` candidate is
-`1ce2059fc352b5d32b5da3adbaeb1ecb48834db7`. Its retained full matrix is
-`c0e56a26407c19828a9e1a76e6d8a8e229cdaf6ffc1c7b0b7056ba52ea7ed6c7`: PASS 10 /
-INCONCLUSIVE 1 / UNVERIFIED 1. The exact candidate has matching live-provider
-connectivity and quality evidence plus a Darwin/Linux/Windows rendered
-aggregate, so `rendered-cross-platform=PASS`. The broad
+`3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. Its retained exact-head matrix is
+`b2aba10c1f059380521aa45c4b9adab487389c9e25dd3f2748a3d11827d4c629`:
+PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5. The exact-tip live-provider and
+owned-browser artifacts were not supplied after the non-docs release-consumer
+change in #570, so those rows remain `UNVERIFIED`; the broad
 `hostile-filesystem-toctou` residual remains `UNVERIFIED` and
 `release-authorization` remains `INCONCLUSIVE`.
 
-See the [exact-tip packet](V4-TIP-EVIDENCE-1CE2059.md), [live-provider
-record](V4-LIVE-PROVIDER-EVIDENCE-1CE2059.md), and [rendered cross-platform
-record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-1CE2059.md). Earlier tip packets
-remain historical and are not silently projected onto this candidate.
+See the [exact-tip packet](V4-TIP-EVIDENCE-3F5543D.md). The prior
+`1ce2059` packet and its live/browser records remain historical and are not
+silently projected onto this candidate.
 
 ## Command
 
