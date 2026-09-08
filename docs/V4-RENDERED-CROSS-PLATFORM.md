@@ -7,7 +7,7 @@ Its darwin+linux+windows aggregate is `PASS`, with digest
 `be790e046ee209b74531dfbfc7c71a6604f6b6401c214a951f2c54932111f7e5`; exact
 candidate matrix validation reported `head_match=PASS`, `tree=CLEAN`, and
 `rendered-cross-platform=PASS` for that candidate only. Current clean `main`
-behavior candidate `97a3ec5951137a353fcb42276c701040e1e716c1` has no supplied
+behavior candidate `1531850d80485e441bae58369595cb15a57e4c99` has no supplied
 rendered artifact, so its matrix row is `UNVERIFIED`. This is evidence for the
 rendered cross-platform claim, not release authorization. The record is
 exact-candidate bound: documentation-only descendants may retain it, but it
