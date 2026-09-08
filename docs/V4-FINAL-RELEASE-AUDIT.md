@@ -14,10 +14,29 @@ Formal TOCTOU residual-acceptance package:
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
-Current tip evidence packet:
+Current exact-tip evidence packet:
+[V4-TIP-EVIDENCE-1CE2059.md](V4-TIP-EVIDENCE-1CE2059.md).
+The prior `f8a78c6` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Anchors (docs tip `4d0c507` / behavior `f8a78c6`)
+## Current exact-tip rebinding (`1ce2059`)
+
+The latest clean behavior candidate is
+`1ce2059fc352b5d32b5da3adbaeb1ecb48834db7`. The exact-head retained matrix
+`/private/tmp/picogent-evidence-1ce2059/runtime-boundary-matrix-full.json`
+has digest
+`c0e56a26407c19828a9e1a76e6d8a8e229cdaf6ffc1c7b0b7056ba52ea7ed6c7` and
+records **PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1**.
+
+The matching live-provider records are documented in
+[V4-LIVE-PROVIDER-EVIDENCE-1CE2059.md](V4-LIVE-PROVIDER-EVIDENCE-1CE2059.md);
+the matching Darwin/Linux/Windows rendered aggregate is documented in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-1CE2059.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-1CE2059.md).
+The broad `hostile-filesystem-toctou` claim remains `UNVERIFIED`, and
+`release-authorization` remains `INCONCLUSIVE` because no human operator
+decision has been recorded.
+
+## Historical anchors (docs tip `4d0c507` / behavior `f8a78c6`)
 
 | Anchor | Value |
 | --- | --- |
@@ -174,8 +193,9 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-Proved tip-bound foundations at behavior `f8a78c6` (including
-`rendered-cross-platform=PASS`) sit under a clean docs tip `4d0c507`. Residual
+The current exact-tip packet at behavior `1ce2059` records the non-residual
+PASS rows, including `rendered-cross-platform=PASS`. The residual
 `hostile-filesystem-toctou=UNVERIFIED` and `release-authorization=INCONCLUSIVE`
-(`authorized: false`) remain. Human operator review is required before any
-authorization claim.
+(`authorized: false`) remain. The older `f8a78c6` anchors above are historical
+and are not projected onto the current candidate. Human operator review is
+required before any authorization claim.

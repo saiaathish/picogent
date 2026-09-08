@@ -5,19 +5,20 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Tip note (behavior `f8a78c6` / `#551`; docs tip `71c31ca` / `#552`):**
-behavior tip changed (`retention.go`, `session.go`). Prior exact-SHA /
-retention matrices at `423d047…` are **historical only**. Tip full matrix
-with three-platform aggregate **and** live-provider artifacts: digest
-`f0b4bca1ac626fd559bcfacb4a6e414d70c3eecef8b51dd056dd6f82fa574710` —
-PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1; `rendered-cross-platform=PASS`
-(aggregate `5123c9cc…`); `live-provider-connectivity=PASS` and
-`live-provider-quality=PASS`
-([V4-LIVE-PROVIDER-EVIDENCE-F8A78C6.md](V4-LIVE-PROVIDER-EVIDENCE-F8A78C6.md)).
-`hostile-filesystem-toctou` remains UNVERIFIED; `release-authorization`
-stays INCONCLUSIVE. Docs-only tip `71c31ca…` retains with
-`--behavior-sha f8a78c646877164009953401772acdb4d346175d`. See
-[V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
+**Current exact-tip note (behavior `1ce2059` / `#567`):**
+The latest clean `main` candidate is
+`1ce2059fc352b5d32b5da3adbaeb1ecb48834db7`. Its retained full matrix is
+`c0e56a26407c19828a9e1a76e6d8a8e229cdaf6ffc1c7b0b7056ba52ea7ed6c7`: PASS 10 /
+INCONCLUSIVE 1 / UNVERIFIED 1. The exact candidate has matching live-provider
+connectivity and quality evidence plus a Darwin/Linux/Windows rendered
+aggregate, so `rendered-cross-platform=PASS`. The broad
+`hostile-filesystem-toctou` residual remains `UNVERIFIED` and
+`release-authorization` remains `INCONCLUSIVE`.
+
+See the [exact-tip packet](V4-TIP-EVIDENCE-1CE2059.md), [live-provider
+record](V4-LIVE-PROVIDER-EVIDENCE-1CE2059.md), and [rendered cross-platform
+record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-1CE2059.md). Earlier tip packets
+remain historical and are not silently projected onto this candidate.
 
 ## Command
 
@@ -101,25 +102,17 @@ row has a separate opt-in contract:
 evidence file. Connectivity evidence never upgrades the quality row.
 
 The latest tip-bound Codex observation at exact behavior tip
-`37d9206f4512be61fe1b751359c176af85ff6646` is recorded in
-[V4-LIVE-PROVIDER-EVIDENCE-37D9206.md](V4-LIVE-PROVIDER-EVIDENCE-37D9206.md)
+`1ce2059fc352b5d32b5da3adbaeb1ecb48834db7` is recorded in
+[V4-LIVE-PROVIDER-EVIDENCE-1CE2059.md](V4-LIVE-PROVIDER-EVIDENCE-1CE2059.md)
 for [#453](https://github.com/saiaathish/picogent/issues/453). With the matching
 digest-only artifacts supplied, it projects both
 `live-provider-connectivity=PASS` and `live-provider-quality=PASS` for the
 fixed no-tool campaign after canonical prompt-digest and bounded-shape checks;
-provider identity and raw result semantics are not independently attested. The
-matching rendered allow→undo→reload observation is
-[V4-RENDERED-RECOVERY-EVIDENCE-37D9206.md](V4-RENDERED-RECOVERY-EVIDENCE-37D9206.md).
-Historical quality-only records such as
-[V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE.md)
-remain unchanged. Tip Windows owned-browser recollection and three-platform
-aggregate at `423d047…` are recorded in
-[V4-RENDERED-WINDOWS-EVIDENCE-423D047.md](V4-RENDERED-WINDOWS-EVIDENCE-423D047.md)
-and [V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md); supply that
-aggregate for `rendered-cross-platform=PASS`. The historical `18dc4a1…`
-acceptance remains on record
-([Windows](V4-RENDERED-WINDOWS-EVIDENCE-18DC4A1.md)). Hostile TOCTOU and
-release-authorization rows remain independently evidence-bound and are not
+provider identity and raw result semantics are not independently attested.
+The matching Darwin/Linux/Windows rendered observation is recorded in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-1CE2059.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-1CE2059.md)
+for [#507](https://github.com/saiaathish/picogent/issues/507). Hostile TOCTOU
+and release-authorization rows remain independently evidence-bound and are not
 upgraded by either aggregate.
 
 Historical interim tip aggregate at `cddb184…` (post-#541; digest
@@ -319,17 +312,14 @@ The rendered rows are also split by claim size:
   [V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md). One local
   platform record cannot stand in for the other supported platforms.
 
-The latest direct current-main local observation is recorded in
-[V4-RENDERED-RECOVERY-EVIDENCE-423D047.md](V4-RENDERED-RECOVERY-EVIDENCE-423D047.md)
-for [#453](https://github.com/saiaathish/picogent/issues/453), with matching
-[live-provider](V4-LIVE-PROVIDER-EVIDENCE-423D047.md),
-[Linux](V4-RENDERED-LINUX-EVIDENCE-423D047.md), and
-[Windows](V4-RENDERED-WINDOWS-EVIDENCE-423D047.md) records at tip
-`423d0471c1864651473c2f1828b67066885f79bd`. Non-docs `#542`/`#544` invalidated
-prior `37d9206…` / `cddb184…` tip continuity before this tip recollection.
-Exact-SHA matrix projection is `rendered-cross-platform=PASS` when the tip
-aggregate is supplied; docs-only descendants retain it with
-`--behavior-sha 423d0471c1864651473c2f1828b67066885f79bd`. With the
+The latest direct current-main rendered observation is recorded in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-1CE2059.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-1CE2059.md)
+for [#507](https://github.com/saiaathish/picogent/issues/507). Darwin, Linux,
+and Windows each passed the same allow→undo→fresh-process reload flow at the
+exact candidate `1ce2059fc352b5d32b5da3adbaeb1ecb48834db7`. Exact-SHA matrix
+projection is `rendered-cross-platform=PASS` when that candidate aggregate is
+supplied; later docs-only descendants must not project it onto a different
+candidate SHA. With the
 Darwin/Linux parent-swap docs present, `hostile-parent-swap-confinement`
 projects `PASS`; residual `hostile-filesystem-toctou` stays `UNVERIFIED` and
 `release-authorization` stays `INCONCLUSIVE` without operator approval. The
