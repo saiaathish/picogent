@@ -57,7 +57,7 @@ not enough to establish real runtime behavior.
 | Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Hosted `govulncheck` now scans the dependency graph; tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Add hostile runtime evidence and preserve explicit limits around dependency reachability and path races |
 | Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, barrier-driven cancellation/save/publish stress, cooperative cross-process writers, trace lock-holder death recovery, sustained bounded trace retention, first-use lock creation recovery, project-registry transactions, and cross-surface lifecycle checkpoints | Unix/Windows lock primitives and deterministic recovery harnesses | Hostile process death outside the trace lock handoff, rendered cross-surface event ordering, and filesystem races lack complete stress evidence | New orchestration would add complexity before invariants are measured | Extend cross-process evidence only where it proves a user-visible recovery invariant |
 | Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
-| GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, hostile wire coverage, bounded owned-browser reconnect/recovery and long-horizon fixture evidence, HTTP-boundary shutdown/save-failure lifecycle evidence, and hosted Windows console-control cancellation at the server boundary | Lifecycle and undo wiring; one local rendered reconnect path plus one bounded exact-head long-horizon browser run | Live-provider behavior, broad permission/undo semantics, full recovery, and cross-platform rendered journeys remain unverified | Narrow events trigger broad reloads; remaining admission wrappers duplicate task/evidence routing | Add owned-browser permission, undo, full-recovery, and cross-platform rendered evidence before release claims |
+| GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, hostile wire coverage, bounded owned-browser reconnect/recovery and long-horizon fixture evidence, HTTP-boundary shutdown/save-failure lifecycle evidence, hosted Windows console-control cancellation at the server boundary, and exact three-platform rendered-recovery evidence at `3f5543d` | Lifecycle and undo wiring; one local rendered reconnect path plus the exact candidate-bound browser fixture | Live-provider behavior, broad permission/undo semantics, general full recovery, and non-fixture cross-surface rendered journeys remain unverified | Narrow events trigger broad reloads; remaining admission wrappers duplicate task/evidence routing | Extend exact-candidate owned-browser coverage to broader journeys only when a concrete release claim requires it |
 | TUI/headless | Headless stdout/stderr, fail-closed permission behavior, resume state, explicit cleanup/persistence errors, and local macOS EOF/signal/save-failure evidence | CLI dispatch and exit classes | Non-TTY/rendered TUI behavior and cross-platform EOF/signal behavior remain unproven | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Add platform-appropriate subprocess/rendered evidence before changing the shared runtime boundary |
 | Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing remains duplicated | Repeated surface/control paths and stale benchmark anchors | Remove or simplify remaining duplicate control paths only after caller/API confirmation |
 
@@ -127,10 +127,12 @@ green unit tests or bounded hosted quality gates:
   and transcript-recovery path are recorded; HTTP-boundary GUI lifecycle
   shutdown/reconnect/save-failure evidence is also recorded, including hosted
   Windows console-control cancellation for the GUI shutdown fixture in PR #386.
-  Live-provider behavior, permission, undoable file changes, full recovery, and
-  cross-platform rendered behavior remain unverified. Local macOS TUI/headless
-  parity under EOF, signals, and save failures is recorded; Windows
-  EOF/save-failure behavior and rendered behavior remain unverified;
+  The named three-platform rendered-recovery fixture is `PASS` at exact behavior
+  candidate `3f5543d`; live-provider behavior, broad permission/undo semantics,
+  general full recovery, and non-fixture cross-surface rendered behavior remain
+  unverified. Local macOS TUI/headless parity under EOF, signals, and save
+  failures is recorded; Windows EOF/save-failure behavior and rendered TUI
+  behavior remain unverified;
 - full restart/resume/steer behavior after process termination or changing
   goals; bounded fresh-process session attachment now records stale active-turn
   recovery with explicit route, evidence, and stop-reason metadata, and latest-
@@ -541,9 +543,10 @@ Any future production seam should be tracked as its own issue-linked medium
 lane rather than adding a speculative correction to #296.
 
 These slices prove focused contracts and deterministic local or hosted checks;
-they do not establish live-provider quality, rendered cross-platform behavior,
-full hostile lifecycle recovery, SBOM or production-release readiness, or a
-general filesystem race guarantee. The hosted attestation itself is confirmed
-for the bounded evidence subjects, while the independent audit remains
-`INCONCLUSIVE` for release authorization. Parent #246 remains open while those
-boundaries remain unresolved.
+the named rendered-recovery aggregate is `PASS` only at exact behavior
+candidate `3f5543d`. They do not establish live-provider quality, broader
+rendered cross-surface behavior, full hostile lifecycle recovery, SBOM or
+production-release readiness, or a general filesystem race guarantee. The
+hosted attestation itself is confirmed for the bounded evidence subjects, while
+the independent audit remains `INCONCLUSIVE` for release authorization. Parent
+#246 remains open while those boundaries remain unresolved.

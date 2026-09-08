@@ -5,7 +5,7 @@ does **not** set `authorized: true`, and does **not** close
 [#450](https://github.com/saiaathish/picogent/issues/450) /
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
-Current exact-tip evidence packet:
+Current behavior-evidence packet:
 [V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md), with the audit
 narrative in [V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
 The prior [V4-TIP-EVIDENCE-1CE2059.md](V4-TIP-EVIDENCE-1CE2059.md) and
@@ -47,20 +47,26 @@ are green.
 
 | Evidence | Where / digest | What to confirm |
 | --- | --- | --- |
-| Tip rebound packet | [V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md) | Packet stays **NOT COMPLETE**; no completion claim |
-| Exact-SHA matrix at behavior `3f5543d` | digest `b2aba10c1f059380521aa45c4b9adab487389c9e25dd3f2748a3d11827d4c629`; summary PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5 | Verification, gates, artifacts, and bounded hostile rows PASS; live/browser rows remain UNVERIFIED; TOCTOU UNVERIFIED |
+| Behavior-evidence packet | [V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md) and [rendered record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md) | Rendered checkpoint is complete at exact `3f5543d`; release remains **NOT COMPLETE** |
+| Exact-SHA matrix at behavior `3f5543d` | digest `2926c24e7c818290ab57c1bfa6caf84a6d11d4a537f66c7e28c3cdc157a84e87`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Rendered local and cross-platform rows also PASS; live-provider rows remain UNVERIFIED; TOCTOU remains UNVERIFIED |
 | Exact-tip hosted CI | [GHA 34231332200](https://github.com/saiaathish/picogent/actions/runs/34231332200) | Required tests/security and dependent release-evidence succeeded at `3f5543d` |
 | Exact-tip release artifacts | [GHA 34231332411](https://github.com/saiaathish/picogent/actions/runs/34231332411) | Production artifact bundle and subject checks succeeded at `3f5543d` |
-| Three-platform rendered aggregate | No exact-tip owned-browser aggregate supplied | Keep `rendered-cross-platform` and `rendered-platform-local` **UNVERIFIED** |
+| Three-platform rendered aggregate | digest `be790e046ee209b74531dfbfc7c71a6604f6b6401c214a951f2c54932111f7e5`; [record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md) | Darwin, Linux, and Windows owned-browser fixture runs PASS at exact `3f5543d`; this does not authorize release |
+| Rendered Linux / Windows hosted collects | [GHA 34241951536](https://github.com/saiaathish/picogent/actions/runs/34241951536) / [GHA 34241951172](https://github.com/saiaathish/picogent/actions/runs/34241951172) | Both direct owned-browser collection jobs succeeded at exact `3f5543d` |
 | Live provider | No exact-tip live-provider artifact supplied | Keep connectivity and fixed-no-tool quality **UNVERIFIED** |
 | Hostile split | [#542](https://github.com/saiaathish/picogent/pull/542) + parent-swap docs | Parent-swap PASS ≠ TOCTOU PASS |
 | Perf honesty | [#551](https://github.com/saiaathish/picogent/pull/551) / [V4-PERFORMANCE-CAMPAIGN.md](V4-PERFORMANCE-CAMPAIGN.md) | Alloc gains **PROVED**; outcome-quality gains remain UNPROVED |
-| Tip evidence docs | [#571](https://github.com/saiaathish/picogent/issues/571) + this packet | Evidence refresh does not authorize release |
+| Tip evidence docs | [#507](https://github.com/saiaathish/picogent/issues/507) + this packet | Rendered evidence checkpoint is complete; evidence refresh does not authorize release |
 
 Operator-local retained roots (outside checkout):
 
 ```text
 /private/tmp/picogent-evidence-f8a78c6/
+/private/tmp/picogent-rendered-darwin-3f-collector-output.oIIuHB/
+/private/tmp/picogent-rendered-linux-507-artifact.MC0E0Y/
+/private/tmp/picogent-rendered-windows-507-artifact.OlfWSr/
+/private/tmp/picogent-rendered-cross-platform-3f-aggregate.L5cYfm/
+/private/tmp/picogent-rendered-cross-platform-3f-matrix-local.jGT2s2/
 ```
 
 Historical (do not project onto tip):
@@ -97,7 +103,7 @@ does **not**, by itself:
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating docs-tip `rendered-cross-platform=PASS` at another candidate | Aggregate is exact-candidate-bound to `1ce2059` |
+| Fabricating docs-tip `rendered-cross-platform=PASS` at another candidate | Aggregate is exact-candidate-bound to `3f5543d` |
 
 ## Current dry-run posture (no approval observed)
 
@@ -105,7 +111,7 @@ does **not**, by itself:
 | --- | --- |
 | Docs tip | docs-only descendant containing this packet; bind the release SHA separately |
 | Behavior evidence SHA | `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe` |
-| Matrix (exact behavior head) | PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5 |
+| Matrix (exact behavior head) | PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3; rendered local and cross-platform `PASS` |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
 | Operator approval | **Absent — do not auto-sign** |
