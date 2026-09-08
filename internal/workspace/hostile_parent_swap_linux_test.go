@@ -97,6 +97,13 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	originalNestedInfo, err := os.Lstat(nested)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !originalNestedInfo.IsDir() || originalNestedInfo.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("workspace nested path is not a real directory: %v", originalNestedInfo.Mode())
+	}
 	if err := workspace.WriteAtomic(workspaceRoot, "nested/seed.txt", []byte("seed\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -156,20 +163,57 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 		}
 		return waitErr
 	}
-	restoreNested := func() {
-		if info, err := os.Lstat(nested); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			_ = os.Remove(nested)
+	restoreNested := func() error {
+		current, err := os.Lstat(nested)
+		if err == nil {
+			switch {
+			case current.Mode()&os.ModeSymlink != 0:
+				if err := os.Remove(nested); err != nil {
+					return fmt.Errorf("remove hostile nested symlink: %w", err)
+				}
+			case !current.IsDir():
+				return fmt.Errorf("hostile nested replacement is not a directory: %v", current.Mode())
+			case os.SameFile(originalNestedInfo, current):
+				return nil
+			default:
+				if err := os.RemoveAll(nested); err != nil {
+					return fmt.Errorf("remove hostile nested replacement: %w", err)
+				}
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("inspect nested workspace after attacker: %w", err)
 		}
-		if _, err := os.Lstat(nested); errors.Is(err, os.ErrNotExist) {
-			_ = os.Rename(backup, nested)
+		backupInfo, err := os.Lstat(backup)
+		if err != nil {
+			return fmt.Errorf("locate trusted nested workspace backup: %w", err)
 		}
+		if !backupInfo.IsDir() || backupInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("trusted nested workspace backup is not a real directory: %v", backupInfo.Mode())
+		}
+		if err := os.Rename(backup, nested); err != nil {
+			return fmt.Errorf("restore trusted nested workspace: %w", err)
+		}
+		restored, err := os.Lstat(nested)
+		if err != nil {
+			return fmt.Errorf("inspect restored nested workspace: %w", err)
+		}
+		if !os.SameFile(originalNestedInfo, restored) {
+			return fmt.Errorf("restored nested workspace is not the original directory")
+		}
+		return nil
 	}
 	cleanup := func() error {
 		_ = os.WriteFile(release, []byte("go\n"), 0o600)
 		_ = os.WriteFile(stop, []byte("stop\n"), 0o600)
 		err := waitForAttackerExit()
-		restoreNested()
-		return err
+		restoreErr := restoreNested()
+		if err != nil && restoreErr != nil {
+			return fmt.Errorf("attacker: %v; restore: %w", err, restoreErr)
+		}
+		if err != nil {
+			return err
+		}
+		return restoreErr
 	}
 	cleaned := false
 	defer func() {
@@ -242,22 +286,7 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	if swaps < 1 {
 		t.Fatalf("no confirmed attacker swaps (%d)", swaps)
 	}
-	after, err := os.ReadFile(sentinelPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	afterSentinelDigest := sha256Hex(after)
 	anyEscape := writeEscape || readEscape || removeEscape
-	if afterSentinelDigest != before {
-		anyEscape = true
-	}
-	afterTree, err := outsideTreeSHA256(outside)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if afterTree != beforeTree {
-		anyEscape = true
-	}
 
 	// A hostile parent may legitimately deny every active attempt. The attack
 	// verdict comes from confinement; verify ordinary in-tree semantics after
@@ -265,35 +294,12 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 	if err := workspace.WriteAtomic(workspaceRoot, "nested/write-target.txt", []byte("inside-write\n")); err != nil {
 		t.Fatalf("write trusted workspace result: %v", err)
 	}
-	dataFile, err := workspace.OpenRead(workspaceRoot, "nested/write-target.txt")
+	data, err := os.ReadFile(filepath.Join(workspaceRoot, "nested/write-target.txt"))
 	if err != nil {
-		t.Fatalf("open trusted workspace write result: %v", err)
-	}
-	data, readContentErr := io.ReadAll(dataFile)
-	closeContentErr := dataFile.Close()
-	if readContentErr != nil {
-		t.Fatalf("read trusted workspace write result: %v", readContentErr)
-	}
-	if closeContentErr != nil {
-		t.Fatalf("close trusted workspace write result: %v", closeContentErr)
+		t.Fatalf("read trusted workspace write result: %v", err)
 	}
 	if string(data) != "inside-write\n" {
 		t.Fatalf("trusted workspace write result has unexpected content %q", data)
-	}
-	seedFile, err := workspace.OpenRead(workspaceRoot, "nested/seed.txt")
-	if err != nil {
-		t.Fatalf("open trusted workspace read result: %v", err)
-	}
-	seed, readContentErr := io.ReadAll(seedFile)
-	closeContentErr = seedFile.Close()
-	if readContentErr != nil {
-		t.Fatalf("read trusted workspace read result: %v", readContentErr)
-	}
-	if closeContentErr != nil {
-		t.Fatalf("close trusted workspace read result: %v", closeContentErr)
-	}
-	if string(seed) != "seed\n" {
-		t.Fatalf("trusted workspace read result has unexpected content %q", seed)
 	}
 	removePath := "nested/remove-verified.txt"
 	if err := workspace.WriteAtomic(workspaceRoot, removePath, []byte("inside-remove-verified\n")); err != nil {
@@ -312,6 +318,21 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(workspaceRoot, path)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("successful remove left trusted path %s in place: %v", path, err)
 		}
+	}
+	after, err := os.ReadFile(sentinelPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	afterSentinelDigest := sha256Hex(after)
+	if afterSentinelDigest != before {
+		anyEscape = true
+	}
+	afterTree, err := outsideTreeSHA256(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterTree != beforeTree {
+		anyEscape = true
 	}
 
 	verdict := "PASS"
