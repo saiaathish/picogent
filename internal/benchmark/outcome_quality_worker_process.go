@@ -5,13 +5,19 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/procenv"
 )
 
+const outcomeQualityWorkerWaitDelay = 2 * time.Second
+
 func runOutcomeQualityWorkerCommand(ctx context.Context, command *exec.Cmd) error {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if command.WaitDelay == 0 {
+		command.WaitDelay = outcomeQualityWorkerWaitDelay
 	}
 	if err := command.Start(); err != nil {
 		return err
