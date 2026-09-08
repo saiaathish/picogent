@@ -5,17 +5,19 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact-tip note (candidate `3f5543d` / PR `#570`):**
-The latest clean `main` candidate is
-`3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. Its retained exact-head matrix is
-`b2aba10c1f059380521aa45c4b9adab487389c9e25dd3f2748a3d11827d4c629`:
-PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5. The exact-tip live-provider and
-owned-browser artifacts were not supplied after the non-docs release-consumer
-change in #570, so those rows remain `UNVERIFIED`; the broad
-`hostile-filesystem-toctou` residual remains `UNVERIFIED` and
-`release-authorization` remains `INCONCLUSIVE`.
+**Current exact behavior-evidence note (candidate `3f5543d` / PR `#570`):**
+The latest retained rendered evidence is bound to clean behavior candidate
+`3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. Its exact-head matrix, with the
+Darwin local record and the three-platform aggregate supplied, has digest
+`2926c24e7c818290ab57c1bfa6caf84a6d11d4a537f66c7e28c3cdc157a84e87`:
+PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3. The rendered local and
+cross-platform rows are `PASS` for that exact fixture/candidate; live-provider
+rows remain `UNVERIFIED`, the broad `hostile-filesystem-toctou` residual
+remains `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE`.
 
-See the [exact-tip packet](V4-TIP-EVIDENCE-3F5543D.md). The prior
+See the [exact behavior-evidence packet](V4-TIP-EVIDENCE-3F5543D.md) and the
+[rendered cross-platform record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md).
+The prior
 `1ce2059` packet and its live/browser records remain historical and are not
 silently projected onto this candidate.
 
@@ -100,7 +102,7 @@ row has a separate opt-in contract:
 `PICOGENT_LIVE_PROVIDER_QUALITY_ARTIFACT` must point at a valid quality
 evidence file. Connectivity evidence never upgrades the quality row.
 
-The latest tip-bound Codex observation at exact behavior tip
+The historical tip-bound Codex observation at exact behavior tip
 `1ce2059fc352b5d32b5da3adbaeb1ecb48834db7` is recorded in
 [V4-LIVE-PROVIDER-EVIDENCE-1CE2059.md](V4-LIVE-PROVIDER-EVIDENCE-1CE2059.md)
 for [#453](https://github.com/saiaathish/picogent/issues/453). With the matching
@@ -311,11 +313,11 @@ The rendered rows are also split by claim size:
   [V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md). One local
   platform record cannot stand in for the other supported platforms.
 
-The latest direct current-main rendered observation is recorded in
-[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-1CE2059.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-1CE2059.md)
+The latest exact-candidate rendered observation is recorded in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md)
 for [#507](https://github.com/saiaathish/picogent/issues/507). Darwin, Linux,
 and Windows each passed the same allow→undo→fresh-process reload flow at the
-exact candidate `1ce2059fc352b5d32b5da3adbaeb1ecb48834db7`. Exact-SHA matrix
+exact candidate `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. Exact-SHA matrix
 projection is `rendered-cross-platform=PASS` when that candidate aggregate is
 supplied; later docs-only descendants must not project it onto a different
 candidate SHA. With the

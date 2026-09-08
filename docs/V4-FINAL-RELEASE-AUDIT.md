@@ -21,26 +21,31 @@ The prior `1ce2059` packet is retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current exact-tip rebinding (`3f5543d`)
+## Current exact behavior-evidence checkpoint (`3f5543d`)
 
 The latest clean behavior candidate is
 `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. The exact-head retained matrix
-`/private/tmp/picogent-evidence-3f5543d/runtime-boundary-matrix-full.json`
+`/private/tmp/picogent-rendered-cross-platform-3f-matrix-local.jGT2s2/exact-candidate-runtime-boundary-matrix.json`
 has digest
-`b2aba10c1f059380521aa45c4b9adab487389c9e25dd3f2748a3d11827d4c629` and
-records **PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5**.
+`2926c24e7c818290ab57c1bfa6caf84a6d11d4a537f66c7e28c3cdc157a84e87` and
+records **PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3**.
 
 The exact-tip packet is documented in
-[V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md). It records exact
-verification, release-gate, artifact, attestation, and bounded hostile-runtime
-results. Exact-tip live-provider and owned-browser artifacts were not supplied,
-so those rows remain `UNVERIFIED`; the broad `hostile-filesystem-toctou`
-residual remains `UNVERIFIED`, and `release-authorization` remains
-`INCONCLUSIVE` because no human operator decision has been recorded.
+[V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md). The matching
+Darwin/Linux/Windows owned-browser aggregate is documented in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md)
+and has digest
+`be790e046ee209b74531dfbfc7c71a6604f6b6401c214a951f2c54932111f7e5`.
+Rendered local and cross-platform rows are `PASS` for this exact fixture and
+candidate. Exact-tip live-provider rows remain `UNVERIFIED`; the broad
+`hostile-filesystem-toctou` residual remains `UNVERIFIED`; and
+`release-authorization` remains `INCONCLUSIVE` because no human operator
+decision has been recorded.
 
 The prior `1ce2059` live-provider and rendered-browser observations are not
 rebound: PR #570 changed non-docs release-consumer code after that behavior
-candidate. The docs-only descendant exception therefore does not apply.
+candidate. The fresh `3f5543d` rendered collection closes the named #507
+checkpoint without projecting older evidence.
 
 ## Historical exact-tip rebinding (`1ce2059`)
 
@@ -216,8 +221,9 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-The current exact-tip packet at behavior `3f5543d` records exact-tip PASS 6 /
-INCONCLUSIVE 1 / UNVERIFIED 5. Its live-provider and owned-browser rows remain
+The current behavior-evidence packet at `3f5543d` records exact-tip PASS 8 /
+INCONCLUSIVE 1 / UNVERIFIED 3. Its rendered local and owned-browser
+cross-platform rows are `PASS` for the named fixture; live-provider rows remain
 `UNVERIFIED`, the residual `hostile-filesystem-toctou=UNVERIFIED`, and
 `release-authorization=INCONCLUSIVE` (`authorized: false`) remain. The older
 `1ce2059` and `f8a78c6` anchors above are historical and are not projected onto

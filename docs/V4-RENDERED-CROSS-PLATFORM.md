@@ -1,15 +1,15 @@
 # v4 rendered cross-platform evidence contract
 
 Status: contract plus packaging helper. The latest retained exact-candidate
-record is [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-269573.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-269573.md),
-bound to candidate SHA `269573bacfa772a7d14275073ad75397b1aa13a0`. Its
-darwin+linux+windows aggregate is `PASS`, with digest
-`b05fcf40f7236bba4ff7fcae30a11c3015f38246d61d9a5f5cb4e087f9e7951c`; exact
+record is [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md),
+bound to behavior candidate SHA `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`.
+Its darwin+linux+windows aggregate is `PASS`, with digest
+`be790e046ee209b74531dfbfc7c71a6604f6b6401c214a951f2c54932111f7e5`; exact
 candidate matrix validation reported `head_match=PASS`, `tree=CLEAN`, and
 `rendered-cross-platform=PASS`. This is evidence for the rendered
-cross-platform claim, not release authorization. The prior exact-candidate
-record at `06e06a1…` remains historical and is not projected onto this newer
-tip. This current-tip rebind belongs to
+cross-platform claim, not release authorization. The record is exact-candidate
+bound: documentation-only descendants may retain it, but it must not be
+projected onto another candidate SHA. This checkpoint belongs to
 [#507](https://github.com/saiaathish/picogent/issues/507) under parent
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
