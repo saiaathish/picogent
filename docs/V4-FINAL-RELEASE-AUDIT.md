@@ -15,15 +15,38 @@ Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
 Current exact-tip evidence packet:
+[V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md).
+The prior `97a3ec5` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-97A3EC5.md](V4-TIP-EVIDENCE-97A3EC5.md).
-The prior `3f5543d` packet is retained as historical evidence only:
+The older `3f5543d` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md).
 The older `1ce2059` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-1CE2059.md](V4-TIP-EVIDENCE-1CE2059.md).
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current exact behavior-evidence checkpoint (`97a3ec5`)
+## Current exact behavior-evidence checkpoint (`1531850`)
+
+The latest clean behavior candidate is
+`1531850d80485e441bae58369595cb15a57e4c99`. The exact-head retained matrix
+`/private/tmp/picogent-candidate-06e06a1/runtime-boundary-matrix-1531850.json`
+has digest
+`d261af32e1d547b9c97243f4d4b3667c4ba6a99981770ff80ea4dd0915c3957c` and
+records **PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5**.
+
+The exact-tip packet is documented in
+[V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md). No current-tip
+live-provider or rendered-platform artifacts were supplied, so those rows are
+`UNVERIFIED`. The broad `hostile-filesystem-toctou` residual remains
+`UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` because no
+human operator decision has been recorded.
+
+PR #581's post-merge continuity check correctly rejected rebinding behavior
+`97a3ec5` because that PR touched `README.md`; this repository contract permits
+continuity only across intervening `docs/` paths. The fresh `1531850` exact-head
+collection is the authoritative current packet.
+
+## Historical exact behavior-evidence checkpoint (`97a3ec5`)
 
 The latest clean behavior candidate is
 `97a3ec5951137a353fcb42276c701040e1e716c1`. The exact-head retained matrix
@@ -244,10 +267,10 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-The current behavior-evidence packet at `97a3ec5` records exact-tip PASS 6 /
+The current behavior-evidence packet at `1531850` records exact-tip PASS 6 /
 INCONCLUSIVE 1 / UNVERIFIED 5. Its live-provider and rendered-platform rows
 remain `UNVERIFIED`; the residual `hostile-filesystem-toctou=UNVERIFIED` and
 `release-authorization=INCONCLUSIVE` (`authorized: false`) remain. The older
-`3f5543d`, `1ce2059`, and `f8a78c6` anchors above are historical and are not
+`97a3ec5`, `3f5543d`, `1ce2059`, and `f8a78c6` anchors above are historical and are not
 projected onto the current candidate. Human operator review is required before
 any authorization claim.

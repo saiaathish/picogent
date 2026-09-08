@@ -5,21 +5,21 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact behavior-evidence note (candidate `97a3ec5` / issue `#580`):**
+**Current exact behavior-evidence note (candidate `1531850` / issue `#582`):**
 The latest clean behavior candidate is
-`97a3ec5951137a353fcb42276c701040e1e716c1`. Its exact-head matrix is retained
+`1531850d80485e441bae58369595cb15a57e4c99`. Its exact-head matrix is retained
 outside the checkout at
-`/private/tmp/picogent-candidate-06e06a1/runtime-boundary-matrix-97a3ec5.json`
+`/private/tmp/picogent-candidate-06e06a1/runtime-boundary-matrix-1531850.json`
 with digest
-`f244d37976965874d25a9465c071cdc6ff63caf26a411182ccf339bd003dddc3`:
+`d261af32e1d547b9c97243f4d4b3667c4ba6a99981770ff80ea4dd0915c3957c`:
 PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5. The live-provider and
 rendered-platform rows remain `UNVERIFIED`; the broad
 `hostile-filesystem-toctou` residual remains `UNVERIFIED`; and
 `release-authorization` remains `INCONCLUSIVE`.
 
-See the [exact behavior-evidence packet](V4-TIP-EVIDENCE-97A3EC5.md). No
+See the [exact behavior-evidence packet](V4-TIP-EVIDENCE-1531850.md). No
 current-tip live-provider or rendered-browser artifact is supplied. The prior
-`3f5543d` and `1ce2059` packets and their live/browser records remain
+`97a3ec5`, `3f5543d`, and `1ce2059` packets and their live/browser records remain
 historical and are not silently projected onto this candidate.
 
 ## Command
@@ -321,7 +321,7 @@ and Windows each passed the same allow→undo→fresh-process reload flow at the
 exact candidate `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. Exact-SHA matrix
 projection is `rendered-cross-platform=PASS` when that candidate aggregate is
 supplied; later docs-only descendants must not project it onto a different
-candidate SHA. Current behavior candidate `97a3ec5` requires a fresh
+candidate SHA. Current behavior candidate `1531850` requires a fresh
 three-platform collection. With the
 Darwin/Linux parent-swap docs present, `hostile-parent-swap-confinement`
 projects `PASS`; residual `hostile-filesystem-toctou` stays `UNVERIFIED` and
