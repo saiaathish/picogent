@@ -12,10 +12,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
+
+const outcomeQualityLegacyDescendantMarkerEnv = "PICOGENT_OUTCOME_QUALITY_LEGACY_DESCENDANT_MARKER"
 
 // The legacy executor deliberately launches an opaque v3 command. These
 // subprocess modes let Execute failure and cancellation paths be tested
@@ -27,11 +31,11 @@ func init() {
 		return
 	}
 	mode := os.Args[len(os.Args)-1]
-	switch mode {
-	case "legacy-test-command-failure":
+	switch {
+	case mode == "legacy-test-command-failure":
 		fmt.Fprintln(os.Stderr, "legacy test command failure")
 		os.Exit(7)
-	case "legacy-test-provider-failure":
+	case mode == "legacy-test-provider-failure":
 		baseURL := strings.TrimRight(os.Getenv("PICOGENT_BASE_URL"), "/")
 		response, err := http.Post(baseURL+"/chat/completions", "application/json", strings.NewReader(`{"model":"test","messages":[]}`))
 		if err != nil {
@@ -44,9 +48,38 @@ func init() {
 			os.Exit(9)
 		}
 		os.Exit(7)
-	case "legacy-test-timeout":
+	case mode == "legacy-test-timeout":
 		select {}
+	case strings.HasPrefix(mode, "legacy-test-spawn-descendant:"):
+		// The marker path is appended to the prompt so this test-only child can
+		// pass it through the otherwise deliberately sanitized legacy environment.
+		markerPath := strings.TrimPrefix(mode, "legacy-test-spawn-descendant:")
+		if markerPath == mode || markerPath == "" {
+			fmt.Fprintln(os.Stderr, "legacy descendant marker path is missing")
+			os.Exit(10)
+		}
+		command := exec.Command(os.Args[0], "-test.run", "^TestOutcomeQualityLegacyDescendant$", "-test.count=1")
+		command.Env = append(os.Environ(), outcomeQualityLegacyDescendantMarkerEnv+"="+markerPath)
+		command.Stdout = os.Stdout
+		command.Stderr = os.Stderr
+		if err := command.Start(); err != nil {
+			fmt.Fprintln(os.Stderr, "start legacy descendant:", err)
+			os.Exit(11)
+		}
+		os.Exit(0)
 	}
+}
+
+func TestOutcomeQualityLegacyDescendant(t *testing.T) {
+	markerPath := strings.TrimSpace(os.Getenv(outcomeQualityLegacyDescendantMarkerEnv))
+	if markerPath == "" {
+		return
+	}
+	if err := os.WriteFile(markerPath, []byte(strconv.Itoa(os.Getpid())+"\n"), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, "write legacy descendant marker:", err)
+		os.Exit(12)
+	}
+	time.Sleep(10 * time.Second)
 }
 
 func TestBuildOutcomeQualityLegacyLaunchesExactV3Binary(t *testing.T) {
@@ -645,6 +678,70 @@ func TestOutcomeQualityLegacyExecuteTimeoutCleansRunDir(t *testing.T) {
 		t.Fatal("legacy timeout unexpectedly succeeded")
 	}
 	assertOutcomeQualityLegacyRunDirRemoved(t, tempParent)
+}
+
+func TestOutcomeQualityLegacyExecuteKillsDescendantOnPolicyTimeout(t *testing.T) {
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeLegacyProviderResponse(w, nil, "unused")
+	}))
+	t.Cleanup(provider.Close)
+	markerPath := filepath.Join(t.TempDir(), "legacy-descendant.pid")
+	executor, request, tempParent := newOutcomeQualityLegacyTestExecutor(t, provider.URL, "legacy-test-spawn-descendant:"+markerPath)
+	request.Policy.TimeoutMillis = 1_000
+
+	started := time.Now()
+	_, err := executor.Execute(context.Background(), request)
+	elapsed := time.Since(started)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("legacy descendant timeout error=%v, want deadline", err)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("legacy descendant cleanup took too long: %s", elapsed)
+	}
+
+	var pid int
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		data, readErr := os.ReadFile(markerPath)
+		if readErr == nil {
+			pid, readErr = strconv.Atoi(strings.TrimSpace(string(data)))
+			if readErr != nil || pid <= 0 {
+				t.Fatalf("legacy descendant marker=%q, parse error=%v", data, readErr)
+			}
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if pid <= 0 {
+		t.Fatalf("legacy descendant marker was not written: %v", os.ErrNotExist)
+	}
+	t.Cleanup(func() {
+		if process, findErr := os.FindProcess(pid); findErr == nil {
+			_ = process.Kill()
+		}
+	})
+	if runtime.GOOS != "windows" {
+		deadline = time.Now().Add(2 * time.Second)
+		for outcomeQualityLegacyProcessAlive(pid) && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
+		if outcomeQualityLegacyProcessAlive(pid) {
+			t.Fatalf("legacy descendant pid=%d survived process-tree timeout", pid)
+		}
+	}
+	assertOutcomeQualityLegacyRunDirRemoved(t, tempParent)
+}
+
+func outcomeQualityLegacyProcessAlive(pid int) bool {
+	if runtime.GOOS == "windows" {
+		return false
+	}
+	output, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	state := strings.TrimSpace(string(output))
+	return state != "" && !strings.HasPrefix(state, "Z")
 }
 
 func newOutcomeQualityLegacyTestExecutor(t *testing.T, providerURL, prompt string) (*OutcomeQualityLegacyProcessExecutor, OutcomeQualityExecutionRequest, string) {
