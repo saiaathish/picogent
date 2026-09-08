@@ -171,6 +171,8 @@ type server struct {
 	// AI prompt recommendations for the primary chat hero.
 	mainRecs   []promptRec
 	mainRecsAt time.Time
+
+	authStatusCache guiAuthStatusCache
 }
 
 func Run() error {
@@ -794,6 +796,7 @@ func (s *server) snapshot() map[string]any {
 		turnMode = &copyMode
 	}
 	s.mu.Unlock()
+	authStatus := s.authStatusSnapshot()
 	var task *taskstate.Task
 	undoAvailable := false
 	if ag != nil {
@@ -827,14 +830,14 @@ func (s *server) snapshot() map[string]any {
 		"model":               cfg.DisplayModel(),
 		"workspace":           cfg.Workspace,
 		"provider":            cfg.Provider,
-		"codex":               cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
-		"codex_cli":           codexauth.LoggedIn(),
-		"quadcode":            cfg.Provider == config.ProviderQuadCode && (cfg.AnthropicKeyResolved() != "" || claudeauth.LoggedIn()),
-		"claude_cli":          claudeauth.LoggedIn(),
-		"opencode":            cfg.Provider == config.ProviderOpenCode && opencodeauth.LoggedIn(),
-		"opencode_cli":        opencodeauth.LoggedIn(),
-		"antigravity":         cfg.Provider == config.ProviderAntigravity && agyauth.LoggedIn(),
-		"antigravity_cli":     agyauth.LoggedIn(),
+		"codex":               cfg.Provider == config.ProviderCodex && authStatus.codex,
+		"codex_cli":           authStatus.codex,
+		"quadcode":            cfg.Provider == config.ProviderQuadCode && (cfg.AnthropicKeyResolved() != "" || authStatus.claude),
+		"claude_cli":          authStatus.claude,
+		"opencode":            cfg.Provider == config.ProviderOpenCode && authStatus.opencode,
+		"opencode_cli":        authStatus.opencode,
+		"antigravity":         cfg.Provider == config.ProviderAntigravity && authStatus.antigravity,
+		"antigravity_cli":     authStatus.antigravity,
 		"busy":                busy,
 		"task_mode_temporary": temporaryTaskMode,
 		"hint":                hint,
