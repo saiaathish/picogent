@@ -15,13 +15,36 @@ Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
 Current exact-tip evidence packet:
+[V4-TIP-EVIDENCE-97A3EC5.md](V4-TIP-EVIDENCE-97A3EC5.md).
+The prior `3f5543d` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md).
-The prior `1ce2059` packet is retained as historical evidence only:
+The older `1ce2059` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-1CE2059.md](V4-TIP-EVIDENCE-1CE2059.md).
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current exact behavior-evidence checkpoint (`3f5543d`)
+## Current exact behavior-evidence checkpoint (`97a3ec5`)
+
+The latest clean behavior candidate is
+`97a3ec5951137a353fcb42276c701040e1e716c1`. The exact-head retained matrix
+`/private/tmp/picogent-candidate-06e06a1/runtime-boundary-matrix-97a3ec5.json`
+has digest
+`f244d37976965874d25a9465c071cdc6ff63caf26a411182ccf339bd003dddc3` and
+records **PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5**.
+
+The exact-tip packet is documented in
+[V4-TIP-EVIDENCE-97A3EC5.md](V4-TIP-EVIDENCE-97A3EC5.md). No current-tip
+live-provider or rendered-platform artifacts were supplied, so those rows are
+`UNVERIFIED`. The broad `hostile-filesystem-toctou` residual remains
+`UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` because no
+human operator decision has been recorded.
+
+The `3f5543d` and `1ce2059` live-provider and rendered-browser observations are
+not rebound: PR #578 and PR #579 changed non-documentation code after those
+behavior candidates. The current packet records the new tip's fail-closed
+state without inventing replacement runtime observations.
+
+## Historical exact behavior-evidence checkpoint (`3f5543d`)
 
 The latest clean behavior candidate is
 `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. The exact-head retained matrix
@@ -221,11 +244,10 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-The current behavior-evidence packet at `3f5543d` records exact-tip PASS 8 /
-INCONCLUSIVE 1 / UNVERIFIED 3. Its rendered local and owned-browser
-cross-platform rows are `PASS` for the named fixture; live-provider rows remain
-`UNVERIFIED`, the residual `hostile-filesystem-toctou=UNVERIFIED`, and
+The current behavior-evidence packet at `97a3ec5` records exact-tip PASS 6 /
+INCONCLUSIVE 1 / UNVERIFIED 5. Its live-provider and rendered-platform rows
+remain `UNVERIFIED`; the residual `hostile-filesystem-toctou=UNVERIFIED` and
 `release-authorization=INCONCLUSIVE` (`authorized: false`) remain. The older
-`1ce2059` and `f8a78c6` anchors above are historical and are not projected onto
-the current candidate. Human operator review is required before any
-authorization claim.
+`3f5543d`, `1ce2059`, and `f8a78c6` anchors above are historical and are not
+projected onto the current candidate. Human operator review is required before
+any authorization claim.
