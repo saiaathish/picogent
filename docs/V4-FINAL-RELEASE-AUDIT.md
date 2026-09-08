@@ -15,11 +15,34 @@ Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
 Current exact-tip evidence packet:
+[V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md).
+The prior `1ce2059` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-1CE2059.md](V4-TIP-EVIDENCE-1CE2059.md).
-The prior `f8a78c6` packet is retained as historical evidence only:
+The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current exact-tip rebinding (`1ce2059`)
+## Current exact-tip rebinding (`3f5543d`)
+
+The latest clean behavior candidate is
+`3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. The exact-head retained matrix
+`/private/tmp/picogent-evidence-3f5543d/runtime-boundary-matrix-full.json`
+has digest
+`b2aba10c1f059380521aa45c4b9adab487389c9e25dd3f2748a3d11827d4c629` and
+records **PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5**.
+
+The exact-tip packet is documented in
+[V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md). It records exact
+verification, release-gate, artifact, attestation, and bounded hostile-runtime
+results. Exact-tip live-provider and owned-browser artifacts were not supplied,
+so those rows remain `UNVERIFIED`; the broad `hostile-filesystem-toctou`
+residual remains `UNVERIFIED`, and `release-authorization` remains
+`INCONCLUSIVE` because no human operator decision has been recorded.
+
+The prior `1ce2059` live-provider and rendered-browser observations are not
+rebound: PR #570 changed non-docs release-consumer code after that behavior
+candidate. The docs-only descendant exception therefore does not apply.
+
+## Historical exact-tip rebinding (`1ce2059`)
 
 The latest clean behavior candidate is
 `1ce2059fc352b5d32b5da3adbaeb1ecb48834db7`. The exact-head retained matrix
@@ -193,9 +216,10 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-The current exact-tip packet at behavior `1ce2059` records the non-residual
-PASS rows, including `rendered-cross-platform=PASS`. The residual
-`hostile-filesystem-toctou=UNVERIFIED` and `release-authorization=INCONCLUSIVE`
-(`authorized: false`) remain. The older `f8a78c6` anchors above are historical
-and are not projected onto the current candidate. Human operator review is
-required before any authorization claim.
+The current exact-tip packet at behavior `3f5543d` records exact-tip PASS 6 /
+INCONCLUSIVE 1 / UNVERIFIED 5. Its live-provider and owned-browser rows remain
+`UNVERIFIED`, the residual `hostile-filesystem-toctou=UNVERIFIED`, and
+`release-authorization=INCONCLUSIVE` (`authorized: false`) remain. The older
+`1ce2059` and `f8a78c6` anchors above are historical and are not projected onto
+the current candidate. Human operator review is required before any
+authorization claim.
