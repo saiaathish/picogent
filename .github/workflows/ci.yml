@@ -56,6 +56,18 @@ jobs:
             go test -v ./internal/checkpoint -run '^TestLinuxSameUIDCheckpointParentSwapConfinement$' -count=1
           go test -race ./internal/securefile ./internal/workspace ./internal/checkpoint -run 'TestLinuxSameUID' -count=1
           sha256sum "$EVIDENCE_DIR"/*.json
+      - name: Linux hostile final-path evidence
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}/picogent-hostile-parent-swap
+        run: |
+          mkdir -p "$EVIDENCE_DIR"
+          PICOGENT_HOSTILE_FINAL_PATH_SOURCE_SHA="$CANDIDATE_SHA" \
+          PICOGENT_HOSTILE_FINAL_PATH_EVIDENCE_OUT="$EVIDENCE_DIR/final-path.json" \
+            go test -v ./internal/securefile -run '^TestLinuxSameUIDFinalPathReplacementConfinement$' -count=1
+          sha256sum "$EVIDENCE_DIR/final-path.json"
       - name: Upload Linux hostile parent-swap evidence
         if: always() && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
