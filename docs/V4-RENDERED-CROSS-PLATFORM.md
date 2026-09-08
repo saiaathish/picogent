@@ -1,15 +1,17 @@
 # v4 rendered cross-platform evidence contract
 
 Status: contract plus packaging helper. The latest retained exact-candidate
-record is [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-06E06A1.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-06E06A1.md),
-bound to candidate SHA `06e06a154cfc7e1d4c3e3e72e4819497a0c9d5f8`. Its
+record is [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-269573.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-269573.md),
+bound to candidate SHA `269573bacfa772a7d14275073ad75397b1aa13a0`. Its
 darwin+linux+windows aggregate is `PASS`, with digest
-`29564305dc590e7069693fc69db18fc92413c1b7637eaa457e1dfa2244a29766`; exact
-candidate matrix validation reported `head_match=PASS` and `tree=CLEAN`. This
-is evidence for the rendered cross-platform claim, not release authorization.
-`main` later advanced to `dba10f6c8b068685165a8b889072e25dadb2b77b` when #557
-added the Linux collection lane, so the aggregate remains bound to its exact
-observed candidate and is not projected onto that newer tip.
+`b05fcf40f7236bba4ff7fcae30a11c3015f38246d61d9a5f5cb4e087f9e7951c`; exact
+candidate matrix validation reported `head_match=PASS`, `tree=CLEAN`, and
+`rendered-cross-platform=PASS`. This is evidence for the rendered
+cross-platform claim, not release authorization. The prior exact-candidate
+record at `06e06a1…` remains historical and is not projected onto this newer
+tip. This current-tip rebind belongs to
+[#507](https://github.com/saiaathish/picogent/issues/507) under parent
+[#453](https://github.com/saiaathish/picogent/issues/453).
 
 The earlier tip digest-only aggregate PASS remains on record at
 `f8a78c646877164009953401772acdb4d346175d` with digest
@@ -18,11 +20,10 @@ The earlier tip digest-only aggregate PASS remains on record at
 behavior-SHA retention from `423d047…`; that historical package re-bound
 darwin+linux+windows at its tip. Historical tip digest-only aggregate PASS remains on record at
 `423d0471c1864651473c2f1828b67066885f79bd`, plus a prior acceptance aggregate
-PASS at `18dc4a1ca1137ab78dfd0102848eb99c417653cc` (issue
-[#507](https://github.com/saiaathish/picogent/issues/507) closed on that
-acceptance). This record belongs to
-[#500](https://github.com/saiaathish/picogent/issues/500) under parent
-[#453](https://github.com/saiaathish/picogent/issues/453).
+PASS at `18dc4a1ca1137ab78dfd0102848eb99c417653cc` (the earlier #507
+acceptance). The packaging contract remains tracked by
+[#500](https://github.com/saiaathish/picogent/issues/500); the current
+evidence record is tracked by #507 under #453.
 
 A single darwin BrowserOS observation, the HTTP API-boundary fixture, and
 hosted CI alone are not cross-platform owned-browser proof. The Windows row
@@ -130,8 +131,8 @@ PICOGENT_RENDERED_CROSS_PLATFORM_ARTIFACT=/absolute/path/outside/checkout/render
 If any platform observation is missing, use the matrix without the
 cross-platform flag and retain `UNVERIFIED`; never synthesize a placeholder
 artifact to make the aggregate pass. A successful aggregate still does not
-authorize release. [#507](https://github.com/saiaathish/picogent/issues/507)
-is closed on the `18dc4a1…` three-platform acceptance.
+authorize release. #507 remains open for the broader release-audit residuals
+even after an exact-candidate rendered evidence rebind.
 
 ## PASS requirements
 
@@ -148,4 +149,4 @@ is closed on the `18dc4a1…` three-platform acceptance.
 - does not invent placeholder Windows/Linux BrowserOS observations
 - does not treat `TestRenderedRecoveryFixtureAPIBoundary` as owned-browser proof
 - does not upgrade live-provider, hostile-TOCTOU, or release-authorization rows
-- the aggregate PASS at `18dc4a1…` does not by itself authorize a release
+- an aggregate PASS at any candidate does not by itself authorize a release
