@@ -73,6 +73,26 @@ attestation, and release-gate inputs are otherwise ready. Before supplying
 A dry-run without operator approval must remain `UNVERIFIED` /
 `authorized: false` even when every other input is `PASS`.
 
+## Matrix claim completeness
+
+The v1 release consumer uses a closed set of canonical claim IDs rather than
+accepting any arbitrary PASS row in a required category. A passing matrix must
+contain all of these evidence rows:
+
+- `live-provider-connectivity` and `live-provider-quality`;
+- `rendered-cross-platform`;
+- `hostile-child-env-sanitization`, `hostile-filesystem-deterministic`, and
+  `hostile-parent-swap-confinement`; and
+- `restart-steer-undo-recovery`.
+
+Known optional rows are still checked for their canonical category, provenance,
+and verdict vocabulary. Unknown IDs, category substitutions, duplicate IDs,
+missing provenance, and invalid verdicts fail closed. The optional
+`hostile-filesystem-toctou` row may be `UNVERIFIED` or `INCONCLUSIVE` as the
+explicit residual boundary; a recorded `FAIL` remains a release blocker. The
+`release-authorization` row is validated but is not itself required to be
+`PASS`, because this predicate is its separate consumer.
+
 The operator-approval record is an input contract, not an identity system. A
 trusted workflow must establish the actor's authority before supplying it.
 This package only prevents the release decision from silently proceeding when
