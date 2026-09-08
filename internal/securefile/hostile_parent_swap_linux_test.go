@@ -130,6 +130,9 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 				return successes, errs, escape
 			},
 			verify: func(parent string) error {
+				if err := securefile.WriteAtomic(filepath.Join(parent, "state.yaml"), []byte("inside-verified\n"), 0o600); err != nil {
+					return fmt.Errorf("write trusted atomic-write result: %w", err)
+				}
 				data, err := os.ReadFile(filepath.Join(parent, "state.yaml"))
 				if err != nil {
 					return fmt.Errorf("read trusted atomic-write result: %w", err)
@@ -209,23 +212,18 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 				return successes, errs, escape
 			},
 			verify: func(parent string) error {
-				entries, err := os.ReadDir(parent)
+				name := filepath.Join(parent, "exclusive-verified.json")
+				if err := securefile.WriteExclusive(name, []byte("exclusive-verified\n"), 0o600); err != nil {
+					return fmt.Errorf("write trusted exclusive-write result: %w", err)
+				}
+				data, err := os.ReadFile(name)
 				if err != nil {
-					return fmt.Errorf("read trusted exclusive-write directory: %w", err)
+					return fmt.Errorf("read trusted exclusive-write result: %w", err)
 				}
-				for _, entry := range entries {
-					if !strings.HasPrefix(entry.Name(), "exclusive-") || !strings.HasSuffix(entry.Name(), ".json") {
-						continue
-					}
-					data, err := os.ReadFile(filepath.Join(parent, entry.Name()))
-					if err != nil {
-						return fmt.Errorf("read trusted exclusive-write result: %w", err)
-					}
-					if strings.HasPrefix(string(data), "exclusive-") {
-						return nil
-					}
+				if string(data) != "exclusive-verified\n" {
+					return fmt.Errorf("trusted exclusive-write result has unexpected content %q", data)
 				}
-				return fmt.Errorf("no successful exclusive write remained in trusted parent")
+				return nil
 			},
 		},
 		{
@@ -254,15 +252,20 @@ func TestLinuxSameUIDParentSwapConfinement(t *testing.T) {
 				return successes, errs, escape
 			},
 			verify: func(parent string) error {
-				_, err := os.Lstat(filepath.Join(parent, "remove-target.txt"))
-				switch {
-				case err == nil:
-					return fmt.Errorf("successful remove left trusted target in place")
-				case errors.Is(err, os.ErrNotExist):
-					return nil
-				default:
+				name := filepath.Join(parent, "remove-target.txt")
+				if err := os.WriteFile(name, []byte("inside-remove-verified\n"), 0o600); err != nil {
+					return fmt.Errorf("prepare trusted remove target: %w", err)
+				}
+				if err := securefile.RemoveFile(name); err != nil {
+					return fmt.Errorf("remove trusted remove target: %w", err)
+				}
+				if _, err := os.Lstat(name); !errors.Is(err, os.ErrNotExist) {
+					if err == nil {
+						return fmt.Errorf("trusted remove target remained after ordinary remove")
+					}
 					return fmt.Errorf("stat trusted remove target: %w", err)
 				}
+				return nil
 			},
 		},
 	}
