@@ -15,6 +15,8 @@ Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
 Current exact-tip evidence packet:
+[V4-TIP-EVIDENCE-492595F.md](V4-TIP-EVIDENCE-492595F.md).
+The prior `1531850` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md).
 The prior `97a3ec5` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-97A3EC5.md](V4-TIP-EVIDENCE-97A3EC5.md).
@@ -25,17 +27,17 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current exact behavior-evidence checkpoint (`1531850`)
+## Current exact behavior-evidence checkpoint (`492595f`)
 
 The latest clean behavior candidate is
-`1531850d80485e441bae58369595cb15a57e4c99`. The exact-head retained matrix
-`/private/tmp/picogent-candidate-06e06a1/runtime-boundary-matrix-1531850.json`
+`492595fb69bb02a91665cb34998a9d7c486ead72`. The exact-head retained matrix
+`/private/tmp/picogent-candidate-06e06a1/runtime-boundary-matrix-492595f.json`
 has digest
-`d261af32e1d547b9c97243f4d4b3667c4ba6a99981770ff80ea4dd0915c3957c` and
+`a59a2d485aff8156fa31cc99f70ec8f260562f238999fd1e96b15402f94acbfa` and
 records **PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5**.
 
 The exact-tip packet is documented in
-[V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md). No current-tip
+[V4-TIP-EVIDENCE-492595F.md](V4-TIP-EVIDENCE-492595F.md). No current-tip
 live-provider or rendered-platform artifacts were supplied, so those rows are
 `UNVERIFIED`. The broad `hostile-filesystem-toctou` residual remains
 `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` because no
@@ -44,7 +46,22 @@ human operator decision has been recorded.
 PR #581's post-merge continuity check correctly rejected rebinding behavior
 `97a3ec5` because that PR touched `README.md`; this repository contract permits
 continuity only across intervening `docs/` paths. The fresh `1531850` exact-head
-collection is the authoritative current packet.
+collection was the prior packet. The fresh `492595f` exact-head collection after
+docs-only PR #583 is the authoritative current packet.
+
+## Historical exact behavior-evidence checkpoint (`1531850`)
+
+The prior clean behavior candidate was
+`1531850d80485e441bae58369595cb15a57e4c99`. Its exact-head retained matrix
+`/private/tmp/picogent-candidate-06e06a1/runtime-boundary-matrix-1531850.json`
+had digest
+`d261af32e1d547b9c97243f4d4b3667c4ba6a99981770ff80ea4dd0915c3957c` and
+recorded **PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5**.
+
+The historical packet is
+[V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md). Its live-provider,
+rendered-platform, broad hostile-filesystem-TOCTOU, and release-authorization
+boundaries remain fail-closed and are not projected onto another candidate.
 
 ## Historical exact behavior-evidence checkpoint (`97a3ec5`)
 
@@ -267,10 +284,10 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-The current behavior-evidence packet at `1531850` records exact-tip PASS 6 /
+The current behavior-evidence packet at `492595f` records exact-tip PASS 6 /
 INCONCLUSIVE 1 / UNVERIFIED 5. Its live-provider and rendered-platform rows
 remain `UNVERIFIED`; the residual `hostile-filesystem-toctou=UNVERIFIED` and
 `release-authorization=INCONCLUSIVE` (`authorized: false`) remain. The older
-`97a3ec5`, `3f5543d`, `1ce2059`, and `f8a78c6` anchors above are historical and are not
+`1531850`, `97a3ec5`, `3f5543d`, `1ce2059`, and `f8a78c6` anchors above are historical and are not
 projected onto the current candidate. Human operator review is required before
 any authorization claim.

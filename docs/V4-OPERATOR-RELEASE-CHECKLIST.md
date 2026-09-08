@@ -6,9 +6,10 @@ does **not** set `authorized: true`, and does **not** close
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
 Current behavior-evidence packet:
-[V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md), with the audit
+[V4-TIP-EVIDENCE-492595F.md](V4-TIP-EVIDENCE-492595F.md), with the audit
 narrative in [V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
-The prior [V4-TIP-EVIDENCE-97A3EC5.md](V4-TIP-EVIDENCE-97A3EC5.md),
+The prior [V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md),
+[V4-TIP-EVIDENCE-97A3EC5.md](V4-TIP-EVIDENCE-97A3EC5.md),
 [V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md),
 [V4-TIP-EVIDENCE-1CE2059.md](V4-TIP-EVIDENCE-1CE2059.md), and
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md) packets are historical
@@ -26,7 +27,7 @@ Before supplying
 `OperatorApproval{Approved: true, Scope: "v4-release", ...}` to a trusted
 workflow, confirm all of the following bind to the **same** intended release
 candidate (current behavior evidence source:
-`1531850d80485e441bae58369595cb15a57e4c99`; later documentation commits are
+`492595fb69bb02a91665cb34998a9d7c486ead72`; later documentation commits are
 docs-only descendants and must not be treated as a new behavior observation):
 
 1. Exact `main` tip identity for the release decision SHA, clean worktree, and
@@ -49,11 +50,11 @@ are green.
 
 | Evidence | Where / digest | What to confirm |
 | --- | --- | --- |
-| Behavior-evidence packet | [V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md) | Current exact-tip matrix is recorded; release remains **NOT COMPLETE** |
-| Exact-SHA matrix at behavior `1531850` | digest `d261af32e1d547b9c97243f4d4b3667c4ba6a99981770ff80ea4dd0915c3957c`; summary PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5 | Deterministic rows remain PASS; live-provider and rendered-platform rows are UNVERIFIED; TOCTOU remains UNVERIFIED |
-| Exact-tip hosted changes | [PR #581](https://github.com/saiaathishkarthik/picogent/pull/581) | Required hosted checks passed for the post-merge evidence pointer refresh |
-| Current three-platform rendered aggregate | None supplied at `1531850`; prior [record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md) is historical | Keep `rendered-cross-platform` **UNVERIFIED** until a fresh exact-tip collection exists |
-| Current local rendered artifact | None supplied at `1531850`; prior record is historical | Keep `rendered-platform-local` **UNVERIFIED** until a fresh exact-tip observation exists |
+| Behavior-evidence packet | [V4-TIP-EVIDENCE-492595F.md](V4-TIP-EVIDENCE-492595F.md) | Current exact-tip matrix is recorded; release remains **NOT COMPLETE** |
+| Exact-SHA matrix at behavior `492595f` | digest `a59a2d485aff8156fa31cc99f70ec8f260562f238999fd1e96b15402f94acbfa`; summary PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5 | Deterministic rows remain PASS; live-provider and rendered-platform rows are UNVERIFIED; TOCTOU remains UNVERIFIED |
+| Exact-tip hosted changes | [PR #583](https://github.com/saiaathishkarthik/picogent/pull/583) | Required hosted checks passed for the docs-only exact-head evidence refresh |
+| Current three-platform rendered aggregate | None supplied at `492595f`; prior [record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md) is historical | Keep `rendered-cross-platform` **UNVERIFIED** until a fresh exact-tip collection exists |
+| Current local rendered artifact | None supplied at `492595f`; prior record is historical | Keep `rendered-platform-local` **UNVERIFIED** until a fresh exact-tip observation exists |
 | Live provider | No exact-tip live-provider artifact supplied | Keep connectivity and fixed-no-tool quality **UNVERIFIED** |
 | Hostile split | [#542](https://github.com/saiaathish/picogent/pull/542) + parent-swap docs | Parent-swap PASS ≠ TOCTOU PASS |
 | Perf honesty | [#551](https://github.com/saiaathish/picogent/pull/551) / [V4-PERFORMANCE-CAMPAIGN.md](V4-PERFORMANCE-CAMPAIGN.md) | Alloc gains **PROVED**; outcome-quality gains remain UNPROVED |
@@ -104,14 +105,14 @@ does **not**, by itself:
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating docs-tip `rendered-cross-platform=PASS` at another candidate | Historical aggregate is exact-candidate-bound to `3f5543d`; current `1531850` row is UNVERIFIED |
+| Fabricating docs-tip `rendered-cross-platform=PASS` at another candidate | Historical aggregate is exact-candidate-bound to `3f5543d`; current `492595f` row is UNVERIFIED |
 
 ## Current dry-run posture (no approval observed)
 
 | Field | Value |
 | --- | --- |
 | Docs tip | docs-only descendant containing this packet; bind the release SHA separately |
-| Behavior evidence SHA | `1531850d80485e441bae58369595cb15a57e4c99` |
+| Behavior evidence SHA | `492595fb69bb02a91665cb34998a9d7c486ead72` |
 | Matrix (exact behavior head) | PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5; live-provider and rendered-platform rows `UNVERIFIED` |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
