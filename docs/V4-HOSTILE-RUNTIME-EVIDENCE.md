@@ -205,5 +205,16 @@ Post-merge Ubuntu CI on `5d4496b88a8ed2d86d1bee8705eff86c14763483` retained
 `artifact-sha256=7ee2ee5f6c7da728a7a17f0f6831884de2495284471ca63a1a6dfa89935a9914`.
 Digest-only evidence keeps `BroadTOCTOUClaim: UNVERIFIED`.
 
+Issue [#566](https://github.com/saiaathishkarthik/picogent/issues/566) /
+PR [#567](https://github.com/saiaathishkarthik/picogent/pull/567) adds the
+separate Linux same-UID final-path replacement campaign for the four named
+`securefile` operations. Its exact-head digest-only result and explicit limits
+are recorded in
+[V4-HOSTILE-FINAL-PATH-LINUX.md](V4-HOSTILE-FINAL-PATH-LINUX.md). The hosted
+candidate `c44d8825732877aac9b33ca7bfd448a18085918f` reported `PASS` with
+confirmed attacker swaps and unchanged outside-tree digests. This is a
+narrowed final-path observation only; `hostile-filesystem-toctou` remains
+`UNVERIFIED`.
+
 The row `hostile-filesystem-toctou` stays `UNVERIFIED` until a broader
 evidence record exists.
