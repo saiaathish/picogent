@@ -135,8 +135,9 @@ func TestGUIFreshProcessShutdownRetainsInterruptedTurn(t *testing.T) {
 	wait := make(chan error, 1)
 	childDone := make(chan struct{})
 	go func() {
-		wait <- cmd.Wait()
+		err := cmd.Wait()
 		close(childDone)
+		wait <- err
 	}()
 	cleanupChild := func() {
 		cleanupGUIChild(t, cmd, wait, childDone, stdoutDone, releaseProvider, "GUI shutdown child")
@@ -314,8 +315,9 @@ func TestGUIFreshProcessKillRecoversInterruptedTurn(t *testing.T) {
 	wait := make(chan error, 1)
 	childDone := make(chan struct{})
 	go func() {
-		wait <- cmd.Wait()
+		err := cmd.Wait()
 		close(childDone)
+		wait <- err
 	}()
 	cleanupChild := func() {
 		cleanupGUIChild(t, cmd, wait, childDone, stdoutDone, releaseProvider, "GUI process-kill child")
