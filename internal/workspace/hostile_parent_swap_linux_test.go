@@ -259,15 +259,54 @@ func TestLinuxSameUIDWorkspaceParentSwapConfinement(t *testing.T) {
 		anyEscape = true
 	}
 
-	if writeOK == 0 || readOK == 0 || removeOK == 0 {
-		t.Fatalf("completed with no successful in-tree operations: write=%d read=%d remove=%d", writeOK, readOK, removeOK)
+	// A hostile parent may legitimately deny every active attempt. The attack
+	// verdict comes from confinement; verify ordinary in-tree semantics after
+	// the parent is restored instead of requiring a success during the window.
+	if err := workspace.WriteAtomic(workspaceRoot, "nested/write-target.txt", []byte("inside-write\n")); err != nil {
+		t.Fatalf("write trusted workspace result: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(nested, "write-target.txt"))
+	dataFile, err := workspace.OpenRead(workspaceRoot, "nested/write-target.txt")
 	if err != nil {
-		t.Fatalf("read trusted workspace write result: %v", err)
+		t.Fatalf("open trusted workspace write result: %v", err)
+	}
+	data, readContentErr := io.ReadAll(dataFile)
+	closeContentErr := dataFile.Close()
+	if readContentErr != nil {
+		t.Fatalf("read trusted workspace write result: %v", readContentErr)
+	}
+	if closeContentErr != nil {
+		t.Fatalf("close trusted workspace write result: %v", closeContentErr)
 	}
 	if string(data) != "inside-write\n" {
 		t.Fatalf("trusted workspace write result has unexpected content %q", data)
+	}
+	seedFile, err := workspace.OpenRead(workspaceRoot, "nested/seed.txt")
+	if err != nil {
+		t.Fatalf("open trusted workspace read result: %v", err)
+	}
+	seed, readContentErr := io.ReadAll(seedFile)
+	closeContentErr = seedFile.Close()
+	if readContentErr != nil {
+		t.Fatalf("read trusted workspace read result: %v", readContentErr)
+	}
+	if closeContentErr != nil {
+		t.Fatalf("close trusted workspace read result: %v", closeContentErr)
+	}
+	if string(seed) != "seed\n" {
+		t.Fatalf("trusted workspace read result has unexpected content %q", seed)
+	}
+	removePath := "nested/remove-verified.txt"
+	if err := workspace.WriteAtomic(workspaceRoot, removePath, []byte("inside-remove-verified\n")); err != nil {
+		t.Fatalf("write trusted workspace remove result: %v", err)
+	}
+	if err := workspace.Remove(workspaceRoot, removePath); err != nil {
+		t.Fatalf("remove trusted workspace result: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(workspaceRoot, removePath)); !errors.Is(err, os.ErrNotExist) {
+		if err == nil {
+			t.Fatalf("trusted workspace remove result remained")
+		}
+		t.Fatalf("stat trusted workspace remove result: %v", err)
 	}
 	for _, path := range removedPaths {
 		if _, err := os.Lstat(filepath.Join(workspaceRoot, path)); !errors.Is(err, os.ErrNotExist) {
