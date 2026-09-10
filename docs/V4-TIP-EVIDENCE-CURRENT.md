@@ -1,16 +1,19 @@
-# Current V4 live-provider evidence and continuity
+# Current V4 evidence and continuity
 
-Stable entrypoint for the current exact-head live-provider packet:
-[V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md).
-The post-merge continuity check is recorded in
-[V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md](V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md).
+Stable entrypoint for the latest audited main candidate
+`8b022e82be4b2e8ade0a502c5f373eaf6dc61160`:
 
-The linked packet is bound to behavior SHA
-`b7b5c5c3e98f2caaf1c0d951740bdd7046f755f5`. The continuity record captures
-candidate `db477d17ab0f374e5cc9ae473a0613744023743e` and verifies it as a
-docs-only descendant without rebinding the observations' provenance. A later
-main tip needs its own matrix capture before being described as current.
-Rendered, hostile-runtime, and release-authorization claims remain separately
-bounded.
-This entrypoint is updated only by a later evidence-refresh commit and never
-projects an older packet onto a new behavior candidate.
+- Rendered exact-candidate packet:
+  [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md).
+- Live-provider continuity packet:
+  [V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md](V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md).
+- Underlying live behavior observation:
+  [V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md).
+
+The rendered packet is bound to behavior SHA `8b022e8`; the live-provider
+continuity packet validates retained artifacts from behavior SHA `b7b5c5c`
+through a `DOCS_ONLY_DESCENDANT` relationship. These are separate matrices and
+must not be unioned into a synthetic release-authorizing result. A later
+non-documentation behavior change requires fresh evidence; a later main tip
+also needs its own continuity matrix before being described as current.
+Hostile-runtime and release-authorization claims remain separately bounded.
