@@ -261,10 +261,12 @@ func windowsRetainLoadParentSwapHelper(t *testing.T) {
 }
 
 func hostileWindowsRetainLoadCreateJunction(link, target string) error {
-	command := fmt.Sprintf("mklink /J %q %q", link, target)
-	output, err := exec.Command("cmd.exe", "/d", "/s", "/c", command).CombinedOutput()
+	// Use explicit cmd.exe quoting rather than fmt's Go-string %q quoting;
+	// backslashes in Windows paths are path separators, not Go escapes.
+	command := fmt.Sprintf("mklink /J \"%s\" \"%s\"", link, target)
+	output, err := exec.Command("cmd.exe", "/d", "/c", command).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("mklink /J: %w (%s)", err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("mklink /J %q -> %q: %w (%s)", link, target, err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
