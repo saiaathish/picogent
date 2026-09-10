@@ -1,16 +1,18 @@
 # v4 rendered cross-platform evidence contract
 
 Status: contract plus packaging helper. The current clean candidate
-`f004f724a4336f948e765d91c6a985b01eb37505` has a direct hosted Linux
-observation in [V4-RENDERED-LINUX-EVIDENCE-F004F72.md](V4-RENDERED-LINUX-EVIDENCE-F004F72.md)
-from [#601](https://github.com/saiaathishkarthik/picogent/issues/601); its
-`linux/amd64` rendered row is `PASS`. The latest retained Darwin observation is
-[V4-RENDERED-RECOVERY-EVIDENCE-4854523.md](V4-RENDERED-RECOVERY-EVIDENCE-4854523.md),
-bound to behavior candidate `48545233c0a453c419787a4ca8b06d21741cc31c` from
-[#599](https://github.com/saiaathishkarthik/picogent/issues/599) and carried only
-through the documented docs-only-descendant continuity rule. No Windows
-observation was supplied at the current candidate, so the cross-platform row
-remains `UNVERIFIED`. The last retained exact-candidate cross-platform record is [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md),
+`f0e5dd7da8387748b723964e559c7f8a8e300df6` has a direct hosted Windows
+observation in [V4-RENDERED-WINDOWS-EVIDENCE-F0E5DD7.md](V4-RENDERED-WINDOWS-EVIDENCE-F0E5DD7.md)
+from [#603](https://github.com/saiaathishkarthik/picogent/issues/603); its
+`windows/amd64` rendered row is `PASS`. The Linux observation is retained at
+the docs-only ancestor candidate
+`f004f724a4336f948e765d91c6a985b01eb37505` in
+[V4-RENDERED-LINUX-EVIDENCE-F004F72.md](V4-RENDERED-LINUX-EVIDENCE-F004F72.md),
+and the latest retained Darwin observation is
+[V4-RENDERED-RECOVERY-EVIDENCE-4854523.md](V4-RENDERED-RECOVERY-EVIDENCE-4854523.md);
+both may be carried only through the documented docs-only-descendant
+continuity rule. No exact-current Darwin observation was supplied, so the
+cross-platform row remains `UNVERIFIED`. The last retained exact-candidate cross-platform record is [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md),
 bound to historical behavior candidate SHA `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`.
 Its darwin+linux+windows aggregate is `PASS`, with digest
 `be790e046ee209b74531dfbfc7c71a6604f6b6401c214a951f2c54932111f7e5`; exact
