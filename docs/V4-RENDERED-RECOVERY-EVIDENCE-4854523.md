@@ -26,7 +26,7 @@ quality, arbitrary hostile same-UID filesystem races, or release readiness.
   `2026-09-10T04:40:05.211497Z`.
 - Both fixture manifests recorded `source_sha_verified=true` and
   `source_tree_modified=false`.
-- Probe content SHA-256:
+- Fixture manifest applied-content SHA-256:
   `6edfb9937f622dadd7cb093d2e4150c3747de904ef6be0e15d15eed69e1e627b`.
 - Disposable fixture home and manifests were kept under the macOS system temp
   directory and are not checkout or Desktop artifacts.
@@ -38,8 +38,8 @@ quality, arbitrary hostile same-UID filesystem races, or release readiness.
 | Sequence | Direct UI/DOM observation | Local corroboration | Verdict |
 | --- | --- | --- | --- |
 | 1 | Fresh seed page loaded in Safe mode with no enabled Undo control. | Seed manifest recorded the probe as absent before the turn. | `PASS` |
-| 2 | Safe permission card rendered `Deny`, `This turn`, `Always allow`, and `Allow`; the permission text identified `rendered-recovery-probe.txt`. | Probe was absent before approval. | `PASS` |
-| 3 | Clicking `Allow` rendered `Edited 1 file`, `Changed files (1)`, and enabled `Undo last change`. | Probe existed with the expected SHA-256. | `PASS` |
+| 2 | Safe permission card rendered `Deny`, `This turn`, `Always allow`, and `Allow`; the permission text identified `rendered-recovery-probe.txt`. | Seed manifest recorded the probe as absent before the turn; no probe was observed in the pre-Allow UI state. | `PASS` |
+| 3 | Clicking `Allow` rendered `Edited 1 file`, `Changed files (1)`, and enabled `Undo last change`. | Fixture manifest recorded the deterministic applied-content SHA; the independent on-disk hash was not retained before Undo. | `PASS` |
 | 4 | Clicking `Undo last change` removed the Undo control and rendered `Undid last turn: removed rendered-recovery-probe.txt`. | Probe path was absent after Undo. | `PASS` |
 | 5 | After stopping the seed process and loading the fresh reload process in the same task-owned page, durable history rendered `Changed files (1)` with no stale Undo control. | Probe remained absent after reload; reload manifest retained exact clean provenance. | `PASS` |
 
@@ -65,9 +65,9 @@ release-authorization=INCONCLUSIVE
 Digest-only retained artifacts outside the checkout:
 
 ```text
-observation     f3f81b70ab7501352ac665ca332695732319d9f92e72bcde9d58afb48b8522bc
-platform        9b8151074321f09bc9ed2db89e7b9683ff4b0fe989997eb608fba417dcece8fd
-matrix          ee9b5d25d885911b515dc5b8290dfe8d2399a19a5dbddf4de8cddaa26c6978ba
+observation     e3dac9e678ab1b0eca700750dc3ae3bba73f94f477209fd39de85c78e6e2e315
+platform        fcd7e33390c9dff0448eeaadae104f617da8f096264ebf16c6c6efb5be01eb59
+matrix          7e35eef5b4bdaf7b490e2afaea54ae0331c469b806d5ebdb13153a7ecced42d9
 screenshot      UNRECORDED
 ```
 

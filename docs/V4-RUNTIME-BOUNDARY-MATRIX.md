@@ -9,8 +9,9 @@ proof.
 The latest clean candidate is
 `48545233c0a453c419787a4ca8b06d21741cc31c`. Its exact-head matrix is retained
 outside the checkout at
-`/private/tmp/picogent-rendered-599-evidence/runtime-boundary-matrix.json` with
-digest `ee9b5d25d885911b515dc5b8290dfe8d2399a19a5dbddf4de8cddaa26c6978ba`:
+`/private/tmp/picogent-rendered-599-evidence/runtime-boundary-matrix-v2.json`
+with digest
+`7e35eef5b4bdaf7b490e2afaea54ae0331c469b806d5ebdb13153a7ecced42d9`:
 PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4. The task-owned Darwin rendered row is
 `PASS`; the cross-platform rendered row remains `UNVERIFIED`. Live-provider
 connectivity and fixed quality are not rebound in this exact-head matrix; the
