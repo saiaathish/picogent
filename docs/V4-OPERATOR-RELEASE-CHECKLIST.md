@@ -5,21 +5,20 @@ does **not** set `authorized: true`, and does **not** close
 [#450](https://github.com/saiaathish/picogent/issues/450) /
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
-Current evidence is split across exact behavior checkpoints, each bound to its
-own claim family:
+Current evidence is split across two exact candidate-bound matrices at audited
+main candidate `8b022e82be4b2e8ade0a502c5f373eaf6dc61160`:
 
-- Fresh live-provider evidence at the current behavior/candidate SHA
+- Live-provider continuity from behavior SHA
   `b7b5c5c3e98f2caaf1c0d951740bdd7046f755f5`:
-  [V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md).
-- Rendered cross-platform evidence at behavior SHA
-  `ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c`:
-  [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md).
+  [V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md](V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md).
+- Rendered cross-platform evidence at exact behavior SHA
+  `8b022e82be4b2e8ade0a502c5f373eaf6dc61160`:
+  [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md).
 
-The earlier `0e2b156` → `ad34bd5` documentation-only continuity is historical;
-the later setup behavior change means the fresh `b7b5c5c` live packet must not
-be combined with the older rendered packet. This preserves evidence
-provenance; it does **not** combine separate matrices into a
-release-authorizing result. The audit narrative is in
+The underlying live observation remains
+[V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md).
+These packets preserve evidence provenance and do **not** combine separate
+matrices into a release-authorizing result. The audit narrative is in
 [V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
 The prior [V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md),
 [V4-TIP-EVIDENCE-97A3EC5.md](V4-TIP-EVIDENCE-97A3EC5.md),
@@ -64,12 +63,14 @@ are green.
 
 | Evidence | Where / digest | What to confirm |
 | --- | --- | --- |
-| Live-provider packet | [V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md) | Connectivity and fixed-no-tool quality are `PASS` at exact current candidate `b7b5c5c`; rendered rows remain `UNVERIFIED` there |
-| Live-provider matrix at `b7b5c5c` | digest `5be231cd13d31915753c1743365bbe0582f47accd3e210f6f493b8f4264d074f`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | `EXACT_HEAD`, `HEAD=PASS`, `tree=CLEAN`; provider identity and raw result semantics remain self-reported |
+| Live-provider packet | [V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md) | Connectivity and fixed-no-tool quality are `PASS` for behavior `b7b5c5c`; provider identity and raw result semantics remain self-reported |
+| Live-provider continuity at `8b022e8` | digest `3260157d65e09aa43669bc565f76b0912a782fc7a0174fd3e28c3f0b96237ebd`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | `DOCS_ONLY_DESCENDANT`, `HEAD=PASS`, `tree=CLEAN`; live rows `PASS`, rendered rows `UNVERIFIED` |
+| Historical live-provider matrix at `b7b5c5c` | digest `5be231cd13d31915753c1743365bbe0582f47accd3e210f6f493b8f4264d074f`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Exact behavior observation; continuity does not rebind rendered evidence |
 | Live-provider matrix at `0e2b156` | digest `824e1072b4d7fc9acf9ef00b683b376632febf8556c1ded2282eb486510fe0a9`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Provider identity and raw result semantics remain self-reported; this is not the rendered candidate matrix |
 | Historical live continuity matrix | [continuity record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md#docs-only-continuity-refresh-at-2dd8e1b); candidate `2dd8e1b`, behavior `0e2b156`, digest `764a940da63d5003be6a6f3d302752ffbaa230010ab9f23a859a26cf60e94235` | `DOCS_ONLY_DESCENDANT`, `HEAD=PASS`, `tree=CLEAN`; live-provider rows `PASS`, rendered rows `UNVERIFIED` |
-| Rendered cross-platform packet | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md) | Darwin/Linux/Windows are `PASS` at exact candidate `ad34bd5`; no live-provider claim follows |
-| Rendered exact-candidate matrix at `ad34bd5` | digest `0edb2195f34cd53af4aa4574f82f1f3cd864b319361d427a1d179df6b5c1f952`; summary PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4 | `rendered-cross-platform=PASS`; live-provider rows and broad TOCTOU remain `UNVERIFIED` |
+| Rendered cross-platform packet | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md) | Darwin/Linux/Windows are `PASS` at exact candidate `8b022e8`; live-provider rows remain separate |
+| Rendered exact-candidate matrix at `8b022e8` | digest `b1a735b0a377d2b519e6306fb11308ef10498a5d612680e4a858d4c4ad772ae2`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | `rendered-platform-local=PASS`, `rendered-cross-platform=PASS`; live-provider rows and broad TOCTOU remain `UNVERIFIED` |
+| Historical rendered packet at `ad34bd5` | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md) | Retain separately; do not project it onto the current candidate |
 | Historical evidence continuity | `0e2b156` → `ad34bd5` with intervening paths under `docs/` only | Retain the historical claim packets separately; do not synthesize a release matrix by unioning their PASS rows |
 | Exact-tip hosted changes | [PR #610](https://github.com/saiaathishkarthik/picogent/pull/610), [#611](https://github.com/saiaathishkarthik/picogent/pull/611), [#612](https://github.com/saiaathishkarthik/picogent/pull/612), [#614](https://github.com/saiaathishkarthik/picogent/pull/614) | Hosted checks and merge history cover the three platform records and aggregate ledger; they do not authorize release |
 | Hostile split | [#542](https://github.com/saiaathish/picogent/pull/542) + parent-swap docs | Parent-swap PASS ≠ TOCTOU PASS |
@@ -81,11 +82,11 @@ Current operator-local retained roots (outside checkout):
 ```text
 /private/tmp/picogent-live-0e2b156/
 /private/tmp/picogent-live-619.R6pSMq/
-/private/tmp/picogent-rendered-darwin-609/evidence/
-/private/tmp/picogent-rendered-linux-607/rendered-linux-owned-browser-ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c/picogent-linux-rendered-evidence/
-/private/tmp/picogent-rendered-windows-608/rendered-windows-evidence-ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c/
-/private/tmp/picogent-rendered-aggregate-ad34/rendered-cross-platform-evidence.json
-/private/tmp/picogent-rendered-aggregate-ad34/runtime-boundary-matrix.json
+/private/tmp/picogent-rendered-current-8b022e8/darwin/evidence/
+/private/tmp/picogent-rendered-current-8b022e8/linux/rendered-linux-owned-browser-8b022e82be4b2e8ade0a502c5f373eaf6dc61160/picogent-linux-rendered-evidence/
+/private/tmp/picogent-rendered-current-8b022e8/windows/rendered-windows-evidence-8b022e82be4b2e8ade0a502c5f373eaf6dc61160/
+/private/tmp/picogent-rendered-current-8b022e8/aggregate/rendered-cross-platform-evidence.json
+/private/tmp/picogent-rendered-current-8b022e8/aggregate/runtime-boundary-matrix-rendered.json
 ```
 
 Historical (do not project onto tip):
@@ -99,6 +100,10 @@ Historical (do not project onto tip):
 /private/tmp/picogent-rendered-cross-platform-3f-matrix-local.jGT2s2/
 /private/tmp/picogent-evidence-423d047/
 /private/tmp/picogent-evidence-docs-tip-70dba64/
+/private/tmp/picogent-rendered-darwin-609/evidence/
+/private/tmp/picogent-rendered-linux-607/rendered-linux-owned-browser-ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c/picogent-linux-rendered-evidence/
+/private/tmp/picogent-rendered-windows-608/rendered-windows-evidence-ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c/
+/private/tmp/picogent-rendered-aggregate-ad34/
 ```
 
 ## Explicit residual acceptance (required if authorizing while open)
@@ -128,7 +133,7 @@ does **not**, by itself:
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating a unified current-tip `PASS` | The live packet is bound to `b7b5c5c` and the rendered aggregate to older `ad34bd5`; separate PASS rows must not be unioned for release authorization, and any later non-docs candidate requires fresh collection |
+| Fabricating a unified current-tip `PASS` | The live continuity artifacts are bound to behavior `b7b5c5c` and the rendered aggregate to `8b022e8`; separate PASS rows must not be unioned for release authorization, and any later non-docs candidate requires fresh collection |
 
 ## Current dry-run posture (no approval observed)
 
@@ -136,9 +141,9 @@ does **not**, by itself:
 | --- | --- |
 | Docs tip | Documentation-only descendants retain separate packets; bind the release SHA and one exact-SHA matrix separately |
 | Live-provider evidence SHA | `b7b5c5c3e98f2caaf1c0d951740bdd7046f755f5` |
-| Live-provider matrix | PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 at exact current head; live-provider rows `PASS`, rendered rows `UNVERIFIED` |
-| Rendered evidence SHA | `ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c` |
-| Rendered exact-candidate matrix | PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4; `rendered-cross-platform=PASS`, live-provider rows `UNVERIFIED` |
+| Live-provider continuity matrix | PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 at candidate `8b022e8` with behavior `b7b5c5c`; live-provider rows `PASS`, rendered rows `UNVERIFIED` |
+| Rendered evidence SHA | `8b022e82be4b2e8ade0a502c5f373eaf6dc61160` |
+| Rendered exact-candidate matrix | PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3; `rendered-platform-local=PASS`, `rendered-cross-platform=PASS`, live-provider rows `UNVERIFIED` |
 | Release matrix posture | No synthetic union of the two matrices; `release-authorization` remains `INCONCLUSIVE` |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
