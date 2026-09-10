@@ -18,18 +18,20 @@ import (
 )
 
 const (
-	goalHostileHelperEnv   = "PICOGENT_GOAL_HOSTILE_HELPER"
-	goalHostileParentEnv   = "PICOGENT_GOAL_HOSTILE_PARENT"
-	goalHostileBackupEnv   = "PICOGENT_GOAL_HOSTILE_BACKUP"
-	goalHostileOutsideEnv  = "PICOGENT_GOAL_HOSTILE_OUTSIDE"
-	goalHostileReadyEnv    = "PICOGENT_GOAL_HOSTILE_READY"
-	goalHostileStartEnv    = "PICOGENT_GOAL_HOSTILE_START"
-	goalHostileStopEnv     = "PICOGENT_GOAL_HOSTILE_STOP"
-	goalHostileSwapsEnv    = "PICOGENT_GOAL_HOSTILE_SWAPS"
-	goalHostileSourceEnv   = "PICOGENT_GOAL_HOSTILE_SOURCE_SHA"
-	goalHostileEvidenceEnv = "PICOGENT_GOAL_HOSTILE_EVIDENCE_OUT"
-	goalHostileAttempts    = 256
-	goalHostilePause       = 250 * time.Microsecond
+	goalHostileHelperEnv     = "PICOGENT_GOAL_HOSTILE_HELPER"
+	goalHostileParentEnv     = "PICOGENT_GOAL_HOSTILE_PARENT"
+	goalHostileBackupEnv     = "PICOGENT_GOAL_HOSTILE_BACKUP"
+	goalHostileOutsideEnv    = "PICOGENT_GOAL_HOSTILE_OUTSIDE"
+	goalHostileReadyEnv      = "PICOGENT_GOAL_HOSTILE_READY"
+	goalHostileStartEnv      = "PICOGENT_GOAL_HOSTILE_START"
+	goalHostileStopEnv       = "PICOGENT_GOAL_HOSTILE_STOP"
+	goalHostileSwapsEnv      = "PICOGENT_GOAL_HOSTILE_SWAPS"
+	goalHostileRestoredEnv   = "PICOGENT_GOAL_HOSTILE_RESTORED"
+	goalHostileRestoreAckEnv = "PICOGENT_GOAL_HOSTILE_RESTORE_ACK"
+	goalHostileSourceEnv     = "PICOGENT_GOAL_HOSTILE_SOURCE_SHA"
+	goalHostileEvidenceEnv   = "PICOGENT_GOAL_HOSTILE_EVIDENCE_OUT"
+	goalHostileAttempts      = 256
+	goalHostilePause         = 250 * time.Microsecond
 )
 
 type goalHostileEvidence struct {
@@ -114,6 +116,8 @@ func TestGoalHostileParentSwapConfinement(t *testing.T) {
 	start := filepath.Join(root, "start")
 	stop := filepath.Join(root, "stop")
 	swaps := filepath.Join(root, "swaps")
+	restored := filepath.Join(root, "restored")
+	restoreAck := filepath.Join(root, "restore-ack")
 	cmd := exec.Command(os.Args[0], "-test.run", "^TestGoalHostileParentSwapHelper$", "-test.count=1")
 	cmd.Env = append(os.Environ(),
 		goalHostileHelperEnv+"=1",
@@ -124,6 +128,8 @@ func TestGoalHostileParentSwapConfinement(t *testing.T) {
 		goalHostileStartEnv+"="+start,
 		goalHostileStopEnv+"="+stop,
 		goalHostileSwapsEnv+"="+swaps,
+		goalHostileRestoredEnv+"="+restored,
+		goalHostileRestoreAckEnv+"="+restoreAck,
 	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -148,10 +154,34 @@ func TestGoalHostileParentSwapConfinement(t *testing.T) {
 		t.Fatal(err)
 	}
 	goalHostileWaitForPath(t, swaps)
+	// Hold the helper after its first hostile interval so the evidence campaign
+	// records one trusted operation without depending on scheduler luck.
+	goalHostileWaitForPath(t, restored)
 
-	trustedLoads := 0
-	successfulWrites := 0
 	outsideMarkerObserved := false
+	trustedLoads := 0
+	if state, loadErr := LoadState(workspace); loadErr != nil {
+		t.Fatalf("synchronized trusted goal load: %v", loadErr)
+	} else {
+		switch {
+		case state.Text == "outside-goal-marker":
+			outsideMarkerObserved = true
+		case state.Text == "inside-goal-marker" || strings.HasPrefix(state.Text, "inside-write-"):
+			trustedLoads++
+		default:
+			t.Fatalf("synchronized trusted goal load = %#v", state)
+		}
+	}
+	successfulWrites := 0
+	if _, err := SetState(workspace, "inside-write-synchronized"); err != nil {
+		t.Fatalf("synchronized trusted goal write: %v", err)
+	} else {
+		successfulWrites++
+	}
+	if err := os.WriteFile(restoreAck, []byte("ack\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	for i := 0; i < goalHostileAttempts; i++ {
 		state, loadErr := LoadState(workspace)
 		if loadErr == nil {
@@ -272,7 +302,9 @@ func goalHostileParentSwapHelper(t *testing.T) {
 	start := os.Getenv(goalHostileStartEnv)
 	stop := os.Getenv(goalHostileStopEnv)
 	swapsPath := os.Getenv(goalHostileSwapsEnv)
-	if parent == "" || backup == "" || outside == "" || ready == "" || start == "" || stop == "" || swapsPath == "" {
+	restoredPath := os.Getenv(goalHostileRestoredEnv)
+	restoreAckPath := os.Getenv(goalHostileRestoreAckEnv)
+	if parent == "" || backup == "" || outside == "" || ready == "" || start == "" || stop == "" || swapsPath == "" || restoredPath == "" || restoreAckPath == "" {
 		t.Fatal("hostile goal helper environment is incomplete")
 	}
 	if err := os.WriteFile(ready, []byte("ready\n"), 0o600); err != nil {
@@ -280,6 +312,7 @@ func goalHostileParentSwapHelper(t *testing.T) {
 	}
 	goalHostileWaitForPath(t, start)
 	confirmed := false
+	synchronized := false
 	for {
 		if _, err := os.Stat(stop); err == nil {
 			break
@@ -304,6 +337,13 @@ func goalHostileParentSwapHelper(t *testing.T) {
 		if err := goalHostileRestoreParent(parent, backup); err != nil {
 			t.Fatal(err)
 		}
+		if !synchronized {
+			if err := os.WriteFile(restoredPath, []byte("restored\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			goalHostileWaitForPath(t, restoreAckPath)
+			synchronized = true
+		}
 		time.Sleep(goalHostilePause)
 	}
 	if _, err := os.Stat(parent); errors.Is(err, os.ErrNotExist) {
@@ -317,36 +357,49 @@ func goalHostileParentSwapHelper(t *testing.T) {
 }
 
 func goalHostileRestoreParent(parent, backup string) error {
-	if err := os.Rename(backup, parent); err == nil {
-		return nil
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for {
+		if err := os.Rename(backup, parent); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		// A victim write may recreate the missing trusted directory during the
+		// short interval between removing the hostile entry and restoring the
+		// original. Preserve that disposable directory under a unique name rather
+		// than deleting it or letting it block restoration.
+		info, err := os.Lstat(parent)
+		if errors.Is(err, os.ErrNotExist) {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("restore trusted goal parent: %w", lastErr)
+			}
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("restore trusted goal parent: %w", err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("restore trusted goal parent: destination is not a recreated directory")
+		}
+		recreated := fmt.Sprintf("%s-recreated-%d", parent, time.Now().UnixNano())
+		// Windows can briefly reject a directory rename while the victim is
+		// releasing a handle opened during the hostile interval. Retry only this
+		// disposable-directory handoff; do not delete the directory or shorten the
+		// evidence window just to make restoration appear successful. If the victim
+		// recreates the destination again, the outer loop preserves that directory
+		// too before retrying the original backup.
+		if err := goalHostileRenameUntil(parent, recreated, deadline); err != nil {
+			return fmt.Errorf("preserve recreated goal parent: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("restore trusted goal parent: %w", lastErr)
+		}
 	}
-	// A victim write may recreate the missing trusted directory during the
-	// short interval between removing the hostile entry and restoring the
-	// original. Preserve that disposable directory under a unique name rather
-	// than deleting it or letting it block restoration.
-	info, err := os.Lstat(parent)
-	if err != nil {
-		return fmt.Errorf("restore trusted goal parent: %w", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("restore trusted goal parent: destination is not a recreated directory")
-	}
-	recreated := fmt.Sprintf("%s-recreated-%d", parent, time.Now().UnixNano())
-	// Windows can briefly reject a directory rename while the victim is
-	// releasing a handle opened during the hostile interval. Retry only this
-	// disposable-directory handoff; do not delete the directory or shorten the
-	// evidence window just to make restoration appear successful.
-	if err := goalHostileRenameWithRetry(parent, recreated); err != nil {
-		return fmt.Errorf("preserve recreated goal parent: %w", err)
-	}
-	if err := goalHostileRenameWithRetry(backup, parent); err != nil {
-		return fmt.Errorf("restore trusted goal parent: %w", err)
-	}
-	return nil
 }
 
-func goalHostileRenameWithRetry(oldPath, newPath string) error {
-	deadline := time.Now().Add(5 * time.Second)
+func goalHostileRenameUntil(oldPath, newPath string, deadline time.Time) error {
 	var err error
 	for {
 		if err = os.Rename(oldPath, newPath); err == nil {
