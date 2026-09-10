@@ -306,7 +306,11 @@ and must leave the outside file digest unchanged. The exact protocol and
 digest-only schema are documented in
 [V4-PROJECT-RULE-READ-EVIDENCE.md](V4-PROJECT-RULE-READ-EVIDENCE.md).
 
-Hosted observations are retained only in runner temporary artifacts and must
-be rebound here with the exact source SHA and digest after the CI run passes.
-Until then this is an implemented contract, not a hosted `PASS` claim. The
-broad `hostile-filesystem-toctou` row remains `UNVERIFIED`.
+The post-merge exact-main Darwin refresh recorded 256 attempts, 47 trusted
+loads, confirmed attacker swaps, no outside marker, and identical outside
+digests at source `167155027caafb40894bb49e46eff6ac5b6e0294`. Its retained
+JSON digest is
+`1455f2ed98f03cd2d0f1f678f5467b46e205897d3270ebf4dfd6d49acc777cf1`.
+The Windows hosted observation remains correctly bound to the pre-merge PR
+SHA and is not projected onto this main tip. The broad
+`hostile-filesystem-toctou` row remains `UNVERIFIED`.
