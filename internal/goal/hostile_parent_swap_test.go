@@ -332,13 +332,31 @@ func goalHostileRestoreParent(parent, backup string) error {
 		return fmt.Errorf("restore trusted goal parent: destination is not a recreated directory")
 	}
 	recreated := fmt.Sprintf("%s-recreated-%d", parent, time.Now().UnixNano())
-	if err := os.Rename(parent, recreated); err != nil {
+	// Windows can briefly reject a directory rename while the victim is
+	// releasing a handle opened during the hostile interval. Retry only this
+	// disposable-directory handoff; do not delete the directory or shorten the
+	// evidence window just to make restoration appear successful.
+	if err := goalHostileRenameWithRetry(parent, recreated); err != nil {
 		return fmt.Errorf("preserve recreated goal parent: %w", err)
 	}
-	if err := os.Rename(backup, parent); err != nil {
+	if err := goalHostileRenameWithRetry(backup, parent); err != nil {
 		return fmt.Errorf("restore trusted goal parent: %w", err)
 	}
 	return nil
+}
+
+func goalHostileRenameWithRetry(oldPath, newPath string) error {
+	deadline := time.Now().Add(5 * time.Second)
+	var err error
+	for {
+		if err = os.Rename(oldPath, newPath); err == nil {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(time.Millisecond)
+	}
 }
 
 func goalHostileWaitForPath(t *testing.T, path string) {
