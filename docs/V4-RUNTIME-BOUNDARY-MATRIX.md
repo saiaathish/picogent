@@ -37,7 +37,7 @@ current live-provider packet is bound to behavior SHA `b7b5c5c`. The broad
 `hostile-filesystem-toctou` residual remains `UNVERIFIED`, and
 `release-authorization` remains `INCONCLUSIVE`.
 
-The post-merge continuity matrix at current `main` `db477d1` is recorded in
+The post-merge continuity matrix captured at candidate `db477d1` is recorded in
 [V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md](V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md).
 It validates the retained live-provider rows through the documented
 `DOCS_ONLY_DESCENDANT` rule; it does not rebind or upgrade the remaining
