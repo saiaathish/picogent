@@ -5,23 +5,22 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact behavior-evidence note (candidate `f901e8f` / issue `#595`):**
+**Current exact behavior-evidence note (candidate `0e2b156` / issue `#597`):**
 The latest clean behavior candidate is
-`f901e8fa1a7de08ef8c5f4f9db5246b7b7d64a25`. Its exact-head matrix is retained
+`0e2b15624b29c256c4b22364ecf6970890c90374`. Its exact-head matrix is retained
 outside the checkout at
-`/private/tmp/picogent-evidence-f901e8f/runtime-boundary-matrix.json` with
-digest
-`6e7cc3a996bc69b7cdcab7d7d735c2f6d359bf1a8920d112aafab59e4a877774`:
-PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5. The live-provider and
-rendered-platform rows remain `UNVERIFIED`; the broad
+`/private/tmp/picogent-live-0e2b156/runtime-boundary-matrix.json` with digest
+`824e1072b4d7fc9acf9ef00b683b376632febf8556c1ded2282eb486510fe0a9`:
+PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3. The live-provider connectivity and
+fixed quality rows are `PASS`; rendered-platform-local and
+rendered-cross-platform remain `UNVERIFIED`; the broad
 `hostile-filesystem-toctou` residual remains `UNVERIFIED`; and
 `release-authorization` remains `INCONCLUSIVE`.
 
-See the [exact behavior-evidence packet](V4-TIP-EVIDENCE-F901E8F.md). No
-current-tip live-provider or rendered-browser artifact is supplied. The prior
-`492595f`, `1531850`, `97a3ec5`, `3f5543d`, and `1ce2059` packets and their
-live/browser records remain historical and are not silently projected onto
-this candidate.
+See the [exact-tip live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
+The prior `f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, and `1ce2059`
+packets and their live/browser records remain historical and are not silently
+projected onto this candidate.
 
 ## Command
 
@@ -322,7 +321,7 @@ and Windows each passed the same allow→undo→fresh-process reload flow at the
 exact candidate `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. Exact-SHA matrix
 projection is `rendered-cross-platform=PASS` when that candidate aggregate is
 supplied; later docs-only descendants must not project it onto a different
-candidate SHA. Current behavior candidate `492595f` requires a fresh
+candidate SHA. Current behavior candidate `0e2b156` requires a fresh
 three-platform collection. With the
 Darwin/Linux parent-swap docs present, `hostile-parent-swap-confinement`
 projects `PASS`; residual `hostile-filesystem-toctou` stays `UNVERIFIED` and
