@@ -56,6 +56,8 @@ func TestOutcomeFocusForToolUsesDurableOutcomeContract(t *testing.T) {
 		"Outcome data:",
 		"Outcome state: DIAGNOSE",
 		"Intent revision: 1",
+		"Adaptive task depth: schema=picogent.outcome-depth.v1 class=BROAD",
+		"Quality budget: research=BROAD",
 		"Requirements: research=false measure=false visual=false tests=true approval=false",
 		"Top obstacle categories: project-shape-unknown",
 		"Next safe action category: inspect the workspace and identify the intended project entry point",
