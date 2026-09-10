@@ -1,33 +1,33 @@
 # v4 rendered cross-platform evidence contract
 
-Status: contract plus packaging helper. The current clean candidate
-`c8a9eda1c1965c29d10046a3103e1442766e6e94` has a direct local Darwin
-observation in [V4-RENDERED-DARWIN-EVIDENCE-C8A9EDA.md](V4-RENDERED-DARWIN-EVIDENCE-C8A9EDA.md)
-from [#605](https://github.com/saiaathishkarthik/picogent/issues/605); its
-`darwin/arm64` rendered row is `PASS`. The retained Windows observation is
-bound to ancestor candidate `f0e5dd7da8387748b723964e559c7f8a8e300df6` in
-[V4-RENDERED-WINDOWS-EVIDENCE-F0E5DD7.md](V4-RENDERED-WINDOWS-EVIDENCE-F0E5DD7.md),
-and the retained Linux observation is bound to ancestor candidate
-`f004f724a4336f948e765d91c6a985b01eb37505` in
-[V4-RENDERED-LINUX-EVIDENCE-F004F72.md](V4-RENDERED-LINUX-EVIDENCE-F004F72.md);
-those older rows may be carried only through the documented docs-only-descendant
-continuity rule. No exact-current Linux or Windows observation was supplied,
-so the cross-platform row remains `UNVERIFIED`. The last retained exact-candidate cross-platform record is [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md),
-bound to historical behavior candidate SHA `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`.
-Its darwin+linux+windows aggregate is `PASS`, with digest
-`be790e046ee209b74531dfbfc7c71a6604f6b6401c214a951f2c54932111f7e5`; exact
-candidate matrix validation reported `head_match=PASS`, `tree=CLEAN`, and
-`rendered-cross-platform=PASS` for that candidate only. The exact-head local
-matrix at `48545233c0a453c419787a4ca8b06d21741cc31c` records
-`PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4`, with
-`rendered-platform-local=PASS` and `rendered-cross-platform=UNVERIFIED`.
+Status: contract plus packaging helper. The latest exact behavior candidate
+`ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c` has a direct local Darwin
+observation in
+[V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md)
+from [#609](https://github.com/saiaathishkarthik/picogent/issues/609); its
+`darwin/arm64` rendered row is `PASS`. Fresh task-owned Linux/amd64 and
+Windows/amd64 observations were also collected at that exact candidate under
+[#607](https://github.com/saiaathishkarthik/picogent/issues/607) and
+[#608](https://github.com/saiaathishkarthik/picogent/issues/608). The external
+aggregate at `/private/tmp/picogent-rendered-aggregate-ad34/rendered-cross-platform-evidence.json`
+records all three rows as `PASS`, with aggregate SHA-256
+`f3def9dc069980125752abbe3d22b7c2ad6a3af8ad74d52091afc38974e35630`.
+The exact-candidate matrix at
+`/private/tmp/picogent-rendered-aggregate-ad34/runtime-boundary-matrix.json`
+records `head_match=PASS`, `tree=CLEAN`, and
+`rendered-cross-platform=PASS`, with matrix SHA-256
+`0edb2195f34cd53af4aa4574f82f1f3cd864b319361d427a1d179df6b5c1f952`.
+These records are exact-candidate bound: this documentation-only descendant
+may retain them, but a later non-docs candidate must recollect all three
+platforms.
+This is evidence for the rendered cross-platform claim, not release
+authorization.
 The live-provider evidence packet remains separately bound to behavior SHA
 `0e2b15624b29c256c4b22364ecf6970890c90374`; it is not silently projected onto
-the new candidate. This is evidence for the
-rendered cross-platform claim, not release authorization. The record is
-exact-candidate bound: documentation-only descendants may retain it, but it
-must not be projected onto another candidate SHA. This checkpoint belongs to
-[#507](https://github.com/saiaathish/picogent/issues/507) under parent
+the new candidate. The record is exact-candidate bound: documentation-only
+descendants may retain it, but it must not be projected onto another candidate
+SHA. This checkpoint belongs to #607, #608, and
+[#609](https://github.com/saiaathishkarthik/picogent/issues/609) under parent
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
 The earlier tip digest-only aggregate PASS remains on record at
