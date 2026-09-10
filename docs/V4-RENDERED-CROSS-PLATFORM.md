@@ -12,6 +12,9 @@ Windows/amd64 observations were also collected at that exact candidate under
 aggregate at `/private/tmp/picogent-rendered-aggregate-ad34/rendered-cross-platform-evidence.json`
 records all three rows as `PASS`, with aggregate SHA-256
 `f3def9dc069980125752abbe3d22b7c2ad6a3af8ad74d52091afc38974e35630`.
+The current per-platform records are [Darwin](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
+[Linux](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md), and
+[Windows](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md).
 The exact-candidate matrix at
 `/private/tmp/picogent-rendered-aggregate-ad34/runtime-boundary-matrix.json`
 records `head_match=PASS`, `tree=CLEAN`, and
