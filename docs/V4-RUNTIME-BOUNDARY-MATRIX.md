@@ -5,8 +5,15 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact behavior-evidence note (candidate `ad34bd5` / issues `#607`-
-`#609`):** The latest exact behavior candidate is
+**Current exact behavior-evidence note (candidate `b7b5c5c` / issue `#619`):**
+The latest exact behavior candidate is
+`b7b5c5c3e98f2caaf1c0d951740bdd7046f755f5`. Its fresh task-owned
+live-provider packet is documented in
+[V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md),
+with exact-head matrix digest
+`5be231cd13d31915753c1743365bbe0582f47accd3e210f6f493b8f4264d074f`, live
+connectivity and fixed quality `PASS`, and summary PASS 8 / INCONCLUSIVE 1 /
+UNVERIFIED 3. The older exact rendered candidate remains
 `ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c`. A Darwin exact-head matrix is
 retained outside the checkout under
 `/private/tmp/picogent-rendered-darwin-609/evidence/` with matrix digest
@@ -14,7 +21,7 @@ retained outside the checkout under
 reports `HEAD=PASS`, `tree=CLEAN`, `darwin/arm64`, and PASS 7 /
 INCONCLUSIVE 1 / UNVERIFIED 4. The task-owned Darwin rendered row is `PASS`.
 Fresh task-owned Linux/amd64 and Windows/amd64 observations were collected at
-the same exact candidate under [#607](https://github.com/saiaathishkarthik/picogent/issues/607)
+that older exact rendered candidate under [#607](https://github.com/saiaathishkarthik/picogent/issues/607)
 and [#608](https://github.com/saiaathishkarthik/picogent/issues/608). The
 external aggregate at
 `/private/tmp/picogent-rendered-aggregate-ad34/rendered-cross-platform-evidence.json`
@@ -25,16 +32,16 @@ The exact-candidate matrix at
 `/private/tmp/picogent-rendered-aggregate-ad34/runtime-boundary-matrix.json`
 has digest `0edb2195f34cd53af4aa4574f82f1f3cd864b319361d427a1d179df6b5c1f952`
 and projects `rendered-cross-platform=PASS`. Live-provider connectivity and
-fixed quality are not rebound in this exact-head matrix; the separate
-live-provider packet remains bound to behavior SHA `0e2b156`. The broad
+fixed quality are not rebound in this historical rendered matrix; the separate
+current live-provider packet is bound to behavior SHA `b7b5c5c`. The broad
 `hostile-filesystem-toctou` residual remains `UNVERIFIED`, and
 `release-authorization` remains `INCONCLUSIVE`.
 
-See the [current Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
-the [current Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md),
-the [current Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md),
+See the [historical Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
+the [historical Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md),
+the [historical Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md),
 and the [exact-candidate aggregate record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md)
-and the [exact-tip live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
+and the [current exact-tip live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md).
 The prior `f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, and `1ce2059`
 packets and their live/browser records remain historical and are not silently
 projected onto this candidate.
