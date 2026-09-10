@@ -270,3 +270,22 @@ not retain files or start the helper outside this focused test. This is a
 bounded retained-artifact read-confinement result; it does not establish
 Windows reparse behavior, every pathname operation, or the broad
 `hostile-filesystem-toctou` claim. That matrix row remains `UNVERIFIED`.
+
+## Windows retained-artifact read campaign (#626)
+
+Issue [#626](https://github.com/saiaathishkarthik/picogent/issues/626) adds the
+platform-specific counterpart for the retained-artifact read boundary. The
+focused Windows test starts an independent same-UID helper that replaces the
+trusted parent name with a junction to an outside directory during repeated
+`LoadReport` calls. The outside artifact carries a valid candidate-matching
+record with an `outside-marker` reason; a successful load must never return
+that marker, at least one trusted in-tree load must succeed, and the outside
+artifact digest must remain unchanged.
+
+The implementation and CI contract are documented in
+[V4-HOSTILE-RETAINED-READ-WINDOWS.md](V4-HOSTILE-RETAINED-READ-WINDOWS.md).
+The hosted observation is retained only in the runner's temporary artifact
+directory and must be rebound here with its exact source SHA and digest after a
+passing Windows run. Until that record is available, this section is an
+implemented contract, not a Windows `PASS` claim. The broad
+`hostile-filesystem-toctou` row remains `UNVERIFIED`.
