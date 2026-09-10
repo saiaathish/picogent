@@ -37,6 +37,12 @@ current live-provider packet is bound to behavior SHA `b7b5c5c`. The broad
 `hostile-filesystem-toctou` residual remains `UNVERIFIED`, and
 `release-authorization` remains `INCONCLUSIVE`.
 
+The post-merge continuity matrix at current `main` `db477d1` is recorded in
+[V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md](V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md).
+It validates the retained live-provider rows through the documented
+`DOCS_ONLY_DESCENDANT` rule; it does not rebind or upgrade the remaining
+rendered, hostile-TOCTOU, or release-authorization rows.
+
 See the [historical Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
 the [historical Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md),
 the [historical Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md),
