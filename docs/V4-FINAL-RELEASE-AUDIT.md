@@ -15,6 +15,8 @@ Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
 Current exact-tip evidence packet:
+[V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
+The prior `f901e8f` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-F901E8F.md](V4-TIP-EVIDENCE-F901E8F.md).
 The prior `492595f` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-492595F.md](V4-TIP-EVIDENCE-492595F.md).
@@ -29,23 +31,37 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current exact behavior-evidence checkpoint (`f901e8f`)
+## Current exact behavior-evidence checkpoint (`0e2b156`)
 
 The current clean behavior candidate is
-`f901e8fa1a7de08ef8c5f4f9db5246b7b7d64a25`. The exact-head retained matrix
+`0e2b15624b29c256c4b22364ecf6970890c90374`. The exact-head retained matrix
+`/private/tmp/picogent-live-0e2b156/runtime-boundary-matrix.json` has digest
+`824e1072b4d7fc9acf9ef00b683b376632febf8556c1ded2282eb486510fe0a9` and
+records **PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3**.
+
+The exact-tip packet is documented in
+[V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
+The retained collector proves `EXACT_HEAD`, `head_match=PASS`, and
+`tree=CLEAN`. The live-provider connectivity and fixed quality rows are
+`PASS`; rendered-platform-local and rendered-cross-platform remain
+`UNVERIFIED`. The broad `hostile-filesystem-toctou` residual remains
+`UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` because no
+human operator decision has been recorded. The adaptive-depth quality result
+is benchmark-only and does not change this matrix.
+
+## Historical exact behavior-evidence checkpoint (`f901e8f`)
+
+The prior clean behavior candidate was
+`f901e8fa1a7de08ef8c5f4f9db5246b7b7d64a25`. Its exact-head retained matrix
 `/private/tmp/picogent-evidence-f901e8f/runtime-boundary-matrix.json` has
 digest
 `6e7cc3a996bc69b7cdcab7d7d735c2f6d359bf1a8920d112aafab59e4a877774` and
 records **PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5**.
 
-The exact-tip packet is documented in
-[V4-TIP-EVIDENCE-F901E8F.md](V4-TIP-EVIDENCE-F901E8F.md). The retained
-collector proves `EXACT_HEAD`, `head_match=PASS`, and `tree=CLEAN`. No
-current-tip live-provider or rendered-platform artifacts were supplied, so
-those rows are `UNVERIFIED`. The broad `hostile-filesystem-toctou` residual
-remains `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE`
-because no human operator decision has been recorded. The adaptive-depth
-quality result is benchmark-only and does not change this matrix.
+The historical exact-tip packet is documented in
+[V4-TIP-EVIDENCE-F901E8F.md](V4-TIP-EVIDENCE-F901E8F.md). No live-provider or
+rendered-platform artifacts were supplied for that candidate, so those rows
+remain `UNVERIFIED`.
 
 ## Historical exact behavior-evidence checkpoint (`492595f`)
 
@@ -67,7 +83,7 @@ PR #581's post-merge continuity check correctly rejected rebinding behavior
 `97a3ec5` because that PR touched `README.md`; this repository contract permits
 continuity only across intervening `docs/` paths. The fresh `1531850` exact-head
 collection was the prior packet. The fresh `492595f` exact-head collection after
-docs-only PR #583 is the authoritative current packet.
+docs-only PR #583 was authoritative for that historical checkpoint.
 
 ## Historical exact behavior-evidence checkpoint (`1531850`)
 
@@ -304,10 +320,11 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-The current behavior-evidence packet at `492595f` records exact-tip PASS 6 /
-INCONCLUSIVE 1 / UNVERIFIED 5. Its live-provider and rendered-platform rows
+The current behavior-evidence packet at `0e2b156` records exact-tip PASS 8 /
+INCONCLUSIVE 1 / UNVERIFIED 3. Its live-provider connectivity and fixed
+quality rows are `PASS`; rendered-platform-local and rendered-cross-platform
 remain `UNVERIFIED`; the residual `hostile-filesystem-toctou=UNVERIFIED` and
 `release-authorization=INCONCLUSIVE` (`authorized: false`) remain. The older
-`1531850`, `97a3ec5`, `3f5543d`, `1ce2059`, and `f8a78c6` anchors above are historical and are not
-projected onto the current candidate. Human operator review is required before
-any authorization claim.
+`f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, `1ce2059`, and
+`f8a78c6` anchors above are historical and are not projected onto the current
+candidate. Human operator review is required before any authorization claim.
