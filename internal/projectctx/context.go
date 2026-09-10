@@ -1,9 +1,10 @@
 package projectctx
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 const maxRulesBytes = 24 << 10
@@ -22,7 +23,7 @@ func Load(workspace string) string {
 	var parts []string
 	for _, name := range ruleFiles {
 		path := filepath.Join(workspace, name)
-		data, err := os.ReadFile(path)
+		data, err := securefile.ReadFilePrefix(path, maxRulesBytes)
 		if err != nil || len(data) == 0 {
 			continue
 		}

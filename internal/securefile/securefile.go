@@ -111,6 +111,18 @@ func ReadFileLimited(path string, maxBytes int) ([]byte, error) {
 	return readFile(path, maxBytes)
 }
 
+// ReadFilePrefix reads at most maxBytes from a regular, non-symlink file below
+// its validated parent. Unlike ReadFileLimited, it treats truncation as a
+// successful bounded read. It is intended for callers that historically
+// retained a fixed prefix while still keeping hostile or accidentally huge
+// files out of memory.
+func ReadFilePrefix(path string, maxBytes int) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, errors.New("secure file prefix limit must be positive")
+	}
+	return readFilePrefix(path, maxBytes)
+}
+
 // WriteExclusive creates a regular file below a descriptor/handle-anchored
 // parent, writes the complete payload, and refuses to overwrite an existing
 // entry. If publication fails, cleanup removes only the inode opened by this
@@ -175,6 +187,19 @@ func readFile(path string, maxBytes int) ([]byte, error) {
 		return nil, err
 	}
 	defer root.Close()
+	return readOpenedFile(root, name, path, maxBytes, true)
+}
+
+func readFilePrefix(path string, maxBytes int) ([]byte, error) {
+	root, name, err := openParent(path, false)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	return readOpenedFile(root, name, path, maxBytes, false)
+}
+
+func readOpenedFile(root secureParent, name, path string, maxBytes int, rejectOversized bool) ([]byte, error) {
 	info, err := root.stat(name)
 	if err != nil {
 		return nil, err
@@ -193,10 +218,14 @@ func readFile(path string, maxBytes int) ([]byte, error) {
 	}
 	var reader io.Reader = file
 	if maxBytes > 0 {
-		reader = io.LimitReader(file, int64(maxBytes)+1)
+		limit := int64(maxBytes)
+		if rejectOversized {
+			limit++
+		}
+		reader = io.LimitReader(file, limit)
 	}
 	data, readErr := io.ReadAll(reader)
-	if readErr == nil && maxBytes > 0 && len(data) > maxBytes {
+	if readErr == nil && rejectOversized && maxBytes > 0 && len(data) > maxBytes {
 		data = nil
 		readErr = fmt.Errorf("%w: file %q exceeds the %d-byte read limit", ErrReadLimit, path, maxBytes)
 	}

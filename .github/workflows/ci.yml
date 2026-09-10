@@ -98,6 +98,36 @@ jobs:
           PICOGENT_HOSTILE_RETAIN_WINDOWS_LOAD_EVIDENCE_OUT="$EVIDENCE_DIR/retained-artifact-read.json" \
             go test -v ./internal/runtimeboundary -run '^TestWindowsSameUIDRetainedArtifactReadConfinement$' -count=1
           sha256sum "$EVIDENCE_DIR/retained-artifact-read.json"
+      - name: Unix project-rule hostile read evidence
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}/picogent-project-rule-read
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          PICOGENT_PROJECT_RULE_HOSTILE_SOURCE_SHA="$CANDIDATE_SHA" \
+          PICOGENT_PROJECT_RULE_HOSTILE_EVIDENCE_OUT="$EVIDENCE_DIR/project-rule-read.json" \
+            go test -v ./internal/projectctx -run '^TestProjectRuleHostileParentSwapConfinement$' -count=1
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$EVIDENCE_DIR/project-rule-read.json"
+          else
+            shasum -a 256 "$EVIDENCE_DIR/project-rule-read.json"
+          fi
+      - name: Windows project-rule hostile read evidence
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}/picogent-project-rule-read
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          PICOGENT_PROJECT_RULE_HOSTILE_SOURCE_SHA="$CANDIDATE_SHA" \
+          PICOGENT_PROJECT_RULE_HOSTILE_EVIDENCE_OUT="$EVIDENCE_DIR/project-rule-read.json" \
+            go test -v ./internal/projectctx -run '^TestProjectRuleHostileParentSwapConfinement$' -count=1
+          sha256sum "$EVIDENCE_DIR/project-rule-read.json"
       - name: Upload Unix retained-artifact hostile read evidence
         if: always() && runner.os != 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -111,6 +141,13 @@ jobs:
         with:
           name: hostile-retained-read-${{ runner.os }}-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/picogent-hostile-retained-read/*.json
+          if-no-files-found: warn
+      - name: Upload project-rule hostile read evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: project-rule-read-${{ runner.os }}-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/picogent-project-rule-read/*.json
           if-no-files-found: warn
       - name: Upload Linux hostile parent-swap evidence
         if: always() && matrix.os == 'ubuntu-latest'

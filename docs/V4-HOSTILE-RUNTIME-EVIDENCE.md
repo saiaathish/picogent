@@ -289,3 +289,24 @@ directory and must be rebound here with its exact source SHA and digest after a
 passing Windows run. Until that record is available, this section is an
 implemented contract, not a Windows `PASS` claim. The broad
 `hostile-filesystem-toctou` row remains `UNVERIFIED`.
+
+## Project-rule read campaign (#628)
+
+Issue [#628](https://github.com/saiaathishkarthik/picogent/issues/628) closes a
+separate source-backed read boundary: the project instruction loader no longer
+uses an unrestricted path read. `AGENTS.md`, `CLAUDE.md`, and
+`.picogent/rules.md` are read through the shared descriptor/handle-anchored
+securefile boundary and retain the existing 24 KiB prefix limit.
+
+The focused Unix and Windows tests start an independent same-UID helper that
+replaces `.picogent` with a symlink or junction during 256 `Load` calls. The
+outside directory contains an `outside-project-rule-marker`; a passing
+campaign must never return it, must observe at least one trusted in-tree load,
+and must leave the outside file digest unchanged. The exact protocol and
+digest-only schema are documented in
+[V4-PROJECT-RULE-READ-EVIDENCE.md](V4-PROJECT-RULE-READ-EVIDENCE.md).
+
+Hosted observations are retained only in runner temporary artifacts and must
+be rebound here with the exact source SHA and digest after the CI run passes.
+Until then this is an implemented contract, not a hosted `PASS` claim. The
+broad `hostile-filesystem-toctou` row remains `UNVERIFIED`.

@@ -23,6 +23,21 @@ func TestReadFileLimitedReturnsSentinel(t *testing.T) {
 	}
 }
 
+func TestReadFilePrefixReturnsBoundedPrefix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rules.md")
+	if err := os.WriteFile(path, []byte("0123456789"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadFilePrefix(path, 4)
+	if err != nil {
+		t.Fatalf("ReadFilePrefix = %v", err)
+	}
+	if string(got) != "0123" {
+		t.Fatalf("ReadFilePrefix = %q, want %q", got, "0123")
+	}
+}
+
 func TestReadFileMissingPreservesOSNotExist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.json")
 	_, err := ReadFile(path)
