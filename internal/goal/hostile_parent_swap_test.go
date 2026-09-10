@@ -317,36 +317,49 @@ func goalHostileParentSwapHelper(t *testing.T) {
 }
 
 func goalHostileRestoreParent(parent, backup string) error {
-	if err := os.Rename(backup, parent); err == nil {
-		return nil
+	deadline := time.Now().Add(10 * time.Second)
+	var lastErr error
+	for {
+		if err := os.Rename(backup, parent); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		// A victim write may recreate the missing trusted directory during the
+		// short interval between removing the hostile entry and restoring the
+		// original. Preserve that disposable directory under a unique name rather
+		// than deleting it or letting it block restoration.
+		info, err := os.Lstat(parent)
+		if errors.Is(err, os.ErrNotExist) {
+			if time.Now().After(deadline) {
+				return fmt.Errorf("restore trusted goal parent: %w", lastErr)
+			}
+			time.Sleep(time.Millisecond)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("restore trusted goal parent: %w", err)
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("restore trusted goal parent: destination is not a recreated directory")
+		}
+		recreated := fmt.Sprintf("%s-recreated-%d", parent, time.Now().UnixNano())
+		// Windows can briefly reject a directory rename while the victim is
+		// releasing a handle opened during the hostile interval. Retry only this
+		// disposable-directory handoff; do not delete the directory or shorten the
+		// evidence window just to make restoration appear successful. If the victim
+		// recreates the destination again, the outer loop preserves that directory
+		// too before retrying the original backup.
+		if err := goalHostileRenameUntil(parent, recreated, deadline); err != nil {
+			return fmt.Errorf("preserve recreated goal parent: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("restore trusted goal parent: %w", lastErr)
+		}
 	}
-	// A victim write may recreate the missing trusted directory during the
-	// short interval between removing the hostile entry and restoring the
-	// original. Preserve that disposable directory under a unique name rather
-	// than deleting it or letting it block restoration.
-	info, err := os.Lstat(parent)
-	if err != nil {
-		return fmt.Errorf("restore trusted goal parent: %w", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("restore trusted goal parent: destination is not a recreated directory")
-	}
-	recreated := fmt.Sprintf("%s-recreated-%d", parent, time.Now().UnixNano())
-	// Windows can briefly reject a directory rename while the victim is
-	// releasing a handle opened during the hostile interval. Retry only this
-	// disposable-directory handoff; do not delete the directory or shorten the
-	// evidence window just to make restoration appear successful.
-	if err := goalHostileRenameWithRetry(parent, recreated); err != nil {
-		return fmt.Errorf("preserve recreated goal parent: %w", err)
-	}
-	if err := goalHostileRenameWithRetry(backup, parent); err != nil {
-		return fmt.Errorf("restore trusted goal parent: %w", err)
-	}
-	return nil
 }
 
-func goalHostileRenameWithRetry(oldPath, newPath string) error {
-	deadline := time.Now().Add(5 * time.Second)
+func goalHostileRenameUntil(oldPath, newPath string, deadline time.Time) error {
 	var err error
 	for {
 		if err = os.Rename(oldPath, newPath); err == nil {
