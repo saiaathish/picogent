@@ -9,6 +9,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/projects"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 // State is the durable goal text together with a monotonically increasing
@@ -33,7 +34,7 @@ func storePath(workspace string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := securefile.EnsureDir(filepath.Dir(path), 0o700); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -44,7 +45,7 @@ func revisionPath(path string) string {
 }
 
 func readRevision(path string) (uint64, error) {
-	data, err := os.ReadFile(revisionPath(path))
+	data, err := securefile.ReadFile(revisionPath(path))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
@@ -68,15 +69,6 @@ func stateBackupPath(path string) string {
 	return path + ".bak"
 }
 
-func syncParent(path string) {
-	dir, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return
-	}
-	_ = dir.Sync()
-	_ = dir.Close()
-}
-
 func encodeState(state State) []byte {
 	return []byte(stateMagic + "\n" + strconv.FormatUint(state.Revision, 10) + "\n" + state.Text)
 }
@@ -97,69 +89,42 @@ func decodeState(data []byte) (State, error) {
 	return State{Text: text, Revision: revision}, nil
 }
 
-// writeAtomic replaces one state record as a transaction. The backup path is
-// used only for platforms that cannot rename over an existing file; if a
-// process dies between the two renames, loadLocked recovers the old record.
+// writeAtomic publishes one complete state record through the shared secure
+// file boundary. A separately retained backup is recovered by recoverBackup
+// when a process dies before the primary record is available.
 func writeAtomic(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".goal-state-")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err == nil {
-		syncParent(path)
-		return nil
-	}
-	backup := stateBackupPath(path)
-	if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if err := os.Rename(path, backup); err != nil {
-		return err
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		_ = os.Rename(backup, path)
-		return err
-	}
-	_ = os.Remove(backup)
-	syncParent(path)
-	return nil
+	return securefile.WriteAtomic(path, data, 0o600)
 }
 
 func recoverBackup(path string) error {
-	if _, err := os.Stat(path); err == nil {
+	if _, err := securefile.ReadFile(path); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
 	backup := stateBackupPath(path)
-	if _, err := os.Stat(backup); err != nil {
+	data, err := securefile.ReadFile(backup)
+	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
 		return err
 	}
-	if err := os.Rename(backup, path); err != nil {
+	if err := securefile.WriteExclusive(path, data, 0o600); err != nil {
+		if os.IsExist(err) {
+			return nil
+		}
 		return err
 	}
-	syncParent(path)
-	return nil
+	return removeIfPresent(backup)
+}
+
+func removeIfPresent(path string) error {
+	err := securefile.RemoveFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
 }
 
 // missingStatePathError distinguishes an absent state directory (a normal
@@ -192,7 +157,7 @@ func loadLocked(path string) (State, error) {
 	if err := recoverBackup(path); err != nil {
 		return State{}, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := securefile.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			revision, revisionErr := readRevision(path)
@@ -223,7 +188,9 @@ func loadLocked(path string) (State, error) {
 	if err := writeAtomic(path, encodeState(state)); err != nil {
 		return State{}, err
 	}
-	_ = os.Remove(revisionPath(path))
+	if err := removeIfPresent(revisionPath(path)); err != nil {
+		return State{}, err
+	}
 	return state, nil
 }
 
@@ -294,7 +261,9 @@ func SetState(workspace, text string) (uint64, error) {
 	if err := writeAtomic(path, encodeState(State{Text: text, Revision: revision})); err != nil {
 		return 0, err
 	}
-	_ = os.Remove(revisionPath(path))
+	if err := removeIfPresent(revisionPath(path)); err != nil {
+		return 0, err
+	}
 	return revision, nil
 }
 
@@ -325,7 +294,9 @@ func Clear(workspace string) error {
 			return err
 		}
 	}
-	_ = os.Remove(revisionPath(path))
+	if err := removeIfPresent(revisionPath(path)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -367,7 +338,9 @@ func clearIfState(workspace, expected string, expectedRevision *uint64) (bool, e
 			return false, err
 		}
 	}
-	_ = os.Remove(revisionPath(path))
+	if err := removeIfPresent(revisionPath(path)); err != nil {
+		return false, err
+	}
 	return true, nil
 }
 

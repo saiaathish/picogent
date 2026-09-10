@@ -290,6 +290,27 @@ passing Windows run. Until that record is available, this section is an
 implemented contract, not a Windows `PASS` claim. The broad
 `hostile-filesystem-toctou` row remains `UNVERIFIED`.
 
+## Goal-state persistence campaign (#632)
+
+Issue [#632](https://github.com/saiaathishkarthik/picogent/issues/632) hardens a
+separate durable-state boundary. Goal reads, writes, lock acquisition, atomic
+publication, backup recovery, and revision cleanup now use the shared secure
+file primitives. Existing revision, tombstone, legacy-migration, and
+compare-and-clear semantics remain covered by the package tests.
+
+The focused Unix and Windows tests start an independent same-UID helper that
+replaces the `goals` directory with a symlink or junction during bounded goal
+loads and writes. The campaign also recovers a trusted backup, requires
+trusted reads/writes/recovery, rejects the `outside-goal-marker`, and verifies
+that the outside tree digest is unchanged. The exact protocol and digest-only
+schema are documented in
+[V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md).
+
+Hosted observations are retained only in runner temporary artifacts and must
+be rebound here with the exact source SHA and digest after the CI run passes.
+Until then this is an implemented contract, not a hosted `PASS` claim. The
+broad `hostile-filesystem-toctou` row remains `UNVERIFIED`.
+
 ## Project-rule read campaign (#628)
 
 Issue [#628](https://github.com/saiaathishkarthik/picogent/issues/628) closes a

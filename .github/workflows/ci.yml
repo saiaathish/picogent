@@ -128,6 +128,36 @@ jobs:
           PICOGENT_PROJECT_RULE_HOSTILE_EVIDENCE_OUT="$EVIDENCE_DIR/project-rule-read.json" \
             go test -v ./internal/projectctx -run '^TestProjectRuleHostileParentSwapConfinement$' -count=1
           sha256sum "$EVIDENCE_DIR/project-rule-read.json"
+      - name: Unix goal-state hostile read/write evidence
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}/picogent-goal-state
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          PICOGENT_GOAL_HOSTILE_SOURCE_SHA="$CANDIDATE_SHA" \
+          PICOGENT_GOAL_HOSTILE_EVIDENCE_OUT="$EVIDENCE_DIR/goal-state.json" \
+            go test -v ./internal/goal -run '^TestGoalHostileParentSwapConfinement$' -count=1
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$EVIDENCE_DIR/goal-state.json"
+          else
+            shasum -a 256 "$EVIDENCE_DIR/goal-state.json"
+          fi
+      - name: Windows goal-state hostile read/write evidence
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}/picogent-goal-state
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          PICOGENT_GOAL_HOSTILE_SOURCE_SHA="$CANDIDATE_SHA" \
+          PICOGENT_GOAL_HOSTILE_EVIDENCE_OUT="$EVIDENCE_DIR/goal-state.json" \
+            go test -v ./internal/goal -run '^TestGoalHostileParentSwapConfinement$' -count=1
+          sha256sum "$EVIDENCE_DIR/goal-state.json"
       - name: Upload Unix retained-artifact hostile read evidence
         if: always() && runner.os != 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -148,6 +178,13 @@ jobs:
         with:
           name: project-rule-read-${{ runner.os }}-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/picogent-project-rule-read/*.json
+          if-no-files-found: warn
+      - name: Upload goal-state hostile read/write evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: goal-state-${{ runner.os }}-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/picogent-goal-state/*.json
           if-no-files-found: warn
       - name: Upload Linux hostile parent-swap evidence
         if: always() && matrix.os == 'ubuntu-latest'
