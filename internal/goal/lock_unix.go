@@ -3,22 +3,21 @@
 package goal
 
 import (
-	"os"
-
-	"golang.org/x/sys/unix"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 func acquireGoalLock(path string) (func(), error) {
-	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := securefile.OpenLockFile(path + ".lock")
 	if err != nil {
 		return nil, err
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
+	unlock, err := securefile.LockFile(f, true)
+	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
 	return func() {
-		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
+		_ = unlock()
 		_ = f.Close()
 	}, nil
 }

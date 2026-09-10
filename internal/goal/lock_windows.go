@@ -3,23 +3,21 @@
 package goal
 
 import (
-	"os"
-
-	"golang.org/x/sys/windows"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 func acquireGoalLock(path string) (func(), error) {
-	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := securefile.OpenLockFile(path + ".lock")
 	if err != nil {
 		return nil, err
 	}
-	overlapped := new(windows.Overlapped)
-	if err := windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, overlapped); err != nil {
+	unlock, err := securefile.LockFile(f, true)
+	if err != nil {
 		_ = f.Close()
 		return nil, err
 	}
 	return func() {
-		_ = windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, overlapped)
+		_ = unlock()
 		_ = f.Close()
 	}, nil
 }
