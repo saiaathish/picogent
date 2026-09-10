@@ -1,7 +1,9 @@
 # V4 durable goal-state confinement
 
-Status: **bounded evidence contract implemented; hosted observation pending**.
-This record belongs to [#632](https://github.com/saiaathishkarthik/picogent/issues/632)
+Status: **bounded evidence contract implemented; hosted goal-state observations
+PASS at merged main**.
+This record refreshes [#634](https://github.com/saiaathishkarthik/picogent/issues/634),
+whose parent is [#632](https://github.com/saiaathishkarthik/picogent/issues/632),
 under the broader runtime-boundary parent
 [#453](https://github.com/saiaathishkarthik/picogent/issues/453).
 It does not claim universal filesystem race resistance and does not upgrade
@@ -45,8 +47,20 @@ temporary directory. Windows probes junction support explicitly; if the
 runner cannot create the required reparse fixture, evidence mode fails instead
 of silently converting an unsupported host into a pass.
 
-The eventual retained record must bind `candidate_sha` to the reviewed source,
-set `source_tree_modified=false`, `verdict=PASS`, and retain
+The merged-main CI run [34541903769](https://github.com/saiaathishkarthik/picogent/actions/runs/34541903769)
+completed successfully at
+`eccebd293e58ec48c6553e9228ff4b201a74c77a`. An independent fetch confirmed
+that `origin/main` resolves to the same SHA. The retained artifacts are:
+
+| Artifact | Host | Attempts / swaps | Trusted loads | Successful writes | Successful recoveries | Outside marker | Outside digest (before = after) |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| `goal-state-Linux-eccebd293e58ec48c6553e9228ff4b201a74c77a` | Linux amd64 | 256 / true | 8 | 3 | 1 | false | `711d5b777da71a543f9abd64b09a74d435cefc9d3186b22a31f905ec4c511be9` |
+| `goal-state-Windows-eccebd293e58ec48c6553e9228ff4b201a74c77a` | Windows amd64 | 256 / true | 256 | 65 | 1 | false | `7e66767a5da6744133357163b4369d0ec3c3fe0ff6e74bcb834af9676e7177df` |
+| `goal-state-macOS-eccebd293e58ec48c6553e9228ff4b201a74c77a` | macOS darwin/arm64 | 256 / true | 257 | 65 | 1 | false | `c567655a26e4eed52e2ca02249d406a728abf6def2f03a8a343c695eee45f969` |
+
+Each record uses schema `picogent.v4.goal-state-persistence-evidence.v1`,
+binds `candidate_sha` to the merged SHA above, sets
+`source_tree_modified=false`, `verdict=PASS`, and retains
 `broad_toctou_claim=UNVERIFIED`.
 
 ## Explicit limits
