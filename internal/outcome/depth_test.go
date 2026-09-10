@@ -170,6 +170,60 @@ func TestPredictTaskDepthAddsBoundedVisualQualityLoops(t *testing.T) {
 	}
 }
 
+func TestPredictTaskDepthEscalatesFullAndUnderstatedHighRiskIntent(t *testing.T) {
+	full := &taskstate.Task{
+		Intent: &taskstate.IntentContract{
+			Class:        "general",
+			Action:       "implementation",
+			Completeness: "full",
+			Confidence:   "high",
+		},
+	}
+	got := PredictTaskDepth(full, ImpactProfile{Scope: ImpactNone, Risk: ImpactRiskLow, Confidence: "high"})
+	if got.Class != TaskDepthDeep || !containsTaskDepthSignal(got.Signals, TaskDepthSignalUserIntent) {
+		t.Fatalf("full intent depth = %#v", got)
+	}
+
+	highRisk := &taskstate.Task{
+		Intent: &taskstate.IntentContract{
+			Class:        "general",
+			Action:       "implementation",
+			Completeness: "targeted",
+			Risk:         "high",
+			Confidence:   "high",
+		},
+	}
+	got = PredictTaskDepth(highRisk, ImpactProfile{Scope: ImpactFocused, Risk: ImpactRiskLow, Confidence: "high"})
+	if got.Class != TaskDepthDeep || !containsTaskDepthSignal(got.Signals, TaskDepthSignalSecurity) {
+		t.Fatalf("high-risk intent depth = %#v", got)
+	}
+}
+
+func TestPredictTaskDepthEscalatesHigherVerificationCost(t *testing.T) {
+	task := &taskstate.Task{
+		Intent: &taskstate.IntentContract{
+			Class:        "general",
+			Action:       "implementation",
+			Completeness: "targeted",
+			Confidence:   "high",
+		},
+	}
+	impact := ImpactProfile{
+		Scope:      ImpactFocused,
+		Risk:       ImpactRiskMedium,
+		Confidence: "high",
+		Verification: []ImpactCheck{
+			ImpactCheckTargetedTests,
+			ImpactCheckBuild,
+		},
+		Review: []ImpactCheck{ImpactCheckTargetedReview, ImpactCheckConfigReview},
+	}
+	got := PredictTaskDepth(task, impact)
+	if got.Class != TaskDepthDeep || !containsTaskDepthSignal(got.Signals, TaskDepthSignalVerificationCost) {
+		t.Fatalf("verification-cost depth = %#v", got)
+	}
+}
+
 func TestPredictTaskDepthIsDeterministicAndDoesNotMutateTask(t *testing.T) {
 	task := &taskstate.Task{
 		Goal:         "architecture review",

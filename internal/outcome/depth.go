@@ -126,7 +126,7 @@ func taskDepthSignals(task *taskstate.Task, impact ImpactProfile) map[TaskDepthS
 	if len(task.Uncertainty) > 0 {
 		signals[TaskDepthSignalUncertainty] = struct{}{}
 	}
-	if impact.Risk == ImpactRiskHigh || hasImpactArea(impact, ImpactAreaSecurity) || intentNeedsApproval(intent) || intentClass(intent) == "security" {
+	if impact.Risk == ImpactRiskHigh || intentRisk(intent) == "high" || hasImpactArea(impact, ImpactAreaSecurity) || intentNeedsApproval(intent) || intentClass(intent) == "security" {
 		signals[TaskDepthSignalSecurity] = struct{}{}
 	}
 	if hasImpactArea(impact, ImpactAreaConcurrency) || intentClass(intent) == "refactor" || intentValueIn(intentAction(intent), "architecture", "migrate", "migration", "redesign", "rewrite") {
@@ -148,7 +148,7 @@ func classifyTaskDepth(task *taskstate.Task, impact ImpactProfile, signals map[T
 	if impact.Scope == ImpactBroad || broadIntent(task) {
 		return TaskDepthBroad
 	}
-	if impact.Scope == ImpactUnknown || impact.Scope == ImpactCrossArea || impact.Risk == ImpactRiskHigh || hasSignal(signals, TaskDepthSignalSecurity, TaskDepthSignalArchitecture, TaskDepthSignalUncertainty, TaskDepthSignalHistoricalFragility) {
+	if impact.Scope == ImpactUnknown || impact.Scope == ImpactCrossArea || impact.Risk == ImpactRiskHigh || intentRisk(task.Intent) == "high" || normalizedIntentCompleteness(task.Intent) == "full" || hasSignal(signals, TaskDepthSignalSecurity, TaskDepthSignalArchitecture, TaskDepthSignalVerificationCost, TaskDepthSignalUncertainty, TaskDepthSignalHistoricalFragility) {
 		return TaskDepthDeep
 	}
 	if minimalTask(task, impact, signals) {
@@ -405,4 +405,11 @@ func intentNeedsMeasurement(intent *taskstate.IntentContract) bool {
 
 func intentNeedsApproval(intent *taskstate.IntentContract) bool {
 	return intent != nil && intent.NeedsApproval
+}
+
+func intentRisk(intent *taskstate.IntentContract) string {
+	if intent == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(intent.Risk))
 }
