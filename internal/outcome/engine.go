@@ -169,6 +169,7 @@ type Contract struct {
 	Obstacles           []Obstacle          `json:"obstacles,omitempty"`
 	Evidence            EvidenceSummary     `json:"evidence"`
 	Impact              ImpactProfile       `json:"impact"`
+	Depth               TaskDepthProfile    `json:"depth"`
 	Risks               []string            `json:"risks,omitempty"`
 	Uncertainty         []string            `json:"uncertainty,omitempty"`
 	Health              HealthSummary       `json:"health"`
@@ -183,6 +184,7 @@ func Build(task *taskstate.Task, report projecthealth.Report) Contract {
 	contradictions := DetectContradictions(task)
 	decision := selectWithContradictions(task, report, contradictions)
 	completion := EvaluateCompletion(task)
+	impact := PredictImpact(task)
 	contract := Contract{
 		Schema:         EngineSchema,
 		State:          stateForDecision(task, decision),
@@ -191,7 +193,8 @@ func Build(task *taskstate.Task, report projecthealth.Report) Contract {
 		Stop:           stopFor(task, decision, completion),
 		Completion:     completion,
 		Contradictions: contradictions,
-		Impact:         PredictImpact(task),
+		Impact:         impact,
+		Depth:          PredictTaskDepth(task, impact),
 		Turn:           turnContractForTaskWithContradictions(task, completion, contradictions),
 		// A health observation is still useful when no durable task is attached;
 		// the stop policy below keeps that case from authorizing autonomous work.
@@ -343,6 +346,18 @@ func EngineInstruction(contract Contract) string {
 		" risk=" + string(contract.Impact.Risk) +
 		" confidence=" + contract.Impact.Confidence +
 		" areas=" + impactAreasSummary(contract.Impact.Areas))
+	depth := contract.Depth
+	line("Adaptive task depth: schema=" + depth.Schema +
+		" class=" + string(depth.Class) +
+		" confidence=" + depth.Confidence +
+		" signals=" + taskDepthSignalsSummary(depth.Signals))
+	line("Quality budget: research=" + string(depth.Budget.Research) +
+		" review=" + string(depth.Budget.Review) +
+		" experimentation=" + string(depth.Budget.Experimentation) +
+		" verification=" + string(depth.Budget.Verification) +
+		" specialists=" + string(depth.Budget.Specialists) +
+		" reasoning=" + string(depth.Budget.Reasoning) +
+		" quality_loops=" + itoa(depth.Budget.QualityLoops))
 	line("Impact verification: " + impactChecksSummary(contract.Impact.Verification) +
 		"; review=" + impactChecksSummary(contract.Impact.Review) +
 		"; checkpoint=" + string(contract.Impact.Checkpoint))
@@ -822,6 +837,7 @@ func boundContract(contract Contract) Contract {
 		contract.Health.DirtyPaths = 0
 	}
 	contract.Impact = boundImpact(contract.Impact)
+	contract.Depth = boundTaskDepthProfile(contract.Depth)
 	contract.Next = boundDecisionForReport(contract.Next, contract.Contradictions)
 	if contract.Next.Kind == "" {
 		contract.Next = Decision{
@@ -1039,6 +1055,17 @@ func obstacleIDs(obstacles []Obstacle, limit int) string {
 		}
 	}
 	return strings.Join(ids, ",")
+}
+
+func taskDepthSignalsSummary(signals []TaskDepthSignal) string {
+	if len(signals) == 0 {
+		return "none"
+	}
+	out := make([]string, 0, len(signals))
+	for _, signal := range signals {
+		out = append(out, string(signal))
+	}
+	return strings.Join(out, ",")
 }
 
 func completionCriteriaIDs(indices []int) string {
