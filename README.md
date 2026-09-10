@@ -163,6 +163,7 @@ Subagents, skills marketplace, plugins, embedding indexes.
 - v0.2 finish-the-loop guide: [docs/V0.2.md](docs/V0.2.md)
 - v4 rendered cross-platform evidence contract: [docs/V4-RENDERED-CROSS-PLATFORM.md](docs/V4-RENDERED-CROSS-PLATFORM.md)
 - v4 project-rule read evidence contract: [docs/V4-PROJECT-RULE-READ-EVIDENCE.md](docs/V4-PROJECT-RULE-READ-EVIDENCE.md)
+- v4 goal-state evidence contract: [docs/V4-GOAL-STATE-EVIDENCE.md](docs/V4-GOAL-STATE-EVIDENCE.md)
 - Current exact-head evidence packet: [docs/V4-TIP-EVIDENCE-CURRENT.md](docs/V4-TIP-EVIDENCE-CURRENT.md)
 - Last retained rendered evidence (historical behavior tip): [docs/V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](docs/V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md)
 - License: MIT
