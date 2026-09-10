@@ -76,6 +76,10 @@ type OutcomeQualityExecutionRequest struct {
 	Input       OutcomeQualityInput
 	Target      OutcomeQualityTarget
 	Policy      OutcomeQualityPolicy
+	// QualityLoops is an optional benchmark-only fixture requirement. Zero
+	// preserves the legacy one-verification script; measurement lanes may set
+	// a bounded value to compare route budgets against the same script.
+	QualityLoops int `json:"quality_loops,omitempty"`
 }
 
 // OutcomeQualityExecution is the executor's bounded observation. The runner

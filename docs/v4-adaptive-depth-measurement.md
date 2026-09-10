@@ -45,3 +45,33 @@ A later quality lane must use the same fixture, executor, source, environment,
 and bounded policy for both routes, change only the routing decision, and
 record explicit pass/fail/inconclusive evidence before adaptive depth can be
 used as a production routing gate.
+
+## Quality-isolated lane (#593)
+
+Issue #593 adds that later lane with the same deterministic fixture, scripted
+agent executor, target provenance, input digest, and metric policy for both
+routes. The only route difference is the bounded `MaxTurns` value derived from
+the fixed one-loop comparator or the adaptive profile. Each catalog scenario is
+run twice, in stable scenario/repetition order.
+
+```shell
+GOMAXPROCS=2 go test -p 1 ./internal/benchmark -run 'Test(MeasureAdaptiveDepthQuality|AdaptiveDepthQuality)' -count=1 -v
+```
+
+Observed deterministic result:
+
+| observation | result |
+| --- | ---: |
+| catalog scenarios | 20 |
+| repeated paired observations | 40 |
+| focused/deep/broad observations | 8 / 28 / 4 |
+| fixed-route budget exhaustions | 26 |
+| adaptive-route budget exhaustions | 0 |
+| adaptive quality deltas marked pass | 26 |
+
+The report is serialized and validated, including stable catalog order,
+repetition order, input digests, target provenance, metric bounds, route caps,
+and the generalization boundary. This is evidence that the bounded scripted
+fixture distinguishes the two route limits. It is not evidence of improved
+quality for live providers or arbitrary repositories, and it does not promote
+adaptive depth from advisory guidance to production authority.

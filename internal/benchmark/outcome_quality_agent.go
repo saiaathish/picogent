@@ -84,7 +84,14 @@ func (e *OutcomeQualityAgentExecutor) Execute(ctx context.Context, request Outco
 	verifyCallback := func(verifyCtx context.Context, targets []string) (string, error) {
 		return verifyOutcomeQualityFixture(verifyCtx, workspaceRoot, targets, input, expected)
 	}
-	script, err := outcomeQualityScript(input, expected)
+	qualityLoops := request.QualityLoops
+	if qualityLoops == 0 {
+		qualityLoops = 1
+	}
+	if qualityLoops < 1 || qualityLoops > MaxAdaptiveDepthQualityLoops {
+		return OutcomeQualityExecution{}, fmt.Errorf("scripted quality_loops=%d outside 1..%d", qualityLoops, MaxAdaptiveDepthQualityLoops)
+	}
+	script, err := outcomeQualityScript(input, expected, qualityLoops)
 	if err != nil {
 		return OutcomeQualityExecution{}, err
 	}
@@ -203,8 +210,11 @@ func outcomeQualityExpectedContents(scenario OutcomeQualityScenario, input Outco
 	return expected
 }
 
-func outcomeQualityScript(input OutcomeQualityInput, expected map[string]string) ([]llm.ChatResponse, error) {
-	responses := make([]llm.ChatResponse, 0, 4)
+func outcomeQualityScript(input OutcomeQualityInput, expected map[string]string, qualityLoops int) ([]llm.ChatResponse, error) {
+	if qualityLoops < 1 || qualityLoops > MaxAdaptiveDepthQualityLoops {
+		return nil, fmt.Errorf("quality_loops=%d outside 1..%d", qualityLoops, MaxAdaptiveDepthQualityLoops)
+	}
+	responses := make([]llm.ChatResponse, 0, 3+qualityLoops)
 	readCalls := make([]llm.ToolCall, 0, len(input.Files))
 	for index, file := range input.Files {
 		args, err := json.Marshal(map[string]string{"path": file.Path})
@@ -254,6 +264,13 @@ func outcomeQualityScript(input OutcomeQualityInput, expected map[string]string)
 		Name:      "verify",
 		Arguments: string(verifyArgs),
 	}}, 112, 56))
+	for loop := 2; loop <= qualityLoops; loop++ {
+		responses = append(responses, scriptedOutcomeToolResponse([]llm.ToolCall{{
+			ID:        fmt.Sprintf("verify-%d", loop),
+			Name:      "verify",
+			Arguments: string(verifyArgs),
+		}}, 112, 56))
+	}
 	responses = append(responses, llm.ChatResponse{
 		Message:          llm.Message{Role: "assistant", Content: "Goal complete: the deterministic fixture is complete and verified."},
 		PromptTokens:     128,
