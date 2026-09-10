@@ -5,19 +5,21 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact behavior-evidence note (candidate `0e2b156` / issue `#597`):**
-The latest clean behavior candidate is
-`0e2b15624b29c256c4b22364ecf6970890c90374`. Its exact-head matrix is retained
+**Current exact behavior-evidence note (candidate `4854523` / issue `#599`):**
+The latest clean candidate is
+`48545233c0a453c419787a4ca8b06d21741cc31c`. Its exact-head matrix is retained
 outside the checkout at
-`/private/tmp/picogent-live-0e2b156/runtime-boundary-matrix.json` with digest
-`824e1072b4d7fc9acf9ef00b683b376632febf8556c1ded2282eb486510fe0a9`:
-PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3. The live-provider connectivity and
-fixed quality rows are `PASS`; rendered-platform-local and
-rendered-cross-platform remain `UNVERIFIED`; the broad
-`hostile-filesystem-toctou` residual remains `UNVERIFIED`; and
+`/private/tmp/picogent-rendered-599-evidence/runtime-boundary-matrix.json` with
+digest `ee9b5d25d885911b515dc5b8290dfe8d2399a19a5dbddf4de8cddaa26c6978ba`:
+PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4. The task-owned Darwin rendered row is
+`PASS`; the cross-platform rendered row remains `UNVERIFIED`. Live-provider
+connectivity and fixed quality are not rebound in this exact-head matrix; the
+separate live-provider packet remains bound to behavior SHA `0e2b156`.
+The broad `hostile-filesystem-toctou` residual remains `UNVERIFIED`, and
 `release-authorization` remains `INCONCLUSIVE`.
 
-See the [exact-tip live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
+See the [current Darwin rendered evidence record](V4-RENDERED-RECOVERY-EVIDENCE-4854523.md)
+and the [exact-tip live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
 The prior `f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, and `1ce2059`
 packets and their live/browser records remain historical and are not silently
 projected onto this candidate.
@@ -314,15 +316,19 @@ The rendered rows are also split by claim size:
   [V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md). One local
   platform record cannot stand in for the other supported platforms.
 
-The last retained exact-candidate rendered observation is recorded in
+The latest local rendered observation is recorded in
+[V4-RENDERED-RECOVERY-EVIDENCE-4854523.md](V4-RENDERED-RECOVERY-EVIDENCE-4854523.md)
+at `48545233c0a453c419787a4ca8b06d21741cc31c`; only Darwin is evidenced there.
+The last retained exact-candidate cross-platform observation is recorded in
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md)
 for [#507](https://github.com/saiaathish/picogent/issues/507). Darwin, Linux,
 and Windows each passed the same allow→undo→fresh-process reload flow at the
 exact candidate `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. Exact-SHA matrix
 projection is `rendered-cross-platform=PASS` when that candidate aggregate is
 supplied; later docs-only descendants must not project it onto a different
-candidate SHA. Current behavior candidate `0e2b156` requires a fresh
-three-platform collection. With the
+candidate SHA. Current candidate `4854523` has a fresh Darwin local row but
+requires fresh Linux and Windows observations for a three-platform collection.
+With the
 Darwin/Linux parent-swap docs present, `hostile-parent-swap-confinement`
 projects `PASS`; residual `hostile-filesystem-toctou` stays `UNVERIFIED` and
 `release-authorization` stays `INCONCLUSIVE` without operator approval. The
