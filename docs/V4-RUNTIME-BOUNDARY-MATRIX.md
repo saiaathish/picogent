@@ -5,21 +5,25 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact behavior-evidence note (candidate `4854523` / issue `#599`):**
-The latest clean candidate is
-`48545233c0a453c419787a4ca8b06d21741cc31c`. Its exact-head matrix is retained
-outside the checkout at
-`/private/tmp/picogent-rendered-599-evidence/runtime-boundary-matrix-v2.json`
-with digest
-`7e35eef5b4bdaf7b490e2afaea54ae0331c469b806d5ebdb13153a7ecced42d9`:
-PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4. The task-owned Darwin rendered row is
-`PASS`; the cross-platform rendered row remains `UNVERIFIED`. Live-provider
-connectivity and fixed quality are not rebound in this exact-head matrix; the
-separate live-provider packet remains bound to behavior SHA `0e2b156`.
-The broad `hostile-filesystem-toctou` residual remains `UNVERIFIED`, and
+**Current exact behavior-evidence note (candidate `f004f72` / issue `#601`):**
+The current clean candidate is
+`f004f724a4336f948e765d91c6a985b01eb37505`. A hosted Linux exact-head matrix
+is retained outside the checkout under
+`/private/tmp/picogent-rendered-linux-601/` with matrix digest
+`dee13285d9b702ccbbd0fb3f35b2e4a58f76995e35a204cb983848b0a1c7cd74`; it reports
+`HEAD=PASS`, `tree=CLEAN`, `linux/amd64`, and PASS 7 / INCONCLUSIVE 1 /
+UNVERIFIED 4. The task-owned Linux rendered row is `PASS`. The retained Darwin
+rendered row is bound to behavior SHA `48545233c0a453c419787a4ca8b06d21741cc31c`
+and may be carried only through the documented docs-only-descendant continuity
+rule. No Windows observation is supplied at the current candidate, so
+`rendered-cross-platform` remains `UNVERIFIED`. Live-provider connectivity and
+fixed quality are not rebound in this exact-head matrix; the separate
+live-provider packet remains bound to behavior SHA `0e2b156`. The broad
+`hostile-filesystem-toctou` residual remains `UNVERIFIED`, and
 `release-authorization` remains `INCONCLUSIVE`.
 
-See the [current Darwin rendered evidence record](V4-RENDERED-RECOVERY-EVIDENCE-4854523.md)
+See the [current Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-F004F72.md),
+the [retained Darwin rendered evidence record](V4-RENDERED-RECOVERY-EVIDENCE-4854523.md)
 and the [exact-tip live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
 The prior `f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, and `1ce2059`
 packets and their live/browser records remain historical and are not silently
