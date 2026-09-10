@@ -32,7 +32,8 @@ live-provider packet remains bound to behavior SHA `0e2b156`. The broad
 
 See the [current Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
 the [current Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md),
-and the [current Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md)
+the [current Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md),
+and the [exact-candidate aggregate record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md)
 and the [exact-tip live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
 The prior `f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, and `1ce2059`
 packets and their live/browser records remain historical and are not silently
