@@ -5,27 +5,27 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact behavior-evidence note (candidate `f0e5dd7` / issue `#603`):**
+**Current exact behavior-evidence note (candidate `c8a9eda` / issue `#605`):**
 The current clean candidate is
-`f0e5dd7da8387748b723964e559c7f8a8e300df6`. A hosted Windows exact-head matrix
-is retained outside the checkout under
-`/private/tmp/picogent-rendered-windows-603/` with matrix digest
-`9d80ec0bb837df94ddf7f5c0d478e9ff97303990c5be6030fa37e328a621f52d`; it reports
-`HEAD=PASS`, `tree=CLEAN`, `windows/amd64`, and PASS 7 / INCONCLUSIVE 1 /
-UNVERIFIED 4. The task-owned Windows rendered row is `PASS`. The retained Linux
-rendered row is bound to ancestor candidate
-`f004f724a4336f948e765d91c6a985b01eb37505`, and the retained Darwin rendered row
-is bound to behavior SHA `48545233c0a453c419787a4ca8b06d21741cc31c`; both may be
-carried only through the documented docs-only-descendant continuity rule. No
-exact-current Darwin observation is supplied, so `rendered-cross-platform`
-remains `UNVERIFIED`. Live-provider connectivity and fixed quality are not
-rebound in this exact-head matrix; the separate live-provider packet remains
-bound to behavior SHA `0e2b156`. The broad `hostile-filesystem-toctou` residual
-remains `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE`.
+`c8a9eda1c1965c29d10046a3103e1442766e6e94`. A Darwin exact-head matrix is
+retained outside the checkout under
+`/private/tmp/picogent-rendered-darwin-605/evidence/` with matrix digest
+`5d7040d4a027977339b2e4b4de3f5b743078ea55e353d5ee8fe09b978d1f9f63`; it
+reports `HEAD=PASS`, `tree=CLEAN`, `darwin/arm64`, and PASS 7 /
+INCONCLUSIVE 1 / UNVERIFIED 4. The task-owned Darwin rendered row is `PASS`.
+The retained Linux and Windows rows are bound to ancestor candidates
+`f004f724a4336f948e765d91c6a985b01eb37505` and
+`f0e5dd7da8387748b723964e559c7f8a8e300df6`; they may be carried only through
+the documented docs-only-descendant continuity rule. No exact-current Linux or
+Windows observation is supplied, so `rendered-cross-platform` remains
+`UNVERIFIED`. Live-provider connectivity and fixed quality are not rebound in
+this exact-head matrix; the separate live-provider packet remains bound to
+behavior SHA `0e2b156`. The broad `hostile-filesystem-toctou` residual remains
+`UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE`.
 
-See the [current Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-F0E5DD7.md),
-the [retained Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-F004F72.md),
-the [retained Darwin rendered evidence record](V4-RENDERED-RECOVERY-EVIDENCE-4854523.md)
+See the [current Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-C8A9EDA.md),
+the [retained Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-F0E5DD7.md),
+and the [retained Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-F004F72.md)
 and the [exact-tip live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
 The prior `f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, and `1ce2059`
 packets and their live/browser records remain historical and are not silently
