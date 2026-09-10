@@ -30,7 +30,7 @@ const panels = [...document.querySelectorAll(".setup-stage")];
 
 function toolsReady(st) {
   const required = (st.components || []).filter(
-    (c) => c.id === "home" || c.id === "git" || c.id === "codex-cli" || c.id === "claude-cli"
+    (c) => c.id === "home" || c.id === "git" || c.id === "codex-cli"
   );
   return required.every((c) => c.ok);
 }

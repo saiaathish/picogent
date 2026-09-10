@@ -34,7 +34,7 @@ brew install --build-from-source ./contrib/homebrew/picogent.rb
 ./picogent
 ```
 
-If this is a new machine, Picogent opens a **browser setup page**. It can install missing Codex / Claude Code CLIs into a private Picogent tools folder, then you tap **Log in to ChatGPT Codex** (and optionally **Log in to Claude**). OAuth opens in the browser, then you bounce back to setup. OpenCode and Antigravity are installed separately from their official documentation; Picogent never pipes a remote installer into a shell.
+If this is a new machine, Picogent opens a **browser setup page**. It can install the missing Codex CLI into a private Picogent tools folder, then you tap **Log in to ChatGPT Codex**. Claude Code is optional: choose **Log in to Claude** when you want its subscription path, and Picogent will install it then if needed. OAuth opens in the browser, then you bounce back to setup. OpenCode and Antigravity are installed separately from their official documentation; Picogent never pipes a remote installer into a shell.
 
 Already set up:
 

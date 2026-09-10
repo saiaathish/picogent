@@ -76,7 +76,7 @@ function setupHarness(installResponse) {
   };
   const script = fs.readFileSync(path.join(__dirname, "setup.js"), "utf8");
   vm.runInNewContext(script, context, { filename: "setup.js" });
-  return { calls, elements, context };
+  return { calls, elements, panels, context };
 }
 
 async function settleSetup() {
@@ -199,6 +199,27 @@ test("setup only installs after an explicit button action", async () => {
 
   await installButton.onclick();
   assert.deepEqual(harness.calls.map((call) => call.url), ["/api/setup", "/api/setup/install"]);
+});
+
+test("setup treats Claude CLI as optional", async () => {
+  const harness = setupHarness({
+    status: {
+      components: [
+        { id: "home", ok: true, can_fix: false, detail: "ready" },
+        { id: "git", ok: true, can_fix: false, detail: "ready" },
+        { id: "codex-cli", ok: true, can_fix: false, detail: "ready" },
+        { id: "claude-cli", ok: false, can_fix: true, detail: "optional" },
+      ],
+      logged_in: false,
+    },
+  });
+  await settleSetup();
+
+  await harness.elements.get("install").onclick();
+  const nextButton = harness.elements.get("next");
+  assert.equal(nextButton.disabled, false);
+  await nextButton.onclick();
+  assert.equal(harness.panels[2].hidden, false);
 });
 
 test("failed setup installation restores the explicit action", async () => {
