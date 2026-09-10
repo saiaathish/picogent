@@ -1,9 +1,9 @@
 # v4 live-provider continuity at merged main `db477d1`
 
-Status: the post-merge runtime-boundary matrix validates the retained
-live-provider artifacts from behavior SHA `b7b5c5c` against current clean
-`main` `db477d1`. This is continuity evidence, not a new provider session,
-release authorization, or v4 completion claim.
+Status: the post-merge runtime-boundary matrix captured against clean `main`
+candidate `db477d1` validates the retained live-provider artifacts from
+behavior SHA `b7b5c5c`. This is continuity evidence, not a new provider
+session, release authorization, or v4 completion claim.
 
 This checkpoint continues [#453](https://github.com/saiaathishkarthik/picogent/issues/453)
 and the exact behavior observation in
@@ -49,8 +49,8 @@ post-merge matrix was retained outside the checkout at:
 
 ## Reproduction boundary
 
-From a clean checkout at current `main`, with the original artifacts kept
-outside the checkout:
+From a clean checkout at candidate `db477d1`, with the original artifacts
+kept outside the checkout:
 
 ```sh
 PICOGENT_LIVE_PROVIDER_EVIDENCE=1 \
