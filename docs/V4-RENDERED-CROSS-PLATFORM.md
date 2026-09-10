@@ -15,6 +15,8 @@ records all three rows as `PASS`, with aggregate SHA-256
 The current per-platform records are [Darwin](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
 [Linux](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md), and
 [Windows](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md).
+The dedicated exact-candidate aggregate record is
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md).
 The exact-candidate matrix at
 `/private/tmp/picogent-rendered-aggregate-ad34/runtime-boundary-matrix.json`
 records `head_match=PASS`, `tree=CLEAN`, and
