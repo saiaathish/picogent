@@ -26,6 +26,7 @@ func TestMeasureAdaptiveDepthCatalogIsBoundedAndExplicitlyInconclusive(t *testin
 	fixedFailures := 0
 	adaptivePasses := 0
 	adaptiveWorkAboveFixed := false
+	maxAdaptiveWork := 0
 	for _, observation := range report.Observations {
 		classCounts[observation.Profile.Class]++
 		if observation.FixedBudgetAdequacy == OutcomeAssessmentFail {
@@ -36,6 +37,9 @@ func TestMeasureAdaptiveDepthCatalogIsBoundedAndExplicitlyInconclusive(t *testin
 		}
 		if observation.AdaptiveWorkUnits > observation.FixedWorkUnits {
 			adaptiveWorkAboveFixed = true
+		}
+		if observation.AdaptiveWorkUnits > maxAdaptiveWork {
+			maxAdaptiveWork = observation.AdaptiveWorkUnits
 		}
 		if observation.AdaptiveWorkUnits > report.MaxWorkUnits {
 			t.Fatalf("unbounded adaptive work for %q: %d > %d", observation.ScenarioID, observation.AdaptiveWorkUnits, report.MaxWorkUnits)
@@ -49,6 +53,7 @@ func TestMeasureAdaptiveDepthCatalogIsBoundedAndExplicitlyInconclusive(t *testin
 	if fixedFailures == 0 || adaptivePasses != len(report.Observations) || !adaptiveWorkAboveFixed {
 		t.Fatalf("adaptive routing proxy did not distinguish bounded work: fixed_failures=%d adaptive_passes=%d observations=%d work_delta=%v", fixedFailures, adaptivePasses, len(report.Observations), adaptiveWorkAboveFixed)
 	}
+	t.Logf("adaptive-depth proxy: scenarios=%d focused=%d deep=%d broad=%d fixed_underadequate=%d adaptive_adequate=%d fixed_work=%d max_adaptive_work=%d quality_impact=%s", len(report.Observations), classCounts[outcome.TaskDepthFocused], classCounts[outcome.TaskDepthDeep], classCounts[outcome.TaskDepthBroad], fixedFailures, adaptivePasses, report.Observations[0].FixedWorkUnits, maxAdaptiveWork, report.QualityImpact)
 }
 
 func TestMeasureAdaptiveDepthCatalogHonorsCancellation(t *testing.T) {
