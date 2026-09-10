@@ -218,3 +218,55 @@ narrowed final-path observation only; `hostile-filesystem-toctou` remains
 
 The row `hostile-filesystem-toctou` stays `UNVERIFIED` until a broader
 evidence record exists.
+
+## Retained-artifact read-side campaign (#624)
+
+Issue [#624](https://github.com/saiaathishkarthik/picogent/issues/624) adds a
+bounded read-side observation for `runtimeboundary.LoadReport`. An independent
+same-UID helper repeatedly renames the trusted artifact parent away, presents a
+symlink to a separate outside directory containing a valid candidate-matching
+artifact with an outside-only marker, and restores the trusted parent. The test
+passes only when the outside marker is never accepted, at least one in-tree load
+succeeds, the helper confirms activity, and the outside artifact digest is
+unchanged.
+
+The first exact clean local observation used behavior source
+`2c625c88149b4dbebadba106ecf58908683c8023` on Darwin/arm64:
+
+```text
+schema=picogent.v4.hostile-retained-artifact-read-evidence.v1
+attempts=400
+successful_loads=54
+confirmed_attacker_swaps=true
+outside_marker_observed=false
+source_tree_modified=false
+verdict=PASS
+broad_toctou_claim=UNVERIFIED
+artifact_sha256=e02dcec92a5ece246264a80e55b280efea91640a9c10210a1a90b598aa3b8746
+artifact=/private/tmp/picogent-hostile-retain-624.zDHqYp/retained-artifact-read.json
+```
+
+After the pacing fix, a fresh exact clean local observation used behavior
+source `e7f90b2fbc15b1a5e190a27c1884a365f3dcdd86` on Darwin/arm64:
+
+```text
+schema=picogent.v4.hostile-retained-artifact-read-evidence.v1
+attempts=400
+successful_loads=122
+confirmed_attacker_swaps=true
+outside_marker_observed=false
+source_tree_modified=false
+verdict=PASS
+broad_toctou_claim=UNVERIFIED
+artifact_sha256=e7872eebda5f9d910708c6926b8a500567b6d6d9011467a736f29ec6889a1939
+```
+
+PR #625's hosted run for this fixed source passed Ubuntu, Windows, macOS,
+security, production-artifacts, and release-evidence checks.
+
+The Unix CI matrix runs the same opt-in evidence mode on the exact pull-request
+source SHA and uploads only the digest-only JSON artifact. Normal test runs do
+not retain files or start the helper outside this focused test. This is a
+bounded retained-artifact read-confinement result; it does not establish
+Windows reparse behavior, every pathname operation, or the broad
+`hostile-filesystem-toctou` claim. That matrix row remains `UNVERIFIED`.
