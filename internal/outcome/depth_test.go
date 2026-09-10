@@ -11,7 +11,7 @@ import (
 
 func TestPredictTaskDepthNilIsEmptyAndBounded(t *testing.T) {
 	got := PredictTaskDepth(nil, ImpactProfile{})
-	if got.Class != TaskDepthNone || got.Confidence != "low" || len(got.Signals) != 0 {
+	if got.Schema != TaskDepthSchema || got.Class != TaskDepthNone || got.Confidence != "low" || len(got.Signals) != 0 {
 		t.Fatalf("nil task depth = %#v", got)
 	}
 	if got.Budget != emptyQualityBudget() {

@@ -7,6 +7,7 @@ import (
 )
 
 const (
+	TaskDepthSchema     = "picogent.outcome-depth.v1"
 	maxTaskDepthSignals = 8
 	maxQualityLoops     = 3
 )
@@ -24,8 +25,8 @@ const (
 	TaskDepthBroad   TaskDepthClass = "BROAD"
 )
 
-// TaskDepthSignal is a fixed explanation for why a task received more than
-// minimal depth. Free-form task text is deliberately not retained here.
+// TaskDepthSignal is a fixed explanation for the selected depth. Free-form
+// task text is deliberately not retained here.
 type TaskDepthSignal string
 
 const (
@@ -67,6 +68,7 @@ type QualityBudget struct {
 // TaskDepthProfile is the bounded adaptive-depth contract. It is derived
 // from durable task intent plus the existing impact observation only.
 type TaskDepthProfile struct {
+	Schema     string            `json:"schema"`
 	Class      TaskDepthClass    `json:"class"`
 	Confidence string            `json:"confidence"`
 	Signals    []TaskDepthSignal `json:"signals,omitempty"`
@@ -90,6 +92,7 @@ var taskDepthSignalOrder = [...]TaskDepthSignal{
 // than silently reducing verification.
 func PredictTaskDepth(task *taskstate.Task, impact ImpactProfile) TaskDepthProfile {
 	profile := TaskDepthProfile{
+		Schema:     TaskDepthSchema,
 		Class:      TaskDepthNone,
 		Confidence: "low",
 		Budget:     emptyQualityBudget(),
@@ -260,6 +263,7 @@ func orderedTaskDepthSignals(signals map[TaskDepthSignal]struct{}) []TaskDepthSi
 }
 
 func boundTaskDepthProfile(profile TaskDepthProfile) TaskDepthProfile {
+	profile.Schema = TaskDepthSchema
 	switch profile.Class {
 	case TaskDepthNone, TaskDepthMinimal, TaskDepthFocused, TaskDepthDeep, TaskDepthBroad:
 	default:
