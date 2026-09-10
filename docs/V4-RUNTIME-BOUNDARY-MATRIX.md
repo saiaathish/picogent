@@ -5,22 +5,23 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact behavior-evidence note (candidate `492595f` / issue `#584`):**
+**Current exact behavior-evidence note (candidate `f901e8f` / issue `#595`):**
 The latest clean behavior candidate is
-`492595fb69bb02a91665cb34998a9d7c486ead72`. Its exact-head matrix is retained
+`f901e8fa1a7de08ef8c5f4f9db5246b7b7d64a25`. Its exact-head matrix is retained
 outside the checkout at
-`/private/tmp/picogent-candidate-06e06a1/runtime-boundary-matrix-492595f.json`
-with digest
-`a59a2d485aff8156fa31cc99f70ec8f260562f238999fd1e96b15402f94acbfa`:
+`/private/tmp/picogent-evidence-f901e8f/runtime-boundary-matrix.json` with
+digest
+`6e7cc3a996bc69b7cdcab7d7d735c2f6d359bf1a8920d112aafab59e4a877774`:
 PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5. The live-provider and
 rendered-platform rows remain `UNVERIFIED`; the broad
 `hostile-filesystem-toctou` residual remains `UNVERIFIED`; and
 `release-authorization` remains `INCONCLUSIVE`.
 
-See the [exact behavior-evidence packet](V4-TIP-EVIDENCE-492595F.md). No
+See the [exact behavior-evidence packet](V4-TIP-EVIDENCE-F901E8F.md). No
 current-tip live-provider or rendered-browser artifact is supplied. The prior
-`1531850`, `97a3ec5`, `3f5543d`, and `1ce2059` packets and their live/browser records remain
-historical and are not silently projected onto this candidate.
+`492595f`, `1531850`, `97a3ec5`, `3f5543d`, and `1ce2059` packets and their
+live/browser records remain historical and are not silently projected onto
+this candidate.
 
 ## Command
 

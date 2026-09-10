@@ -15,6 +15,8 @@ Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
 Current exact-tip evidence packet:
+[V4-TIP-EVIDENCE-F901E8F.md](V4-TIP-EVIDENCE-F901E8F.md).
+The prior `492595f` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-492595F.md](V4-TIP-EVIDENCE-492595F.md).
 The prior `1531850` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md).
@@ -27,7 +29,25 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current exact behavior-evidence checkpoint (`492595f`)
+## Current exact behavior-evidence checkpoint (`f901e8f`)
+
+The current clean behavior candidate is
+`f901e8fa1a7de08ef8c5f4f9db5246b7b7d64a25`. The exact-head retained matrix
+`/private/tmp/picogent-evidence-f901e8f/runtime-boundary-matrix.json` has
+digest
+`6e7cc3a996bc69b7cdcab7d7d735c2f6d359bf1a8920d112aafab59e4a877774` and
+records **PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5**.
+
+The exact-tip packet is documented in
+[V4-TIP-EVIDENCE-F901E8F.md](V4-TIP-EVIDENCE-F901E8F.md). The retained
+collector proves `EXACT_HEAD`, `head_match=PASS`, and `tree=CLEAN`. No
+current-tip live-provider or rendered-platform artifacts were supplied, so
+those rows are `UNVERIFIED`. The broad `hostile-filesystem-toctou` residual
+remains `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE`
+because no human operator decision has been recorded. The adaptive-depth
+quality result is benchmark-only and does not change this matrix.
+
+## Historical exact behavior-evidence checkpoint (`492595f`)
 
 The latest clean behavior candidate is
 `492595fb69bb02a91665cb34998a9d7c486ead72`. The exact-head retained matrix
