@@ -14,8 +14,13 @@ Formal TOCTOU residual-acceptance package:
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
-Current exact-tip evidence packet:
-[V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
+Current retained evidence packets:
+[V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md)
+for live-provider behavior at `0e2b156`, and
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md)
+for rendered behavior at `ad34bd5`. The latter is a documentation-only
+descendant of the former. These packets retain separate provenance and must
+not be unioned into a synthetic release-authorizing matrix.
 The prior `f901e8f` packet is retained as historical evidence only:
 [V4-TIP-EVIDENCE-F901E8F.md](V4-TIP-EVIDENCE-F901E8F.md).
 The prior `492595f` packet is retained as historical evidence only:
@@ -31,15 +36,15 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current exact behavior-evidence checkpoint (`0e2b156`)
+## Current retained live-provider checkpoint (`0e2b156`)
 
-The current clean behavior candidate is
+The retained clean behavior candidate for live-provider evidence is
 `0e2b15624b29c256c4b22364ecf6970890c90374`. The exact-head retained matrix
 `/private/tmp/picogent-live-0e2b156/runtime-boundary-matrix.json` has digest
 `824e1072b4d7fc9acf9ef00b683b376632febf8556c1ded2282eb486510fe0a9` and
 records **PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3**.
 
-The exact-tip packet is documented in
+The live-provider packet is documented in
 [V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
 The retained collector proves `EXACT_HEAD`, `head_match=PASS`, and
 `tree=CLEAN`. The live-provider connectivity and fixed quality rows are
@@ -47,7 +52,34 @@ The retained collector proves `EXACT_HEAD`, `head_match=PASS`, and
 `UNVERIFIED`. The broad `hostile-filesystem-toctou` residual remains
 `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` because no
 human operator decision has been recorded. The adaptive-depth quality result
-is benchmark-only and does not change this matrix.
+is benchmark-only and does not change this matrix. This checkpoint is an
+ancestor of the rendered `ad34bd5` checkpoint through documentation-only
+changes; that continuity retains this live-provider record but does not upgrade
+the rendered rows in this matrix.
+
+## Current exact rendered checkpoint (`ad34bd5`)
+
+The exact clean rendered candidate is
+`ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c`. The retained three-platform
+aggregate
+`/private/tmp/picogent-rendered-aggregate-ad34/rendered-cross-platform-evidence.json`
+has SHA-256
+`f3def9dc069980125752abbe3d22b7c2ad6a3af8ad74d52091afc38974e35630` and
+records Darwin, Linux, and Windows as `PASS`. Its exact-candidate runtime
+matrix at
+`/private/tmp/picogent-rendered-aggregate-ad34/runtime-boundary-matrix.json`
+has digest
+`0edb2195f34cd53af4aa4574f82f1f3cd864b319361d427a1d179df6b5c1f952` and
+records **PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4** with
+`rendered-cross-platform=PASS`.
+
+The exact rendered packet is documented in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md).
+Its independent live-provider connectivity and quality rows remain
+`UNVERIFIED`, as do the broad `hostile-filesystem-toctou` residual and
+`release-authorization` (`INCONCLUSIVE`). The three platform PASS rows cannot
+be combined with the live-provider PASS rows from `0e2b156` to authorize a
+release, because the release predicate requires one exact-SHA matrix.
 
 ## Historical exact behavior-evidence checkpoint (`f901e8f`)
 
@@ -320,11 +352,17 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-The current behavior-evidence packet at `0e2b156` records exact-tip PASS 8 /
-INCONCLUSIVE 1 / UNVERIFIED 3. Its live-provider connectivity and fixed
-quality rows are `PASS`; rendered-platform-local and rendered-cross-platform
-remain `UNVERIFIED`; the residual `hostile-filesystem-toctou=UNVERIFIED` and
+The retained evidence is split across two exact behavior candidates. At
+`0e2b156`, the live-provider matrix records PASS 8 / INCONCLUSIVE 1 /
+UNVERIFIED 3 with live-provider connectivity and fixed quality `PASS`, while
+rendered rows remain `UNVERIFIED`. At `ad34bd5`, the rendered matrix records
+PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4 with
+`rendered-cross-platform=PASS`, while live-provider rows remain `UNVERIFIED`.
+The documentation-only continuity between them preserves provenance but does
+not create a synthetic union. The residual
+`hostile-filesystem-toctou=UNVERIFIED` and
 `release-authorization=INCONCLUSIVE` (`authorized: false`) remain. The older
 `f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, `1ce2059`, and
-`f8a78c6` anchors above are historical and are not projected onto the current
-candidate. Human operator review is required before any authorization claim.
+`f8a78c6` anchors above are historical and are not projected onto either
+current packet. Human operator review is required before any authorization
+claim.

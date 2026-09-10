@@ -5,9 +5,21 @@ does **not** set `authorized: true`, and does **not** close
 [#450](https://github.com/saiaathish/picogent/issues/450) /
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
-Current behavior-evidence packet:
-[V4-TIP-EVIDENCE-492595F.md](V4-TIP-EVIDENCE-492595F.md), with the audit
-narrative in [V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
+Current evidence is split across two exact behavior checkpoints, each bound to
+its own claim family:
+
+- Live-provider evidence at behavior SHA
+  `0e2b15624b29c256c4b22364ecf6970890c90374`:
+  [V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md).
+- Rendered cross-platform evidence at behavior SHA
+  `ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c`:
+  [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md).
+
+The `ad34bd5` candidate is a documentation-only descendant of `0e2b156`, and
+the later `main` updates retain both records under that continuity boundary.
+This preserves evidence provenance; it does **not** combine the two matrices
+into a release-authorizing result. The audit narrative is in
+[V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
 The prior [V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md),
 [V4-TIP-EVIDENCE-97A3EC5.md](V4-TIP-EVIDENCE-97A3EC5.md),
 [V4-TIP-EVIDENCE-3F5543D.md](V4-TIP-EVIDENCE-3F5543D.md),
@@ -26,9 +38,10 @@ Predicate contract (including the shorter approval list from
 Before supplying
 `OperatorApproval{Approved: true, Scope: "v4-release", ...}` to a trusted
 workflow, confirm all of the following bind to the **same** intended release
-candidate (current behavior evidence source:
-`0e2b15624b29c256c4b22364ecf6970890c90374`; later documentation commits are
-docs-only descendants and must not be treated as a new behavior observation):
+candidate. The retained live-provider and rendered observations above are
+separate continuity-bound records, not a synthetic union; the release
+predicate still needs one exact-SHA matrix containing every required
+non-residual claim:
 
 1. Exact `main` tip identity for the release decision SHA, clean worktree, and
    verification-manifest `head.match=PASS`.
@@ -50,31 +63,36 @@ are green.
 
 | Evidence | Where / digest | What to confirm |
 | --- | --- | --- |
-| Behavior-evidence packet | [V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md) | Current exact-tip matrix is recorded; release remains **NOT COMPLETE** |
-| Exact-SHA matrix at behavior `0e2b156` | digest `824e1072b4d7fc9acf9ef00b683b376632febf8556c1ded2282eb486510fe0a9`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Live connectivity and fixed quality are PASS; rendered rows and broad TOCTOU remain UNVERIFIED |
-| Exact-tip hosted changes | [PR #596](https://github.com/saiaathishkarthik/picogent/pull/596) | Required hosted checks passed for the docs-only exact-head evidence refresh |
-| Current three-platform rendered aggregate | None supplied at `0e2b156`; prior [record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md) is historical | Keep `rendered-cross-platform` **UNVERIFIED** until a fresh exact-tip collection exists |
-| Current local rendered artifact | None supplied at `0e2b156`; prior record is historical | Keep `rendered-platform-local` **UNVERIFIED** until a fresh exact-tip observation exists |
-| Live provider | [V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md) / digests recorded there | Connectivity and fixed-no-tool quality are `PASS`; provider identity and raw result semantics remain self-reported |
+| Live-provider packet | [V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md) | Connectivity and fixed-no-tool quality are `PASS` at `0e2b156`; rendered rows remain `UNVERIFIED` there |
+| Live-provider matrix at `0e2b156` | digest `824e1072b4d7fc9acf9ef00b683b376632febf8556c1ded2282eb486510fe0a9`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Provider identity and raw result semantics remain self-reported; this is not the rendered candidate matrix |
+| Rendered cross-platform packet | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md) | Darwin/Linux/Windows are `PASS` at exact candidate `ad34bd5`; no live-provider claim follows |
+| Rendered exact-candidate matrix at `ad34bd5` | digest `0edb2195f34cd53af4aa4574f82f1f3cd864b319361d427a1d179df6b5c1f952`; summary PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4 | `rendered-cross-platform=PASS`; live-provider rows and broad TOCTOU remain `UNVERIFIED` |
+| Evidence continuity | `0e2b156` → `ad34bd5` with intervening paths under `docs/` only | Retain the two claim packets separately; do not synthesize a release matrix by unioning their PASS rows |
+| Exact-tip hosted changes | [PR #610](https://github.com/saiaathishkarthik/picogent/pull/610), [#611](https://github.com/saiaathishkarthik/picogent/pull/611), [#612](https://github.com/saiaathishkarthik/picogent/pull/612), [#614](https://github.com/saiaathishkarthik/picogent/pull/614) | Hosted checks and merge history cover the three platform records and aggregate ledger; they do not authorize release |
 | Hostile split | [#542](https://github.com/saiaathish/picogent/pull/542) + parent-swap docs | Parent-swap PASS ≠ TOCTOU PASS |
 | Perf honesty | [#551](https://github.com/saiaathish/picogent/pull/551) / [V4-PERFORMANCE-CAMPAIGN.md](V4-PERFORMANCE-CAMPAIGN.md) | Alloc gains **PROVED**; outcome-quality gains remain UNPROVED |
-| Tip evidence docs | [#597](https://github.com/saiaathishkarthik/picogent/issues/597) + this packet | Live-provider evidence refresh is complete; rendered evidence remains separate and release is unauthorized |
+| Tip evidence docs | [#597](https://github.com/saiaathishkarthik/picogent/issues/597), [#613](https://github.com/saiaathishkarthik/picogent/issues/613), and this packet | Live-provider and rendered evidence are both retained, but separate; release remains unauthorized |
 
-Operator-local retained roots (outside checkout):
+Current operator-local retained roots (outside checkout):
 
 ```text
-/private/tmp/picogent-evidence-f8a78c6/
 /private/tmp/picogent-live-0e2b156/
-/private/tmp/picogent-rendered-darwin-3f-collector-output.oIIuHB/
-/private/tmp/picogent-rendered-linux-507-artifact.MC0E0Y/
-/private/tmp/picogent-rendered-windows-507-artifact.OlfWSr/
-/private/tmp/picogent-rendered-cross-platform-3f-aggregate.L5cYfm/
-/private/tmp/picogent-rendered-cross-platform-3f-matrix-local.jGT2s2/
+/private/tmp/picogent-rendered-darwin-609/evidence/
+/private/tmp/picogent-rendered-linux-607/rendered-linux-owned-browser-ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c/picogent-linux-rendered-evidence/
+/private/tmp/picogent-rendered-windows-608/rendered-windows-evidence-ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c/
+/private/tmp/picogent-rendered-aggregate-ad34/rendered-cross-platform-evidence.json
+/private/tmp/picogent-rendered-aggregate-ad34/runtime-boundary-matrix.json
 ```
 
 Historical (do not project onto tip):
 
 ```text
+/private/tmp/picogent-evidence-f8a78c6/
+/private/tmp/picogent-rendered-darwin-3f-collector-output.oIIuHB/
+/private/tmp/picogent-rendered-linux-507-artifact.MC0E0Y/
+/private/tmp/picogent-rendered-windows-507-artifact.OlfWSr/
+/private/tmp/picogent-rendered-cross-platform-3f-aggregate.L5cYfm/
+/private/tmp/picogent-rendered-cross-platform-3f-matrix-local.jGT2s2/
 /private/tmp/picogent-evidence-423d047/
 /private/tmp/picogent-evidence-docs-tip-70dba64/
 ```
@@ -106,15 +124,18 @@ does **not**, by itself:
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating docs-tip `rendered-cross-platform=PASS` at another candidate | Historical aggregate is exact-candidate-bound to `3f5543d`; current `0e2b156` row is UNVERIFIED |
+| Fabricating a unified docs-tip `PASS` | The live packet is bound to `0e2b156` and the rendered aggregate to `ad34bd5`; separate PASS rows must not be unioned for release authorization, and any later non-docs candidate requires fresh collection |
 
 ## Current dry-run posture (no approval observed)
 
 | Field | Value |
 | --- | --- |
-| Docs tip | docs-only descendant containing this packet; bind the release SHA separately |
-| Behavior evidence SHA | `0e2b15624b29c256c4b22364ecf6970890c90374` |
-| Matrix (exact behavior head) | PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3; live-provider rows `PASS`, rendered rows `UNVERIFIED` |
+| Docs tip | Documentation-only descendants retain separate packets; bind the release SHA and one exact-SHA matrix separately |
+| Live-provider evidence SHA | `0e2b15624b29c256c4b22364ecf6970890c90374` |
+| Live-provider matrix | PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3; live-provider rows `PASS`, rendered rows `UNVERIFIED` |
+| Rendered evidence SHA | `ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c` |
+| Rendered exact-candidate matrix | PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4; `rendered-cross-platform=PASS`, live-provider rows `UNVERIFIED` |
+| Release matrix posture | No synthetic union of the two matrices; `release-authorization` remains `INCONCLUSIVE` |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
 | Operator approval | **Absent — do not auto-sign** |
