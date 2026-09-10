@@ -65,6 +65,7 @@ are green.
 | --- | --- | --- |
 | Live-provider packet | [V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md) | Connectivity and fixed-no-tool quality are `PASS` at `0e2b156`; rendered rows remain `UNVERIFIED` there |
 | Live-provider matrix at `0e2b156` | digest `824e1072b4d7fc9acf9ef00b683b376632febf8556c1ded2282eb486510fe0a9`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Provider identity and raw result semantics remain self-reported; this is not the rendered candidate matrix |
+| Current-main live continuity matrix | [continuity record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md#docs-only-continuity-refresh-at-2dd8e1b); candidate `2dd8e1b`, behavior `0e2b156`, digest `764a940da63d5003be6a6f3d302752ffbaa230010ab9f23a859a26cf60e94235` | `DOCS_ONLY_DESCENDANT`, `HEAD=PASS`, `tree=CLEAN`; live-provider rows `PASS`, rendered rows `UNVERIFIED` |
 | Rendered cross-platform packet | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md) | Darwin/Linux/Windows are `PASS` at exact candidate `ad34bd5`; no live-provider claim follows |
 | Rendered exact-candidate matrix at `ad34bd5` | digest `0edb2195f34cd53af4aa4574f82f1f3cd864b319361d427a1d179df6b5c1f952`; summary PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4 | `rendered-cross-platform=PASS`; live-provider rows and broad TOCTOU remain `UNVERIFIED` |
 | Evidence continuity | `0e2b156` → `ad34bd5` with intervening paths under `docs/` only | Retain the two claim packets separately; do not synthesize a release matrix by unioning their PASS rows |
