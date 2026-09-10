@@ -70,6 +70,25 @@ hostile-filesystem-toctou=UNVERIFIED
 release-authorization=INCONCLUSIVE
 ```
 
+## Docs-only continuity refresh at `2dd8e1b`
+
+After the rendered evidence landings and the split-audit documentation merge,
+the matrix was rerun at the exact clean `main` tip
+`2dd8e1bb6b395d7b14bca4d45bf2b4fc53f93fb0`, retaining this packet's behavior
+SHA `0e2b15624b29c256c4b22364ecf6970890c90374`. Git proved
+`behavior_provenance=DOCS_ONLY_DESCENDANT`; `head_match=PASS` and `tree=CLEAN`
+were also recorded.
+
+The retained current-main continuity matrix is
+`/private/tmp/picogent-continuity-main-2dd8e1b/runtime-boundary-matrix.json`
+with SHA-256
+`764a940da63d5003be6a6f3d302752ffbaa230010ab9f23a859a26cf60e94235`. It
+records **PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3**, with both live-provider
+rows still `PASS` and both rendered rows still `UNVERIFIED`. This is a
+continuity refresh for the live-provider claim family only. It does not rebind
+the rendered `ad34bd5` aggregate and must not be unioned with that aggregate
+to authorize a release.
+
 ## Reproduction boundary
 
 Reproduce from a clean checkout at the exact candidate SHA with a disposable

@@ -57,6 +57,15 @@ ancestor of the rendered `ad34bd5` checkpoint through documentation-only
 changes; that continuity retains this live-provider record but does not upgrade
 the rendered rows in this matrix.
 
+The live-provider packet also has a current-main continuity refresh at docs tip
+`2dd8e1bb6b395d7b14bca4d45bf2b4fc53f93fb0`, retained at
+`/private/tmp/picogent-continuity-main-2dd8e1b/runtime-boundary-matrix.json`
+with digest
+`764a940da63d5003be6a6f3d302752ffbaa230010ab9f23a859a26cf60e94235`. It
+records `DOCS_ONLY_DESCENDANT`, `HEAD=PASS`, `tree=CLEAN`, and the same PASS 8 /
+INCONCLUSIVE 1 / UNVERIFIED 3 live-provider-only posture. It is a continuity
+refresh, not a second rendered observation and not a synthetic release matrix.
+
 ## Current exact rendered checkpoint (`ad34bd5`)
 
 The exact clean rendered candidate is
