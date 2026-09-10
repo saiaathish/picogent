@@ -1,8 +1,11 @@
 # Current V4 exact-head evidence
 
-Stable entrypoint for the current exact-head evidence packet:
-[V4-TIP-EVIDENCE-492595F.md](V4-TIP-EVIDENCE-492595F.md).
+Stable entrypoint for the current exact-head live-provider packet:
+[V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md).
 
-The linked packet is bound to its named candidate SHA. This entrypoint is
-updated only by a later evidence-refresh commit; it does not authorize a
-release or permit an older packet to be projected onto a new candidate.
+The linked packet is bound to the merged `main` candidate
+`b7b5c5c3e98f2caaf1c0d951740bdd7046f755f5`. It records live-provider
+connectivity and fixed-no-tool quality only; rendered, hostile-runtime, and
+release-authorization claims remain separately bounded. This entrypoint is
+updated only by a later evidence-refresh commit and never projects an older
+packet onto a new candidate.

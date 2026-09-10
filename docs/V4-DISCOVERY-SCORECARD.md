@@ -56,7 +56,7 @@ not enough to establish real runtime behavior.
 | Performance | Deterministic local microbenchmarks, bounded long-session persistence through 256 turns, fresh/warm child-process RSS envelopes, and a 96-turn live-retention stress fixture exist | Bounded output/context controls | Provider-token accuracy, cross-surface startup, and stable cross-platform budgets remain unmeasured | Live value-aware selection adds a large allocation/latency delta over the recency control; repeated large-output scans and broad provenance passes may waste CPU | Profile production-shaped retention overhead and rerun v3-v4 comparisons before claiming performance gains |
 | Security | Safe/Fast permission gate, workspace containment checks, allowlisted MCP environment | Hosted `govulncheck` now scans the dependency graph; tool output is partly labeled untrusted | Filesystem writes remain TOCTOU-sensitive; verification/git/installer environments and raw MCP results are not uniformly isolated | Automatic `curl \| bash`/global installer fallbacks are high-risk default surface | Add hostile runtime evidence and preserve explicit limits around dependency reachability and path races |
 | Concurrency | Goal ABA defense, save-before-publish invariants, hosted Linux race coverage, bounded GUI active-turn reconnect evidence, barrier-driven cancellation/save/publish stress, cooperative cross-process writers, trace lock-holder death recovery, sustained bounded trace retention, first-use lock creation recovery, project-registry transactions, and cross-surface lifecycle checkpoints | Unix/Windows lock primitives and deterministic recovery harnesses | Hostile process death outside the trace lock handoff, rendered cross-surface event ordering, and filesystem races lack complete stress evidence | New orchestration would add complexity before invariants are measured | Extend cross-process evidence only where it proves a user-visible recovery invariant |
-| Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | First-run attempts several optional provider installs; advanced cards/side rail compete with first success | Make first run one path: folder → Codex → Safe → first useful result; defer optional providers/features |
+| Beginner UX | Safe default, visible progress, action summaries, and undo affordance | Scoped confirmations and readable CLI error structure | Provider jargon, inconsistent failure paths, and untested rendered interaction | Advanced optional-provider cards/side rail can compete with first success | Keep first run one path: folder → Codex → Safe → first useful result; keep optional providers explicit |
 | GUI | Stale-turn guards, permission generations, bounded SSE server, four-state verification presentation, hostile wire coverage, bounded owned-browser reconnect/recovery and long-horizon fixture evidence, HTTP-boundary shutdown/save-failure lifecycle evidence, hosted Windows console-control cancellation at the server boundary, and last-retained exact three-platform rendered-recovery evidence at historical `3f5543d` | Lifecycle and undo wiring; one local rendered reconnect path plus the exact candidate-bound browser fixture | Current behavior tip `492595f` has no fresh rendered artifact; live-provider behavior, broad permission/undo semantics, general full recovery, and non-fixture cross-surface rendered journeys remain unverified | Narrow events trigger broad reloads; remaining admission wrappers duplicate task/evidence routing | Extend exact-candidate owned-browser coverage to broader journeys only when a concrete release claim requires it |
 | TUI/headless | Headless stdout/stderr, fail-closed permission behavior, resume state, explicit cleanup/persistence errors, and local macOS EOF/signal/save-failure evidence | CLI dispatch and exit classes | Non-TTY/rendered TUI behavior and cross-platform EOF/signal behavior remain unproven | `stdioHandler` stream/discard path is a deletion candidate pending caller proof | Add platform-appropriate subprocess/rendered evidence before changing the shared runtime boundary |
 | Maintainability/deletion | Existing safety primitives are localized enough to preserve | Dependency/build surface is understandable | GUI server is 2,702 lines; GUI/TUI routing remains duplicated | Repeated surface/control paths and stale benchmark anchors | Remove or simplify remaining duplicate control paths only after caller/API confirmation |
@@ -106,8 +106,8 @@ not enough to establish real runtime behavior.
 - Duplicate surface admission/inference and repeated large-output/provenance
   scans.
 - Duplicate stale-output reduction paths and duplicate task/evidence models.
-- Optional provider installation and advanced UI concepts in the first-run
-  path.
+- Advanced UI concepts in the first-run path; automatic optional-provider
+  installation was removed from the default path by #618.
 - Compatibility aliases are deletion candidates, but external API usage is
   `UNVERIFIED`; do not delete them speculatively.
 
@@ -171,8 +171,8 @@ confirmation; it is no longer a deletion candidate.
    has equivalent coverage.
 2. Prompt-only repair diversity hints after structural route/recovery evidence
    exists.
-3. Optional provider installers and advanced first-run cards from the default
-   setup path.
+3. Advanced first-run cards; automatic optional-provider installation from the
+   default setup path was fixed by #618.
 
 ## Completed and selected slices
 
