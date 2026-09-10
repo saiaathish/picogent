@@ -131,9 +131,9 @@ func codexCLIComponent() Component {
 
 func claudeCLIComponent() Component {
 	if p := look("claude"); p != "" {
-		return Component{ID: "claude-cli", Name: "Claude Code CLI", OK: true, Detail: p}
+		return Component{ID: "claude-cli", Name: "Claude Code CLI (optional)", OK: true, Detail: p}
 	}
-	return Component{ID: "claude-cli", Name: "Claude Code CLI", CanFix: true, Detail: "not installed", FixHint: "Will install into Picogent's private CLI folder with npm."}
+	return Component{ID: "claude-cli", Name: "Claude Code CLI (optional)", CanFix: true, Detail: "not installed — choose Log in to Claude if you want it", FixHint: "Optional: choose Log in to Claude to install and sign in when needed."}
 }
 
 func openCodeCLIComponent() Component {
@@ -281,16 +281,6 @@ func InstallCores() (string, error) {
 		}
 	} else {
 		say("ok  codex cli")
-	}
-
-	if look("claude") == "" {
-		if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
-			say("skip  claude cli (test)")
-		} else if err := installNPM(claudeNPMSpec, say); err != nil {
-			say("miss claude  " + err.Error())
-		}
-	} else {
-		say("ok  claude cli")
 	}
 
 	if look("opencode") == "" {

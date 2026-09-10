@@ -359,6 +359,58 @@ func TestSetupDoesNotAutoExecuteRemoteProviderInstallers(t *testing.T) {
 	}
 }
 
+func TestInstallCoresDoesNotInstallOptionalClaude(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("PICOGENT_HOME", home)
+	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
+
+	oldLookup := execLookPath
+	oldTrust := trustedExecutableFn
+	oldElevated := setupElevatedFn
+	oldRunner := runInstaller
+	t.Cleanup(func() {
+		execLookPath = oldLookup
+		trustedExecutableFn = oldTrust
+		setupElevatedFn = oldElevated
+		runInstaller = oldRunner
+	})
+
+	fakeNPM := filepath.Join(home, "npm")
+	execLookPath = func(name string) (string, error) {
+		if name == "npm" {
+			return fakeNPM, nil
+		}
+		return "", errors.New("not found")
+	}
+	trustedExecutableFn = func(_ string, path string) string { return path }
+	setupElevatedFn = func() bool { return false }
+	installCalls := 0
+	runInstaller = func(_ time.Duration, _ string, _ []string, _ []string) (string, error) {
+		installCalls++
+		binDir := filepath.Join(home, managedToolsDirName, managedBinDirName)
+		if err := os.MkdirAll(binDir, 0o700); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(binDir, "codex"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+			return "", err
+		}
+		return "", nil
+	}
+
+	log, err := InstallCores()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installCalls != 1 {
+		t.Fatalf("core setup invoked %d installers, want only the default Codex installer", installCalls)
+	}
+	for _, line := range strings.Split(strings.ToLower(log), "\n") {
+		if strings.Contains(line, "claude cli") || strings.Contains(line, "miss claude") {
+			t.Fatalf("core setup mentioned optional Claude: %q", log)
+		}
+	}
+}
+
 func TestTrustedExternalExecutableRejectsUntrustedPath(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

@@ -34,7 +34,7 @@ prompt-construction test.
 
 ### Installer safety
 
-The first-run installer no longer runs remote shell text. Codex and Claude
+The first-run installer no longer runs remote shell text. The default Codex
 installation uses only compile-time allowlisted package names from the
 explicit `https://registry.npmjs.org/` registry, a private
 `~/.picogent/tools` prefix, isolated npm config/cache files, and
@@ -43,8 +43,9 @@ an explicit allowlisted environment rather than the Picogent process's API
 keys, auth variables, loader hooks, npm configuration overrides, or ambient
 PATH entries. The resolved package manager and provider binaries must come
 from known runtime prefixes, and automatic installation refuses an elevated
-Unix process or elevated Windows token. Interactive provider login also refuses
-to launch from an elevated Picogent process, including when a provider was
+Unix process or elevated Windows token. Optional Claude installation is only
+requested by its explicit login action and uses the same boundary. Interactive
+provider login also refuses to launch from an elevated Picogent process, including when a provider was
 already installed. Installer output is capped and credential-shaped values are
 redacted before it reaches setup logs.
 
