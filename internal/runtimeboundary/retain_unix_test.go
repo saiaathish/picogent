@@ -91,6 +91,7 @@ const (
 	hostileRetainLoadEvidenceEnv  = "PICOGENT_HOSTILE_RETAIN_LOAD_EVIDENCE_OUT"
 	hostileRetainLoadArtifactName = "runtime-boundary-matrix.json"
 	hostileRetainLoadAttempts     = 400
+	hostileRetainLoadTrustedPause = 250 * time.Microsecond
 )
 
 type hostileRetainLoadEvidence struct {
@@ -285,6 +286,11 @@ func retainLoadParentSwapHelper(t *testing.T) {
 		if err := os.Rename(backup, parent); err != nil {
 			t.Fatal(err)
 		}
+		// Keep the restored trusted parent visible briefly so the reader has a
+		// deterministic opportunity to observe a valid in-tree load on slower
+		// hosted runners. The next loop still immediately resumes the hostile
+		// replacement campaign after this bounded pause.
+		time.Sleep(hostileRetainLoadTrustedPause)
 	}
 	info, err := os.Lstat(parent)
 	if errors.Is(err, os.ErrNotExist) {
