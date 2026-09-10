@@ -1,6 +1,7 @@
 # V4 project-rule read confinement
 
-Status: **bounded evidence contract implemented; hosted observation pending**.
+Status: **PASS for the exact post-merge Darwin main observation; the Windows
+record remains bound to the pre-merge pull-request SHA**.
 This record belongs to [#628](https://github.com/saiaathishkarthik/picogent/issues/628)
 under the broader runtime-boundary parent
 [#453](https://github.com/saiaathishkarthik/picogent/issues/453).
@@ -34,6 +35,34 @@ in-tree load must succeed, the helper must confirm a swap, and the outside
 file digest must remain unchanged. Evidence mode writes only a digest-only JSON
 record using schema `picogent.v4.project-rule-read-evidence.v1`.
 
+## Post-merge exact-main observation
+
+The focused campaign was rerun from a clean checkout at the post-merge `main`
+tip after #629:
+
+```text
+source:                 167155027caafb40894bb49e46eff6ac5b6e0294
+host:                   darwin/arm64
+attempts:               256
+successful_loads:       47
+confirmed_attacker_swaps: true
+outside_marker_observed: false
+outside_before_sha256:  3efd9b5dbef128bbba2b62bb4549bca6b7b3abc8e9189d9f59c68311e277ef1f
+outside_after_sha256:   3efd9b5dbef128bbba2b62bb4549bca6b7b3abc8e9189d9f59c68311e277ef1f
+source_tree_modified:   false
+verdict:                PASS
+broad_toctou_claim:     UNVERIFIED
+artifact_sha256:        1455f2ed98f03cd2d0f1f678f5467b46e205897d3270ebf4dfd6d49acc777cf1
+observed:               2026-09-10, local exact-main run
+```
+
+The retained JSON record was written outside the checkout under
+`/private/tmp/picogent-project-rule-evidence-1671550/`. It contains only the
+schema, source identity, categorical counts, and digests; the outside rule
+contents and helper output were not retained. The hosted PR run also passed
+the Windows junction campaign at its exact review SHA, but that record is not
+rebound to this later merge SHA.
+
 ## Hosted execution
 
 The Unix and Windows CI lanes run the focused test against the exact
@@ -42,9 +71,11 @@ temporary directory. Windows probes junction support explicitly; if the
 runner cannot create the required reparse fixture, evidence mode fails instead
 of silently converting an unsupported host into a pass.
 
-The eventual retained record must bind `candidate_sha` to the reviewed source,
-set `source_tree_modified=false`, `verdict=PASS`, and retain
-`broad_toctou_claim=UNVERIFIED`.
+Any later retained record must bind `candidate_sha` to its exact reviewed
+source, set `source_tree_modified=false`, `verdict=PASS`, and retain
+`broad_toctou_claim=UNVERIFIED`. The exact-main Darwin record above is the
+current post-merge observation for this named boundary; it does not make the
+stale global live-provider or rendered-platform packet current.
 
 ## Explicit limits
 
