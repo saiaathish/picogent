@@ -119,6 +119,22 @@ func TestEvidenceSnapshotRecognizesDeniedApproval(t *testing.T) {
 	}
 }
 
+func TestEvidenceSnapshotPreservesUnverifiedStatus(t *testing.T) {
+	task, err := New("evidence-unverified", "check the result", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.AddEvidence(Evidence{
+		Kind:    EvidenceKindTests,
+		Status:  "UNVERIFIED",
+		Summary: "unverified evidence remains categorical",
+	})
+	snapshot := task.EvidenceSnapshot()
+	if len(snapshot) != 1 || snapshot[0].Status != "UNVERIFIED" || snapshot[0].Trusted {
+		t.Fatalf("unverified snapshot = %#v", snapshot)
+	}
+}
+
 func TestEvidenceSnapshotOmitsInvalidCriterionBinding(t *testing.T) {
 	task, err := New("evidence-invalid-criterion", "check the result", nil)
 	if err != nil {
