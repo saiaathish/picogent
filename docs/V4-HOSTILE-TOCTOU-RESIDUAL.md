@@ -20,27 +20,31 @@ Fillable residual-acceptance record stub:
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 
-## Rebind baseline (main tip `0788a2b`)
+## Rebind baseline (docs tip `190bdc8`; behavior tip `9c1ca2e`)
 
-This rebind starts from `main` tip
-`0788a2b74155d5c46af37c5f7c19c5a3d5c22ef9`. The latest retained runtime
-evidence remains bound to behavior candidate `592b07a633d9683354c4abeee09b767bc071ab35`.
-Because PR #651 changed code after that candidate, the retained matrix is not
+This rebind records the current docs-only `main` tip
+`190bdc8b92aa11b498e08638b3de48b7237ef4fa`, a documentation descendant of
+behavior-hardening tip `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` (PR #661).
+The latest retained runtime evidence remains bound to behavior candidate
+`592b07a633d9683354c4abeee09b767bc071ab35`. Because PRs #651, #657, #659, and
+#661 changed code after that candidate, the retained matrix is not
 current-main runtime proof and must not be silently re-used as one.
 
 | Anchor | Value |
 | --- | --- |
-| Base docs / `main` tip at rebind authoring | `0788a2b74155d5c46af37c5f7c19c5a3d5c22ef9` |
+| Base docs / `main` tip at rebind authoring | `190bdc8b92aa11b498e08638b3de48b7237ef4fa` |
 | Latest retained behavior candidate | `592b07a633d9683354c4abeee09b767bc071ab35` |
+| Latest behavior-hardening tip (not retained runtime evidence) | `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` |
+| Docs-only descendants after the behavior tip | #663, #665, and #666 |
 | Three-platform aggregate SHA-256 | `71bfe03c0afb889c9a548e9264cf0ab4509d80f69a85e346fb4501d85a626b05` |
 | Runtime matrix SHA-256 | `6048c4244818db694b96b5875f8893f1d84aaf731a4caebc4493bfbff4213817` |
 | Retained matrix summary | **PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1** |
 | Residual row | `hostile-filesystem-toctou=UNVERIFIED` |
-| Narrow persistence hardening | [#651](https://github.com/saiaathish/picogent/pull/651) merged; [#652](https://github.com/saiaathish/picogent/pull/652) removed dead session helpers |
+| Narrow hardening lineage | [#651](https://github.com/saiaathish/picogent/pull/651), [#657](https://github.com/saiaathish/picogent/pull/657), [#659](https://github.com/saiaathish/picogent/pull/659), and [#661](https://github.com/saiaathish/picogent/pull/661) merged; [#652](https://github.com/saiaathish/picogent/pull/652) removed dead session helpers |
 
 The candidate and current-main anchors are intentionally separate. A fresh
 exact-current behavior campaign is required before making claims about the
-combined post-#651 code.
+combined post-#661 code.
 
 ## Why this package exists
 

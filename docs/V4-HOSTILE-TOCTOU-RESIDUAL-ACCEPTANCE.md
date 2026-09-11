@@ -1,6 +1,6 @@
 # V4 hostile TOCTOU residual acceptance record (operator stub)
 
-Status: **unsigned stub** (re-bound from base `main` tip `0788a2b`). Fill this
+Status: **unsigned stub** (re-bound from docs `main` tip `190bdc8`). Fill this
 record when consciously accepting
 `hostile-filesystem-toctou=UNVERIFIED` as a residual audit boundary during
 release eligibility. This file does **not** authorize a release by itself,
@@ -26,13 +26,15 @@ secrets or credentials into this stub.
 | Bounded confinement proved | `hostile-parent-swap-confinement=PASS` via [#542](https://github.com/saiaathish/picogent/pull/542) |
 | Final-release / checklist packet | [#548](https://github.com/saiaathish/picogent/pull/548) |
 | Latest retained candidate / behavior SHA | `592b07a633d9683354c4abeee09b767bc071ab35` |
-| Base `main` tip before this docs rebind | `0788a2b74155d5c46af37c5f7c19c5a3d5c22ef9` |
+| Latest behavior-hardening tip (not retained runtime evidence) | `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` |
+| Base docs `main` tip before this docs rebind | `190bdc8b92aa11b498e08638b3de48b7237ef4fa` |
 | Exact-SHA matrix digest (optional) | `71bfe03c0afb889c9a548e9264cf0ab4509d80f69a85e346fb4501d85a626b05` aggregate; `6048c4244818db694b96b5875f8893f1d84aaf731a4caebc4493bfbff4213817` runtime |
 | Record date (UTC) | `_fill_` |
 
-The retained candidate predates the post-candidate code changes in #651. A
-signer must replace it with a fresh exact-current candidate before treating
-this record as release-bound; this stub does not imply that refresh occurred.
+The retained candidate predates the post-candidate code changes in #651, #657,
+#659, and #661. A signer must replace it with a fresh exact-current candidate
+before treating this record as release-bound; this stub does not imply that
+refresh occurred.
 
 ## Decision
 
