@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 	"github.com/saiaathish/picogent/internal/workspace"
 )
@@ -21,6 +22,48 @@ type verificationEvidence struct {
 	observation       *workspace.Observation
 	observationUsable bool
 	observationReason string
+}
+
+// noteVisualEvidence binds only a package-owned browser screenshot producer to
+// the durable visual requirement. Screenshot-shaped text, model narration, or
+// generic MCP output never reaches this function without first passing the
+// catalog-bound identity and image validation in internal/mcpbridge.
+func (a *Agent) noteVisualEvidence(producer tools.ProducerResult, err error, ev EventHandler) bool {
+	visual := producer.Visual
+	if visual == nil {
+		return false
+	}
+	status := "PASS"
+	summary := "live browser screenshot returned a validated image"
+	switch {
+	case err != nil || visual.ResultError:
+		status = "FAIL"
+		summary = "live browser screenshot producer failed before producing usable visual evidence"
+	case visual.ValidImageCount <= 0:
+		status = "INCONCLUSIVE"
+		summary = "live browser screenshot producer returned no validated image"
+	}
+	reference := strings.TrimSpace(visual.Reference)
+	if reference == "" {
+		reference = "browser screenshot producer"
+	}
+	return a.mutateTask(ev, func(task *taskstate.Task) error {
+		task.RecordBrowserEvidence(status, summary, reference)
+		return nil
+	})
+}
+
+func cloneLLMParts(parts []llm.Part) []llm.Part {
+	if len(parts) == 0 {
+		return nil
+	}
+	out := make([]llm.Part, 0, len(parts))
+	for _, part := range parts {
+		clone := part
+		clone.Data = append([]byte(nil), part.Data...)
+		out = append(out, clone)
+	}
+	return out
 }
 
 // executeVerification observes the requested paths before and after the
