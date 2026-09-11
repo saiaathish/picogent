@@ -1,14 +1,16 @@
 # V4 hostile filesystem TOCTOU boundary inventory
 
-Status: **inventory and contract slice only**. This record supports [#648](https://github.com/saiaathish/picogent/issues/648)
-under parent [#453](https://github.com/saiaathish/picogent/issues/453). It does
-not claim `hostile-filesystem-toctou=PASS`, authorize a release, or provide
-race-winning or exploit procedures.
+Status: **inventory and contract slice only**. This record supports the
+remaining [#453](https://github.com/saiaathish/picogent/issues/453) audit and
+records the completed #648 artifact-boundary child. It does not claim
+`hostile-filesystem-toctou=PASS`, authorize a release, or provide race-winning
+or exploit procedures.
 
 ## Evidence anchor
 
 The inventory was reviewed against merged `main` at
-`f5c8612e101225ebcd9c4a6df93f2a5f5ff3811e`. The latest rendered evidence
+`9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` after focused hardening in PRs
+#657, #659, and #661. The latest rendered evidence
 candidate remains
 `592b07a633d9683354c4abeee09b767bc071ab35`; its exact-candidate aggregate and
 runtime matrix are documented in
@@ -28,8 +30,8 @@ That packet records `rendered-cross-platform=PASS`, while the broader
 | Evolution store state | `internal/evolve/store.go` now uses `securefile.EnsureDir`, `ReadFile`, and `WriteAtomic`; the shared `securefile.OpenLockFile` / `LockFile` contract owns lock bootstrap and platform locking. The old raw `internal/evolve/atomic*.go` and platform lock helpers were removed. | Evolution-store tests cover ordinary persistence, cross-process serialization, and Unix rejection of symlinked state parents, state files, and lock files; securefile platform tests cover the underlying descriptor/handle implementations. | The secure-file contract narrows pathname replacement and symlink races but does not provide an atomic cross-process snapshot across the initial existence probe, lock acquisition, and payload read. The broad same-UID TOCTOU claim remains `UNVERIFIED`. |
 | Retained runtime evidence | `internal/runtimeboundary/retain.go`: lexical/resolved outside-workspace validation then `securefile.WriteExclusive`; loads use `securefile.ReadFileLimited`. | Exact-SHA schema, size, candidate, clean-tree, and outside-workspace checks are covered; the current rendered packet retains digest-only artifacts. | The resolved artifact parent is not a universal immutable identity binding. A hostile writer can still race an outside path after validation; the matrix intentionally keeps the broad row `UNVERIFIED`. |
 | GUI workspace preview | `internal/gui/server.go` `readFile` resolves the request with `perm` and opens through `workspace.OpenRead`, then reads a bounded prefix. | Read-only preview is bounded and uses the workspace file boundary for the actual open. | This is a read-only consumer, not proof for every other path surface. The separate file-picker attachment path in `internal/gui/files_api.go` reads explicitly user-selected paths with `os.ReadFile` and has a different trust boundary. |
-| Release-artifact output | `internal/releaseartifact/artifact.go` resolves an operator-provided output directory, creates it, builds binaries into it, then uses `os.OpenFile` / `os.WriteFile` and pathname reads for packages, SBOMs, and file evidence. | Hosted release-artifact checks validate clean provenance, deterministic outputs, and artifact contracts in task-owned CI environments. | The output directory and its final names are not protected by the workspace descriptor primitive. A hostile output directory is outside the current bounded workspace evidence and needs an explicit trust/ownership decision. |
-| Matrix/manifest consumers | `cmd/runtime-boundary-matrix`, `cmd/release-gates`, and `cmd/verify-manifest` use absolute-path and bounded-file validation before consuming retained artifacts or ledgers. | Malformed, stale-SHA, trailing, oversized, symlinked, and workspace-contained artifacts fail closed where the contracts apply. | Consumer validation is not an atomic read/verify transaction against an uncooperative same-UID writer. It proves artifact contract handling, not universal filesystem race resistance. |
+| Release-artifact output | `internal/releaseartifact/artifact.go` stages binaries, packages, and SBOMs in an owned temporary directory; staged/final reads use `securefile`, final publication uses `securefile.WriteAtomic`, and the package archive is written only inside the owned stage. | Hosted release-artifact checks validate clean provenance, deterministic outputs, and artifact contracts in task-owned CI environments. | The stage archive writer and final output names still use path operations within their respective owned directories. A hostile same-UID writer can race a final name after identity checks; this is outside the bounded contract. |
+| Matrix/manifest consumers | `cmd/runtime-boundary-matrix`, `cmd/release-gates`, and `cmd/verify-manifest` use absolute-path and bounded-file validation before consuming retained artifacts or ledgers. Release-gate ledgers and targeted Go coverprofiles now read through `securefile.ReadFileLimited`. | Malformed, stale-SHA, trailing, oversized, symlinked, and workspace-contained artifacts fail closed where the contracts apply; Unix tests cover symlinked ledger/profile targets and parents. | Consumer validation is not an atomic read/verify transaction against an uncooperative same-UID writer. It proves artifact contract handling, not universal filesystem race resistance. |
 
 ## Decision boundary
 
@@ -47,9 +49,9 @@ The inventory separates three outcomes that must not be conflated:
    human operator decision through the residual-acceptance record.
 
 No implementation should be started solely to change the matrix count. The
-next #648 decision is whether one of the listed pathname surfaces has a
-high-value, defensible hardening change; otherwise the correct deliverable is a
-more precise residual boundary and operator packet.
+#648 artifact-output decision has now produced focused hardening slices; the
+remaining #453 work should use the same bar. Otherwise the correct deliverable
+is a more precise residual boundary and operator packet.
 
 ## Proposed validation contract
 
