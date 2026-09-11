@@ -1,6 +1,7 @@
 # V4 hostile TOCTOU residual acceptance record (operator stub)
 
-Status: **unsigned stub** (re-bound from docs `main` tip `190bdc8`). Fill this
+Status: **unsigned stub** (re-bound from the exact current docs `main` tip
+`166b7d3`). Fill this
 record when consciously accepting
 `hostile-filesystem-toctou=UNVERIFIED` as a residual audit boundary during
 release eligibility. This file does **not** authorize a release by itself,
@@ -12,6 +13,8 @@ Canonical residual package:
 [V4-HOSTILE-TOCTOU-RESIDUAL.md](V4-HOSTILE-TOCTOU-RESIDUAL.md).
 Operator checklist:
 [V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).
+Current exact-head packet:
+[V4-CURRENT-RESIDUAL-PACKET-166B7D3.md](V4-CURRENT-RESIDUAL-PACKET-166B7D3.md).
 
 Prefer retaining a completed copy **outside** the checkout if the trusted
 workflow requires an immutable out-of-tree approval artifact. Do not commit
@@ -24,17 +27,18 @@ secrets or credentials into this stub.
 | Residual claim | `hostile-filesystem-toctou` |
 | Residual verdict (must remain) | `UNVERIFIED` |
 | Bounded confinement proved | `hostile-parent-swap-confinement=PASS` via [#542](https://github.com/saiaathish/picogent/pull/542) |
-| Final-release / checklist packet | [#548](https://github.com/saiaathish/picogent/pull/548) |
-| Latest retained candidate / behavior SHA | `592b07a633d9683354c4abeee09b767bc071ab35` |
-| Latest behavior-hardening tip (not retained runtime evidence) | `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` |
-| Base docs `main` tip before this docs rebind | `190bdc8b92aa11b498e08638b3de48b7237ef4fa` |
-| Exact-SHA matrix digest (optional) | `71bfe03c0afb889c9a548e9264cf0ab4509d80f69a85e346fb4501d85a626b05` aggregate; `6048c4244818db694b96b5875f8893f1d84aaf731a4caebc4493bfbff4213817` runtime |
+| Historical final-release / checklist packet | [#548](https://github.com/saiaathish/picogent/pull/548) |
+| Latest bounded behavior-evidence tip | `f4e489844b6fbc5d5a34ce26568937e76b97ea61` |
+| Current exact-head audit candidate | `166b7d37d3f5b07de389741110fa62a48bb6f65e` |
+| Current exact-head matrix digest | `66516803f5bec85084ff30dc4296ba661dee3c19372f91bc1a25aa4ed8d1c8d8` |
+| Current matrix summary | `PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5` |
 | Record date (UTC) | `_fill_` |
 
-The retained candidate predates the post-candidate code changes in #651, #657,
-#659, and #661. A signer must replace it with a fresh exact-current candidate
-before treating this record as release-bound; this stub does not imply that
-refresh occurred.
+The current packet intentionally has no fresh live-provider or rendered-
+platform artifacts. Those rows are `UNVERIFIED`; broad same-UID TOCTOU remains
+`UNVERIFIED`; release authorization remains `INCONCLUSIVE`. A signer must
+still complete this stub against the intended release candidate before treating
+it as release-bound; this unsigned record does not imply approval.
 
 ## Decision
 
