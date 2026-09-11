@@ -245,8 +245,11 @@ close the open or unrecorded risks below.
   `internal/gitobs/gitobs_test.go` exercises those named helper and redaction
   checks. This does not establish behavior for every Git version or arbitrary
   repository configuration.
-- External MCP responses still need adversarial prompt-injection and
-  secret-leakage runtime tests.
+- The external MCP response boundary has a direct HTTP adversarial test for
+  untrusted-result marking, credential-shaped redaction, and bounded output.
+  `internal/mcpbridge/manager_test.go` exercises that transport boundary. It
+  does not establish model-level resistance to prompt injection or arbitrary
+  external MCP server behavior.
 - The hosted deep security scan was unavailable in the earlier campaign; no
   scan ID, manifest, or no-findings result is claimed.
 
