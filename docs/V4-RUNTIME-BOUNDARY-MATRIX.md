@@ -5,7 +5,15 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current behavior-bound checkpoint (behavior tip `9c1ca2e`; parent issue `#453`):**
+**Current main checkpoint for this refresh:** `origin/main` is
+`04554f10ac46f0a92beca07a6505bd1242d5f163` and includes the bounded Windows
+ACL behavior from PR #679 plus the docs-only PR #680. Hosted CI run 34606332223
+and release-artifacts run 34606332079 passed for that behavior merge. No fresh
+live-provider or rendered-platform artifact is bound to this tip, so those rows
+remain `UNVERIFIED`; broad hostile same-UID filesystem TOCTOU remains
+`UNVERIFIED` and release authorization remains `INCONCLUSIVE`.
+
+**Prior behavior-bound checkpoint (behavior tip `9c1ca2e`; parent issue `#453`):**
 The fresh live-provider observation is bound to behavior tip
 `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` (PR #661). It was evaluated from
 the clean docs candidate
@@ -44,7 +52,7 @@ TOCTOU and release authorization remain independently bounded.
 
 The fresh matrix digest is
 `a49c2bbb74d13f7a2053f3cbd131c7fc8aaf6dc32a295ccea2c87e2c79126293`, with
-summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3. Its current behavior-bound
+summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3. Its behavior-bound
 rows are:
 
 | Current behavior-tip claim | Current result | Boundary |
