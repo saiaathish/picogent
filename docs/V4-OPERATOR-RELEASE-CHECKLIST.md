@@ -6,19 +6,17 @@ does **not** set `authorized: true`, and does **not** close
 already closed in GitHub; its historical references below are retained for
 provenance.
 
-The current behavior checkpoint for this refresh is
-`547a5b1a4c8d348dae0b0c155c081f4d1b263742` (PR #685), carried by the exact
-docs candidate `e4e67c15dea4ad5fe87b3349da3bc4dc230cf0a3`. The typed browser
-screenshot admission is covered by focused tests, and the fresh live-provider
-packet is documented in
-[V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md](V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md).
-The exact-head runtime matrix is `PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3`,
-with live-provider connectivity and quality `PASS`; rendered-platform-local,
-rendered-cross-platform, and broad hostile TOCTOU remain `UNVERIFIED`.
+The current exact evidence candidate for this refresh is
+`3535bda907dbe8cc44ca43d5563e4e607a96d266` (PR #689 merge). The fresh
+task-owned rendered packet for #690 is documented in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md).
+The exact-head runtime matrix is `PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1`,
+with live-provider connectivity and quality plus rendered-platform-local and
+rendered-cross-platform `PASS`; broad hostile TOCTOU remains `UNVERIFIED`.
 Release authorization remains `INCONCLUSIVE`. The matrix artifact digest is
-`6be4f28d3a68322e6d6a525fc625a3f4269a46b056672c899fbc74169f828339`.
+`f9576b69a41c8d0eb3e036dc8d82b7057f1eb7c842d9ffd5086916408fada2cc`.
 
-The last fully rendered candidate for this checklist refresh is
+The prior fully rendered candidate for this checklist refresh was
 `eabf8d6e35322170f7ab19dbd30d3cfb576f422c`. It is a documentation-only
 descendant of behavior candidate
 `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb`. The behavior-bound live-provider
@@ -27,7 +25,7 @@ records are documented in
 earlier bounded goal-state records remain documented in
 [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md).
 
-The last fully rendered three-platform recovery evidence is documented in
+The prior fully rendered three-platform recovery evidence is documented in
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md).
 It records `rendered-platform-local=PASS` and
 `rendered-cross-platform=PASS` for candidate `eabf8d6`. The exact-head matrix
@@ -100,7 +98,7 @@ are green.
 | Historical live-provider matrix at `b7b5c5c` | digest `5be231cd13d31915753c1743365bbe0582f47accd3e210f6f493b8f4264d074f`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Exact behavior observation; continuity does not rebind rendered evidence |
 | Live-provider matrix at `0e2b156` | digest `824e1072b4d7fc9acf9ef00b683b376632febf8556c1ded2282eb486510fe0a9`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Provider identity and raw result semantics remain self-reported; this is not the rendered candidate matrix |
 | Historical live continuity matrix | [continuity record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md#docs-only-continuity-refresh-at-2dd8e1b); candidate `2dd8e1b`, behavior `0e2b156`, digest `764a940da63d5003be6a6f3d302752ffbaa230010ab9f23a859a26cf60e94235` | `DOCS_ONLY_DESCENDANT`, `HEAD=PASS`, `tree=CLEAN`; live-provider rows `PASS`, rendered rows `UNVERIFIED` |
-| Historical rendered cross-platform packet | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md) | Retain separately; the last fully rendered packet is recorded above at `eabf8d6` |
+| Historical rendered cross-platform packet | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md) | Retain separately; the prior fully rendered packet is recorded above at `eabf8d6` |
 | Rendered exact-candidate matrix at `8b022e8` | digest `b1a735b0a377d2b519e6306fb11308ef10498a5d612680e4a858d4c4ad772ae2`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | `rendered-platform-local=PASS`, `rendered-cross-platform=PASS`; live-provider rows and broad TOCTOU remain `UNVERIFIED` |
 | Historical rendered packet at `ad34bd5` | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md) | Retain separately; do not project it onto the current candidate |
 | Historical evidence continuity | `0e2b156` → `ad34bd5` with intervening paths under `docs/` only | Retain the historical claim packets separately; do not synthesize a release matrix by unioning their PASS rows |
@@ -165,18 +163,17 @@ does **not**, by itself:
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating a unified current-tip `PASS` | The last fully rendered three-platform candidate is `eabf8d6`; the prior `9a11719` checkpoint had a separate Darwin-only rendered `PASS`, but it is not projected onto behavior candidate `547a5b1`. Broad TOCTOU remains `UNVERIFIED` and release authorization remains `INCONCLUSIVE`. Historical artifacts must not be unioned, and any later non-docs candidate requires fresh collection |
+| Fabricating a unified current-tip `PASS` | The exact current rendered three-platform candidate is `3535bda`; the prior `eabf8d6` and `9a11719` packets remain separate historical records. Broad TOCTOU remains `UNVERIFIED` and release authorization remains `INCONCLUSIVE`. Historical artifacts must not be unioned, and any later non-docs candidate requires fresh collection |
 
 ## Current dry-run posture (no approval observed)
 
 | Field | Value |
 | --- | --- |
-| Current main behavior checkpoint | `547a5b1a4c8d348dae0b0c155c081f4d1b263742` (PR #685 typed browser screenshot admission; this checklist does not project a rendered PASS from the screenshot handoff) |
-| Last fully rendered evidence candidate | `eabf8d6e35322170f7ab19dbd30d3cfb576f422c` (later docs-only descendants must use the continuity contract) |
-| Last non-documentation behavior candidate | `547a5b1a4c8d348dae0b0c155c081f4d1b263742` (PR #685); behavior-bound live-provider evidence remains retained at `9c1ca2e` in [V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md](V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md) |
-| Live-provider evidence | Connectivity and fixed quality `PASS` at behavior candidate `9c1ca2e` in [V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md](V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md); the exact-head rendered matrix keeps live-provider rows `UNVERIFIED` |
-| Rendered evidence | Historical three-platform packet [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md) remains `PASS` only at `eabf8d6`; prior Darwin packet [V4-RENDERED-DARWIN-EVIDENCE-9A11719.md](V4-RENDERED-DARWIN-EVIDENCE-9A11719.md) is not projected onto `547a5b1`, while cross-platform and broad TOCTOU remain `UNVERIFIED` |
-| Release matrix posture | Exact-head behavior matrix is PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5; no synthetic union; live-provider, rendered-platform-local, rendered-cross-platform, and broad TOCTOU remain `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` |
+| Current main evidence checkpoint | `3535bda907dbe8cc44ca43d5563e4e607a96d266` (PR #689 merge; the #690 rendered packet is exact-candidate-bound) |
+| Current rendered evidence candidate | `3535bda907dbe8cc44ca43d5563e4e607a96d266` in [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md) |
+| Live-provider evidence | Connectivity and fixed quality are `PASS` in the exact-current digest-only matrix; provider identity and raw result semantics remain self-reported |
+| Rendered evidence | Darwin, Linux, and Windows rendered recovery are `PASS` at exact candidate `3535bda`; broad TOCTOU remains `UNVERIFIED` |
+| Release matrix posture | Exact-head matrix is PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1; no synthetic union; broad TOCTOU remains `UNVERIFIED` and `release-authorization` remains `INCONCLUSIVE` |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
 | Operator approval | **Absent — do not auto-sign** |

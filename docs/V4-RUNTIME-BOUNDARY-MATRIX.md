@@ -5,21 +5,21 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current behavior checkpoint for this refresh:** `main` carries behavior
-`547a5b1a4c8d348dae0b0c155c081f4d1b263742` from PR #685 through the
-documentation-only candidate `e4e67c15dea4ad5fe87b3349da3bc4dc230cf0a3`.
-The typed browser screenshot admission is tested but does not itself create an
-owned-browser observation. A fresh exact-head matrix with task-owned
-live-provider artifacts records `HEAD=PASS`, `tree=CLEAN`, and summary
-`PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3`. Its artifact SHA-256 is
-`6be4f28d3a68322e6d6a525fc625a3f4269a46b056672c899fbc74169f828339`.
-The live-provider connectivity and fixed quality rows are `PASS`; rendered
-platform and broad hostile-filesystem TOCTOU remain `UNVERIFIED`, and release
-authorization remains `INCONCLUSIVE`. The packet is recorded in
-[V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md](V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md).
-Any later behavior change requires fresh collection; later documentation-only
-descendants may retain this exact behavior-bound packet under the continuity
-contract.
+**Current exact-head checkpoint for this refresh:** `main` is clean at
+`3535bda907dbe8cc44ca43d5563e4e607a96d266`, the PR #689 merge. The typed
+browser screenshot admission remains separately tested; this packet adds
+task-owned rendered recovery observations on Darwin, Linux, and Windows. The
+fresh exact-head matrix records `HEAD=PASS`, `tree=CLEAN`, and summary
+`PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1`. Its artifact SHA-256 is
+`f9576b69a41c8d0eb3e036dc8d82b7057f1eb7c842d9ffd5086916408fada2cc`.
+Live-provider connectivity and fixed quality plus rendered-platform-local and
+rendered-cross-platform are `PASS` under their bounded artifact contracts;
+broad hostile-filesystem TOCTOU remains `UNVERIFIED`, and release
+authorization remains `INCONCLUSIVE`. The rendered packet is recorded in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md).
+The packet is exact-candidate-bound; any later non-documentation behavior
+change requires fresh collection, and later documentation-only descendants
+must not silently rebind the observation.
 
 **Prior behavior-bound checkpoint (behavior tip `9c1ca2e`; parent issue `#453`):**
 The fresh live-provider observation is bound to behavior tip
@@ -384,15 +384,14 @@ The rendered rows are also split by claim size:
   [V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md). One local
   platform record cannot stand in for the other supported platforms.
 
-The exact-current three-platform observation is recorded in
+The historical retained three-platform observation is recorded in
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md)
 for [#646](https://github.com/saiaathishkarthik/picogent/issues/646). Darwin,
 Linux, and Windows each passed the same allow→undo→fresh-process reload flow
 at exact candidate `592b07a633d9683354c4abeee09b767bc071ab35`; the aggregate
 digest is `71bfe03c0afb889c9a548e9264cf0ab4509d80f69a85e346fb4501d85a626b05`.
 Exact-SHA matrix projection is `rendered-cross-platform=PASS` only for that
-candidate aggregate. Later docs-only descendants may use the continuity
-contract, while a later non-documentation candidate requires recollection.
+historical candidate aggregate. It is not projected onto the current tip.
 The older Darwin, Linux, Windows, and aggregate records remain historical and
 are not silently projected onto this candidate. With the Darwin/Linux
 parent-swap docs present, `hostile-parent-swap-confinement` projects `PASS`;
@@ -429,7 +428,7 @@ summary `PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4`. This rebinds only the local
 Darwin rendered row; live-provider, cross-platform, broad TOCTOU, and release
 authorization rows remain independently bounded.
 
-The newer exact-current three-platform refresh at
+The prior exact-current three-platform refresh at
 `eabf8d6e35322170f7ab19dbd30d3cfb576f422c` is recorded in
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md).
 Darwin/arm64, Linux/amd64, and Windows/amd64 each passed the same owned-browser
@@ -440,6 +439,19 @@ exact-head matrix with local and aggregate artifacts supplied reports
 `PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3`. The remaining three rows are the two
 live-provider claims and broad same-UID TOCTOU; release authorization remains
 `INCONCLUSIVE`.
+
+The latest exact-current three-platform refresh at
+`3535bda907dbe8cc44ca43d5563e4e607a96d266` is recorded in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md).
+Darwin/arm64, Linux/amd64, and Windows/amd64 each passed the same owned-browser
+allow → undo → fresh-process reload flow. The validated aggregate digest is
+`d01672f51c5b3121e5a6b740b7ec56dc89f516adf47e5398888869c2ed876d8d`, and the
+exact-head matrix with local, aggregate, and exact-current live-provider
+artifacts supplied reports `rendered-platform-local=PASS`,
+`rendered-cross-platform=PASS`, `live-provider-connectivity=PASS`,
+`live-provider-quality=PASS`, and summary `PASS 10 / INCONCLUSIVE 1 /
+UNVERIFIED 1`. Broad same-UID TOCTOU remains `UNVERIFIED` and release
+authorization remains `INCONCLUSIVE`.
 
 Enable the narrow local row with an evidence artifact outside the checkout:
 
