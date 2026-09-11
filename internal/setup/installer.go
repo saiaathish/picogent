@@ -219,13 +219,8 @@ func trustedManagedRoot(root string) bool {
 		if err != nil || st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
 			return false
 		}
-		if runtime.GOOS != "windows" {
-			if current == filepath.Clean(abs) && st.Mode().Perm()&0o077 != 0 {
-				return false
-			}
-			if current != filepath.Clean(abs) && st.Mode().Perm()&0o022 != 0 {
-				return false
-			}
+		if !trustedManagedDirectory(current, current == filepath.Clean(abs)) {
+			return false
 		}
 		if samePath(current, filepath.Clean(homeAbs)) {
 			break
@@ -336,50 +331,6 @@ func managedBinaryPath(name string) string {
 		return resolved
 	}
 	return ""
-}
-
-func executableAncestorsProtected(root, target string) bool {
-	if runtime.GOOS == "windows" {
-		return true
-	}
-	root, ok := canonicalPath(root)
-	if !ok {
-		return false
-	}
-	target, ok = canonicalPath(target)
-	if !ok {
-		return false
-	}
-	rel, err := filepath.Rel(root, target)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return false
-	}
-	for current := root; ; current = filepath.Dir(current) {
-		rootInfo, err := os.Stat(current)
-		if err != nil || !rootInfo.IsDir() || (rootInfo.Mode().Perm()&0o022 != 0 && rootInfo.Mode()&os.ModeSticky == 0) {
-			return false
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			break
-		}
-	}
-	current := root
-	parts := strings.Split(rel, string(filepath.Separator))
-	for i, part := range parts {
-		current = filepath.Join(current, part)
-		st, err := os.Stat(current)
-		if err != nil {
-			return false
-		}
-		if i == len(parts)-1 {
-			continue
-		}
-		if !st.IsDir() || (st.Mode().Perm()&0o022 != 0 && st.Mode()&os.ModeSticky == 0) {
-			return false
-		}
-	}
-	return true
 }
 
 func managedBinaryCandidates(binDir, name string) []string {
