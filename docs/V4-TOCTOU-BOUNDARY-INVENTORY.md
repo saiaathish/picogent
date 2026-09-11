@@ -8,30 +8,38 @@ or exploit procedures.
 
 ## Evidence anchor
 
-The inventory was reviewed against merged `main` at
-`9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` after focused hardening in PRs
-#657, #659, and #661. The latest rendered evidence
-candidate remains
-`592b07a633d9683354c4abeee09b767bc071ab35`; its exact-candidate aggregate and
-runtime matrix are documented in
-[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md).
-That packet records `rendered-cross-platform=PASS`, while the broader
-`hostile-filesystem-toctou` row remains `UNVERIFIED`.
+This inventory is rebound by child #696 against merged `main` at exact SHA
+`f4e489844b6fbc5d5a34ce26568937e76b97ea61`, after PR #695 added bounded
+Windows parent-replacement evidence. Post-merge [CI run
+34649906362](https://github.com/saiaathish/picogent/actions/runs/34649906362)
+and [release-artifacts run
+34649906436](https://github.com/saiaathish/picogent/actions/runs/34649906436)
+passed for that exact tip.
 
-The current `main` tip at this rebind is
-`190bdc8b92aa11b498e08638b3de48b7237ef4fa`, a docs-only descendant after
-#666. The post-merge [CI run 34576333654](https://github.com/saiaathish/picogent/actions/runs/34576333654)
-and [release-artifacts run 34576333615](https://github.com/saiaathish/picogent/actions/runs/34576333615)
-passed for that tip, but they do not project the retained runtime packet onto
-the newer behavior-hardening tip.
+The exact-head runtime matrix was generated from a clean Darwin/arm64 checkout
+with `head_match=PASS` and `behavior_provenance=EXACT_HEAD`. Its digest is
+`d5b6698cf95763000f172171c8d7450f046089b71f13eebe0f7c3ea34d40b72b`, with
+summary `PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5`. The matrix deliberately
+keeps live-provider and rendered claims `UNVERIFIED`, broad hostile same-UID
+TOCTOU `UNVERIFIED`, and release authorization `INCONCLUSIVE` because no
+fresh packets were supplied to this local refresh.
+
+The post-merge Windows retained artifact is
+`hostile-parent-replacement-windows-f4e489844b6fbc5d5a34ce26568937e76b97ea61`.
+Its securefile record digest is
+`40427e1ff79a1df451d3d9d9d8c94b04f637799da4e70de083925bb9704c1d49` and its
+workspace record digest is
+`a40312eaf459029576b6852ff74125f09d5179f45c03389588a298bc06a3c92e`.
+Both records report bounded `PASS`, confirmed attacker activity, unchanged
+outside-tree digests, and `broad_toctou_claim=UNVERIFIED`.
 
 ## Boundary inventory
 
 | Surface | Current owner and mechanism | Bounded evidence | Remaining boundary |
 | --- | --- | --- | --- |
 | Permission-to-file approval | `internal/perm/perm.go`: `ClassifyPath`, `ResolveWorkspacePath`, `WorkspaceIdentity.Validate` capture a canonical root identity and require revalidation before path-scoped I/O. | Root replacement is rejected at the approval boundary; path aliases are resolved fail-closed. | The approval check and the later filesystem operation are separate events. Hostile races after the final validation are delegated to the platform-specific workspace primitives. |
-| Workspace file access | `internal/workspace/workspace.go` plus `workspace_unix.go` / `workspace_windows.go` traverse from a root descriptor/handle, reject symlinks/reparse points and hard-linked files, and publish atomic replacements. | `workspace/hostile_parent_swap_*` and workspace security tests cover bounded parent replacement and safe failure. | `WriteAtomicIfUnchanged*` is compare-then-publish, not a cross-process CAS. Final-name replacement and replacement of the named root remain outside a universal same-UID guarantee. |
-| Shared secure-file primitive | `internal/securefile/securefile.go` plus Unix/Windows implementations open the parent by descriptor/handle, use no-follow checks, compare identities for cleanup, and publish through the anchored parent. | `securefile/hostile_parent_swap_*` and final-path tests cover the named bounded families. | The implementation documents that a same-UID writer can race a final pathname or rename after an identity check. That is a narrower race detector/confinement contract, not universal TOCTOU closure. |
+| Workspace file access | `internal/workspace/workspace.go` plus `workspace_unix.go` / `workspace_windows.go` traverse from a root descriptor/handle, reject symlinks/reparse points and hard-linked files, and publish atomic replacements. | Linux/Darwin bounded parent-swap tests plus the exact-merge Windows record cover named parent replacement and safe failure; the Windows artifact is retained by PR #695's post-merge CI. | `WriteAtomicIfUnchanged*` is compare-then-publish, not a cross-process CAS. Final-name replacement and replacement of the named root remain outside a universal same-UID guarantee. |
+| Shared secure-file primitive | `internal/securefile/securefile.go` plus Unix/Windows implementations open the parent by descriptor/handle, use no-follow checks, compare identities for cleanup, and publish through the anchored parent. | Linux/Darwin bounded parent-swap and final-path tests plus the exact-merge Windows record cover named bounded families; the Windows artifact is retained by PR #695's post-merge CI. | The implementation documents that a same-UID writer can race a final pathname or rename after an identity check. That is a narrower race detector/confinement contract, not universal TOCTOU closure. |
 | Checkpoint and undo restore | `internal/checkpoint/checkpoint.go`: `resolveWorkspace` / `securePath` preflight paths; `readWorkspaceFile` and `writeWorkspaceState` delegate native mutations to `workspace`; `Restore` handles conflicts and rollback. `internal/agent/undo_journal.go` persists journals through `securefile`. | Recovery/undo tests cover conflict detection, restart persistence, and bounded parent-swap behavior. | `EvalSymlinks`/`Lstat` preflight and later operations are separate observations. A replaced root, unlisted path family, or uncooperative writer can still produce a safe failure or a conflict without proving a universal no-race claim. |
 | Session, task, goal, and trace state | Active session/delete-undo, task-state, goal, and trace payload reads/writes use `securefile` plus application locks. Goal primary/backup existence probes now use bounded securefile reads. Directory enumeration and multi-record workflows still use ordinary path operations at their coordination edges. The exact-head call-site inventory found no callers for the legacy raw `internal/session/atomic*.go` helpers; those dead helpers were removed. | Bounded file limits, atomic publication, lock ownership, restart recovery, state validation, and Unix symlink rejection for goal probes are covered by their package tests. | The secure-file payload contract does not make directory enumeration or multi-file transactions an atomic cross-process snapshot. Session directory coordination and multi-record workflows remain separate residual surfaces. |
 | Evolution store state | `internal/evolve/store.go` now uses `securefile.EnsureDir`, `ReadFile`, and `WriteAtomic`; the shared `securefile.OpenLockFile` / `LockFile` contract owns lock bootstrap and platform locking. The old raw `internal/evolve/atomic*.go` and platform lock helpers were removed. | Evolution-store tests cover ordinary persistence, cross-process serialization, and Unix rejection of symlinked state parents, state files, and lock files; securefile platform tests cover the underlying descriptor/handle implementations. | The secure-file contract narrows pathname replacement and symlink races but does not provide an atomic cross-process snapshot across the initial existence probe, lock acquisition, and payload read. The broad same-UID TOCTOU claim remains `UNVERIFIED`. |
