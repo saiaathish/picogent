@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -452,6 +453,7 @@ func windowsHostileParentSwapHelper(t *testing.T) {
 	if err := os.WriteFile(ready, []byte("ready\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	swaps := 0
 	for {
 		if _, err := os.Stat(stop); err == nil {
 			break
@@ -465,7 +467,8 @@ func windowsHostileParentSwapHelper(t *testing.T) {
 			time.Sleep(time.Millisecond)
 			continue
 		}
-		if err := os.WriteFile(swapsPath, []byte("confirmed\n"), 0o600); err != nil {
+		swaps++
+		if err := os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
 		time.Sleep(windowsHostilePause)
@@ -476,6 +479,9 @@ func windowsHostileParentSwapHelper(t *testing.T) {
 			t.Fatal(fmt.Errorf("restore trusted parent: %w", err))
 		}
 		time.Sleep(windowsHostilePause)
+	}
+	if err := os.WriteFile(swapsPath, []byte(strconv.Itoa(swaps)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := os.Stat(parent); errors.Is(err, os.ErrNotExist) {
 		if err := windowsHostileRestoreParent(parent, backup); err != nil {
@@ -555,10 +561,11 @@ func windowsHostileSwapCount(t *testing.T, path string) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(data)) != "confirmed" {
-		t.Fatalf("unexpected hostile swap marker %q", data)
+	swaps, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || swaps < 1 {
+		t.Fatalf("unexpected hostile swap count %q", data)
 	}
-	return 1
+	return swaps
 }
 
 func windowsHostileTreeMutated(root, before string) (bool, error) {
