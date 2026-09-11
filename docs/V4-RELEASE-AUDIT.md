@@ -1,5 +1,43 @@
 # V4 independent release-evidence audit
 
+## Current exact-head checkpoint — `main` `6ac572bb126721a23de13e094a132128afaad6fe`
+
+Status: `INCONCLUSIVE` for release authorization. This checkpoint records the
+current docs-only descendant after PR #663; it is not a release approval.
+
+### Exact-head provenance
+
+- Current `main` tip: `6ac572bb126721a23de13e094a132128afaad6fe`.
+- Latest behavior-changing tip: `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` (PR #661).
+- The current tip is a docs-only descendant from PR #663; no behavior evidence
+  is projected onto it without that provenance distinction.
+- Local exact-head tree: `CLEAN`.
+
+### Post-merge hosted runs
+
+| Run | Result | Jobs |
+| --- | --- | --- |
+| [CI 34572159108](https://github.com/saiaathish/picogent/actions/runs/34572159108) | `success` | Ubuntu `103176405966`, Windows `103176406038`, macOS `103176406064`, security `103176405973`, release-evidence `103178318971` |
+| [release-artifacts 34572159118](https://github.com/saiaathish/picogent/actions/runs/34572159118) | `success` | production-artifacts `103176405925` |
+
+These runs confirm the hosted jobs completed successfully for the exact
+current commit. They do not, by themselves, establish live-provider quality,
+rendered browser behavior, universal hostile-filesystem race resistance, or
+operator approval.
+
+### Current-head verdict
+
+| Claim | Result | Boundary |
+| --- | --- | --- |
+| Required hosted CI and artifact jobs passed at the exact current tip | `CONFIRMED` | CI and release-artifacts runs above both bind `6ac572b`. |
+| Current source tree is clean | `CONFIRMED` | The exact-head checkout reports no local changes. |
+| Release-gate and coverprofile reader hardening is present | `CONFIRMED` | These behavior changes are bound to `9c1ca2e`; #663 is docs-only. |
+| Fresh live-provider or rendered-platform observation at this tip | `UNVERIFIED` | Earlier behavior-bound packets are not unioned into a fresh current-tip observation. |
+| Hostile filesystem TOCTOU | `UNVERIFIED` | Bounded confinement and evidence-reader hardening do not prove the universal same-UID claim. |
+| Overall release authorization | `INCONCLUSIVE` | No explicit operator approval is present; green hosted runs are evidence, not authorization. |
+
+No v4 completion or release claim follows from this checkpoint.
+
 Status: `INCONCLUSIVE` for release authorization. This is an independently
 rechecked evidence report, not a release approval or a supply-chain
 certification.
