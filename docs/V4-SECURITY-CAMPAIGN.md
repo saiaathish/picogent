@@ -240,8 +240,12 @@ close the open or unrecorded risks below.
   closed on missing or malformed descriptors and on unsupported ACE shapes
   that carry write-capable access. The Windows
   `icacls` tests exercise writable target and ancestor cases when the hosted
-  runner provides that tool. This is bounded ACL enforcement, not proof of
-  complete reparse-point behavior or same-user replacement-race resistance.
+  runner provides that tool. The check intentionally permits only the
+  standard directory create-file/create-directory rights on existing directory
+  ancestors; that exception does not apply to the executable target or to
+  broader modification, deletion, or security-control rights. This is bounded
+  ACL enforcement, not proof of complete reparse-point behavior or same-user
+  replacement-race resistance.
 - macOS Terminal.app launch now prefixes the provider command with an explicit
   `/usr/bin/env -i` allowlist, but Terminal profile startup and Apple Event
   behavior remain live-runtime proof gaps.
