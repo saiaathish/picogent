@@ -1,31 +1,29 @@
-//go:build unix
-
 package evolve
 
 import (
-	"os"
 	"sync"
 
-	"golang.org/x/sys/unix"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 var evolveProcessLock sync.Mutex
 
 func acquireStoreLock(path string) (func(), error) {
 	evolveProcessLock.Lock()
-	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	file, err := securefile.OpenLockFile(path + ".lock")
 	if err != nil {
 		evolveProcessLock.Unlock()
 		return nil, err
 	}
-	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX); err != nil {
-		_ = f.Close()
+	release, err := securefile.LockFile(file, true)
+	if err != nil {
+		_ = file.Close()
 		evolveProcessLock.Unlock()
 		return nil, err
 	}
 	return func() {
-		_ = unix.Flock(int(f.Fd()), unix.LOCK_UN)
-		_ = f.Close()
+		_ = release()
+		_ = file.Close()
 		evolveProcessLock.Unlock()
 	}, nil
 }
