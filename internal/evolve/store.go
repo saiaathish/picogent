@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/projects"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 const (
@@ -109,36 +109,15 @@ func storePath(workspace string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := securefile.EnsureDir(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
 	return path, nil
 }
 
-func missingStatePathError(path string) error {
-	dir := filepath.Dir(path)
-	for {
-		info, err := os.Stat(dir)
-		if err == nil {
-			if !info.IsDir() {
-				return fmt.Errorf("evolve state parent %s is not a directory", dir)
-			}
-			return nil
-		}
-		if !os.IsNotExist(err) {
-			return err
-		}
-		next := filepath.Dir(dir)
-		if next == dir {
-			return nil
-		}
-		dir = next
-	}
-}
-
 func loadLocked(path, workspace string) (Store, error) {
 	s := Store{Workspace: workspace}
-	data, err := os.ReadFile(path)
+	data, err := securefile.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return s, nil
@@ -159,11 +138,11 @@ func Load(workspace string) (Store, error) {
 	if err != nil {
 		return Store{}, err
 	}
-	if _, err := os.Stat(path); err != nil {
+	// Probe without creating the state directory. The bounded read keeps a
+	// missing first-use load cheap; loadLocked reopens the same validated
+	// boundary while holding the cross-process lock.
+	if _, err := securefile.ReadFilePrefix(path, 1); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			if parentErr := missingStatePathError(path); parentErr != nil {
-				return Store{}, parentErr
-			}
 			return Store{Workspace: workspace}, nil
 		}
 		return Store{}, err
@@ -183,7 +162,7 @@ func saveLocked(path string, s Store) (Store, error) {
 	if err != nil {
 		return Store{}, err
 	}
-	if err := writeAtomic(path, data); err != nil {
+	if err := securefile.WriteAtomic(path, data, 0o644); err != nil {
 		return Store{}, err
 	}
 	return s, nil
