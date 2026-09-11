@@ -123,6 +123,9 @@ func windowsACLPathProtected(path string) bool {
 		if header.AceSize < 8 {
 			return false
 		}
+		if header.AceFlags&windows.INHERIT_ONLY_ACE != 0 {
+			continue
+		}
 		switch header.AceType {
 		case windows.ACCESS_DENIED_ACE_TYPE:
 			continue
