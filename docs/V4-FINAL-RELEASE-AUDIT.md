@@ -2,9 +2,10 @@
 
 Status: **NOT COMPLETE**. This is a tip-bound evidence packet for operator
 review. It does **not** authorize a release, does **not** claim
-`release-authorization=PASS`, and does **not** close parents
-[#450](https://github.com/saiaathish/picogent/issues/450) /
-[#453](https://github.com/saiaathish/picogent/issues/453).
+`release-authorization=PASS`, and does **not** close
+[#453](https://github.com/saiaathish/picogent/issues/453). Parent #450 is
+already closed in GitHub; its historical references below are retained for
+provenance and do not make it an open gate.
 
 Operator decision checklist:
 [V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).
@@ -14,11 +15,12 @@ Formal TOCTOU residual-acceptance package:
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
-The exact-current rendered cross-platform packet at candidate `eabf8d6` is
+The last fully rendered cross-platform packet at candidate `eabf8d6` is
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md).
 Its aggregate and matrix remain retained outside the checkout and are bound
 only to that candidate; later documentation-only descendants do not
 synthesize or rebind the observations.
+
 The prior retained live/rendered packets at audited main candidate `8b022e8`:
 [V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md](V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md)
 for live-provider continuity from behavior `b7b5c5c`, and
@@ -44,9 +46,28 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current exact-candidate posture (rendered evidence `eabf8d6`; behavior `9c1ca2e`)
+## Current main checkpoint (2026-09-11)
 
-The exact clean rendered candidate covered by this audit packet is
+The current `origin/main` tip for this audit refresh is
+`04554f10ac46f0a92beca07a6505bd1242d5f163`. It contains the bounded Windows
+ACL behavior merged by [PR #679](https://github.com/saiaathish/picogent/pull/679)
+at `b9706c442262903c163e552bbe31a04b61a6f9b8` and the documentation-only
+follow-up [PR #680](https://github.com/saiaathish/picogent/pull/680). Hosted
+[CI run 34606332223](https://github.com/saiaathish/picogent/actions/runs/34606332223)
+and [release-artifacts run 34606332079](https://github.com/saiaathish/picogent/actions/runs/34606332079)
+passed for the ACL merge, including Windows, Ubuntu, macOS, security, and
+release-evidence jobs.
+
+Those hosted results prove the current source, test, and artifact checks only;
+they do not rebind the older live-provider or rendered-platform packets to
+`04554f1`. No fresh live-provider or rendered-platform artifact is bound to
+this tip, so those rows remain `UNVERIFIED`. Broad hostile same-UID filesystem
+TOCTOU remains `UNVERIFIED`, and release authorization remains
+`INCONCLUSIVE` with `authorized=false`.
+
+## Last fully rendered exact-candidate posture (rendered evidence `eabf8d6`; behavior `9c1ca2e`)
+
+The last clean rendered candidate covered by this audit packet is
 `eabf8d6e35322170f7ab19dbd30d3cfb576f422c`. It is a documentation-only
 descendant of behavior candidate
 `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb`. The behavior-bound live-provider
@@ -55,7 +76,7 @@ evidence is retained in
 later documentation-only descendants may preserve that continuity but do
 not change the evidence candidate.
 
-The exact-current rendered packet is retained in
+The last fully rendered packet is retained in
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md).
 Its three-platform aggregate digest is
 `e59d54ebd6f75403974744432b03e28ba2725654c4a11e264a868d4842a0f681`; the
@@ -432,12 +453,12 @@ Per [#551](https://github.com/saiaathish/picogent/pull/551) /
   telemetry is missing.
 - Do **not** invent fake microbenchmark gains beyond the proved alloc rows.
 
-## Parents remain open
+## Parent status
 
-- [#450](https://github.com/saiaathish/picogent/issues/450) â€” **OPEN**
+- [#450](https://github.com/saiaathish/picogent/issues/450) â€” **CLOSED** in GitHub; retained here as historical release-readiness context.
 - [#453](https://github.com/saiaathish/picogent/issues/453) â€” **OPEN**
 
-Keep both open until residual TOCTOU is closed or formally accepted and an
+Keep #453 open until residual TOCTOU is closed or formally accepted and an
 operator release decision is recorded. This packet does not merge, close, or
 mark the goal complete.
 
@@ -445,7 +466,7 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-The current exact rendered candidate `eabf8d6` records PASS 8 /
+The last fully rendered candidate `eabf8d6` records PASS 8 /
 INCONCLUSIVE 1 / UNVERIFIED 3, with
 `rendered-platform-local=PASS` and `rendered-cross-platform=PASS`; its
 live-provider rows remain `UNVERIFIED`. Separately, the behavior-bound live

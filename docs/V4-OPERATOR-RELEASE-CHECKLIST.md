@@ -2,10 +2,18 @@
 
 Status: human gate only. This checklist does **not** auto-authorize a release,
 does **not** set `authorized: true`, and does **not** close
-[#450](https://github.com/saiaathish/picogent/issues/450) /
-[#453](https://github.com/saiaathish/picogent/issues/453).
+[#453](https://github.com/saiaathish/picogent/issues/453). Parent #450 is
+already closed in GitHub; its historical references below are retained for
+provenance.
 
-The exact-current rendered candidate for this checklist refresh is
+The current main checkpoint for this refresh is
+`04554f10ac46f0a92beca07a6505bd1242d5f163`, which includes the bounded
+Windows ACL behavior merge `b9706c442262903c163e552bbe31a04b61a6f9b8` and
+the documentation-only follow-up in PR #680. No fresh live-provider or
+rendered-platform artifact is bound to this checkpoint, so those rows remain
+`UNVERIFIED`.
+
+The last fully rendered candidate for this checklist refresh is
 `eabf8d6e35322170f7ab19dbd30d3cfb576f422c`. It is a documentation-only
 descendant of behavior candidate
 `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb`. The behavior-bound live-provider
@@ -14,7 +22,7 @@ records are documented in
 earlier bounded goal-state records remain documented in
 [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md).
 
-The exact-current three-platform rendered recovery evidence is documented in
+The last fully rendered three-platform recovery evidence is documented in
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md).
 It records `rendered-platform-local=PASS` and
 `rendered-cross-platform=PASS` for candidate `eabf8d6`. The exact-head matrix
@@ -80,13 +88,13 @@ are green.
 | --- | --- | --- |
 | Historical goal-state persistence at `eccebd2` | [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md); retained artifacts from CI `34541903769` | Linux, Windows, and macOS bounded records are `PASS` for their exact candidate; do not project this earlier behavior evidence through later non-documentation changes |
 | Behavior-bound live-provider packet at `9c1ca2e` | [V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md](V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md); matrix digest `a49c2bbb74d13f7a2053f3cbd131c7fc8aaf6dc32a295ccea2c87e2c79126293` | Task-owned connectivity and fixed no-tool quality are `PASS`; rendered, hostile, and release rows remain independently bounded |
-| Exact-current rendered packet at `eabf8d6` | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md); aggregate digest `e59d54ebd6f75403974744432b03e28ba2725654c4a11e264a868d4842a0f681`; matrix digest `32c49185692511abf753e678d682b668bda025bf14741b5877e3342e53c30e17` | Darwin, Linux, and Windows rendered recovery are `PASS` at the exact candidate; live-provider rows are `UNVERIFIED`, while broad TOCTOU and release authorization remain separate gates |
+| Last fully rendered packet at `eabf8d6` | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md); aggregate digest `e59d54ebd6f75403974744432b03e28ba2725654c4a11e264a868d4842a0f681`; matrix digest `32c49185692511abf753e678d682b668bda025bf14741b5877e3342e53c30e17` | Darwin, Linux, and Windows rendered recovery are `PASS` at the historical exact candidate; current main has no fresh rendered packet, while broad TOCTOU and release authorization remain separate gates |
 | Live-provider packet | [V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md) | Connectivity and fixed-no-tool quality are `PASS` for behavior `b7b5c5c`; provider identity and raw result semantics remain self-reported |
 | Live-provider continuity at `8b022e8` | digest `3260157d65e09aa43669bc565f76b0912a782fc7a0174fd3e28c3f0b96237ebd`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | `DOCS_ONLY_DESCENDANT`, `HEAD=PASS`, `tree=CLEAN`; live rows `PASS`, rendered rows `UNVERIFIED` |
 | Historical live-provider matrix at `b7b5c5c` | digest `5be231cd13d31915753c1743365bbe0582f47accd3e210f6f493b8f4264d074f`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Exact behavior observation; continuity does not rebind rendered evidence |
 | Live-provider matrix at `0e2b156` | digest `824e1072b4d7fc9acf9ef00b683b376632febf8556c1ded2282eb486510fe0a9`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Provider identity and raw result semantics remain self-reported; this is not the rendered candidate matrix |
 | Historical live continuity matrix | [continuity record](V4-LIVE-PROVIDER-EVIDENCE-0E2B156.md#docs-only-continuity-refresh-at-2dd8e1b); candidate `2dd8e1b`, behavior `0e2b156`, digest `764a940da63d5003be6a6f3d302752ffbaa230010ab9f23a859a26cf60e94235` | `DOCS_ONLY_DESCENDANT`, `HEAD=PASS`, `tree=CLEAN`; live-provider rows `PASS`, rendered rows `UNVERIFIED` |
-| Historical rendered cross-platform packet | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md) | Retain separately; the exact-current rendered packet is recorded above at `eabf8d6` |
+| Historical rendered cross-platform packet | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md) | Retain separately; the last fully rendered packet is recorded above at `eabf8d6` |
 | Rendered exact-candidate matrix at `8b022e8` | digest `b1a735b0a377d2b519e6306fb11308ef10498a5d612680e4a858d4c4ad772ae2`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | `rendered-platform-local=PASS`, `rendered-cross-platform=PASS`; live-provider rows and broad TOCTOU remain `UNVERIFIED` |
 | Historical rendered packet at `ad34bd5` | [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md) | Retain separately; do not project it onto the current candidate |
 | Historical evidence continuity | `0e2b156` → `ad34bd5` with intervening paths under `docs/` only | Retain the historical claim packets separately; do not synthesize a release matrix by unioning their PASS rows |
@@ -147,20 +155,21 @@ does **not**, by itself:
 | --- | --- |
 | Publish / tag / deploy | Predicate does not publish |
 | `UpdateGoal complete` / “v4.0 complete” | Goal completion is a separate human product decision |
-| Closing [#450](https://github.com/saiaathish/picogent/issues/450) / [#453](https://github.com/saiaathish/picogent/issues/453) | Keep open until residuals accepted **and** release decision recorded |
+| Closing [#453](https://github.com/saiaathish/picogent/issues/453) | Keep open until residuals accepted **and** release decision recorded; #450 is already closed |
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating a unified current-tip `PASS` | The exact-current rendered candidate is `eabf8d6`; its cross-platform rendered row is `PASS`, while broad TOCTOU remains `UNVERIFIED` and release authorization remains `INCONCLUSIVE`. Live-provider PASS rows retain their `9c1ca2e` behavior provenance under documented continuity; the exact-head rendered matrix leaves those rows `UNVERIFIED`. Historical artifacts must not be unioned, and any later non-docs candidate requires fresh collection |
+| Fabricating a unified current-tip `PASS` | The last fully rendered candidate is `eabf8d6`; current main later received the Windows ACL behavior merge `b9706c4`, so its cross-platform rendered row is not projected onto current main. Broad TOCTOU remains `UNVERIFIED` and release authorization remains `INCONCLUSIVE`. Historical artifacts must not be unioned, and any later non-docs candidate requires fresh collection |
 
 ## Current dry-run posture (no approval observed)
 
 | Field | Value |
 | --- | --- |
-| Current evidence candidate | `eabf8d6e35322170f7ab19dbd30d3cfb576f422c` (later docs-only descendants must use the continuity contract) |
+| Current main checkpoint | `04554f10ac46f0a92beca07a6505bd1242d5f163` (ACL behavior merge `b9706c4`; no fresh live-provider or rendered artifact is bound to this tip) |
+| Last fully rendered evidence candidate | `eabf8d6e35322170f7ab19dbd30d3cfb576f422c` (later docs-only descendants must use the continuity contract) |
 | Last non-documentation behavior candidate | `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb`; behavior-bound live-provider evidence is retained in [V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md](V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md) |
 | Live-provider evidence | Connectivity and fixed quality `PASS` at behavior candidate `9c1ca2e` in [V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md](V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md); the exact-head rendered matrix keeps live-provider rows `UNVERIFIED` |
-| Rendered evidence | Exact-current packet [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md) records `rendered-platform-local=PASS` and `rendered-cross-platform=PASS` at `eabf8d6`; broad TOCTOU remains separate and `UNVERIFIED` |
+| Rendered evidence | Last fully rendered packet [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md) records `rendered-platform-local=PASS` and `rendered-cross-platform=PASS` at `eabf8d6`; current main has no fresh rendered artifact, and broad TOCTOU remains separate and `UNVERIFIED` |
 | Release matrix posture | Exact-head rendered matrix is PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3; no synthetic union; rendered cross-platform is `PASS`, live-provider rows and broad TOCTOU remain `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
