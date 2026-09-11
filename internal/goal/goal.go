@@ -127,30 +127,21 @@ func removeIfPresent(path string) error {
 	return err
 }
 
-// missingStatePathError distinguishes an absent state directory (a normal
-// first-run condition) from a path whose ancestor exists but is not a
-// directory. Windows reports the latter as ERROR_PATH_NOT_FOUND, which
-// os.IsNotExist also matches; walking the ancestors keeps persistence failures
-// visible consistently across platforms.
-func missingStatePathError(path string) error {
-	dir := filepath.Dir(path)
-	for {
-		info, err := os.Stat(dir)
-		if err == nil {
-			if !info.IsDir() {
-				return fmt.Errorf("goal state parent %s is not a directory", dir)
-			}
-			return nil
-		}
-		if !os.IsNotExist(err) {
-			return err
-		}
-		next := filepath.Dir(dir)
-		if next == dir {
-			return nil
-		}
-		dir = next
+// stateAvailable checks the primary and recovery records without creating the
+// state directory. Both observations use the secure parent boundary; callers
+// still acquire the goal lock before the authoritative load.
+func stateAvailable(path string) (bool, error) {
+	if _, err := securefile.ReadFilePrefix(path, 1); err == nil {
+		return true, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
 	}
+	if _, err := securefile.ReadFilePrefix(stateBackupPath(path), 1); err == nil {
+		return true, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	return false, nil
 }
 
 func loadLocked(path string) (State, error) {
@@ -201,19 +192,14 @@ func LoadState(workspace string) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	// Avoid creating a state directory for a read-only status check. If the
-	// file exists, its parent necessarily exists and can host the lock file.
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			if parentErr := missingStatePathError(path); parentErr != nil {
-				return State{}, parentErr
-			}
-			if _, backupErr := os.Stat(stateBackupPath(path)); os.IsNotExist(backupErr) {
-				return State{}, nil
-			}
-		} else {
-			return State{}, err
-		}
+	// Avoid creating a state directory for a read-only status check. If either
+	// record exists, its parent necessarily exists and can host the lock file.
+	available, err := stateAvailable(path)
+	if err != nil {
+		return State{}, err
+	}
+	if !available {
+		return State{}, nil
 	}
 	unlock, err := acquireGoalLock(path)
 	if err != nil {
@@ -309,17 +295,12 @@ func clearIfState(workspace, expected string, expectedRevision *uint64) (bool, e
 	if err != nil {
 		return false, err
 	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			if parentErr := missingStatePathError(path); parentErr != nil {
-				return false, parentErr
-			}
-			if _, backupErr := os.Stat(stateBackupPath(path)); os.IsNotExist(backupErr) {
-				return false, nil
-			}
-		} else {
-			return false, err
-		}
+	available, err := stateAvailable(path)
+	if err != nil {
+		return false, err
+	}
+	if !available {
+		return false, nil
 	}
 	unlock, err := acquireGoalLock(path)
 	if err != nil {
