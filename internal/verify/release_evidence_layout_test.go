@@ -1,7 +1,9 @@
 package verify
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -40,5 +42,35 @@ func TestValidateReleaseEvidenceDirectory(t *testing.T) {
 				t.Fatalf("ValidateReleaseEvidenceDirectory() error = %v, want substring %q", err, tt.wantSubstr)
 			}
 		})
+	}
+}
+
+func TestValidateReleaseEvidenceDirectoryResolvesWorkspaceSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	realWorkspace := t.TempDir()
+	workspaceAlias := filepath.Join(t.TempDir(), "workspace-alias")
+	if err := os.Symlink(realWorkspace, workspaceAlias); err != nil {
+		t.Fatal(err)
+	}
+	evidence := filepath.Join(realWorkspace, "release-evidence")
+	if err := ValidateReleaseEvidenceDirectory(workspaceAlias, evidence); err == nil || !strings.Contains(err.Error(), "inside workspace") {
+		t.Fatalf("workspace symlink containment error = %v", err)
+	}
+}
+
+func TestValidateReleaseEvidenceDirectoryResolvesEvidenceParentSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	workspace := t.TempDir()
+	parent := filepath.Join(t.TempDir(), "evidence-parent")
+	if err := os.Symlink(workspace, parent); err != nil {
+		t.Fatal(err)
+	}
+	evidence := filepath.Join(parent, "release-evidence")
+	if err := ValidateReleaseEvidenceDirectory(workspace, evidence); err == nil || !strings.Contains(err.Error(), "inside workspace") {
+		t.Fatalf("evidence parent symlink containment error = %v", err)
 	}
 }
