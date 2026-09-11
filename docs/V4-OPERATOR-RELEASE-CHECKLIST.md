@@ -6,15 +6,18 @@ does **not** set `authorized: true`, and does **not** close
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
 The current main tip for this checklist refresh is
-`a80b9fb73d3d74a2c9787fdd7c74cd9ba2dd65cf`. The last non-documentation
+`216600450a68c4603f8e2460279688cc56f08c0b`. The last non-documentation
 behavior candidate is
 `eccebd293e58ec48c6553e9228ff4b201a74c77a`; its bounded goal-state records
 are documented in [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md).
-Post-merge CI run `34543854046` and release-artifacts run `34543854052` passed
+Post-merge CI run `34546564353` and release-artifacts run `34546564358` passed
 at the current tip.
 
-No fresh live-provider or rendered-platform matrix is bound to the current
-behavior candidate after the goal-state hardening changes. The retained
+The current exact-head connectivity observation is documented in
+[V4-LIVE-PROVIDER-EVIDENCE-2166004.md](V4-LIVE-PROVIDER-EVIDENCE-2166004.md)
+and records `live-provider-connectivity=PASS` only. No fresh live-provider
+quality or rendered-platform matrix is bound to the current behavior candidate
+after the goal-state hardening changes. The retained
 packets below are historical and remain separate:
 
 - Historical live-provider continuity from behavior SHA
@@ -73,6 +76,7 @@ are green.
 | Evidence | Where / digest | What to confirm |
 | --- | --- | --- |
 | Goal-state persistence at `eccebd2` | [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md); retained artifacts from CI `34541903769` | Linux, Windows, and macOS bounded records are `PASS` with exact candidate binding, trusted activity, recovery, no outside marker, unchanged outside digests, and `source_tree_modified=false`; valid through current docs-only continuity only |
+| Current live-provider connectivity at `2166004` | [V4-LIVE-PROVIDER-EVIDENCE-2166004.md](V4-LIVE-PROVIDER-EVIDENCE-2166004.md); matrix digest `1e17c01e8d9fe015e9530974dddbf04065f07bfa3950cb240b1f576307710c0d` | One task-owned fixed no-tool response is `PASS`; quality, rendered, hostile, and release rows remain independently bounded |
 | Live-provider packet | [V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md) | Connectivity and fixed-no-tool quality are `PASS` for behavior `b7b5c5c`; provider identity and raw result semantics remain self-reported |
 | Live-provider continuity at `8b022e8` | digest `3260157d65e09aa43669bc565f76b0912a782fc7a0174fd3e28c3f0b96237ebd`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | `DOCS_ONLY_DESCENDANT`, `HEAD=PASS`, `tree=CLEAN`; live rows `PASS`, rendered rows `UNVERIFIED` |
 | Historical live-provider matrix at `b7b5c5c` | digest `5be231cd13d31915753c1743365bbe0582f47accd3e210f6f493b8f4264d074f`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Exact behavior observation; continuity does not rebind rendered evidence |
@@ -143,17 +147,17 @@ does **not**, by itself:
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating a unified current-tip `PASS` | The current tip is `a80b9fb`; no live-provider or rendered matrix is bound to it after the non-docs goal-state changes. Historical live/rendered artifacts at `b7b5c5c` / `8b022e8` must not be unioned, and any later non-docs candidate requires fresh collection |
+| Fabricating a unified current-tip `PASS` | The current tip is `2166004`; only connectivity is freshly bound. No quality or rendered matrix is bound to it after the non-docs goal-state changes. Historical live/rendered artifacts at `b7b5c5c` / `8b022e8` must not be unioned, and any later non-docs candidate requires fresh collection |
 
 ## Current dry-run posture (no approval observed)
 
 | Field | Value |
 | --- | --- |
-| Current main tip | `a80b9fb73d3d74a2c9787fdd7c74cd9ba2dd65cf` |
+| Current main tip | `216600450a68c4603f8e2460279688cc56f08c0b` |
 | Last non-documentation behavior candidate | `eccebd293e58ec48c6553e9228ff4b201a74c77a`; bounded goal-state records are retained in [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) |
-| Live-provider evidence | No current-tip packet; historical behavior `b7b5c5c` remains separate and does not rebind through the goal-state code changes |
+| Live-provider evidence | Connectivity `PASS` at current candidate `2166004` in [V4-LIVE-PROVIDER-EVIDENCE-2166004.md](V4-LIVE-PROVIDER-EVIDENCE-2166004.md); quality remains `UNVERIFIED`, and historical behavior `b7b5c5c` remains separate |
 | Rendered evidence | No current-tip packet; historical candidate `8b022e8` remains separate and does not rebind through the goal-state code changes |
-| Release matrix posture | No synthetic union; current live/rendered rows remain `UNVERIFIED`, broad TOCTOU remains `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` |
+| Release matrix posture | No synthetic union; current quality/rendered rows remain `UNVERIFIED`, broad TOCTOU remains `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
 | Operator approval | **Absent — do not auto-sign** |

@@ -5,21 +5,30 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current main behavior-evidence note (candidate `a80b9fb` / issue `#639`):**
+**Current main behavior-evidence note (candidate `2166004` / issue `#641`):**
 The exact current main tip is
-`a80b9fb73d3d74a2c9787fdd7c74cd9ba2dd65cf`. Post-merge CI run
-`34543854046` and release-artifacts run `34543854052` both passed at that
+`216600450a68c4603f8e2460279688cc56f08c0b`. Post-merge CI run
+`34546564353` and release-artifacts run `34546564358` both passed at that
 SHA. The last non-documentation behavior candidate is
 `eccebd293e58ec48c6553e9228ff4b201a74c77a`; the retained bounded goal-state
 records from that candidate are documented in
 [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) and remain valid for
-this documentation-only descendant.
+the current documentation-only descendants.
+
+A fresh exact-head no-tool connectivity observation at this candidate is
+documented in
+[V4-LIVE-PROVIDER-EVIDENCE-2166004.md](V4-LIVE-PROVIDER-EVIDENCE-2166004.md).
+Its exact-head matrix digest is
+`1e17c01e8d9fe015e9530974dddbf04065f07bfa3950cb240b1f576307710c0d`, with
+summary PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4. It is limited to
+`live-provider-connectivity` and does not supply quality or rendered evidence.
 
 No fresh live-provider or rendered-platform observation is bound to the
-current behavior candidate after the goal-state hardening changes. The older
-live-provider packets and rendered aggregates below remain historical and
-must not be unioned or projected onto this candidate. Accordingly, the
-current posture is `live-provider-connectivity=UNVERIFIED`,
+current behavior candidate after the goal-state hardening changes beyond this
+single connectivity probe. The older live-provider packets and rendered
+aggregates below remain historical and must not be unioned or projected onto
+this candidate. Accordingly, the current posture is
+`live-provider-connectivity=PASS`,
 `live-provider-quality=UNVERIFIED`, `rendered-platform-local=UNVERIFIED`,
 `rendered-cross-platform=UNVERIFIED`, broad
 `hostile-filesystem-toctou=UNVERIFIED`, and

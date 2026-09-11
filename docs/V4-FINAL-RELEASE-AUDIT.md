@@ -39,19 +39,22 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current main posture (`a80b9fb`)
+## Current main posture (`2166004`)
 
 The exact current main tip at this audit refresh is
-`a80b9fb73d3d74a2c9787fdd7c74cd9ba2dd65cf`. Post-merge CI run
-`34543854046` and release-artifacts run `34543854052` both passed at that
+`216600450a68c4603f8e2460279688cc56f08c0b`. Post-merge CI run
+`34546564353` and release-artifacts run `34546564358` both passed at that
 SHA. The last non-documentation behavior candidate is
 `eccebd293e58ec48c6553e9228ff4b201a74c77a`; its bounded goal-state evidence
 is retained in [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) and is
-valid through this documentation-only descendant.
+valid through the current documentation-only descendants.
 
-No fresh live-provider or rendered-platform observation is bound to the
-current behavior candidate after the goal-state hardening changes. The
-current matrix therefore keeps `live-provider-connectivity=UNVERIFIED`,
+An exact-head no-tool connectivity observation is retained in
+[V4-LIVE-PROVIDER-EVIDENCE-2166004.md](V4-LIVE-PROVIDER-EVIDENCE-2166004.md).
+It upgrades only `live-provider-connectivity`; no fresh live-provider quality
+or rendered-platform observation is bound to the current behavior candidate
+after the goal-state hardening changes. The current matrix therefore keeps
+`live-provider-connectivity=PASS`,
 `live-provider-quality=UNVERIFIED`, `rendered-platform-local=UNVERIFIED`,
 `rendered-cross-platform=UNVERIFIED`, and broad
 `hostile-filesystem-toctou=UNVERIFIED`. `release-authorization` remains
