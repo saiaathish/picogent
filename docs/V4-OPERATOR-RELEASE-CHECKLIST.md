@@ -6,15 +6,14 @@ does **not** set `authorized: true`, and does **not** close
 already closed in GitHub; its historical references below are retained for
 provenance.
 
-The current exact evidence candidate for this refresh is
-`3535bda907dbe8cc44ca43d5563e4e607a96d266` (PR #689 merge). The fresh
-task-owned rendered packet for #690 is documented in
-[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md).
-The exact-head runtime matrix is `PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1`,
-with live-provider connectivity and quality plus rendered-platform-local and
-rendered-cross-platform `PASS`; broad hostile TOCTOU remains `UNVERIFIED`.
-Release authorization remains `INCONCLUSIVE`. The matrix artifact digest is
-`f9576b69a41c8d0eb3e036dc8d82b7057f1eb7c842d9ffd5086916408fada2cc`.
+The current exact-head audit packet is
+[V4-CURRENT-RESIDUAL-PACKET-166B7D3.md](V4-CURRENT-RESIDUAL-PACKET-166B7D3.md)
+at `166b7d37d3f5b07de389741110fa62a48bb6f65e`. Its matrix is
+`PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5`: live-provider and current rendered
+claims are fail-closed without fresh artifacts, broad hostile TOCTOU remains
+`UNVERIFIED`, and release authorization remains `INCONCLUSIVE`. The matrix
+artifact digest is
+`66516803f5bec85084ff30dc4296ba661dee3c19372f91bc1a25aa4ed8d1c8d8`.
 
 The prior fully rendered candidate for this checklist refresh was
 `eabf8d6e35322170f7ab19dbd30d3cfb576f422c`. It is a documentation-only
@@ -163,17 +162,17 @@ does **not**, by itself:
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating a unified current-tip `PASS` | The exact current rendered three-platform candidate is `3535bda`; the prior `eabf8d6` and `9a11719` packets remain separate historical records. Broad TOCTOU remains `UNVERIFIED` and release authorization remains `INCONCLUSIVE`. Historical artifacts must not be unioned, and any later non-docs candidate requires fresh collection |
+| Fabricating a unified current-tip `PASS` | No fresh current live-provider or rendered-platform packet was supplied for `166b7d3`; historical `3535bda`, `eabf8d6`, and `9a11719` packets remain separate records. Broad TOCTOU remains `UNVERIFIED` and release authorization remains `INCONCLUSIVE`. Historical artifacts must not be unioned, and any later non-docs candidate requires fresh collection |
 
 ## Current dry-run posture (no approval observed)
 
 | Field | Value |
 | --- | --- |
-| Current main evidence checkpoint | `3535bda907dbe8cc44ca43d5563e4e607a96d266` (PR #689 merge; the #690 rendered packet is exact-candidate-bound) |
-| Current rendered evidence candidate | `3535bda907dbe8cc44ca43d5563e4e607a96d266` in [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md) |
-| Live-provider evidence | Connectivity and fixed quality are `PASS` in the exact-current digest-only matrix; provider identity and raw result semantics remain self-reported |
-| Rendered evidence | Darwin, Linux, and Windows rendered recovery are `PASS` at exact candidate `3535bda`; broad TOCTOU remains `UNVERIFIED` |
-| Release matrix posture | Exact-head matrix is PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1; no synthetic union; broad TOCTOU remains `UNVERIFIED` and `release-authorization` remains `INCONCLUSIVE` |
+| Current main evidence checkpoint | `166b7d37d3f5b07de389741110fa62a48bb6f65e` |
+| Current rendered evidence candidate | None supplied for this exact-head refresh; `rendered-platform-local` and `rendered-cross-platform` are `UNVERIFIED` |
+| Live-provider evidence | None supplied for this exact-head refresh; connectivity and quality are `UNVERIFIED` |
+| Rendered evidence | Historical packets remain separate; no current rendered packet is projected onto `166b7d3` |
+| Release matrix posture | Exact-head matrix is PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5; no synthetic union; broad TOCTOU remains `UNVERIFIED` and `release-authorization` remains `INCONCLUSIVE` |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
 | Operator approval | **Absent — do not auto-sign** |
