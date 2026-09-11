@@ -15,20 +15,21 @@ Formal TOCTOU residual-acceptance package:
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
-The last fully rendered cross-platform packet at candidate `eabf8d6` is
-[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md).
-Its aggregate and matrix remain retained outside the checkout and are bound
-only to that candidate; later documentation-only descendants do not
-synthesize or rebind the observations.
+The latest exact-main evidence checkpoint is the PR #689 merge at
+`3535bda907dbe8cc44ca43d5563e4e607a96d266`. The fresh task-owned rendered
+packet for [#690](https://github.com/saiaathishkarthik/picogent/issues/690) is
+documented in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md).
+Its exact-head matrix records the rendered and bounded live-provider claims;
+it does not establish broad same-UID TOCTOU resistance or release
+authorization. The packet and matrix remain bound to `3535bda`; later
+documentation-only descendants do not synthesize or rebind the observations.
 
-The latest behavior merge is [PR #685](https://github.com/saiaathish/picogent/pull/685)
-at `547a5b1a4c8d348dae0b0c155c081f4d1b263742`. The exact docs candidate
-`e4e67c15dea4ad5fe87b3349da3bc4dc230cf0a3` now has a fresh task-owned
-live-provider packet in
+The prior fully rendered cross-platform packet at candidate `eabf8d6` remains
+retained as historical evidence in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md).
+The earlier live-provider packet at `e4e67c1` remains separately documented in
 [V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md](V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md).
-It validates catalog-bound browser screenshot admission plus bounded direct
-connectivity and fixed no-tool quality; it does not establish an owned-browser
-observation, broad same-UID TOCTOU resistance, or release authorization.
 
 The prior retained live/rendered packets at audited main candidate `8b022e8`:
 [V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md](V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md)
@@ -55,24 +56,25 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current behavior checkpoint (2026-09-11)
+## Current exact-head checkpoint (2026-09-11)
 
-The current behavior candidate for this audit refresh is
-`547a5b1a4c8d348dae0b0c155c081f4d1b263742` from PR #685. The exact docs
-candidate is `e4e67c15dea4ad5fe87b3349da3bc4dc230cf0a3`. Its runtime-boundary
-matrix reports `HEAD=PASS`, `tree=CLEAN`, and
-`PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3`; its artifact SHA-256 is
-`6be4f28d3a68322e6d6a525fc625a3f4269a46b056672c899fbc74169f828339`.
-The live-provider connectivity and quality rows are `PASS` from the fresh
-packet. Rendered-platform-local, rendered-cross-platform, and broad hostile
-filesystem TOCTOU remain `UNVERIFIED`. Release authorization remains
-`INCONCLUSIVE` with `authorized=false` because no operator approval is
-recorded. A later documentation-only descendant may retain this packet; any
-later behavior change requires fresh evidence.
+The current evidence candidate is
+`3535bda907dbe8cc44ca43d5563e4e607a96d266`, the clean PR #689 merge. The
+fresh #690 rendered packet and exact-head runtime-boundary matrix report
+`HEAD=PASS`, `tree=CLEAN`, and
+`PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1`; the matrix artifact SHA-256 is
+`f9576b69a41c8d0eb3e036dc8d82b7057f1eb7c842d9ffd5086916408fada2cc`.
+Live-provider connectivity and fixed no-tool quality, rendered-platform-local,
+and rendered-cross-platform are `PASS` under their bounded artifact
+contracts. Broad hostile filesystem TOCTOU remains `UNVERIFIED`. Release
+authorization remains `INCONCLUSIVE` with `authorized=false` because no
+operator approval is recorded. A later non-documentation behavior change
+requires fresh evidence; a documentation-only descendant may retain this
+packet as evidence bound to `3535bda`.
 
-## Last fully rendered exact-candidate posture (rendered evidence `eabf8d6`; behavior `9c1ca2e`)
+## Prior fully rendered exact-candidate posture (rendered evidence `eabf8d6`; behavior `9c1ca2e`)
 
-The last clean rendered candidate covered by this audit packet is
+The prior clean rendered candidate covered by this historical section is
 `eabf8d6e35322170f7ab19dbd30d3cfb576f422c`. It is a documentation-only
 descendant of behavior candidate
 `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb`. The behavior-bound live-provider
@@ -81,7 +83,7 @@ evidence is retained in
 later documentation-only descendants may preserve that continuity but do
 not change the evidence candidate.
 
-The last fully rendered packet is retained in
+The prior fully rendered packet is retained in
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md).
 Its three-platform aggregate digest is
 `e59d54ebd6f75403974744432b03e28ba2725654c4a11e264a868d4842a0f681`; the
@@ -471,17 +473,15 @@ mark the goal complete.
 
 **NOT COMPLETE / unauthorized.**
 
-The last fully rendered three-platform candidate `eabf8d6` records PASS 8 /
-INCONCLUSIVE 1 / UNVERIFIED 3, with
-`rendered-platform-local=PASS` and `rendered-cross-platform=PASS`; its
-live-provider rows remain `UNVERIFIED`. Separately, the behavior-bound live
-provider candidate `9c1ca2e` records PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3,
-with connectivity and fixed quality `PASS` and rendered rows `UNVERIFIED`.
-Documentation-only continuity preserves each packet's provenance but does not
-create a synthetic union. The prior `9a11719` Darwin packet recorded
-`rendered-platform-local=PASS` only; it does not upgrade the historical
-cross-platform or live-provider claims, and it is not projected onto the
-current behavior candidate `547a5b1`. The residual
+The exact current three-platform candidate `3535bda` records PASS 10 /
+INCONCLUSIVE 1 / UNVERIFIED 1, with
+`rendered-platform-local=PASS`, `rendered-cross-platform=PASS`, and the two
+bounded live-provider rows `PASS`. The current packet is documented in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md).
+Documentation-only continuity preserves the packet's provenance but does not
+create a synthetic union or authorize a release. The prior `eabf8d6` and
+`9a11719` packets remain historical and are not projected onto the current
+candidate. The residual
 `hostile-filesystem-toctou=UNVERIFIED` and
 `release-authorization=INCONCLUSIVE` (`authorized: false`) remain. The
 older `f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, `1ce2059`, and

@@ -1,33 +1,32 @@
 # V4 independent release-evidence audit
 
-## Current exact-head checkpoint — docs candidate `e4e67c15dea4ad5fe87b3349da3bc4dc230cf0a3`
+## Current exact-head checkpoint — candidate `3535bda907dbe8cc44ca43d5563e4e607a96d266`
 
-Status: `INCONCLUSIVE` for release authorization. This snapshot is a clean
-exact-main live-provider refresh after the documentation-only #687 merge; it
-is an evidence checkpoint, not a release approval.
+Status: `INCONCLUSIVE` for release authorization. This snapshot is the clean
+exact-main live-provider and rendered-platform refresh after the #689 merge;
+it is an evidence checkpoint, not a release approval.
 
 ### Exact-head provenance
 
-- Behavior candidate: `547a5b1a4c8d348dae0b0c155c081f4d1b263742` (PR #685).
-- Evidence candidate: `e4e67c15dea4ad5fe87b3349da3bc4dc230cf0a3` (docs-only descendant).
+- Exact evidence candidate: `3535bda907dbe8cc44ca43d5563e4e607a96d266` (PR #689 merge).
 - `HEAD` provenance: `PASS`; source tree: `CLEAN`.
 - Runtime-boundary matrix artifact SHA-256:
-  `6be4f28d3a68322e6d6a525fc625a3f4269a46b056672c899fbc74169f828339`.
-- Matrix summary: `PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3`.
+  `f9576b69a41c8d0eb3e036dc8d82b7057f1eb7c842d9ffd5086916408fada2cc`.
+- Matrix summary: `PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1`.
 - The matrix was retained outside the checkout at
-  `/private/tmp/picogent-live-688-final/runtime-boundary-matrix.json`.
-- Live-provider packet: [V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md](V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md).
-- The exact candidate is a `DOCS_ONLY_DESCENDANT` of the behavior candidate;
-  later behavior changes require fresh collection.
+  `/private/tmp/picogent-rendered-cross-platform-690-aggregate/runtime-boundary-matrix-exact.json`.
+- Rendered packet: [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md).
+- The exact candidate is `EXACT_HEAD`; later non-documentation behavior changes
+  require fresh collection.
 
 ### Current-head verdict
 
 | Claim | Result | Boundary |
 | --- | --- | --- |
 | Typed browser screenshot admission | `CONFIRMED` | PR #685 validates catalog-bound image admission and transient handoff to the next model request; it is not hosted browser proof. |
-| Bounded deterministic runtime and recovery rows | `CONFIRMED` | The exact-head matrix records eight bounded PASS rows, including deterministic hostile, parent-swap, live-provider, rendered recovery API, long-horizon, and restart/steer/undo evidence. |
+| Bounded deterministic runtime and recovery rows | `CONFIRMED` | The exact-head matrix records ten bounded PASS rows, including deterministic hostile, parent-swap, live-provider, rendered recovery, long-horizon, and restart/steer/undo evidence. |
 | Live-provider connectivity and quality | `PASS` | The task-owned digest-only packet passed direct connectivity and all three canonical fixed no-tool cases; provider identity and raw result semantics remain self-reported. |
-| Rendered platform behavior | `UNVERIFIED` | No current local or cross-platform rendered artifact was supplied; screenshot routing does not substitute for owned-browser observation. |
+| Rendered platform behavior | `PASS` | Darwin/arm64, Linux/amd64, and Windows/amd64 task-owned rendered recovery records passed the exact-candidate aggregate; raw screenshots and browser transcripts are not committed. |
 | Hostile filesystem TOCTOU | `UNVERIFIED` | Bounded parent-swap confinement does not prove arbitrary same-UID filesystem races. |
 | Overall release authorization | `INCONCLUSIVE` | Explicit operator approval and a complete current release evidence set are absent. |
 
