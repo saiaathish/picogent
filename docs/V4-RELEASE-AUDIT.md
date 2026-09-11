@@ -1,15 +1,15 @@
 # V4 independent release-evidence audit
 
-## Current exact-head checkpoint — `main` `6ac572bb126721a23de13e094a132128afaad6fe`
+## Current exact-head checkpoint — `main` `6768dc760c79c7cc6f232ccd8a684f3aad1a98d5`
 
 Status: `INCONCLUSIVE` for release authorization. This checkpoint records the
-current docs-only descendant after PR #663; it is not a release approval.
+current docs-only descendant after PR #665; it is not a release approval.
 
 ### Exact-head provenance
 
-- Current `main` tip: `6ac572bb126721a23de13e094a132128afaad6fe`.
+- Current `main` tip: `6768dc760c79c7cc6f232ccd8a684f3aad1a98d5`.
 - Latest behavior-changing tip: `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` (PR #661).
-- The current tip is a docs-only descendant from PR #663; no behavior evidence
+- The current tip is a docs-only descendant from PR #665; no behavior evidence
   is projected onto it without that provenance distinction.
 - Local exact-head tree: `CLEAN`.
 
@@ -17,8 +17,8 @@ current docs-only descendant after PR #663; it is not a release approval.
 
 | Run | Result | Jobs |
 | --- | --- | --- |
-| [CI 34572159108](https://github.com/saiaathish/picogent/actions/runs/34572159108) | `success` | Ubuntu `103176405966`, Windows `103176406038`, macOS `103176406064`, security `103176405973`, release-evidence `103178318971` |
-| [release-artifacts 34572159118](https://github.com/saiaathish/picogent/actions/runs/34572159118) | `success` | production-artifacts `103176405925` |
+| [CI 34574150845](https://github.com/saiaathish/picogent/actions/runs/34574150845) | `success` | Ubuntu `103182700750`, Windows `103182700882`, macOS `103182700824`, security `103182700590`, release-evidence `103185031844` |
+| [release-artifacts 34574150809](https://github.com/saiaathish/picogent/actions/runs/34574150809) | `success` | production-artifacts `103182700583` |
 
 These runs confirm the hosted jobs completed successfully for the exact
 current commit. They do not, by themselves, establish live-provider quality,
@@ -29,9 +29,9 @@ operator approval.
 
 | Claim | Result | Boundary |
 | --- | --- | --- |
-| Required hosted CI and artifact jobs passed at the exact current tip | `CONFIRMED` | CI and release-artifacts runs above both bind `6ac572b`. |
+| Required hosted CI and artifact jobs passed at the exact current tip | `CONFIRMED` | CI and release-artifacts runs above both bind `6768dc7`. |
 | Current source tree is clean | `CONFIRMED` | The exact-head checkout reports no local changes. |
-| Release-gate and coverprofile reader hardening is present | `CONFIRMED` | These behavior changes are bound to `9c1ca2e`; #663 is docs-only. |
+| Release-gate and coverprofile reader hardening is present | `CONFIRMED` | These behavior changes are bound to `9c1ca2e`; #663 and #665 are docs-only. |
 | Fresh live-provider or rendered-platform observation at this tip | `UNVERIFIED` | Earlier behavior-bound packets are not unioned into a fresh current-tip observation. |
 | Hostile filesystem TOCTOU | `UNVERIFIED` | Bounded confinement and evidence-reader hardening do not prove the universal same-UID claim. |
 | Overall release authorization | `INCONCLUSIVE` | No explicit operator approval is present; green hosted runs are evidence, not authorization. |
