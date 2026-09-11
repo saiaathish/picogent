@@ -234,8 +234,14 @@ close the open or unrecorded risks below.
   portable path-based launcher cannot eliminate an OS-level replacement race
   between its final check and `execve`/`CreateProcess`; live hostile runtime
   coverage for that gap remains open. Unix lookup also rejects writable
-  ancestors except protected sticky system temporary directories; Windows ACL
-  enforcement remains unverified.
+  ancestors except protected sticky system temporary directories. Windows
+  lookup now inspects the owner and DACL for the canonical target and every
+  ancestor, rejects write-capable grants to untrusted principals, and fails
+  closed on missing or malformed descriptors and on unsupported ACE shapes
+  that carry write-capable access. The Windows
+  `icacls` tests exercise writable target and ancestor cases when the hosted
+  runner provides that tool. This is bounded ACL enforcement, not proof of
+  complete reparse-point behavior or same-user replacement-race resistance.
 - macOS Terminal.app launch now prefixes the provider command with an explicit
   `/usr/bin/env -i` allowlist, but Terminal profile startup and Apple Event
   behavior remain live-runtime proof gaps.
