@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/releaseartifact"
+	"github.com/saiaathish/picogent/internal/securefile"
 )
 
 func main() {
@@ -67,21 +69,16 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	manifestPath := filepath.Join(*outputDir, "release-artifact-manifest.json")
-	file, err := os.Create(manifestPath)
-	if err != nil {
-		fmt.Fprintln(stderr, "create manifest:", err)
+	var manifestData bytes.Buffer
+	if err := releaseartifact.WriteManifest(&manifestData, manifest); err != nil {
+		fmt.Fprintln(stderr, "encode manifest:", err)
 		return 1
 	}
-	if err := releaseartifact.WriteManifest(file, manifest); err != nil {
-		_ = file.Close()
+	if err := securefile.WriteAtomic(manifestPath, manifestData.Bytes(), 0o644); err != nil {
 		fmt.Fprintln(stderr, "write manifest:", err)
 		return 1
 	}
-	if err := file.Close(); err != nil {
-		fmt.Fprintln(stderr, "close manifest:", err)
-		return 1
-	}
-	if err := releaseartifact.WriteManifest(stdout, manifest); err != nil {
+	if _, err := stdout.Write(manifestData.Bytes()); err != nil {
 		fmt.Fprintln(stderr, "emit manifest:", err)
 		return 1
 	}
