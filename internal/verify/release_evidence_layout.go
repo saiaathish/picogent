@@ -2,6 +2,7 @@ package verify
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -37,9 +38,17 @@ func ValidateReleaseEvidenceDirectory(workspace, evidenceDir string) error {
 	if err != nil {
 		return fmt.Errorf("resolve release evidence workspace: %w", err)
 	}
+	workspaceAbs, err = resolveKnownReleasePath(workspaceAbs)
+	if err != nil {
+		return fmt.Errorf("resolve release evidence workspace links: %w", err)
+	}
 	evidenceAbs, err := filepath.Abs(filepath.Clean(evidenceDir))
 	if err != nil {
 		return fmt.Errorf("resolve release evidence directory: %w", err)
+	}
+	evidenceAbs, err = resolveKnownReleasePath(evidenceAbs)
+	if err != nil {
+		return fmt.Errorf("resolve release evidence directory links: %w", err)
 	}
 	relative, err := filepath.Rel(workspaceAbs, evidenceAbs)
 	if err != nil {
@@ -49,4 +58,30 @@ func ValidateReleaseEvidenceDirectory(workspace, evidenceDir string) error {
 		return fmt.Errorf("release evidence directory %q is inside workspace %q", evidenceAbs, workspaceAbs)
 	}
 	return nil
+}
+
+// resolveKnownReleasePath resolves every existing path component while
+// preserving a not-yet-created leaf. This catches a workspace alias or an
+// evidence parent symlink before the lexical containment check, while still
+// allowing the workflow to create its fresh runner-temporary directory later.
+func resolveKnownReleasePath(path string) (string, error) {
+	path = filepath.Clean(path)
+	var suffix []string
+	for current := path; ; current = filepath.Dir(current) {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			for i := len(suffix) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, suffix[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return path, nil
+		}
+		suffix = append(suffix, filepath.Base(current))
+	}
 }
