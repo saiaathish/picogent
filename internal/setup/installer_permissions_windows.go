@@ -120,6 +120,9 @@ func windowsACLPathProtected(path string) bool {
 			return false
 		}
 		header := (*windows.ACE_HEADER)(unsafe.Pointer(ace))
+		if header.AceSize < 8 {
+			return false
+		}
 		switch header.AceType {
 		case windows.ACCESS_DENIED_ACE_TYPE:
 			continue
@@ -133,12 +136,19 @@ func windowsACLPathProtected(path string) bool {
 			}
 		default:
 			// Callback/object/compound ACE layouts need separate SID offsets
-			// and evaluation semantics. Rejecting them avoids treating an
-			// unrecognized write grant as safe.
-			return false
+			// and evaluation semantics. A read-only ACE cannot weaken this
+			// write-protection check, but an unrecognized write-capable ACE
+			// must fail closed.
+			if windowsACEAccessMask(ace)&windowsUntrustedWriteMask != 0 {
+				return false
+			}
 		}
 	}
 	return true
+}
+
+func windowsACEAccessMask(ace *windows.ACCESS_ALLOWED_ACE) uint32 {
+	return uint32(*(*windows.ACCESS_MASK)(unsafe.Add(unsafe.Pointer(ace), unsafe.Offsetof(ace.Mask))))
 }
 
 func windowsACLTrustedSID(sid, owner, currentUser, adminSID, systemSID, trustedInstallerSID *windows.SID) bool {

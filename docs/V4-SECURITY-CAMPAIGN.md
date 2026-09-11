@@ -237,7 +237,8 @@ close the open or unrecorded risks below.
   ancestors except protected sticky system temporary directories. Windows
   lookup now inspects the owner and DACL for the canonical target and every
   ancestor, rejects write-capable grants to untrusted principals, and fails
-  closed on missing or unsupported security-descriptor shapes. The Windows
+  closed on missing or malformed descriptors and on unsupported ACE shapes
+  that carry write-capable access. The Windows
   `icacls` tests exercise writable target and ancestor cases when the hosted
   runner provides that tool. This is bounded ACL enforcement, not proof of
   complete reparse-point behavior or same-user replacement-race resistance.
