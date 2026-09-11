@@ -7,14 +7,16 @@ already closed in GitHub; its historical references below are retained for
 provenance.
 
 The current behavior checkpoint for this refresh is
-`547a5b1a4c8d348dae0b0c155c081f4d1b263742` (PR #685). The typed browser
-screenshot admission is covered by focused tests, but no fresh live-provider
-or owned-browser rendered artifact is bound to this checkpoint. The exact-head
-runtime matrix is `PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5`, with live-provider,
-rendered-platform-local, rendered-cross-platform, and broad hostile TOCTOU
-rows remaining `UNVERIFIED`; release authorization remains `INCONCLUSIVE`.
-The matrix artifact digest is
-`8ce4dde2c26a797bdfd4d1bd56b61e713334383b9bdef44c7b8acbc90ce778b2`.
+`547a5b1a4c8d348dae0b0c155c081f4d1b263742` (PR #685), carried by the exact
+docs candidate `e4e67c15dea4ad5fe87b3349da3bc4dc230cf0a3`. The typed browser
+screenshot admission is covered by focused tests, and the fresh live-provider
+packet is documented in
+[V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md](V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md).
+The exact-head runtime matrix is `PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3`,
+with live-provider connectivity and quality `PASS`; rendered-platform-local,
+rendered-cross-platform, and broad hostile TOCTOU remain `UNVERIFIED`.
+Release authorization remains `INCONCLUSIVE`. The matrix artifact digest is
+`6be4f28d3a68322e6d6a525fc625a3f4269a46b056672c899fbc74169f828339`.
 
 The last fully rendered candidate for this checklist refresh is
 `eabf8d6e35322170f7ab19dbd30d3cfb576f422c`. It is a documentation-only

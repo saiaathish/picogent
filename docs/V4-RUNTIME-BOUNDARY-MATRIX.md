@@ -5,18 +5,21 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current behavior checkpoint for this refresh:** `main` is
-`547a5b1a4c8d348dae0b0c155c081f4d1b263742` at PR #685, whose typed browser
-screenshot admission is tested but does not itself create an owned-browser
-observation. A fresh exact-head matrix was generated with `HEAD=PASS`,
-`tree=CLEAN`, and summary `PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5`.
-Its artifact SHA-256 is
-`8ce4dde2c26a797bdfd4d1bd56b61e713334383b9bdef44c7b8acbc90ce778b2`.
-The live-provider, rendered-platform-local, rendered-cross-platform, and
-hostile-filesystem-toctou rows are `UNVERIFIED`; release authorization is
-`INCONCLUSIVE`. A documentation-only descendant may retain this behavior
-checkpoint under the continuity contract, while any later behavior change
-requires fresh collection.
+**Current behavior checkpoint for this refresh:** `main` carries behavior
+`547a5b1a4c8d348dae0b0c155c081f4d1b263742` from PR #685 through the
+documentation-only candidate `e4e67c15dea4ad5fe87b3349da3bc4dc230cf0a3`.
+The typed browser screenshot admission is tested but does not itself create an
+owned-browser observation. A fresh exact-head matrix with task-owned
+live-provider artifacts records `HEAD=PASS`, `tree=CLEAN`, and summary
+`PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3`. Its artifact SHA-256 is
+`6be4f28d3a68322e6d6a525fc625a3f4269a46b056672c899fbc74169f828339`.
+The live-provider connectivity and fixed quality rows are `PASS`; rendered
+platform and broad hostile-filesystem TOCTOU remain `UNVERIFIED`, and release
+authorization remains `INCONCLUSIVE`. The packet is recorded in
+[V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md](V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md).
+Any later behavior change requires fresh collection; later documentation-only
+descendants may retain this exact behavior-bound packet under the continuity
+contract.
 
 **Prior behavior-bound checkpoint (behavior tip `9c1ca2e`; parent issue `#453`):**
 The fresh live-provider observation is bound to behavior tip

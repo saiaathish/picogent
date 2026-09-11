@@ -22,10 +22,13 @@ only to that candidate; later documentation-only descendants do not
 synthesize or rebind the observations.
 
 The latest behavior merge is [PR #685](https://github.com/saiaathish/picogent/pull/685)
-at `547a5b1a4c8d348dae0b0c155c081f4d1b263742`. It validates catalog-bound
-browser screenshot admission and transient handoff to the next model request;
-it does not establish an owned-browser observation, live-provider quality,
-broad same-UID TOCTOU resistance, or release authorization.
+at `547a5b1a4c8d348dae0b0c155c081f4d1b263742`. The exact docs candidate
+`e4e67c15dea4ad5fe87b3349da3bc4dc230cf0a3` now has a fresh task-owned
+live-provider packet in
+[V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md](V4-LIVE-PROVIDER-EVIDENCE-E4E67C1.md).
+It validates catalog-bound browser screenshot admission plus bounded direct
+connectivity and fixed no-tool quality; it does not establish an owned-browser
+observation, broad same-UID TOCTOU resistance, or release authorization.
 
 The prior retained live/rendered packets at audited main candidate `8b022e8`:
 [V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md](V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md)
@@ -55,16 +58,17 @@ The older `f8a78c6` packet is also retained as historical evidence only:
 ## Current behavior checkpoint (2026-09-11)
 
 The current behavior candidate for this audit refresh is
-`547a5b1a4c8d348dae0b0c155c081f4d1b263742` from PR #685. The exact-head
-runtime-boundary matrix reports `HEAD=PASS`, `tree=CLEAN`, and
-`PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5`; its artifact SHA-256 is
-`8ce4dde2c26a797bdfd4d1bd56b61e713334383b9bdef44c7b8acbc90ce778b2`.
-The five unverified rows are live-provider connectivity, live-provider
-quality, rendered-platform-local, rendered-cross-platform, and broad hostile
-filesystem TOCTOU. Release authorization remains `INCONCLUSIVE` with
-`authorized=false` because no operator approval is recorded. A documentation-
-only descendant may retain this behavior-bound packet; any later behavior
-change requires fresh evidence.
+`547a5b1a4c8d348dae0b0c155c081f4d1b263742` from PR #685. The exact docs
+candidate is `e4e67c15dea4ad5fe87b3349da3bc4dc230cf0a3`. Its runtime-boundary
+matrix reports `HEAD=PASS`, `tree=CLEAN`, and
+`PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3`; its artifact SHA-256 is
+`6be4f28d3a68322e6d6a525fc625a3f4269a46b056672c899fbc74169f828339`.
+The live-provider connectivity and quality rows are `PASS` from the fresh
+packet. Rendered-platform-local, rendered-cross-platform, and broad hostile
+filesystem TOCTOU remain `UNVERIFIED`. Release authorization remains
+`INCONCLUSIVE` with `authorized=false` because no operator approval is
+recorded. A later documentation-only descendant may retain this packet; any
+later behavior change requires fresh evidence.
 
 ## Last fully rendered exact-candidate posture (rendered evidence `eabf8d6`; behavior `9c1ca2e`)
 
