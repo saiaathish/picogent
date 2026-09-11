@@ -321,7 +321,12 @@ func TestWindowsSameUIDParentSwapConfinement(t *testing.T) {
 			_ = os.WriteFile(release, []byte("go\n"), 0o600)
 			_ = os.WriteFile(stop, []byte("stop\n"), 0o600)
 			waitErr := waitForAttackerExit()
-			restoreErr := windowsHostileRestoreParent(parent, backup)
+			var restoreErr error
+			if _, backupErr := os.Lstat(backup); backupErr == nil {
+				restoreErr = windowsHostileRestoreParent(parent, backup)
+			} else if !errors.Is(backupErr, os.ErrNotExist) {
+				restoreErr = backupErr
+			}
 			return errors.Join(waitErr, restoreErr)
 		}
 		cleaned := false
