@@ -329,11 +329,36 @@ func (t mcpTool) Permission(args string, _ Context) perm.Request {
 }
 
 func (t mcpTool) Run(ctx context.Context, args string, _ Context) (string, error) {
+	out, err, _ := t.runWithEvidence(ctx, args)
+	return out, err
+}
+
+func (t mcpTool) runWithEvidence(ctx context.Context, args string) (string, error, ProducerResult) {
+	if t.mgr == nil {
+		return "", fmt.Errorf("MCP manager is unavailable"), ProducerResult{}
+	}
 	bt, ok := t.mgr.Get(t.name)
 	if !ok {
-		return "", fmt.Errorf("mcp tool %s not found", t.name)
+		return "", fmt.Errorf("mcp tool %s not found", t.name), ProducerResult{}
 	}
-	return t.mgr.Call(ctx, bt, args)
+	result, err := t.mgr.CallDetailed(ctx, bt, args)
+	visual, recognized := mcpbridge.BrowserVisualEvidence(bt, result)
+	if !recognized {
+		return result.Text, err, ProducerResult{}
+	}
+	producer := ProducerResult{Visual: &VisualEvidence{
+		Reference:       visual.Reference,
+		ResultError:     visual.ResultError,
+		ValidImageCount: visual.ImageCount,
+	}}
+	for _, image := range visual.Images {
+		producer.Visual.Parts = append(producer.Visual.Parts, llm.Part{
+			Type: "image",
+			MIME: image.MIMEType,
+			Data: append([]byte(nil), image.Data...),
+		})
+	}
+	return result.Text, err, producer
 }
 
 func parseJSON(args string, dest any) error {
