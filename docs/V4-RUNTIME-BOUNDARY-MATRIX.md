@@ -27,6 +27,13 @@ retained prior-candidate matrix digest is
 summary PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1. Those results apply only to
 the retained candidate and its permitted documentation-only descendants.
 
+A fresh exact-current Darwin rendered recovery observation was collected at
+candidate `3935b4482f703662acff21f23b205f0763ee1758` and is recorded in
+[V4-RENDERED-DARWIN-EVIDENCE-3935B44.md](V4-RENDERED-DARWIN-EVIDENCE-3935B44.md).
+It establishes `rendered-platform-local=PASS` for `darwin/arm64`; it does not
+upgrade the retained cross-platform aggregate or the broader hostile and
+authorization rows.
+
 The fresh matrix digest is
 `a49c2bbb74d13f7a2053f3cbd131c7fc8aaf6dc32a295ccea2c87e2c79126293`, with
 summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3. Its current behavior-bound
@@ -50,6 +57,7 @@ rendered, hostile-TOCTOU, or release-authorization rows.
 See the [behavior-bound live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-9C1CA2E.md),
 the [retained prior-candidate rendered cross-platform evidence record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md),
 the [behavior-bound Darwin rendered recovery evidence record](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md),
+the [fresh exact-current Darwin rendered recovery evidence record](V4-RENDERED-DARWIN-EVIDENCE-3935B44.md),
 the [historical Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
 the [historical Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md),
 the [historical Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md),
@@ -372,6 +380,17 @@ checklist are
 TOCTOU residual acceptance is
 [V4-HOSTILE-TOCTOU-RESIDUAL.md](V4-HOSTILE-TOCTOU-RESIDUAL.md). They do
 not authorize a release.
+
+The exact-current local refresh at `3935b4482f703662acff21f23b205f0763ee1758`
+is the [Darwin rendered recovery record](V4-RENDERED-DARWIN-EVIDENCE-3935B44.md).
+Its task-owned BrowserOS neo observation passed the Safe permission, contained
+Allow, Undo, and fresh-process reload flow. The retained exact-head matrix for
+that run has digest
+`0313eb667c1cffbcb9783dbeb2b18f5998157da02f204e1f7cc3bc65b724bc95` and
+summary `PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4`; the run supplied no
+live-provider artifacts, so those rows remain fail-closed in that snapshot.
+The local rendered row is therefore `PASS` only for Darwin/arm64, while
+`rendered-cross-platform` remains `UNVERIFIED`.
 
 Enable the narrow local row with an evidence artifact outside the checkout:
 
