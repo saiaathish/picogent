@@ -16,13 +16,15 @@ import (
 // unused: Windows ACLs express the write boundary through the descriptor, not
 // through a Unix-style permission bit split.
 func trustedManagedDirectory(path string, _ bool) bool {
-	return windowsACLPathProtected(path)
+	return windowsACLPathProtected(path, false)
 }
 
 // executableAncestorsProtected verifies the canonical target and every
 // directory from the trusted root to the filesystem root. Windows has no
 // portable os.FileMode executable bit, so the ACL check also covers the target
-// file itself.
+// file itself. Existing-directory ancestors may have standard create-only
+// access, but the managed root and the target must not be writable by an
+// untrusted principal.
 func executableAncestorsProtected(root, target string) bool {
 	root, ok := canonicalPath(root)
 	if !ok {
@@ -37,7 +39,7 @@ func executableAncestorsProtected(root, target string) bool {
 		return false
 	}
 	for current := root; ; current = filepath.Dir(current) {
-		if !windowsACLPathProtected(current) {
+		if !windowsACLPathProtected(current, true) {
 			return false
 		}
 		parent := filepath.Dir(current)
@@ -56,7 +58,7 @@ func executableAncestorsProtected(root, target string) bool {
 		if i < len(parts)-1 && !st.IsDir() {
 			return false
 		}
-		if !windowsACLPathProtected(current) {
+		if !windowsACLPathProtected(current, i == len(parts)-1) {
 			return false
 		}
 	}
@@ -76,15 +78,22 @@ const windowsUntrustedWriteMask = uint32(
 		windows.GENERIC_ALL,
 )
 
+const windowsCreateOnlyDirectoryMask = uint32(windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA)
+
 const trustedInstallerSIDText = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
 
-// windowsACLPathProtected accepts ACLs whose write-capable grants are limited
-// to a recognized trusted owner, the current user, LocalSystem, local
-// administrators, or TrustedInstaller. This protects against another account
-// or a broad user group modifying the path while preserving user-managed CLI
-// directories. A same-user replacement race after this check remains outside
-// this path-based proof.
-func windowsACLPathProtected(path string) bool {
+// windowsACLPathProtected accepts ACLs whose modification, deletion, or
+// security-control grants are limited to a recognized trusted owner, the
+// current user, LocalSystem, local administrators, or TrustedInstaller. When
+// allowCreateOnlyDirectory is true, the create-file/create-directory rights
+// that Windows grants on some existing system directories are ignored. A
+// same-user replacement race after this check remains outside this path-based
+// proof.
+func windowsACLPathProtected(path string, allowCreateOnlyDirectory bool) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil || sd == nil {
 		return false
@@ -113,6 +122,10 @@ func windowsACLPathProtected(path string) bool {
 	if err != nil {
 		return false
 	}
+	writeMask := windowsUntrustedWriteMask
+	if info.IsDir() && allowCreateOnlyDirectory {
+		writeMask &^= windowsCreateOnlyDirectoryMask
+	}
 
 	for i := uint16(0); i < dacl.AceCount; i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
@@ -130,7 +143,7 @@ func windowsACLPathProtected(path string) bool {
 		case windows.ACCESS_DENIED_ACE_TYPE:
 			continue
 		case windows.ACCESS_ALLOWED_ACE_TYPE:
-			if uint32(ace.Mask)&windowsUntrustedWriteMask == 0 {
+			if uint32(ace.Mask)&writeMask == 0 {
 				continue
 			}
 			sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
@@ -142,7 +155,7 @@ func windowsACLPathProtected(path string) bool {
 			// and evaluation semantics. A read-only ACE cannot weaken this
 			// write-protection check, but an unrecognized write-capable ACE
 			// must fail closed.
-			if windowsACEAccessMask(ace)&windowsUntrustedWriteMask != 0 {
+			if windowsACEAccessMask(ace)&writeMask != 0 {
 				return false
 			}
 		}
