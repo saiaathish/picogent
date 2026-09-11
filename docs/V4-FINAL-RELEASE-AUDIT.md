@@ -14,6 +14,10 @@ Formal TOCTOU residual-acceptance package:
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
+The exact-current rendered cross-platform packet at candidate `592b07a` is
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md).
+Its aggregate and matrix remain retained outside the checkout and are bound
+only to that candidate.
 The prior retained live/rendered packets at audited main candidate `8b022e8`:
 [V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md](V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md)
 for live-provider continuity from behavior `b7b5c5c`, and
@@ -39,31 +43,34 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current main posture (behavior candidate `1865a4c`)
+## Current exact-candidate posture (`592b07a`; behavior `1865a4c`)
 
-The exact clean behavior candidate for this audit packet is
-`1865a4c00356ac9b871b35b3a08f4e983f2af0e1`. The last non-documentation
-behavior candidate is `eccebd293e58ec48c6553e9228ff4b201a74c77a`; its bounded
-goal-state evidence is retained in
-[V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) and remains valid
-through documentation-only descendants.
+The exact clean rendered candidate covered by this audit packet is
+`592b07a633d9683354c4abeee09b767bc071ab35`. It is a documentation-only
+descendant of behavior candidate
+`1865a4c00356ac9b871b35b3a08f4e983f2af0e1`; the last non-documentation
+behavior candidate remains `eccebd293e58ec48c6553e9228ff4b201a74c77a`, with
+bounded goal-state evidence retained in
+[V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md).
 
-Fresh exact-head connectivity and fixed no-tool quality observations are
-retained in
-[V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md).
-Fresh task-owned Darwin rendered recovery evidence is retained in
-[V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md).
-The exact-head matrix records `live-provider-connectivity=PASS` and
-`live-provider-quality=PASS` and `rendered-platform-local=PASS`, while
-`rendered-cross-platform=UNVERIFIED`, and broad
-`hostile-filesystem-toctou=UNVERIFIED` remain explicit gaps.
+The exact-current rendered packet is retained in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md).
+Its three-platform aggregate digest is
+`71bfe03c0afb889c9a548e9264cf0ab4509d80f69a85e346fb4501d85a626b05`; the
+exact-current runtime matrix digest is
+`6048c4244818db694b96b5875f8893f1d84aaf731a4caebc4493bfbff4213817` and its
+summary is **PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1**. The matrix records
+`live-provider-connectivity=PASS`, `live-provider-quality=PASS`,
+`rendered-platform-local=PASS`, and `rendered-cross-platform=PASS`.
+
+The live-provider and local-rendered PASS rows are behavior-bound to `1865a4c`
+under the documented `DOCS_ONLY_DESCENDANT` contract; the cross-platform
+rendered PASS is exact-candidate-bound to `592b07a`. Broad
+`hostile-filesystem-toctou` remains `UNVERIFIED`, and
 `release-authorization` remains `INCONCLUSIVE` with `authorized=false` because
-no human operator decision has been recorded. The bounded goal-state and live
-provider PASS rows do not upgrade any broader rendered, hostile, or release
-row, and the historical live/rendered packets below are not unioned into a
-current release-authorizing matrix. The current docs-tip continuity matrix
-records `PASS 9 / INCONCLUSIVE 1 / UNVERIFIED 2`; its local rendered PASS is
-Darwin-only and does not upgrade the cross-platform row.
+no human operator decision has been recorded. Separate historical packets are
+not unioned into a synthetic release-authorizing matrix. Any later
+non-documentation behavior change requires fresh evidence.
 
 ## Historical main live-provider continuity (`8b022e8`, behavior `b7b5c5c`)
 

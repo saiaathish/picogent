@@ -5,37 +5,32 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current behavior-evidence note (candidate `1865a4c` / issue `#643`):**
-The latest clean current-main behavior candidate for this packet is
-`1865a4c00356ac9b871b35b3a08f4e983f2af0e1`. Post-merge CI run
-`34546564353` and release-artifacts run `34546564358` passed at the preceding
-current-main documentation checkpoint. The last non-documentation behavior
-candidate is `eccebd293e58ec48c6553e9228ff4b201a74c77a`; the retained bounded
-goal-state records from that candidate are documented in
-[V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) and remain valid for
-documentation-only descendants.
+**Current exact-candidate note (candidate `592b07a` / issue `#646`):**
+The latest clean candidate covered by this packet is
+`592b07a633d9683354c4abeee09b767bc071ab35`. It is a documentation-only
+descendant of behavior candidate
+`1865a4c00356ac9b871b35b3a08f4e983f2af0e1`; the retained bounded goal-state,
+live-provider, and local-rendered records remain bound to that behavior
+candidate under the continuity contract.
 
-Fresh exact-head live-provider connectivity and fixed no-tool quality
-observations at this candidate are documented in
-[V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md).
-The retained exact-head matrix digest is
-`512f8f2a404584c08b804e989ebe836fe44b0881646a77e12dae243ea2eb88db`, with
-summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3. It records both
-`live-provider-connectivity=PASS` and `live-provider-quality=PASS`.
+The exact-current three-platform rendered recovery record is documented in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md).
+Its aggregate digest is
+`71bfe03c0afb889c9a548e9264cf0ab4509d80f69a85e346fb4501d85a626b05`. The
+retained exact-current matrix digest is
+`6048c4244818db694b96b5875f8893f1d84aaf731a4caebc4493bfbff4213817`, with
+summary PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1. It records
+`live-provider-connectivity=PASS`, `live-provider-quality=PASS`,
+`rendered-platform-local=PASS`, and `rendered-cross-platform=PASS`.
 
-A fresh task-owned Darwin rendered recovery observation is bound to this
-behavior candidate in
-[V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md).
-Its digest-only artifact was accepted by the matrix through the
-`DOCS_ONLY_DESCENDANT` continuity contract at the current docs tip. Older
-live-provider packets and rendered aggregates below remain historical and must
-not be unioned or projected onto this candidate. Accordingly, the current
-posture is `live-provider-connectivity=PASS`, `live-provider-quality=PASS`,
-`rendered-platform-local=PASS`, `rendered-cross-platform=UNVERIFIED`, broad
-`hostile-filesystem-toctou=UNVERIFIED`, and
-`release-authorization=INCONCLUSIVE`. The bounded live-provider and local
-rendered PASS rows do not upgrade the cross-platform, hostile-runtime, or
-release-authorization rows.
+The exact-current matrix was generated before this documentation-only packet
+and is retained at
+`/private/tmp/picogent-current-592-runtime-boundary-matrix-final.json`. A
+later docs-only descendant may use the continuity contract, but any later
+non-documentation behavior change requires fresh evidence. The current posture
+also keeps broad `hostile-filesystem-toctou=UNVERIFIED` and
+`release-authorization=INCONCLUSIVE`; no historical live/rendered packets are
+unioned into a synthetic release-authorizing result.
 
 The post-merge continuity matrix captured at candidate `db477d1` is recorded in
 [V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md](V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md).
@@ -43,7 +38,8 @@ It validates the retained live-provider rows through the documented
 `DOCS_ONLY_DESCENDANT` rule; it does not rebind or upgrade the remaining
 rendered, hostile-TOCTOU, or release-authorization rows.
 
-See the [current Darwin rendered recovery evidence record](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md),
+See the [exact-current rendered cross-platform evidence record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md),
+the [behavior-bound Darwin rendered recovery evidence record](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md),
 the [historical Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
 the [historical Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md),
 the [historical Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md),
@@ -345,24 +341,19 @@ The rendered rows are also split by claim size:
   [V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md). One local
   platform record cannot stand in for the other supported platforms.
 
-The latest local rendered observation is recorded in
-[V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md)
-at `ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c`; Darwin/arm64 is evidenced
-there.
-The last retained exact-candidate cross-platform observation is recorded in
-[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md)
-for [#507](https://github.com/saiaathish/picogent/issues/507). Darwin, Linux,
-and Windows each passed the same allow→undo→fresh-process reload flow at the
-exact candidate `3f5543d6c88e9484aaf1e01a6eb28f8d7f6982fe`. Exact-SHA matrix
-projection is `rendered-cross-platform=PASS` when that candidate aggregate is
-supplied; later docs-only descendants must not project it onto a different
-candidate SHA. The exact candidate `ad34bd5` now has a fresh Darwin local row
-and a separate darwin/linux/windows aggregate with `verdict=PASS`, recorded in
-[V4-RENDERED-CROSS-PLATFORM.md](V4-RENDERED-CROSS-PLATFORM.md). The aggregate
-remains bound to `ad34bd5`; a later non-docs candidate requires recollection.
-With the
-Darwin/Linux parent-swap docs present, `hostile-parent-swap-confinement`
-projects `PASS`; residual `hostile-filesystem-toctou` stays `UNVERIFIED` and
+The exact-current three-platform observation is recorded in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md)
+for [#646](https://github.com/saiaathishkarthik/picogent/issues/646). Darwin,
+Linux, and Windows each passed the same allow→undo→fresh-process reload flow
+at exact candidate `592b07a633d9683354c4abeee09b767bc071ab35`; the aggregate
+digest is `71bfe03c0afb889c9a548e9264cf0ab4509d80f69a85e346fb4501d85a626b05`.
+Exact-SHA matrix projection is `rendered-cross-platform=PASS` only for that
+candidate aggregate. Later docs-only descendants may use the continuity
+contract, while a later non-documentation candidate requires recollection.
+The older Darwin, Linux, Windows, and aggregate records remain historical and
+are not silently projected onto this candidate. With the Darwin/Linux
+parent-swap docs present, `hostile-parent-swap-confinement` projects `PASS`;
+residual `hostile-filesystem-toctou` stays `UNVERIFIED` and
 `release-authorization` stays `INCONCLUSIVE` without operator approval. The
 tip-bound final release + hostile residual packet and operator decision
 checklist are
