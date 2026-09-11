@@ -239,8 +239,17 @@ close the open or unrecorded risks below.
 - macOS Terminal.app launch now prefixes the provider command with an explicit
   `/usr/bin/env -i` allowlist, but Terminal profile startup and Apple Event
   behavior remain live-runtime proof gaps.
-- Git status/diff and external MCP responses need adversarial hook, textconv,
-  prompt-injection, and secret-leakage runtime tests.
+- Git observation has bounded tests against real temporary repositories that
+  suppress repository hooks, external-diff and textconv helpers, remove
+  inherited Git control values, and redact credential-shaped diff output.
+  `internal/gitobs/gitobs_test.go` exercises those named helper and redaction
+  checks. This does not establish behavior for every Git version or arbitrary
+  repository configuration.
+- The external MCP response boundary has a direct HTTP adversarial test for
+  untrusted-result marking, credential-shaped redaction, and bounded output.
+  `internal/mcpbridge/manager_test.go` exercises that transport boundary. It
+  does not establish model-level resistance to prompt injection or arbitrary
+  external MCP server behavior.
 - The hosted deep security scan was unavailable in the earlier campaign; no
   scan ID, manifest, or no-findings result is claimed.
 
