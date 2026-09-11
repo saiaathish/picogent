@@ -1,42 +1,38 @@
 # V4 independent release-evidence audit
 
-## Current exact-head checkpoint — `main` `6768dc760c79c7cc6f232ccd8a684f3aad1a98d5`
+## Current exact-head checkpoint — `main` behavior candidate `547a5b1a4c8d348dae0b0c155c081f4d1b263742`
 
-Status: `INCONCLUSIVE` for release authorization. This checkpoint records the
-current docs-only descendant after PR #665; it is not a release approval.
+Status: `INCONCLUSIVE` for release authorization. This snapshot was generated
+from a clean exact-main checkout before the documentation-only child for #686;
+it is an evidence checkpoint, not a release approval.
 
 ### Exact-head provenance
 
-- Current `main` tip: `6768dc760c79c7cc6f232ccd8a684f3aad1a98d5`.
-- Latest behavior-changing tip: `9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` (PR #661).
-- The current tip is a docs-only descendant from PR #665; no behavior evidence
-  is projected onto it without that provenance distinction.
-- Local exact-head tree: `CLEAN`.
-
-### Post-merge hosted runs
-
-| Run | Result | Jobs |
-| --- | --- | --- |
-| [CI 34574150845](https://github.com/saiaathish/picogent/actions/runs/34574150845) | `success` | Ubuntu `103182700750`, Windows `103182700882`, macOS `103182700824`, security `103182700590`, release-evidence `103185031844` |
-| [release-artifacts 34574150809](https://github.com/saiaathish/picogent/actions/runs/34574150809) | `success` | production-artifacts `103182700583` |
-
-These runs confirm the hosted jobs completed successfully for the exact
-current commit. They do not, by themselves, establish live-provider quality,
-rendered browser behavior, universal hostile-filesystem race resistance, or
-operator approval.
+- Behavior candidate: `547a5b1a4c8d348dae0b0c155c081f4d1b263742` (PR #685).
+- `HEAD` provenance: `PASS`; source tree: `CLEAN`.
+- Runtime-boundary matrix artifact SHA-256:
+  `8ce4dde2c26a797bdfd4d1bd56b61e713334383b9bdef44c7b8acbc90ce778b2`.
+- Matrix summary: `PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5`.
+- The matrix was retained outside the checkout at
+  `/private/tmp/picogent-v4-evidence-686-artifacts/runtime-boundary-matrix.json`.
+- A later merge of this documentation-only child may be treated as a
+  `DOCS_ONLY_DESCENDANT` of this behavior candidate; later behavior changes
+  require fresh collection.
 
 ### Current-head verdict
 
 | Claim | Result | Boundary |
 | --- | --- | --- |
-| Required hosted CI and artifact jobs passed at the exact current tip | `CONFIRMED` | CI and release-artifacts runs above both bind `6768dc7`. |
-| Current source tree is clean | `CONFIRMED` | The exact-head checkout reports no local changes. |
-| Release-gate and coverprofile reader hardening is present | `CONFIRMED` | These behavior changes are bound to `9c1ca2e`; #663 and #665 are docs-only. |
-| Fresh live-provider or rendered-platform observation at this tip | `UNVERIFIED` | Earlier behavior-bound packets are not unioned into a fresh current-tip observation. |
-| Hostile filesystem TOCTOU | `UNVERIFIED` | Bounded confinement and evidence-reader hardening do not prove the universal same-UID claim. |
-| Overall release authorization | `INCONCLUSIVE` | No explicit operator approval is present; green hosted runs are evidence, not authorization. |
+| Typed browser screenshot admission | `CONFIRMED` | PR #685 validates catalog-bound image admission and transient handoff to the next model request; it is not hosted browser proof. |
+| Bounded deterministic runtime and recovery rows | `CONFIRMED` | The exact-head matrix records six bounded PASS rows, including deterministic hostile, parent-swap, rendered recovery API, long-horizon, and restart/steer/undo evidence. |
+| Live-provider connectivity and quality | `UNVERIFIED` | No live-provider artifact was supplied to this exact-head matrix. |
+| Rendered platform behavior | `UNVERIFIED` | No current local or cross-platform rendered artifact was supplied; screenshot routing does not substitute for owned-browser observation. |
+| Hostile filesystem TOCTOU | `UNVERIFIED` | Bounded parent-swap confinement does not prove arbitrary same-UID filesystem races. |
+| Overall release authorization | `INCONCLUSIVE` | Explicit operator approval and a complete current release evidence set are absent. |
 
 No v4 completion or release claim follows from this checkpoint.
+
+## Historical packet index
 
 Status: `INCONCLUSIVE` for release authorization. This is an independently
 rechecked evidence report, not a release approval or a supply-chain

@@ -5,16 +5,18 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current main checkpoint for this refresh:** `main` is
-`9a1171942e9041a9e25a75e30e6d9e5dc7d7ad5e` and includes the bounded Windows
-ACL behavior from PR #679, the docs-only PR #680, and the release-audit refresh
-from PR #682. A fresh exact-current Darwin rendered-platform artifact is bound
-to this tip in
-[V4-RENDERED-DARWIN-EVIDENCE-9A11719.md](V4-RENDERED-DARWIN-EVIDENCE-9A11719.md).
-It establishes `rendered-platform-local=PASS`; no fresh live-provider or
-cross-platform artifact is bound to this tip, so those rows remain
-`UNVERIFIED`. Broad hostile same-UID filesystem TOCTOU remains `UNVERIFIED`
-and release authorization remains `INCONCLUSIVE`.
+**Current behavior checkpoint for this refresh:** `main` is
+`547a5b1a4c8d348dae0b0c155c081f4d1b263742` at PR #685, whose typed browser
+screenshot admission is tested but does not itself create an owned-browser
+observation. A fresh exact-head matrix was generated with `HEAD=PASS`,
+`tree=CLEAN`, and summary `PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5`.
+Its artifact SHA-256 is
+`8ce4dde2c26a797bdfd4d1bd56b61e713334383b9bdef44c7b8acbc90ce778b2`.
+The live-provider, rendered-platform-local, rendered-cross-platform, and
+hostile-filesystem-toctou rows are `UNVERIFIED`; release authorization is
+`INCONCLUSIVE`. A documentation-only descendant may retain this behavior
+checkpoint under the continuity contract, while any later behavior change
+requires fresh collection.
 
 **Prior behavior-bound checkpoint (behavior tip `9c1ca2e`; parent issue `#453`):**
 The fresh live-provider observation is bound to behavior tip
