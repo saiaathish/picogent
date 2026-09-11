@@ -18,8 +18,11 @@ The current exact-head connectivity and fixed quality observations are
 documented in
 [V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md).
 They record both `live-provider-connectivity=PASS` and
-`live-provider-quality=PASS`. No rendered-platform observation is bound to
-this behavior candidate. The retained packets below are historical and remain
+`live-provider-quality=PASS`. Current task-owned Darwin rendered recovery
+evidence is documented in
+[V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md)
+and records `rendered-platform-local=PASS`; cross-platform rendered evidence
+remains unverified. The retained packets below are historical and remain
 separate:
 
 - Historical live-provider continuity from behavior SHA
@@ -149,7 +152,7 @@ does **not**, by itself:
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating a unified current-tip `PASS` | The current behavior candidate is `1865a4c`; both live rows are freshly bound, but rendered evidence is absent and broad TOCTOU remains `UNVERIFIED`. Historical live/rendered artifacts at `b7b5c5c` / `8b022e8` must not be unioned, and any later non-docs candidate requires fresh collection |
+| Fabricating a unified current-tip `PASS` | The current behavior candidate is `1865a4c`; live rows and Darwin local rendered evidence are freshly bound, but cross-platform rendered evidence and broad TOCTOU remain `UNVERIFIED`. Historical live/rendered artifacts at `b7b5c5c` / `8b022e8` must not be unioned, and any later non-docs candidate requires fresh collection |
 
 ## Current dry-run posture (no approval observed)
 
@@ -158,8 +161,8 @@ does **not**, by itself:
 | Current behavior candidate | `1865a4c00356ac9b871b35b3a08f4e983f2af0e1` (later docs-only descendants must use the continuity contract) |
 | Last non-documentation behavior candidate | `eccebd293e58ec48c6553e9228ff4b201a74c77a`; bounded goal-state records are retained in [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) |
 | Live-provider evidence | Connectivity and fixed quality `PASS` at behavior candidate `1865a4c` in [V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md); historical behavior `b7b5c5c` remains separate |
-| Rendered evidence | No current-tip packet; historical candidate `8b022e8` remains separate and does not rebind through the goal-state code changes |
-| Release matrix posture | Exact-head matrix is PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3; no synthetic union; rendered rows and broad TOCTOU remain `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` |
+| Rendered evidence | Darwin recovery packet [V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md) records `rendered-platform-local=PASS`; cross-platform rendered evidence remains separate and `UNVERIFIED` |
+| Release matrix posture | Docs-tip continuity matrix is PASS 9 / INCONCLUSIVE 1 / UNVERIFIED 2; no synthetic union; cross-platform rendered evidence and broad TOCTOU remain `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
 | Operator approval | **Absent — do not auto-sign** |
