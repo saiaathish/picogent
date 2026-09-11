@@ -214,8 +214,13 @@ close the open or unrecorded risks below.
   replacement-hardlink pressure, but the operation is intentionally not a
   multi-file atomic transaction and cross-process deletion races remain
   required before this is a broad checkpoint safety claim.
-- Trace events clip values but do not provide a complete secret-redaction
-  policy for prompts, tool arguments, MCP output, or crash diagnostics.
+- Durable trace events redact credential-shaped text in every textual event
+  field (`Kind`, `Tool`, and `Detail`) on both append and read. The agent sends
+  prompts, tool arguments and outputs, verification output, and GUI permission
+  summaries through that boundary. This is not a complete global redaction
+  policy: arbitrary external MCP behavior, non-trace crash diagnostics, and
+  secret forms the redactor does not recognize still require separate
+  hostile-runtime evidence.
 - The npm provider packages and their platform-specific optional packages are
   now backed by the reviewed `internal/setup/provider-package-lock.json`; setup
   materializes that lock and uses npm's integrity-checked lock resolution with
