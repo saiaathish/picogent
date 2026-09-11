@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -378,6 +379,54 @@ func TestExpiredDeleteUndoIsRetiredWithoutRestoringTheSession(t *testing.T) {
 	}
 	if _, err := Load(original.ID); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expired delete restored session = %v, want not found", err)
+	}
+}
+
+func TestLoadDeleteUndoFailsClosedOnSymlinkedSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := t.TempDir()
+	original := &Session{
+		ID:        "symlinked-delete-undo",
+		Workspace: workspace,
+		Messages:  []llm.Message{{Role: "user", Content: "must remain recoverable"}},
+	}
+	pending := &DeleteUndo{
+		UndoID:    "symlinked-delete-undo-token",
+		Session:   original,
+		Workspace: workspace,
+		ExpiresAt: time.Now().UTC().Add(time.Minute),
+	}
+	data, _, err := marshalDeleteUndo(pending)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := securefile.EnsureDir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := securefile.WriteAtomic(deleteUndoPath(dir), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte("foreign record"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, original.ID+".json")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := LoadDeleteUndo(); err == nil {
+		t.Fatal("LoadDeleteUndo accepted a symlinked session record")
+	}
+	if _, err := securefile.ReadFile(deleteUndoPath(dir)); err != nil {
+		t.Fatalf("recovery journal was retired after symlink rejection: %v", err)
 	}
 }
 
