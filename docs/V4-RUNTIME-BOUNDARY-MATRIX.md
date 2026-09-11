@@ -5,32 +5,42 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact-candidate note (candidate `592b07a` / issue `#646`):**
-The latest clean candidate covered by this packet is
-`592b07a633d9683354c4abeee09b767bc071ab35`. It is a documentation-only
-descendant of behavior candidate
-`1865a4c00356ac9b871b35b3a08f4e983f2af0e1`; the retained bounded goal-state,
-live-provider, and local-rendered records remain bound to that behavior
-candidate under the continuity contract.
+**Current docs-only checkpoint (docs tip `43d4269`; behavior tip `9c1ca2e`; issue `#669`):**
+The current clean `main` tip is
+`43d4269224bfe380f53707c553e94e12cea01b79`, a docs-only descendant of the
+latest behavior-hardening tip
+`9c1ca2e4df5af35dde5ed5e1f5cce39368e9b2fb` (PR #661). PRs #663, #665, #666,
+and #668 are documentation-only descendants after that behavior tip.
 
-The exact-current three-platform rendered recovery record is documented in
+No exact-current runtime artifact is retained for behavior tip `9c1ca2e`. The
+previously retained packet at candidate
+`592b07a633d9683354c4abeee09b767bc071ab35` predates behavior changes in #651,
+#657, #659, and #661, so its runtime PASS results remain historical and are not
+projected onto the current behavior or docs tip.
+
+The retained three-platform rendered record is documented in
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md).
 Its aggregate digest is
 `71bfe03c0afb889c9a548e9264cf0ab4509d80f69a85e346fb4501d85a626b05`. The
-retained exact-current matrix digest is
+retained prior-candidate matrix digest is
 `6048c4244818db694b96b5875f8893f1d84aaf731a4caebc4493bfbff4213817`, with
-summary PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1. It records
-`live-provider-connectivity=PASS`, `live-provider-quality=PASS`,
-`rendered-platform-local=PASS`, and `rendered-cross-platform=PASS`.
+summary PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1. Those results apply only to
+the retained candidate and its permitted documentation-only descendants.
 
-The exact-current matrix was generated before this documentation-only packet
-and is retained at
-`/private/tmp/picogent-current-592-runtime-boundary-matrix-final.json`. A
-later docs-only descendant may use the continuity contract, but any later
-non-documentation behavior change requires fresh evidence. The current posture
-also keeps broad `hostile-filesystem-toctou=UNVERIFIED` and
-`release-authorization=INCONCLUSIVE`; no historical live/rendered packets are
-unioned into a synthetic release-authorizing result.
+The retained matrix is stored at
+`/private/tmp/picogent-current-592-runtime-boundary-matrix-final.json`. Since
+non-documentation changes intervene between that candidate and `9c1ca2e`, the
+continuity contract cannot make it current. A fresh exact-current observation
+at the behavior tip is required before upgrading the following rows:
+
+| Current behavior-tip claim | Current result | Boundary |
+| --- | --- | --- |
+| `live-provider-connectivity` | `UNVERIFIED` | No fresh connectivity artifact is bound to `9c1ca2e`. |
+| `live-provider-quality` | `UNVERIFIED` | No retained quality artifact is current after the intervening behavior changes. |
+| `rendered-platform-local` | `UNVERIFIED` | No fresh local rendered artifact is bound to `9c1ca2e`. |
+| `rendered-cross-platform` | `UNVERIFIED` | The retained three-platform packet is bound to `592b07a`, not the current behavior tip. |
+| `hostile-filesystem-toctou` | `UNVERIFIED` | Broad same-UID TOCTOU remains an explicit residual. |
+| `release-authorization` | `INCONCLUSIVE` | Runtime evidence and hosted CI do not replace operator approval. |
 
 The post-merge continuity matrix captured at candidate `db477d1` is recorded in
 [V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md](V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md).
@@ -38,7 +48,7 @@ It validates the retained live-provider rows through the documented
 `DOCS_ONLY_DESCENDANT` rule; it does not rebind or upgrade the remaining
 rendered, hostile-TOCTOU, or release-authorization rows.
 
-See the [exact-current rendered cross-platform evidence record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md),
+See the [retained prior-candidate rendered cross-platform evidence record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md),
 the [behavior-bound Darwin rendered recovery evidence record](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md),
 the [historical Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
 the [historical Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md),
