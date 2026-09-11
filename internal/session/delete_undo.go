@@ -432,7 +432,11 @@ func undoSessionMissingLocked(dir, id string) (bool, error) {
 	if !validID(id) {
 		return false, errors.New("invalid session id")
 	}
-	_, err := os.Lstat(filepath.Join(dir, id+".json"))
+	// Use the same descriptor-anchored boundary as the authoritative session
+	// reader. A raw Lstat follows a replaced parent directory and can make a
+	// symlink or foreign record look like a present session, causing recovery
+	// cleanup to retire a journal without restoring it.
+	_, err := securefile.ReadFilePrefix(filepath.Join(dir, id+".json"), 1)
 	if err == nil {
 		return false, nil
 	}
