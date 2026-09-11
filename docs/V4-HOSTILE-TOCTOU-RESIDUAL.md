@@ -1,8 +1,9 @@
 # V4 hostile filesystem TOCTOU residual (formal acceptance package)
 
-Status: **residual audit packaging only**. This note defines the defensive
-confinement residual boundary for `hostile-filesystem-toctou=UNVERIFIED`. It
-does **not**:
+Status: **residual audit packaging only**. This note is re-bound to the current
+documentation tip while the latest retained behavior evidence remains bound to
+an earlier candidate. It defines the defensive confinement residual boundary
+for `hostile-filesystem-toctou=UNVERIFIED`. It does **not**:
 
 - claim `hostile-filesystem-toctou=PASS`;
 - authorize a release or set `authorized: true`;
@@ -18,6 +19,28 @@ Fillable residual-acceptance record stub:
 [V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md](V4-HOSTILE-TOCTOU-RESIDUAL-ACCEPTANCE.md).
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
+
+## Rebind baseline (main tip `0788a2b`)
+
+This rebind starts from `main` tip
+`0788a2b74155d5c46af37c5f7c19c5a3d5c22ef9`. The latest retained runtime
+evidence remains bound to behavior candidate `592b07a633d9683354c4abeee09b767bc071ab35`.
+Because PR #651 changed code after that candidate, the retained matrix is not
+current-main runtime proof and must not be silently re-used as one.
+
+| Anchor | Value |
+| --- | --- |
+| Base docs / `main` tip at rebind authoring | `0788a2b74155d5c46af37c5f7c19c5a3d5c22ef9` |
+| Latest retained behavior candidate | `592b07a633d9683354c4abeee09b767bc071ab35` |
+| Three-platform aggregate SHA-256 | `71bfe03c0afb889c9a548e9264cf0ab4509d80f69a85e346fb4501d85a626b05` |
+| Runtime matrix SHA-256 | `6048c4244818db694b96b5875f8893f1d84aaf731a4caebc4493bfbff4213817` |
+| Retained matrix summary | **PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1** |
+| Residual row | `hostile-filesystem-toctou=UNVERIFIED` |
+| Narrow persistence hardening | [#651](https://github.com/saiaathish/picogent/pull/651) merged; [#652](https://github.com/saiaathish/picogent/pull/652) removed dead session helpers |
+
+The candidate and current-main anchors are intentionally separate. A fresh
+exact-current behavior campaign is required before making claims about the
+combined post-#651 code.
 
 ## Why this package exists
 
@@ -38,7 +61,15 @@ that acceptance. Proving a universal TOCTOU PASS would require offensive
 race-reproduction procedures outside this packaging track; those are
 **out of scope** here by design.
 
-## Anchors (docs tip / behavior)
+The later boundary inventory ([#649](https://github.com/saiaathish/picogent/pull/649)
+and [#650](https://github.com/saiaathish/picogent/pull/650)) identified the
+evolution-store surface. [#651](https://github.com/saiaathish/picogent/pull/651)
+now routes that store through the shared securefile boundary, and
+[#652](https://github.com/saiaathish/picogent/pull/652) removed unreachable raw
+session atomic helpers. Those are narrower hardening and cleanup slices; they
+do not close the cross-surface residual.
+
+## Historical package baseline (superseded)
 
 | Anchor | Value |
 | --- | --- |
@@ -49,9 +80,10 @@ race-reproduction procedures outside this packaging track; those are
 | Parent-swap split | [#542](https://github.com/saiaathish/picogent/pull/542) |
 | Final release + operator packet | [#548](https://github.com/saiaathish/picogent/pull/548) |
 
-Re-bind these anchors to the intended release candidate SHA when signing a
-residual-acceptance record. A docs-only descendant of behavior `423d047` does
-not change the TOCTOU residual.
+These values are preserved as historical provenance only. Re-bind the current
+docs tip and intended release-candidate SHA when signing a residual-acceptance
+record. The current post-#651 main tip is not a docs-only descendant of the
+latest retained behavior candidate.
 
 ## What parent-swap PASS proves
 
@@ -162,5 +194,8 @@ Record reference: docs/V4-HOSTILE-TOCTOU-RESIDUAL.md + this statement
 - Parent-swap Darwin / Linux evidence (bounded PASS only)
 - [#542](https://github.com/saiaathish/picogent/pull/542) — split confinement from residual TOCTOU
 - [#548](https://github.com/saiaathish/picogent/pull/548) — final release audit + operator checklist
+- [#649](https://github.com/saiaathish/picogent/pull/649) / [#650](https://github.com/saiaathish/picogent/pull/650) — current boundary inventory
+- [#651](https://github.com/saiaathish/picogent/pull/651) — evolution-store securefile hardening
+- [#652](https://github.com/saiaathish/picogent/pull/652) — dead session helper cleanup
 - Parents [#450](https://github.com/saiaathish/picogent/issues/450),
   [#453](https://github.com/saiaathish/picogent/issues/453) — remain **OPEN**
