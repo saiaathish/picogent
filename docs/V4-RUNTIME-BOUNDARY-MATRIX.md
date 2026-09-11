@@ -34,6 +34,14 @@ It establishes `rendered-platform-local=PASS` for `darwin/arm64`; it does not
 upgrade the retained cross-platform aggregate or the broader hostile and
 authorization rows.
 
+A fresh exact-current three-platform rendered recovery packet was then
+collected at candidate `eabf8d6e35322170f7ab19dbd30d3cfb576f422c` and is
+recorded in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md).
+It establishes `rendered-platform-local=PASS` and
+`rendered-cross-platform=PASS` for that exact candidate only; broad hostile
+TOCTOU and release authorization remain independently bounded.
+
 The fresh matrix digest is
 `a49c2bbb74d13f7a2053f3cbd131c7fc8aaf6dc32a295ccea2c87e2c79126293`, with
 summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3. Its current behavior-bound
@@ -58,6 +66,7 @@ See the [behavior-bound live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE
 the [retained prior-candidate rendered cross-platform evidence record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md),
 the [behavior-bound Darwin rendered recovery evidence record](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md),
 the [fresh exact-current Darwin rendered recovery evidence record](V4-RENDERED-DARWIN-EVIDENCE-3935B44.md),
+the [fresh exact-current cross-platform rendered recovery evidence record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md),
 the [historical Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
 the [historical Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md),
 the [historical Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md),
@@ -391,6 +400,18 @@ summary `PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4`; the run supplied no
 live-provider artifacts, so those rows remain fail-closed in that snapshot.
 The local rendered row is therefore `PASS` only for Darwin/arm64, while
 `rendered-cross-platform` remains `UNVERIFIED`.
+
+The newer exact-current three-platform refresh at
+`eabf8d6e35322170f7ab19dbd30d3cfb576f422c` is recorded in
+[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-EABF8D6.md).
+Darwin/arm64, Linux/amd64, and Windows/amd64 each passed the same owned-browser
+allow → undo → fresh-process reload flow. The validated aggregate digest is
+`e59d54ebd6f75403974744432b03e28ba2725654c4a11e264a868d4842a0f681`, and the
+exact-head matrix with local and aggregate artifacts supplied reports
+`rendered-platform-local=PASS`, `rendered-cross-platform=PASS`, and summary
+`PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3`. The remaining three rows are the two
+live-provider claims and broad same-UID TOCTOU; release authorization remains
+`INCONCLUSIVE`.
 
 Enable the narrow local row with an evidence artifact outside the checkout:
 
