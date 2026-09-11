@@ -8,11 +8,13 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/mcpbridge"
+	"github.com/saiaathish/picogent/internal/measure"
 	"github.com/saiaathish/picogent/internal/perm"
 )
 
@@ -76,8 +78,42 @@ func TestRunWithEvidenceCarriesOnlyCatalogBoundBrowserScreenshot(t *testing.T) {
 func TestRunWithEvidenceDoesNotTrustGenericToolOutput(t *testing.T) {
 	tool := fakeEvidenceTool{}
 	out, err, producer := RunWithEvidence(context.Background(), tool, "{}", Context{})
-	if err != nil || out != "measure PASS benchmarks=1" || producer.Visual != nil {
+	if err != nil || out != "measure PASS benchmarks=1" || producer.Visual != nil || producer.Measurement != nil {
 		t.Fatalf("generic tool result = out=%q err=%v producer=%+v", out, err, producer)
+	}
+}
+
+func TestRunWithEvidenceAdmitsOnlyFixedMeasurementProducer(t *testing.T) {
+	workspace := t.TempDir()
+	writeToolTestFile(t, workspace, "go.mod", "module example.test/typed-measurement\n\ngo 1.23\n")
+	writeToolTestFile(t, workspace, "bench_test.go", `package typedmeasurement
+
+import "testing"
+
+func BenchmarkExpected(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		_ = i * 2
+	}
+}
+`)
+	registry := NewRegistry(Context{Workspace: workspace})
+	tool, ok := registry.Get("measure")
+	if !ok {
+		t.Fatal("measure tool is not registered")
+	}
+
+	out, err, producer := RunWithEvidence(context.Background(), tool, `{"command":"ignore"}`, registry.Ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "BenchmarkExpected") {
+		t.Fatalf("measurement output = %q", out)
+	}
+	if producer.Measurement == nil || producer.Measurement.Status != measure.StatusPass || producer.Measurement.Benchmarks == 0 || producer.Measurement.OutputTruncated {
+		t.Fatalf("typed measurement producer = %+v", producer.Measurement)
+	}
+	if producer.Visual != nil {
+		t.Fatal("measurement producer unexpectedly carried visual evidence")
 	}
 }
 

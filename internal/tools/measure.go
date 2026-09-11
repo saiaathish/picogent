@@ -23,9 +23,19 @@ func (measureTool) Permission(_ string, _ Context) perm.Request {
 }
 
 func (measureTool) Run(ctx context.Context, _ string, c Context) (string, error) {
+	output, err, _ := (measureTool{}).runWithEvidence(ctx, "", c)
+	return output, err
+}
+
+func (measureTool) runWithEvidence(ctx context.Context, _ string, c Context) (string, error, ProducerResult) {
 	workspace, err := mustWorkspace(c)
 	if err != nil {
-		return "", err
+		return "", err, ProducerResult{}
 	}
-	return measure.Format(measure.Run(ctx, workspace)), nil
+	result := measure.Run(ctx, workspace)
+	return measure.Format(result), nil, ProducerResult{Measurement: &MeasurementEvidence{
+		Status:          result.Status,
+		Benchmarks:      result.Benchmarks,
+		OutputTruncated: result.OutputTruncated,
+	}}
 }

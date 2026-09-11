@@ -329,11 +329,11 @@ func (t mcpTool) Permission(args string, _ Context) perm.Request {
 }
 
 func (t mcpTool) Run(ctx context.Context, args string, _ Context) (string, error) {
-	out, err, _ := t.runWithEvidence(ctx, args)
+	out, err, _ := t.runWithEvidence(ctx, args, Context{})
 	return out, err
 }
 
-func (t mcpTool) runWithEvidence(ctx context.Context, args string) (string, error, ProducerResult) {
+func (t mcpTool) runWithEvidence(ctx context.Context, args string, _ Context) (string, error, ProducerResult) {
 	if t.mgr == nil {
 		return "", fmt.Errorf("MCP manager is unavailable"), ProducerResult{}
 	}

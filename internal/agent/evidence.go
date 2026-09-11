@@ -53,6 +53,37 @@ func (a *Agent) noteVisualEvidence(producer tools.ProducerResult, err error, ev 
 	})
 }
 
+// noteMeasurementEvidence binds only the package-owned fixed benchmark
+// producer to the durable measurement requirement. A passing-looking tool
+// string, an incomplete run, or a producer with no canonical metrics is never
+// allowed to become passing evidence.
+func (a *Agent) noteMeasurementEvidence(producer tools.ProducerResult, err error, ev EventHandler) bool {
+	measurement := producer.Measurement
+	if measurement == nil {
+		return false
+	}
+	status := strings.ToUpper(strings.TrimSpace(string(measurement.Status)))
+	switch {
+	case err != nil:
+		status = "FAIL"
+	case measurement.OutputTruncated:
+		status = "INCONCLUSIVE"
+	case status == "PASS" && measurement.Benchmarks <= 0:
+		status = "INCONCLUSIVE"
+	case status != "PASS" && status != "FAIL" && status != "INCONCLUSIVE":
+		status = "INCONCLUSIVE"
+	}
+	benchmarks := measurement.Benchmarks
+	if benchmarks < 0 {
+		benchmarks = 0
+	}
+	summary := fmt.Sprintf("fixed project measurement %s; canonical benchmarks=%d", status, benchmarks)
+	return a.mutateTask(ev, func(task *taskstate.Task) error {
+		task.RecordMeasurementEvidence(status, summary, "fixed measure tool")
+		return nil
+	})
+}
+
 func cloneLLMParts(parts []llm.Part) []llm.Part {
 	if len(parts) == 0 {
 		return nil
