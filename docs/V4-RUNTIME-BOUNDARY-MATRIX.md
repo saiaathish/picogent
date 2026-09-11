@@ -5,37 +5,26 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact behavior-evidence note (candidate `b7b5c5c` / issue `#619`):**
-The latest exact behavior candidate is
-`b7b5c5c3e98f2caaf1c0d951740bdd7046f755f5`. Its fresh task-owned
-live-provider packet is documented in
-[V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md),
-with exact-head matrix digest
-`5be231cd13d31915753c1743365bbe0582f47accd3e210f6f493b8f4264d074f`, live
-connectivity and fixed quality `PASS`, and summary PASS 8 / INCONCLUSIVE 1 /
-UNVERIFIED 3. The older exact rendered candidate remains
-`ad34bd534b7f9aaf9a3ccc508940dc8ff171bf8c`. A Darwin exact-head matrix is
-retained outside the checkout under
-`/private/tmp/picogent-rendered-darwin-609/evidence/` with matrix digest
-`c2f5b63f3751f95345b901927bde00aac8b10762ffefa879ae3ec95b843a9b17`; it
-reports `HEAD=PASS`, `tree=CLEAN`, `darwin/arm64`, and PASS 7 /
-INCONCLUSIVE 1 / UNVERIFIED 4. The task-owned Darwin rendered row is `PASS`.
-Fresh task-owned Linux/amd64 and Windows/amd64 observations were collected at
-that older exact rendered candidate under [#607](https://github.com/saiaathishkarthik/picogent/issues/607)
-and [#608](https://github.com/saiaathishkarthik/picogent/issues/608). The
-external aggregate at
-`/private/tmp/picogent-rendered-aggregate-ad34/rendered-cross-platform-evidence.json`
-has schema `picogent.v4.rendered-cross-platform-evidence.v1`,
-`verdict=PASS`, `source_tree_modified=false`, and aggregate SHA-256
-`f3def9dc069980125752abbe3d22b7c2ad6a3af8ad74d52091afc38974e35630`.
-The exact-candidate matrix at
-`/private/tmp/picogent-rendered-aggregate-ad34/runtime-boundary-matrix.json`
-has digest `0edb2195f34cd53af4aa4574f82f1f3cd864b319361d427a1d179df6b5c1f952`
-and projects `rendered-cross-platform=PASS`. Live-provider connectivity and
-fixed quality are not rebound in this historical rendered matrix; the separate
-current live-provider packet is bound to behavior SHA `b7b5c5c`. The broad
-`hostile-filesystem-toctou` residual remains `UNVERIFIED`, and
-`release-authorization` remains `INCONCLUSIVE`.
+**Current main behavior-evidence note (candidate `a80b9fb` / issue `#639`):**
+The exact current main tip is
+`a80b9fb73d3d74a2c9787fdd7c74cd9ba2dd65cf`. Post-merge CI run
+`34543854046` and release-artifacts run `34543854052` both passed at that
+SHA. The last non-documentation behavior candidate is
+`eccebd293e58ec48c6553e9228ff4b201a74c77a`; the retained bounded goal-state
+records from that candidate are documented in
+[V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) and remain valid for
+this documentation-only descendant.
+
+No fresh live-provider or rendered-platform observation is bound to the
+current behavior candidate after the goal-state hardening changes. The older
+live-provider packets and rendered aggregates below remain historical and
+must not be unioned or projected onto this candidate. Accordingly, the
+current posture is `live-provider-connectivity=UNVERIFIED`,
+`live-provider-quality=UNVERIFIED`, `rendered-platform-local=UNVERIFIED`,
+`rendered-cross-platform=UNVERIFIED`, broad
+`hostile-filesystem-toctou=UNVERIFIED`, and
+`release-authorization=INCONCLUSIVE`. The bounded goal-state PASS is a named
+subsystem observation and does not upgrade the broader hostile-runtime row.
 
 The post-merge continuity matrix captured at candidate `db477d1` is recorded in
 [V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md](V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md).
@@ -47,7 +36,7 @@ See the [historical Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE
 the [historical Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md),
 the [historical Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md),
 and the [exact-candidate aggregate record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md)
-and the [current exact-tip live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md).
+and the [historical exact-tip live-provider evidence record](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md).
 The prior `f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, and `1ce2059`
 packets and their live/browser records remain historical and are not silently
 projected onto this candidate.
