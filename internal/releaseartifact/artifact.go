@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/saiaathish/picogent/internal/securefile"
 	"github.com/saiaathish/picogent/internal/verify"
 )
 
@@ -39,12 +40,12 @@ type Target struct {
 
 // Options configures one evidence collection run.
 type Options struct {
-	Workspace      string
-	OutputDir      string
-	CandidateSHA   string
+	Workspace       string
+	OutputDir       string
+	CandidateSHA    string
 	SourceDateEpoch int64
-	GoVersion      string
-	Targets        []Target
+	GoVersion       string
+	Targets         []Target
 }
 
 // FileEvidence records one retained artifact.
@@ -109,16 +110,15 @@ func Build(opts Options) (Manifest, error) {
 	if err := verify.ValidateReleaseEvidenceDirectory(workspace, outputDir); err != nil {
 		return manifest, err
 	}
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return manifest, fmt.Errorf("create output dir: %w", err)
-	}
-
 	provenance := verify.CollectProvenance(context.Background(), workspace, opts.CandidateSHA)
 	if provenance.Match != verify.ManifestPass {
 		return manifest, fmt.Errorf("candidate provenance: %s", firstNonEmpty(provenance.Reason, string(provenance.Match)))
 	}
 	if provenance.Tree != "CLEAN" {
 		return manifest, errors.New("workspace is not clean")
+	}
+	if err := securefile.EnsureDir(outputDir, 0o755); err != nil {
+		return manifest, fmt.Errorf("create secure output dir: %w", err)
 	}
 
 	goVersion := strings.TrimSpace(opts.GoVersion)
@@ -162,9 +162,14 @@ func buildTarget(workspace, outputDir, candidateSHA string, epoch int64, target 
 	packageName := base + ".tar.gz"
 	sbomName := base + ".spdx.json"
 
-	binaryPath := filepath.Join(outputDir, binaryName)
-	packagePath := filepath.Join(outputDir, packageName)
-	sbomPath := filepath.Join(outputDir, sbomName)
+	stageDir, err := os.MkdirTemp("", "picogent-release-artifact-")
+	if err != nil {
+		return TargetEvidence{}, fmt.Errorf("create artifact staging directory: %w", err)
+	}
+	defer os.RemoveAll(stageDir)
+	binaryPath := filepath.Join(stageDir, binaryName)
+	packagePath := filepath.Join(stageDir, packageName)
+	sbomPath := filepath.Join(stageDir, sbomName)
 
 	if err := buildBinary(workspace, binaryPath, candidateSHA, target); err != nil {
 		return TargetEvidence{}, err
@@ -186,16 +191,29 @@ func buildTarget(workspace, outputDir, candidateSHA string, epoch int64, target 
 	if err := writeSPDX(sbomPath, candidateSHA, binaryName, modules, epoch); err != nil {
 		return TargetEvidence{}, err
 	}
+	for _, artifact := range []struct {
+		name   string
+		source string
+		mode   os.FileMode
+	}{
+		{name: binaryName, source: binaryPath, mode: 0o755},
+		{name: packageName, source: packagePath, mode: 0o644},
+		{name: sbomName, source: sbomPath, mode: 0o644},
+	} {
+		if err := publishArtifact(outputDir, artifact.name, artifact.source, artifact.mode); err != nil {
+			return TargetEvidence{}, err
+		}
+	}
 
-	binaryEv, err := fileEvidence(binaryName, binaryPath)
+	binaryEv, err := fileEvidence(binaryName, filepath.Join(outputDir, binaryName))
 	if err != nil {
 		return TargetEvidence{}, err
 	}
-	packageEv, err := fileEvidence(packageName, packagePath)
+	packageEv, err := fileEvidence(packageName, filepath.Join(outputDir, packageName))
 	if err != nil {
 		return TargetEvidence{}, err
 	}
-	sbomEv, err := fileEvidence(sbomName, sbomPath)
+	sbomEv, err := fileEvidence(sbomName, filepath.Join(outputDir, sbomName))
 	if err != nil {
 		return TargetEvidence{}, err
 	}
@@ -234,11 +252,11 @@ func buildBinary(workspace, outputPath, candidateSHA string, target Target) erro
 }
 
 func writePackage(packagePath, binaryName, binaryPath, licensePath string, epoch int64) error {
-	binaryData, err := os.ReadFile(binaryPath)
+	binaryData, err := securefile.ReadFile(binaryPath)
 	if err != nil {
 		return fmt.Errorf("read binary: %w", err)
 	}
-	licenseData, err := os.ReadFile(licensePath)
+	licenseData, err := securefile.ReadFile(licensePath)
 	if err != nil {
 		return fmt.Errorf("read LICENSE: %w", err)
 	}
@@ -486,11 +504,22 @@ func writeSPDX(path, candidateSHA, binaryName string, modules []moduleRef, epoch
 		return err
 	}
 	data = append(data, '\n')
-	return os.WriteFile(path, data, 0o644)
+	return securefile.WriteAtomic(path, data, 0o644)
+}
+
+func publishArtifact(outputDir, name, sourcePath string, mode os.FileMode) error {
+	data, err := securefile.ReadFile(sourcePath)
+	if err != nil {
+		return fmt.Errorf("read staged artifact %q: %w", name, err)
+	}
+	if err := securefile.WriteAtomic(filepath.Join(outputDir, name), data, mode); err != nil {
+		return fmt.Errorf("publish artifact %q: %w", name, err)
+	}
+	return nil
 }
 
 func fileEvidence(name, path string) (FileEvidence, error) {
-	data, err := os.ReadFile(path)
+	data, err := securefile.ReadFile(path)
 	if err != nil {
 		return FileEvidence{}, err
 	}

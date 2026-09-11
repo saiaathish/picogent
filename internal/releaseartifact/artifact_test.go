@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -89,6 +90,57 @@ func TestBuildRejectsOutputInsideWorkspace(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "inside workspace") {
 		t.Fatalf("expected layout failure, got %v", err)
+	}
+}
+
+func TestBuildRejectsSymlinkedOutputDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	workspace := t.TempDir()
+	seedWorkspace(t, workspace)
+	sha := commitAll(t, workspace, "initial")
+	outside := t.TempDir()
+	outputDir := filepath.Join(t.TempDir(), "release-output")
+	if err := os.Symlink(outside, outputDir); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Build(Options{
+		Workspace:       workspace,
+		OutputDir:       outputDir,
+		CandidateSHA:    sha,
+		SourceDateEpoch: 1700000000,
+		Targets:         []Target{{GOOS: "linux", GOARCH: "amd64"}},
+	})
+	if err == nil {
+		t.Fatal("Build accepted a symlinked output directory")
+	}
+}
+
+func TestPublishArtifactRejectsSymlinkedTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires privileges on Windows")
+	}
+	source := filepath.Join(t.TempDir(), "source.bin")
+	if err := os.WriteFile(source, []byte("safe artifact"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.bin")
+	if err := os.WriteFile(outside, []byte("must survive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outputDir := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(outputDir, "artifact.bin")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := publishArtifact(outputDir, "artifact.bin", source, 0o644); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("publish symlink = %v, want symbolic-link rejection", err)
+	}
+	data, err := os.ReadFile(outside)
+	if err != nil || string(data) != "must survive" {
+		t.Fatalf("outside target after publish = %q, %v", data, err)
 	}
 }
 
