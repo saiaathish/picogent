@@ -39,28 +39,26 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current main posture (`2166004`)
+## Current main posture (behavior candidate `1865a4c`)
 
-The exact current main tip at this audit refresh is
-`216600450a68c4603f8e2460279688cc56f08c0b`. Post-merge CI run
-`34546564353` and release-artifacts run `34546564358` both passed at that
-SHA. The last non-documentation behavior candidate is
-`eccebd293e58ec48c6553e9228ff4b201a74c77a`; its bounded goal-state evidence
-is retained in [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) and is
-valid through the current documentation-only descendants.
+The exact clean behavior candidate for this audit packet is
+`1865a4c00356ac9b871b35b3a08f4e983f2af0e1`. The last non-documentation
+behavior candidate is `eccebd293e58ec48c6553e9228ff4b201a74c77a`; its bounded
+goal-state evidence is retained in
+[V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) and remains valid
+through documentation-only descendants.
 
-An exact-head no-tool connectivity observation is retained in
-[V4-LIVE-PROVIDER-EVIDENCE-2166004.md](V4-LIVE-PROVIDER-EVIDENCE-2166004.md).
-It upgrades only `live-provider-connectivity`; no fresh live-provider quality
-or rendered-platform observation is bound to the current behavior candidate
-after the goal-state hardening changes. The current matrix therefore keeps
-`live-provider-connectivity=PASS`,
-`live-provider-quality=UNVERIFIED`, `rendered-platform-local=UNVERIFIED`,
+Fresh exact-head connectivity and fixed no-tool quality observations are
+retained in
+[V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md).
+The exact-head matrix records `live-provider-connectivity=PASS` and
+`live-provider-quality=PASS`, while `rendered-platform-local=UNVERIFIED`,
 `rendered-cross-platform=UNVERIFIED`, and broad
-`hostile-filesystem-toctou=UNVERIFIED`. `release-authorization` remains
-`INCONCLUSIVE` with `authorized=false` because no human operator decision has
-been recorded. The bounded goal-state PASS does not upgrade any broader row,
-and the historical live/rendered PASS packets below are not unioned into a
+`hostile-filesystem-toctou=UNVERIFIED` remain explicit gaps.
+`release-authorization` remains `INCONCLUSIVE` with `authorized=false` because
+no human operator decision has been recorded. The bounded goal-state and live
+provider PASS rows do not upgrade any broader rendered, hostile, or release
+row, and the historical live/rendered packets below are not unioned into a
 current release-authorizing matrix.
 
 ## Historical main live-provider continuity (`8b022e8`, behavior `b7b5c5c`)

@@ -5,35 +5,32 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current main behavior-evidence note (candidate `2166004` / issue `#641`):**
-The exact current main tip is
-`216600450a68c4603f8e2460279688cc56f08c0b`. Post-merge CI run
-`34546564353` and release-artifacts run `34546564358` both passed at that
-SHA. The last non-documentation behavior candidate is
-`eccebd293e58ec48c6553e9228ff4b201a74c77a`; the retained bounded goal-state
-records from that candidate are documented in
+**Current behavior-evidence note (candidate `1865a4c` / issue `#643`):**
+The latest clean current-main behavior candidate for this packet is
+`1865a4c00356ac9b871b35b3a08f4e983f2af0e1`. Post-merge CI run
+`34546564353` and release-artifacts run `34546564358` passed at the preceding
+current-main documentation checkpoint. The last non-documentation behavior
+candidate is `eccebd293e58ec48c6553e9228ff4b201a74c77a`; the retained bounded
+goal-state records from that candidate are documented in
 [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) and remain valid for
-the current documentation-only descendants.
+documentation-only descendants.
 
-A fresh exact-head no-tool connectivity observation at this candidate is
-documented in
-[V4-LIVE-PROVIDER-EVIDENCE-2166004.md](V4-LIVE-PROVIDER-EVIDENCE-2166004.md).
-Its exact-head matrix digest is
-`1e17c01e8d9fe015e9530974dddbf04065f07bfa3950cb240b1f576307710c0d`, with
-summary PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4. It is limited to
-`live-provider-connectivity` and does not supply quality or rendered evidence.
+Fresh exact-head live-provider connectivity and fixed no-tool quality
+observations at this candidate are documented in
+[V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md).
+The retained exact-head matrix digest is
+`512f8f2a404584c08b804e989ebe836fe44b0881646a77e12dae243ea2eb88db`, with
+summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3. It records both
+`live-provider-connectivity=PASS` and `live-provider-quality=PASS`.
 
-No fresh live-provider or rendered-platform observation is bound to the
-current behavior candidate after the goal-state hardening changes beyond this
-single connectivity probe. The older live-provider packets and rendered
-aggregates below remain historical and must not be unioned or projected onto
-this candidate. Accordingly, the current posture is
-`live-provider-connectivity=PASS`,
-`live-provider-quality=UNVERIFIED`, `rendered-platform-local=UNVERIFIED`,
-`rendered-cross-platform=UNVERIFIED`, broad
-`hostile-filesystem-toctou=UNVERIFIED`, and
-`release-authorization=INCONCLUSIVE`. The bounded goal-state PASS is a named
-subsystem observation and does not upgrade the broader hostile-runtime row.
+No rendered-platform observation is bound to this behavior candidate. Older
+live-provider packets and rendered aggregates below remain historical and must
+not be unioned or projected onto this candidate. Accordingly, the current
+posture is `live-provider-connectivity=PASS`, `live-provider-quality=PASS`,
+`rendered-platform-local=UNVERIFIED`, `rendered-cross-platform=UNVERIFIED`,
+broad `hostile-filesystem-toctou=UNVERIFIED`, and
+`release-authorization=INCONCLUSIVE`. The bounded live-provider PASS rows do
+not upgrade the rendered, hostile-runtime, or release-authorization rows.
 
 The post-merge continuity matrix captured at candidate `db477d1` is recorded in
 [V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md](V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md).
