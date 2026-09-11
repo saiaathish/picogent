@@ -1,19 +1,22 @@
 # Current V4 evidence and continuity
 
-Stable entrypoint for the latest audited main candidate
-`8b022e82be4b2e8ade0a502c5f373eaf6dc61160`:
+Stable entrypoint for the current main behavior candidate
+`a80b9fb73d3d74a2c9787fdd7c74cd9ba2dd65cf`:
 
-- Rendered exact-candidate packet:
-  [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md).
-- Live-provider continuity packet:
-  [V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md](V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md).
-- Underlying live behavior observation:
-  [V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md).
+- Bounded goal-state evidence from the last non-documentation candidate
+  `eccebd293e58ec48c6553e9228ff4b201a74c77a`:
+  [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md).
+- Current release-audit posture:
+  [V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
+- Current operator gate:
+  [V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).
 
-The rendered packet is bound to behavior SHA `8b022e8`; the live-provider
-continuity packet validates retained artifacts from behavior SHA `b7b5c5c`
-through a `DOCS_ONLY_DESCENDANT` relationship. These are separate matrices and
-must not be unioned into a synthetic release-authorizing result. A later
-non-documentation behavior change requires fresh evidence; a later main tip
-also needs its own continuity matrix before being described as current.
-Hostile-runtime and release-authorization claims remain separately bounded.
+The current main post-merge CI run `34543854046` and release-artifacts run
+`34543854052` passed. No fresh live-provider or rendered-platform observation
+is bound to the current behavior candidate after the goal-state hardening
+changes, so those rows remain `UNVERIFIED`. The older live-provider continuity
+and rendered cross-platform packets remain historical and separate; they must
+not be unioned into a synthetic release-authorizing result. Broad hostile
+filesystem TOCTOU remains `UNVERIFIED`, and release authorization remains
+`INCONCLUSIVE` without an operator decision. A later non-documentation
+behavior change requires fresh evidence.

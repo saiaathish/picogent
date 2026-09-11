@@ -14,7 +14,7 @@ Formal TOCTOU residual-acceptance package:
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
-Current retained evidence packets at audited main candidate `8b022e8`:
+The prior retained live/rendered packets at audited main candidate `8b022e8`:
 [V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md](V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md)
 for live-provider continuity from behavior `b7b5c5c`, and
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md)
@@ -39,7 +39,28 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current main live-provider continuity (`8b022e8`, behavior `b7b5c5c`)
+## Current main posture (`a80b9fb`)
+
+The exact current main tip at this audit refresh is
+`a80b9fb73d3d74a2c9787fdd7c74cd9ba2dd65cf`. Post-merge CI run
+`34543854046` and release-artifacts run `34543854052` both passed at that
+SHA. The last non-documentation behavior candidate is
+`eccebd293e58ec48c6553e9228ff4b201a74c77a`; its bounded goal-state evidence
+is retained in [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) and is
+valid through this documentation-only descendant.
+
+No fresh live-provider or rendered-platform observation is bound to the
+current behavior candidate after the goal-state hardening changes. The
+current matrix therefore keeps `live-provider-connectivity=UNVERIFIED`,
+`live-provider-quality=UNVERIFIED`, `rendered-platform-local=UNVERIFIED`,
+`rendered-cross-platform=UNVERIFIED`, and broad
+`hostile-filesystem-toctou=UNVERIFIED`. `release-authorization` remains
+`INCONCLUSIVE` with `authorized=false` because no human operator decision has
+been recorded. The bounded goal-state PASS does not upgrade any broader row,
+and the historical live/rendered PASS packets below are not unioned into a
+current release-authorizing matrix.
+
+## Historical main live-provider continuity (`8b022e8`, behavior `b7b5c5c`)
 
 The audited main candidate is
 `8b022e82be4b2e8ade0a502c5f373eaf6dc61160`. The retained continuity matrix
@@ -59,7 +80,7 @@ platform rows remain `UNVERIFIED` in this live-only matrix. The broad
 decision has been recorded. This is a retained-artifact continuity check, not
 a new provider session and not a rebind of the rendered observation.
 
-## Current exact-head rendered checkpoint (`8b022e8`)
+## Historical exact-head rendered checkpoint (`8b022e8`)
 
 The exact clean rendered candidate is
 `8b022e82be4b2e8ade0a502c5f373eaf6dc61160`. The retained three-platform
@@ -134,7 +155,7 @@ The exact rendered packet is documented in
 Its independent live-provider connectivity and quality rows remain
 `UNVERIFIED`, as do the broad `hostile-filesystem-toctou` residual and
 `release-authorization` (`INCONCLUSIVE`). The three platform PASS rows cannot
-be combined with the current live-provider PASS rows from `b7b5c5c` to
+be combined with the historical live-provider PASS rows from `b7b5c5c` to
 authorize a release, because the release predicate requires one exact-SHA
 matrix.
 

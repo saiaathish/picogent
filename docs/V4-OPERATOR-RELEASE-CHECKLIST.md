@@ -5,20 +5,29 @@ does **not** set `authorized: true`, and does **not** close
 [#450](https://github.com/saiaathish/picogent/issues/450) /
 [#453](https://github.com/saiaathish/picogent/issues/453).
 
-Current evidence is split across two exact candidate-bound matrices at audited
-main candidate `8b022e82be4b2e8ade0a502c5f373eaf6dc61160`:
+The current main tip for this checklist refresh is
+`a80b9fb73d3d74a2c9787fdd7c74cd9ba2dd65cf`. The last non-documentation
+behavior candidate is
+`eccebd293e58ec48c6553e9228ff4b201a74c77a`; its bounded goal-state records
+are documented in [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md).
+Post-merge CI run `34543854046` and release-artifacts run `34543854052` passed
+at the current tip.
 
-- Live-provider continuity from behavior SHA
+No fresh live-provider or rendered-platform matrix is bound to the current
+behavior candidate after the goal-state hardening changes. The retained
+packets below are historical and remain separate:
+
+- Historical live-provider continuity from behavior SHA
   `b7b5c5c3e98f2caaf1c0d951740bdd7046f755f5`:
   [V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md](V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md).
-- Rendered cross-platform evidence at exact behavior SHA
+- Historical rendered cross-platform evidence at behavior SHA
   `8b022e82be4b2e8ade0a502c5f373eaf6dc61160`:
   [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-8B022E8.md).
 
-The underlying live observation remains
+The underlying historical live observation remains
 [V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md).
 These packets preserve evidence provenance and do **not** combine separate
-matrices into a release-authorizing result. The audit narrative is in
+matrices into a current release-authorizing result. The audit narrative is in
 [V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
 The prior [V4-TIP-EVIDENCE-1531850.md](V4-TIP-EVIDENCE-1531850.md),
 [V4-TIP-EVIDENCE-97A3EC5.md](V4-TIP-EVIDENCE-97A3EC5.md),
@@ -63,6 +72,7 @@ are green.
 
 | Evidence | Where / digest | What to confirm |
 | --- | --- | --- |
+| Goal-state persistence at `eccebd2` | [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md); retained artifacts from CI `34541903769` | Linux, Windows, and macOS bounded records are `PASS` with exact candidate binding, trusted activity, recovery, no outside marker, unchanged outside digests, and `source_tree_modified=false`; valid through current docs-only continuity only |
 | Live-provider packet | [V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md](V4-LIVE-PROVIDER-EVIDENCE-B7B5C5C.md) | Connectivity and fixed-no-tool quality are `PASS` for behavior `b7b5c5c`; provider identity and raw result semantics remain self-reported |
 | Live-provider continuity at `8b022e8` | digest `3260157d65e09aa43669bc565f76b0912a782fc7a0174fd3e28c3f0b96237ebd`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | `DOCS_ONLY_DESCENDANT`, `HEAD=PASS`, `tree=CLEAN`; live rows `PASS`, rendered rows `UNVERIFIED` |
 | Historical live-provider matrix at `b7b5c5c` | digest `5be231cd13d31915753c1743365bbe0582f47accd3e210f6f493b8f4264d074f`; summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 | Exact behavior observation; continuity does not rebind rendered evidence |
@@ -77,7 +87,7 @@ are green.
 | Perf honesty | [#551](https://github.com/saiaathish/picogent/pull/551) / [V4-PERFORMANCE-CAMPAIGN.md](V4-PERFORMANCE-CAMPAIGN.md) | Alloc gains **PROVED**; outcome-quality gains remain UNPROVED |
 | Tip evidence docs | [#619](https://github.com/saiaathishkarthik/picogent/issues/619), [#597](https://github.com/saiaathishkarthik/picogent/issues/597), [#613](https://github.com/saiaathishkarthik/picogent/issues/613), and this packet | Current live-provider evidence and older rendered evidence remain separate; release remains unauthorized |
 
-Current operator-local retained roots (outside checkout):
+Historical operator-local retained roots (outside checkout):
 
 ```text
 /private/tmp/picogent-live-0e2b156/
@@ -133,18 +143,17 @@ does **not**, by itself:
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating a unified current-tip `PASS` | The live continuity artifacts are bound to behavior `b7b5c5c` and the rendered aggregate to `8b022e8`; separate PASS rows must not be unioned for release authorization, and any later non-docs candidate requires fresh collection |
+| Fabricating a unified current-tip `PASS` | The current tip is `a80b9fb`; no live-provider or rendered matrix is bound to it after the non-docs goal-state changes. Historical live/rendered artifacts at `b7b5c5c` / `8b022e8` must not be unioned, and any later non-docs candidate requires fresh collection |
 
 ## Current dry-run posture (no approval observed)
 
 | Field | Value |
 | --- | --- |
-| Docs tip | Documentation-only descendants retain separate packets; bind the release SHA and one exact-SHA matrix separately |
-| Live-provider evidence SHA | `b7b5c5c3e98f2caaf1c0d951740bdd7046f755f5` |
-| Live-provider continuity matrix | PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3 at candidate `8b022e8` with behavior `b7b5c5c`; live-provider rows `PASS`, rendered rows `UNVERIFIED` |
-| Rendered evidence SHA | `8b022e82be4b2e8ade0a502c5f373eaf6dc61160` |
-| Rendered exact-candidate matrix | PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3; `rendered-platform-local=PASS`, `rendered-cross-platform=PASS`, live-provider rows `UNVERIFIED` |
-| Release matrix posture | No synthetic union of the two matrices; `release-authorization` remains `INCONCLUSIVE` |
+| Current main tip | `a80b9fb73d3d74a2c9787fdd7c74cd9ba2dd65cf` |
+| Last non-documentation behavior candidate | `eccebd293e58ec48c6553e9228ff4b201a74c77a`; bounded goal-state records are retained in [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md) |
+| Live-provider evidence | No current-tip packet; historical behavior `b7b5c5c` remains separate and does not rebind through the goal-state code changes |
+| Rendered evidence | No current-tip packet; historical candidate `8b022e8` remains separate and does not rebind through the goal-state code changes |
+| Release matrix posture | No synthetic union; current live/rendered rows remain `UNVERIFIED`, broad TOCTOU remains `UNVERIFIED`, and `release-authorization` remains `INCONCLUSIVE` |
 | `release-authorization` | `INCONCLUSIVE` |
 | `authorized` | `false` |
 | Operator approval | **Absent — do not auto-sign** |
