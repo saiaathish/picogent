@@ -908,9 +908,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		}
 
 		visualEvidenceTransition := false
+		measurementEvidenceTransition := false
 		for _, ex := range pending {
 			if !ex.ran {
 				continue
+			}
+			if a.noteMeasurementEvidence(ex.producer, ex.err, ev) {
+				measurementEvidenceTransition = true
 			}
 			if a.noteVisualEvidence(ex.producer, ex.err, ev) {
 				visualEvidenceTransition = true
@@ -929,7 +933,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		// conservative: the checkpoint cannot prove which bytes the later call
 		// was intended to supersede.
 		contentConflictPaths := map[string]string{}
-		durableTransition := visualEvidenceTransition
+		durableTransition := visualEvidenceTransition || measurementEvidenceTransition
 		for _, ex := range pending {
 			if ex.call.Name == "verify" && ex.ran {
 				durableTransition = true
