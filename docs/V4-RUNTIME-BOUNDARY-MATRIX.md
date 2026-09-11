@@ -5,13 +5,16 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current main checkpoint for this refresh:** `origin/main` is
-`04554f10ac46f0a92beca07a6505bd1242d5f163` and includes the bounded Windows
-ACL behavior from PR #679 plus the docs-only PR #680. Hosted CI run 34606332223
-and release-artifacts run 34606332079 passed for that behavior merge. No fresh
-live-provider or rendered-platform artifact is bound to this tip, so those rows
-remain `UNVERIFIED`; broad hostile same-UID filesystem TOCTOU remains
-`UNVERIFIED` and release authorization remains `INCONCLUSIVE`.
+**Current main checkpoint for this refresh:** `main` is
+`9a1171942e9041a9e25a75e30e6d9e5dc7d7ad5e` and includes the bounded Windows
+ACL behavior from PR #679, the docs-only PR #680, and the release-audit refresh
+from PR #682. A fresh exact-current Darwin rendered-platform artifact is bound
+to this tip in
+[V4-RENDERED-DARWIN-EVIDENCE-9A11719.md](V4-RENDERED-DARWIN-EVIDENCE-9A11719.md).
+It establishes `rendered-platform-local=PASS`; no fresh live-provider or
+cross-platform artifact is bound to this tip, so those rows remain
+`UNVERIFIED`. Broad hostile same-UID filesystem TOCTOU remains `UNVERIFIED`
+and release authorization remains `INCONCLUSIVE`.
 
 **Prior behavior-bound checkpoint (behavior tip `9c1ca2e`; parent issue `#453`):**
 The fresh live-provider observation is bound to behavior tip
@@ -408,6 +411,18 @@ summary `PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4`; the run supplied no
 live-provider artifacts, so those rows remain fail-closed in that snapshot.
 The local rendered row is therefore `PASS` only for Darwin/arm64, while
 `rendered-cross-platform` remains `UNVERIFIED`.
+
+The fresh exact-current Darwin refresh at
+`9a1171942e9041a9e25a75e30e6d9e5dc7d7ad5e` is recorded in
+[V4-RENDERED-DARWIN-EVIDENCE-9A11719.md](V4-RENDERED-DARWIN-EVIDENCE-9A11719.md).
+Its task-owned BrowserOS neo observation passed the Safe permission, contained
+Allow, Undo, and fresh-process reload flow. The platform artifact digest is
+`517ebe333f3b80ade0471f94100acabb1b7a4b96e17719255706072fd6bdb94c`; the
+exact-head matrix digest is
+`c2e11de481c22087d9ac7ca9c8c7db1b40c61b2739d5eccfd9ac6f6d00c1baba` with
+summary `PASS 7 / INCONCLUSIVE 1 / UNVERIFIED 4`. This rebinds only the local
+Darwin rendered row; live-provider, cross-platform, broad TOCTOU, and release
+authorization rows remain independently bounded.
 
 The newer exact-current three-platform refresh at
 `eabf8d6e35322170f7ab19dbd30d3cfb576f422c` is recorded in
