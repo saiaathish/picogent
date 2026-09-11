@@ -23,14 +23,19 @@ The retained exact-head matrix digest is
 summary PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3. It records both
 `live-provider-connectivity=PASS` and `live-provider-quality=PASS`.
 
-No rendered-platform observation is bound to this behavior candidate. Older
+A fresh task-owned Darwin rendered recovery observation is bound to this
+behavior candidate in
+[V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md).
+Its digest-only artifact was accepted by the matrix through the
+`DOCS_ONLY_DESCENDANT` continuity contract at the current docs tip. Older
 live-provider packets and rendered aggregates below remain historical and must
 not be unioned or projected onto this candidate. Accordingly, the current
 posture is `live-provider-connectivity=PASS`, `live-provider-quality=PASS`,
-`rendered-platform-local=UNVERIFIED`, `rendered-cross-platform=UNVERIFIED`,
-broad `hostile-filesystem-toctou=UNVERIFIED`, and
-`release-authorization=INCONCLUSIVE`. The bounded live-provider PASS rows do
-not upgrade the rendered, hostile-runtime, or release-authorization rows.
+`rendered-platform-local=PASS`, `rendered-cross-platform=UNVERIFIED`, broad
+`hostile-filesystem-toctou=UNVERIFIED`, and
+`release-authorization=INCONCLUSIVE`. The bounded live-provider and local
+rendered PASS rows do not upgrade the cross-platform, hostile-runtime, or
+release-authorization rows.
 
 The post-merge continuity matrix captured at candidate `db477d1` is recorded in
 [V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md](V4-LIVE-PROVIDER-CONTINUITY-DB477D1.md).
@@ -38,7 +43,8 @@ It validates the retained live-provider rows through the documented
 `DOCS_ONLY_DESCENDANT` rule; it does not rebind or upgrade the remaining
 rendered, hostile-TOCTOU, or release-authorization rows.
 
-See the [historical Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
+See the [current Darwin rendered recovery evidence record](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md),
+the [historical Darwin rendered evidence record](V4-RENDERED-DARWIN-EVIDENCE-AD34BD5.md),
 the [historical Windows rendered evidence record](V4-RENDERED-WINDOWS-EVIDENCE-AD34BD5.md),
 the [historical Linux rendered evidence record](V4-RENDERED-LINUX-EVIDENCE-AD34BD5.md),
 and the [exact-candidate aggregate record](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-AD34BD5.md)

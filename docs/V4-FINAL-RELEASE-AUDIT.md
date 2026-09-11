@@ -51,15 +51,19 @@ through documentation-only descendants.
 Fresh exact-head connectivity and fixed no-tool quality observations are
 retained in
 [V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md).
+Fresh task-owned Darwin rendered recovery evidence is retained in
+[V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md](V4-RENDERED-RECOVERY-EVIDENCE-1865A4C.md).
 The exact-head matrix records `live-provider-connectivity=PASS` and
-`live-provider-quality=PASS`, while `rendered-platform-local=UNVERIFIED`,
+`live-provider-quality=PASS` and `rendered-platform-local=PASS`, while
 `rendered-cross-platform=UNVERIFIED`, and broad
 `hostile-filesystem-toctou=UNVERIFIED` remain explicit gaps.
 `release-authorization` remains `INCONCLUSIVE` with `authorized=false` because
 no human operator decision has been recorded. The bounded goal-state and live
 provider PASS rows do not upgrade any broader rendered, hostile, or release
 row, and the historical live/rendered packets below are not unioned into a
-current release-authorizing matrix.
+current release-authorizing matrix. The current docs-tip continuity matrix
+records `PASS 9 / INCONCLUSIVE 1 / UNVERIFIED 2`; its local rendered PASS is
+Darwin-only and does not upgrade the cross-platform row.
 
 ## Historical main live-provider continuity (`8b022e8`, behavior `b7b5c5c`)
 
