@@ -5,12 +5,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"strings"
 
+	"github.com/saiaathish/picogent/internal/securefile"
 	"github.com/saiaathish/picogent/internal/verify"
 )
 
@@ -36,19 +38,13 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "release gate ledger path is required")
 		return 2
 	}
-	file, err := os.Open(*ledgerPath)
+	data, err := securefile.ReadFileLimited(*ledgerPath, verify.MaxReleaseGateBytes)
 	if err != nil {
-		fmt.Fprintln(stderr, "open release gate ledger:", err)
-		return 1
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, verify.MaxReleaseGateBytes+1))
-	if err != nil {
-		fmt.Fprintln(stderr, "read release gate ledger:", err)
-		return 1
-	}
-	if len(data) > verify.MaxReleaseGateBytes {
-		fmt.Fprintln(stderr, "release gate ledger exceeds size limit")
+		if errors.Is(err, securefile.ErrReadLimit) {
+			fmt.Fprintln(stderr, "release gate ledger exceeds size limit")
+		} else {
+			fmt.Fprintln(stderr, "read release gate ledger:", err)
+		}
 		return 1
 	}
 	var ledger verify.ReleaseGateLedger
