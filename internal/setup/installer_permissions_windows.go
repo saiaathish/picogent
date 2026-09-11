@@ -76,11 +76,14 @@ const windowsUntrustedWriteMask = uint32(
 		windows.GENERIC_ALL,
 )
 
+const trustedInstallerSIDText = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+
 // windowsACLPathProtected accepts ACLs whose write-capable grants are limited
-// to the object owner, the current user, LocalSystem, or local administrators.
-// This protects against another account or a broad user group modifying the
-// path while preserving user-managed CLI directories. A same-user replacement
-// race after this check remains outside this path-based proof.
+// to a recognized trusted owner, the current user, LocalSystem, local
+// administrators, or TrustedInstaller. This protects against another account
+// or a broad user group modifying the path while preserving user-managed CLI
+// directories. A same-user replacement race after this check remains outside
+// this path-based proof.
 func windowsACLPathProtected(path string) bool {
 	sd, err := windows.GetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 	if err != nil || sd == nil {
@@ -106,6 +109,10 @@ func windowsACLPathProtected(path string) bool {
 	if err != nil {
 		return false
 	}
+	trustedInstallerSID, err := windows.StringToSid(trustedInstallerSIDText)
+	if err != nil {
+		return false
+	}
 
 	for i := uint16(0); i < dacl.AceCount; i++ {
 		var ace *windows.ACCESS_ALLOWED_ACE
@@ -121,7 +128,7 @@ func windowsACLPathProtected(path string) bool {
 				continue
 			}
 			sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-			if !sid.IsValid() || !windowsACLTrustedSID(sid, owner, currentUser.User.Sid, adminSID, systemSID) {
+			if !sid.IsValid() || !windowsACLTrustedSID(sid, owner, currentUser.User.Sid, adminSID, systemSID, trustedInstallerSID) {
 				return false
 			}
 		default:
@@ -134,6 +141,12 @@ func windowsACLPathProtected(path string) bool {
 	return true
 }
 
-func windowsACLTrustedSID(sid, owner, currentUser, adminSID, systemSID *windows.SID) bool {
-	return sid.Equals(owner) || sid.Equals(currentUser) || sid.Equals(adminSID) || sid.Equals(systemSID) || sid.IsWellKnown(windows.WinCreatorOwnerSid)
+func windowsACLTrustedSID(sid, owner, currentUser, adminSID, systemSID, trustedInstallerSID *windows.SID) bool {
+	if sid.Equals(currentUser) || sid.Equals(adminSID) || sid.Equals(systemSID) || sid.Equals(trustedInstallerSID) {
+		return true
+	}
+	if owner.Equals(currentUser) || owner.Equals(adminSID) || owner.Equals(systemSID) || owner.Equals(trustedInstallerSID) {
+		return sid.Equals(owner) || sid.IsWellKnown(windows.WinCreatorOwnerSid)
+	}
+	return false
 }
