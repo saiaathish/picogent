@@ -158,6 +158,22 @@ jobs:
           PICOGENT_GOAL_HOSTILE_EVIDENCE_OUT="$EVIDENCE_DIR/goal-state.json" \
             go test -v ./internal/goal -run '^TestGoalHostileParentSwapConfinement$' -count=1
           sha256sum "$EVIDENCE_DIR/goal-state.json"
+      - name: Windows hostile parent-replacement evidence
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          EVIDENCE_DIR: ${{ runner.temp }}/picogent-windows-parent-replacement
+        run: |
+          set -euo pipefail
+          mkdir -p "$EVIDENCE_DIR"
+          PICOGENT_WINDOWS_HOSTILE_SOURCE_SHA="$CANDIDATE_SHA" \
+          PICOGENT_WINDOWS_HOSTILE_EVIDENCE_OUT="$EVIDENCE_DIR/securefile.json" \
+            go test -v ./internal/securefile -run '^TestWindowsSameUIDParentSwapConfinement$' -count=1
+          PICOGENT_WINDOWS_WORKSPACE_HOSTILE_SOURCE_SHA="$CANDIDATE_SHA" \
+          PICOGENT_WINDOWS_WORKSPACE_HOSTILE_EVIDENCE_OUT="$EVIDENCE_DIR/workspace.json" \
+            go test -v ./internal/workspace -run '^TestWindowsSameUIDWorkspaceParentSwapConfinement$' -count=1
+          sha256sum "$EVIDENCE_DIR"/*.json
       - name: Upload Unix retained-artifact hostile read evidence
         if: always() && runner.os != 'Windows'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -185,6 +201,13 @@ jobs:
         with:
           name: goal-state-${{ runner.os }}-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/picogent-goal-state/*.json
+          if-no-files-found: warn
+      - name: Upload Windows hostile parent-replacement evidence
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: hostile-parent-replacement-windows-${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/picogent-windows-parent-replacement/*.json
           if-no-files-found: warn
       - name: Upload Linux hostile parent-swap evidence
         if: always() && matrix.os == 'ubuntu-latest'
