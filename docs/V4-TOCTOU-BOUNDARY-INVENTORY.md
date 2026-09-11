@@ -18,6 +18,13 @@ runtime matrix are documented in
 That packet records `rendered-cross-platform=PASS`, while the broader
 `hostile-filesystem-toctou` row remains `UNVERIFIED`.
 
+The current `main` tip at this rebind is
+`190bdc8b92aa11b498e08638b3de48b7237ef4fa`, a docs-only descendant after
+#666. The post-merge [CI run 34576333654](https://github.com/saiaathish/picogent/actions/runs/34576333654)
+and [release-artifacts run 34576333615](https://github.com/saiaathish/picogent/actions/runs/34576333615)
+passed for that tip, but they do not project the retained runtime packet onto
+the newer behavior-hardening tip.
+
 ## Boundary inventory
 
 | Surface | Current owner and mechanism | Bounded evidence | Remaining boundary |
