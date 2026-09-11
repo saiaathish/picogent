@@ -150,31 +150,32 @@ func EvaluateCompletion(task *taskstate.Task) CompletionCheck {
 // copied from the durable state and health fields are derived from one fresh
 // report; callers should rebuild it after a mutation or new observation.
 type Contract struct {
-	Schema              string              `json:"schema"`
-	Outcome             string              `json:"outcome,omitempty"`
-	State               State               `json:"state"`
-	IntentClass         string              `json:"intent_class,omitempty"`
-	Turn                TurnContract        `json:"turn"`
-	Revision            uint64              `json:"revision,omitempty"`
-	ChangeSeq           int                 `json:"change_seq,omitempty"`
-	CompletionReady     bool                `json:"completion_ready"`
-	Completion          CompletionCheck     `json:"completion"`
-	Failure             FailureIntelligence `json:"failure"`
-	Contradictions      ContradictionReport `json:"contradictions"`
-	Requirements        Requirements        `json:"requirements"`
-	QualityRequirements []string            `json:"quality_requirements,omitempty"`
-	Constraints         []string            `json:"constraints,omitempty"`
-	Criteria            []CriterionState    `json:"criteria,omitempty"`
-	Blockers            []Blocker           `json:"blockers,omitempty"`
-	Obstacles           []Obstacle          `json:"obstacles,omitempty"`
-	Evidence            EvidenceSummary     `json:"evidence"`
-	Impact              ImpactProfile       `json:"impact"`
-	Depth               TaskDepthProfile    `json:"depth"`
-	Risks               []string            `json:"risks,omitempty"`
-	Uncertainty         []string            `json:"uncertainty,omitempty"`
-	Health              HealthSummary       `json:"health"`
-	Next                Decision            `json:"next"`
-	Stop                StopDecision        `json:"stop"`
+	Schema              string                `json:"schema"`
+	Outcome             string                `json:"outcome,omitempty"`
+	State               State                 `json:"state"`
+	IntentClass         string                `json:"intent_class,omitempty"`
+	Turn                TurnContract          `json:"turn"`
+	Revision            uint64                `json:"revision,omitempty"`
+	ChangeSeq           int                   `json:"change_seq,omitempty"`
+	CompletionReady     bool                  `json:"completion_ready"`
+	Completion          CompletionCheck       `json:"completion"`
+	Failure             FailureIntelligence   `json:"failure"`
+	Contradictions      ContradictionReport   `json:"contradictions"`
+	Requirements        Requirements          `json:"requirements"`
+	QualityRequirements []string              `json:"quality_requirements,omitempty"`
+	Constraints         []string              `json:"constraints,omitempty"`
+	Criteria            []CriterionState      `json:"criteria,omitempty"`
+	Blockers            []Blocker             `json:"blockers,omitempty"`
+	Obstacles           []Obstacle            `json:"obstacles,omitempty"`
+	Evidence            EvidenceSummary       `json:"evidence"`
+	EvidenceLedger      []EvidenceLedgerEntry `json:"evidence_ledger,omitempty"`
+	Impact              ImpactProfile         `json:"impact"`
+	Depth               TaskDepthProfile      `json:"depth"`
+	Risks               []string              `json:"risks,omitempty"`
+	Uncertainty         []string              `json:"uncertainty,omitempty"`
+	Health              HealthSummary         `json:"health"`
+	Next                Decision              `json:"next"`
+	Stop                StopDecision          `json:"stop"`
 }
 
 // Build derives one bounded contract from durable task state and one bounded
@@ -217,6 +218,7 @@ func Build(task *taskstate.Task, report projecthealth.Report) Contract {
 	contract.Criteria = criteriaFor(task)
 	contract.Blockers = blockersFor(task)
 	contract.Evidence = evidenceSummary(task, completion)
+	contract.EvidenceLedger = evidenceLedgerFor(task)
 	contract.Failure = contract.Turn.Failure
 	if task.Intent != nil {
 		contract.IntentClass = compactContractString(task.Intent.Class, 64)
@@ -253,6 +255,10 @@ func Format(contract Contract) string {
 		}
 		if len(contract.Obstacles) > 0 {
 			contract.Obstacles = contract.Obstacles[:len(contract.Obstacles)-1]
+			continue
+		}
+		if len(contract.EvidenceLedger) > 0 {
+			contract.EvidenceLedger = contract.EvidenceLedger[:len(contract.EvidenceLedger)-1]
 			continue
 		}
 		if len(contract.Criteria) > 0 {
@@ -365,6 +371,7 @@ func EngineInstruction(contract Contract) string {
 		" passing=" + itoa(contract.Evidence.Passing) +
 		" latest=" + contract.Evidence.LatestStatus +
 		" current=" + boolWord(contract.Evidence.Current))
+	line("Evidence ledger: " + evidenceLedgerPromptSummary(contract.EvidenceLedger))
 	if len(contract.Blockers) > 0 {
 		line("Blocker categories: " + blockerIDs(contract.Blockers))
 	}
@@ -832,6 +839,7 @@ func boundContract(contract Contract) Contract {
 	if contract.Evidence.LatestChangeSeq < 0 {
 		contract.Evidence.LatestChangeSeq = 0
 	}
+	contract.EvidenceLedger = boundEvidenceLedger(contract.EvidenceLedger)
 	contract.Health.Status = healthEvidenceStateForContract(contract.Health.Status)
 	if contract.Health.DirtyPaths < 0 {
 		contract.Health.DirtyPaths = 0

@@ -61,12 +61,12 @@ func (t *Task) EvidenceSnapshot() []EvidenceSnapshot {
 	return out
 }
 
-// categoricalEvidenceStatus keeps only statuses understood by the derived
-// contradiction contract. Unknown caller text is not useful to that view and
+// categoricalEvidenceStatus keeps only statuses understood by derived
+// categorical views. Unknown caller text is not useful to those views and
 // must not cross the snapshot boundary.
 func categoricalEvidenceStatus(status string) (string, bool) {
 	switch normalized := normalizeEvidenceStatus(status); normalized {
-	case "PASS", "APPROVED", "CONFIRMED", "FAIL", "INCONCLUSIVE", "SKIPPED", "DENIED":
+	case "PASS", "APPROVED", "CONFIRMED", "FAIL", "INCONCLUSIVE", "SKIPPED", "DENIED", "UNVERIFIED":
 		return normalized, true
 	default:
 		return "", false
