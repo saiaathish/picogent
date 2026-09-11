@@ -21,11 +21,11 @@ Its aggregate and matrix remain retained outside the checkout and are bound
 only to that candidate; later documentation-only descendants do not
 synthesize or rebind the observations.
 
-A fresh exact-current Darwin-only rendered packet at `9a11719` is recorded in
-[V4-RENDERED-DARWIN-EVIDENCE-9A11719.md](V4-RENDERED-DARWIN-EVIDENCE-9A11719.md).
-It rebinds only `rendered-platform-local=PASS`; it does not upgrade the
-historical cross-platform packet, live-provider rows, broad same-UID TOCTOU, or
-release authorization.
+The latest behavior merge is [PR #685](https://github.com/saiaathish/picogent/pull/685)
+at `547a5b1a4c8d348dae0b0c155c081f4d1b263742`. It validates catalog-bound
+browser screenshot admission and transient handoff to the next model request;
+it does not establish an owned-browser observation, live-provider quality,
+broad same-UID TOCTOU resistance, or release authorization.
 
 The prior retained live/rendered packets at audited main candidate `8b022e8`:
 [V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md](V4-LIVE-PROVIDER-CONTINUITY-8B022E8.md)
@@ -52,20 +52,19 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current main checkpoint (2026-09-11)
+## Current behavior checkpoint (2026-09-11)
 
-The current `origin/main` tip for this audit refresh is
-`9a1171942e9041a9e25a75e30e6d9e5dc7d7ad5e`. It contains the bounded Windows
-ACL behavior merged by [PR #679](https://github.com/saiaathish/picogent/pull/679)
-at `b9706c442262903c163e552bbe31a04b61a6f9b8`, the documentation-only
-follow-up [PR #680](https://github.com/saiaathish/picogent/pull/680), and the
-release-audit refresh in [PR #682](https://github.com/saiaathish/picogent/pull/682).
-The fresh exact-current Darwin rendered evidence is recorded in
-[V4-RENDERED-DARWIN-EVIDENCE-9A11719.md](V4-RENDERED-DARWIN-EVIDENCE-9A11719.md)
-and establishes `rendered-platform-local=PASS` only. No fresh live-provider or
-cross-platform artifact is bound to this tip, so those rows remain
-`UNVERIFIED`. Broad hostile same-UID filesystem TOCTOU remains `UNVERIFIED`,
-and release authorization remains `INCONCLUSIVE` with `authorized=false`.
+The current behavior candidate for this audit refresh is
+`547a5b1a4c8d348dae0b0c155c081f4d1b263742` from PR #685. The exact-head
+runtime-boundary matrix reports `HEAD=PASS`, `tree=CLEAN`, and
+`PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5`; its artifact SHA-256 is
+`8ce4dde2c26a797bdfd4d1bd56b61e713334383b9bdef44c7b8acbc90ce778b2`.
+The five unverified rows are live-provider connectivity, live-provider
+quality, rendered-platform-local, rendered-cross-platform, and broad hostile
+filesystem TOCTOU. Release authorization remains `INCONCLUSIVE` with
+`authorized=false` because no operator approval is recorded. A documentation-
+only descendant may retain this behavior-bound packet; any later behavior
+change requires fresh evidence.
 
 ## Last fully rendered exact-candidate posture (rendered evidence `eabf8d6`; behavior `9c1ca2e`)
 
@@ -475,9 +474,10 @@ live-provider rows remain `UNVERIFIED`. Separately, the behavior-bound live
 provider candidate `9c1ca2e` records PASS 8 / INCONCLUSIVE 1 / UNVERIFIED 3,
 with connectivity and fixed quality `PASS` and rendered rows `UNVERIFIED`.
 Documentation-only continuity preserves each packet's provenance but does not
-create a synthetic union. The fresh current-main Darwin packet records
+create a synthetic union. The prior `9a11719` Darwin packet recorded
 `rendered-platform-local=PASS` only; it does not upgrade the historical
-cross-platform or live-provider claims. The residual
+cross-platform or live-provider claims, and it is not projected onto the
+current behavior candidate `547a5b1`. The residual
 `hostile-filesystem-toctou=UNVERIFIED` and
 `release-authorization=INCONCLUSIVE` (`authorized: false`) remain. The
 older `f901e8f`, `492595f`, `1531850`, `97a3ec5`, `3f5543d`, `1ce2059`, and

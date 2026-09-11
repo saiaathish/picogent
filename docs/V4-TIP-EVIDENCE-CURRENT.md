@@ -1,28 +1,25 @@
 # Current V4 evidence and continuity
 
-Current documentation tip:
-592b07a633d9683354c4abeee09b767bc071ab35.
+Current behavior checkpoint:
+`547a5b1a4c8d348dae0b0c155c081f4d1b263742` (PR #685).
 
-The behavior-bound evidence baseline is
-1865a4c00356ac9b871b35b3a08f4e983f2af0e1. The current tip is proven to be a
-documentation-only descendant of that behavior candidate.
+The latest behavior slice validates catalog-bound browser screenshot admission
+and transient image handoff to the next model request. It does not establish
+an owned-browser observation, live-provider quality, broad hostile-filesystem
+TOCTOU resistance, or release authorization.
 
-- Bounded goal-state evidence from the last non-documentation candidate:
-  [V4-GOAL-STATE-EVIDENCE.md](V4-GOAL-STATE-EVIDENCE.md).
-- Fresh live-provider connectivity and quality evidence:
-  [V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE-1865A4C.md).
-- Exact-current three-platform rendered recovery evidence:
-  [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-592B07A.md).
-- Current release-audit posture:
-  [V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md).
-- Current operator gate:
-  [V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).
+- Exact-head matrix: `HEAD=PASS`, `tree=CLEAN`.
+- Matrix summary: `PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5`.
+- Matrix artifact SHA-256:
+  `8ce4dde2c26a797bdfd4d1bd56b61e713334383b9bdef44c7b8acbc90ce778b2`.
+- `live-provider-connectivity`, `live-provider-quality`,
+  `rendered-platform-local`, `rendered-cross-platform`, and
+  `hostile-filesystem-toctou`: `UNVERIFIED`.
+- `release-authorization`: `INCONCLUSIVE`; no operator approval is recorded.
 
-The current runtime-boundary matrix is PASS 10 / INCONCLUSIVE 1 /
-UNVERIFIED 1: live-provider connectivity and fixed quality are PASS,
-rendered local and cross-platform recovery are PASS, and broad hostile
-filesystem TOCTOU remains explicitly UNVERIFIED. Release authorization
-remains INCONCLUSIVE because no human operator decision has been recorded.
+The release audit and operator gate remain in
+[V4-FINAL-RELEASE-AUDIT.md](V4-FINAL-RELEASE-AUDIT.md) and
+[V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).
 Historical live/rendered packets remain separate and are not unioned into a
 synthetic release-authorizing result. Any later non-documentation behavior
 change requires fresh evidence.
