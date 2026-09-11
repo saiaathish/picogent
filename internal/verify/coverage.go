@@ -2,11 +2,17 @@ package verify
 
 import (
 	"bufio"
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/saiaathish/picogent/internal/securefile"
 )
+
+const MaxCoverageProfileBytes = 8 << 20
 
 // ParseCoverProfile reads a Go coverprofile and returns package statement
 // coverage. An empty, missing, or malformed profile remains UNVERIFIED.
@@ -15,13 +21,18 @@ func ParseCoverProfile(path string) CoverageEvidence {
 	if path == "" {
 		return CoverageEvidence{Status: ManifestUnverified, Reason: "coverprofile path is empty"}
 	}
-	file, err := os.Open(path)
+	data, err := securefile.ReadFileLimited(path, MaxCoverageProfileBytes)
 	if err != nil {
-		return CoverageEvidence{Status: ManifestUnverified, Reason: "coverprofile was not written"}
+		if errors.Is(err, os.ErrNotExist) {
+			return CoverageEvidence{Status: ManifestUnverified, Reason: "coverprofile was not written"}
+		}
+		if errors.Is(err, securefile.ErrReadLimit) {
+			return CoverageEvidence{Status: ManifestUnverified, Reason: "coverprofile exceeds size limit"}
+		}
+		return CoverageEvidence{Status: ManifestUnverified, Reason: "coverprofile is unreadable"}
 	}
-	defer file.Close()
 
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {
