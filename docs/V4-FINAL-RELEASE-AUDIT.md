@@ -7,6 +7,21 @@ review. It does **not** authorize a release, does **not** claim
 already closed in GitHub; its historical references below are retained for
 provenance and do not make it an open gate.
 
+## Current documentation tip
+
+The current clean main documentation tip is
+e26a57ef0e5d4c1ade67d9a87a74cd42ebbeca47, merged by PR #715. The current
+residual posture is recorded in
+[V4-CURRENT-RESIDUAL-PACKET-E26A57E.md](V4-CURRENT-RESIDUAL-PACKET-E26A57E.md).
+The detailed sections below retain historical candidate labels where they
+describe older behavior-bound packets; they are not silently rebased by this
+docs-only descendant.
+
+PR #715 records a bounded BrowserOS long-horizon observation at behavior SHA
+6914a42abddb1a789a9a655abeb4db61d9e9956c. The observation preserves
+fail-closed rendered proof and does not change the broad hostile TOCTOU or
+release-authorization verdicts.
+
 Operator decision checklist:
 [V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).
 Formal TOCTOU residual-acceptance package:
@@ -15,10 +30,10 @@ Formal TOCTOU residual-acceptance package:
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
-The latest exact-main documentation tip is the PR #707 merge at
+The prior exact-main documentation tip was the PR #707 merge at
 `1ef506be13d0347d820aa0f2b857e627e928f58a`, with runtime behavior still
 bound to `e770897` under the documentation-only descendant contract. The
-fresh verification packet is
+historical verification packet is
 [V4-RELEASE-VERIFICATION-1EF506B.md](V4-RELEASE-VERIFICATION-1EF506B.md).
 The prior task-owned rendered packet for
 [#690](https://github.com/saiaathishkarthik/picogent/issues/690) is
