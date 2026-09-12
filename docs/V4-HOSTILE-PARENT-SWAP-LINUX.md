@@ -24,6 +24,33 @@ harness:    TestLinuxSameUIDParentSwapConfinement
 workflow:   https://github.com/saiaathish/picogent/actions/runs/34037551757
 ```
 
+## Exact-current-main checkpoint (`e770897`)
+
+Hosted CI run
+[34661288831](https://github.com/saiaathishkarthik/picogent/actions/runs/34661288831)
+collected the Linux parent-swap and final-path campaigns from exact clean
+candidate `e770897891541c31d592220ae902c7fbc5b3db70` on `go1.25.14`
+Linux/amd64. Confirmed attacker activity never escaped the trusted boundary,
+outside digests stayed unchanged, and every retained operation reported
+`PASS`.
+
+| Operation | Attempts | Successes | Errors | Attacker swaps | Escape | Verdict |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `securefile-write-atomic` | 250 | 15 | 235 | 649 | no | `PASS` |
+| `securefile-read-file` | 250 | 33 | 217 | 550 | no | `PASS` |
+| `securefile-write-exclusive` | 250 | 232 | 18 | 63 | no | `PASS` |
+| `securefile-remove-file` | 250 | 1 | 249 | 489 | no | `PASS` |
+| `checkpoint-restore-existing` | 200 | 0 | 200 | 5368 | no | `PASS` |
+| `checkpoint-restore-remove-created` | 200 | 78 | 122 | 5200 | no | `PASS` |
+
+The Linux securefile, workspace, checkpoint, and final-path artifact SHA-256
+values are respectively
+`f39fa055344760cbea2d125b0b185ac66579105e6edcfab49281977f5f0aa817`,
+`429d68d00ee2ae4d6a2667a36a5388fc0b4dcf1507a792a23474ac5ebb87d14f`,
+`6d5b159486a9832268a063c31223882660127907f1bc754e47263a9fb8ff72b4`, and
+`5ef149a0291843037342502180a78cc893392e1c571f71cdbc497ac0ae5ec1d4`.
+`BroadTOCTOUClaim=UNVERIFIED` remains explicit.
+
 ## Commands
 
 ```sh

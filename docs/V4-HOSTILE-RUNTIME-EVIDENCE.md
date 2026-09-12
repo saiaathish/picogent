@@ -30,6 +30,27 @@ go test -race ./internal/securefile ./internal/procenv ./internal/workspace -cou
 PASS
 ```
 
+## Exact-current-main hosted checkpoint
+
+The current bounded hostile-runtime records were collected at exact clean
+candidate `e770897891541c31d592220ae902c7fbc5b3db70` by hosted CI run
+[34661288831](https://github.com/saiaathishkarthik/picogent/actions/runs/34661288831)
+and its macOS parent-swap rerun. Every retained record below reports
+`verdict=PASS`, `source_tree_modified=false`, confirmed attacker activity, and
+an unchanged outside marker or outside-tree digest:
+
+| Boundary | Platforms | Retained artifact SHA-256 examples |
+| --- | --- | --- |
+| retained-artifact reads | Darwin, Linux, Windows | `0242c1880f16b3b2ae9acf906da4fe4d1b7b525c980ee6a6d745ce25e0de1bec`, `49a71b9e994ba705f0d466b34c9bd428003bbdde0cdb74cd2718595193a2da28`, `07c821770752220a60b0cc81fbce3595dd6512748a8e547e5c286459c17ab3e2` |
+| project-rule reads | Darwin, Linux, Windows | `9a5fb51f85e310e6a8fce77fc877220f292733a36685bab624b2a27bee5e6e7b`, `becef6bceca3bf7282f30d90b3ebc2d60d4cba4cb9f7f90032a063a702b90dea`, `827dc90db0cd7ed2ea3335a6c1a0c018d3de404e348ee128b8ed5f832ffca725` |
+| goal-state persistence | Darwin, Linux, Windows | `ba7a75485b0fa105e5c21ee978614f4ef8509c9361427dbfcd485f8f4532efe7`, `2fc0c4d9e3fc9abf1bb0c72319cbb740ecf291546d9c72f3acff09c7c77b4b26`, `90ffa349b165a00f8e13f336fd8365891d21f7fcd93f3412ac1c077f675fbbb8` |
+
+The exact hosted run also retained bounded Linux parent-swap/final-path and
+Windows parent-replacement records. The Darwin parent-swap records were
+collected from a clean exact-SHA clone with the same source binding. These
+records enable only the named bounded claims; the universal
+`hostile-filesystem-toctou` row remains `UNVERIFIED`.
+
 ## Bounded controls exercised
 
 The package tests provide deterministic evidence for these boundaries:

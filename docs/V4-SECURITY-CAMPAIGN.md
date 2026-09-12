@@ -3,6 +3,21 @@
 Status: active. This is a bounded manual audit record, not a hosted security
 certification or a claim that every hostile-runtime scenario is closed.
 
+## Exact-current-main hosted checkpoint (`e770897`)
+
+The exact clean `main` candidate
+`e770897891541c31d592220ae902c7fbc5b3db70` was exercised by hosted CI run
+[34661288831](https://github.com/saiaathishkarthik/picogent/actions/runs/34661288831).
+Its Ubuntu, Windows, macOS, security, and release-evidence gates passed. The
+hostile retained-read, project-rule-read, and goal-state artifacts all report
+`PASS`, `source_tree_modified=false`, confirmed attacker activity, and no
+outside marker observation on Darwin/arm64, Linux/amd64, and Windows/amd64.
+
+The exact-current evidence is bounded to the named test fixtures and retained
+artifacts. It does not certify arbitrary hostile writers, live providers, or a
+release. The broad same-UID race claim remains
+`BroadTOCTOUClaim: UNVERIFIED`.
+
 ## Confirmed hardening
 
 ### Network fetch

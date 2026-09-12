@@ -29,6 +29,34 @@ harness:    TestDarwinSameUIDParentSwapConfinement
 observed:   2026-09-06T12:23:24Z securefile / 2026-09-06T12:23:44Z workspace
 ```
 
+## Exact-current-main checkpoint (`e770897`)
+
+The three Darwin campaigns were rerun from a clean clone at exact candidate
+`e770897891541c31d592220ae902c7fbc5b3db70` with `go1.26.6 darwin/arm64`.
+Each test was given the candidate through
+`PICOGENT_HOSTILE_PARENT_SWAP_SOURCE_SHA`; the retained records report
+`source_tree_modified=false` where applicable, confirmed attacker activity,
+unchanged outside digests, and `verdict=PASS`.
+
+| Operation | Attempts | Successes | Errors | Attacker swaps | Escape | Verdict |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `securefile-write-atomic` | 250 | 249 | 1 | 10 | no | `PASS` |
+| `securefile-read-file` | 250 | 64 | 186 | 404 | no | `PASS` |
+| `securefile-write-exclusive` | 250 | 243 | 7 | 34 | no | `PASS` |
+| `securefile-remove-file` | 250 | 1 | 249 | 348 | no | `PASS` |
+| `workspace-write-atomic` | 200 | 183 | 17 | 1190 | no | `PASS` |
+| `workspace-open-read` | 200 | 6 | 194 | 1190 | no | `PASS` |
+| `workspace-remove` | 200 | 5 | 195 | 1190 | no | `PASS` |
+| `checkpoint-restore-existing` | 200 | 19 | 181 | 6051 | no | `PASS` |
+| `checkpoint-restore-remove-created` | 200 | 89 | 111 | 6196 | no | `PASS` |
+
+Retained artifact SHA-256 values are `1aa6bd69788d1e3d96a85b28c2456075205b824337cd9196b268b08543f80134`
+for securefile, `a6c2721ae1f114581bc7b0f744e30840be0af0e23a9c2750ce2401c99659c482`
+for workspace, and `b81df1780ebde62f1c1841827a113ccd92502f27f5c52110ee1c7152063b6848`
+for checkpoint. Both outside sentinel and complete outside-tree digests were
+unchanged in every retained record. `BroadTOCTOUClaim: UNVERIFIED` remains
+explicit.
+
 ## Commands
 
 ```sh
