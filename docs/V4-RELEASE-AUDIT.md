@@ -1,6 +1,24 @@
 # V4 independent release-evidence audit
 
-## Current exact-head checkpoint — candidate `3535bda907dbe8cc44ca43d5563e4e607a96d266`
+## Current exact-head verification refresh — candidate `1ef506be`
+
+Status: `INCONCLUSIVE` for release authorization. The exact clean main
+candidate `1ef506be13d0347d820aa0f2b857e627e928f58a` now has a fresh
+developer-facing verification manifest: exact SHA and clean-tree provenance
+passed, targeted `internal/verify` coverage measured
+`78.85939036381514%`, and broader `go test ./...` passed 49 packages in
+`130.094415792s` under the low-resource policy.
+
+The complete artifact packet is
+[V4-RELEASE-VERIFICATION-1EF506B.md](V4-RELEASE-VERIFICATION-1EF506B.md).
+This verification PASS supersedes the historical killed-at-90-seconds note;
+it does not authorize a release. The current hostile-runtime continuity packet
+remains separately bound to behavior `e770897` and retains broad
+`hostile-filesystem-toctou=UNVERIFIED`. Live-provider, rendered, recovery,
+restart/steering, and operator-authorization claims are not synthesized from
+historical packets.
+
+## Historical exact-head checkpoint — candidate `3535bda907dbe8cc44ca43d5563e4e607a96d266`
 
 Status: `INCONCLUSIVE` for release authorization. This snapshot is the clean
 exact-main live-provider and rendered-platform refresh after the #689 merge;

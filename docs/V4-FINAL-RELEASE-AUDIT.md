@@ -15,15 +15,19 @@ Formal TOCTOU residual-acceptance package:
 Predicate contract:
 [V4-RELEASE-AUTHORIZATION.md](V4-RELEASE-AUTHORIZATION.md).
 Historical dry-runs remain in [V4-RELEASE-AUDIT.md](V4-RELEASE-AUDIT.md).
-The latest exact-main evidence checkpoint is the PR #689 merge at
-`3535bda907dbe8cc44ca43d5563e4e607a96d266`. The fresh task-owned rendered
-packet for [#690](https://github.com/saiaathishkarthik/picogent/issues/690) is
+The latest exact-main documentation tip is the PR #707 merge at
+`1ef506be13d0347d820aa0f2b857e627e928f58a`, with runtime behavior still
+bound to `e770897` under the documentation-only descendant contract. The
+fresh verification packet is
+[V4-RELEASE-VERIFICATION-1EF506B.md](V4-RELEASE-VERIFICATION-1EF506B.md).
+The prior task-owned rendered packet for
+[#690](https://github.com/saiaathishkarthik/picogent/issues/690) is
 documented in
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md).
-Its exact-head matrix records the rendered and bounded live-provider claims;
-it does not establish broad same-UID TOCTOU resistance or release
-authorization. The packet and matrix remain bound to `3535bda`; later
-documentation-only descendants do not synthesize or rebind the observations.
+Its exact-head matrix remains historical and records the rendered and bounded
+live-provider claims; it does not establish broad same-UID TOCTOU resistance or
+release authorization. Later documentation-only descendants do not synthesize
+or rebind those observations.
 
 The prior fully rendered cross-platform packet at candidate `eabf8d6` remains
 retained as historical evidence in
@@ -56,9 +60,9 @@ The older `1ce2059` packet is also retained as historical evidence only:
 The older `f8a78c6` packet is also retained as historical evidence only:
 [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
 
-## Current exact-head checkpoint (2026-09-11)
+## Prior exact-head checkpoint (2026-09-11; superseded as current by `1ef506b`)
 
-The current evidence candidate is
+The prior evidence candidate was
 `3535bda907dbe8cc44ca43d5563e4e607a96d266`, the clean PR #689 merge. The
 fresh #690 rendered packet and exact-head runtime-boundary matrix report
 `HEAD=PASS`, `tree=CLEAN`, and
