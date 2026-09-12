@@ -1,81 +1,108 @@
-# v4 rendered long-horizon direct evidence
+# v4 rendered long-horizon direct evidence at exact main `6914a42`
 
-This evidence record belongs to [#370](https://github.com/saiaathish/picogent/issues/370),
-the large lane under [#366](https://github.com/saiaathish/picogent/issues/366). It records
-one direct, task-owned Darwin Playwright Chromium observation of the merged rendered
-long-horizon fixture at current `main` tip. It is evidence only; it is not a
-live-provider, unsupported-platform, or release-readiness claim.
+Status: `PASS` for one bounded, task-owned Darwin BrowserOS neo observation of
+the existing rendered long-horizon fixture at the exact current `main` tip.
+This slice belongs to [#714](https://github.com/saiaathishkarthik/picogent/issues/714)
+under the runtime-boundary parent
+[#453](https://github.com/saiaathishkarthik/picogent/issues/453). It is evidence only;
+it is not live-provider, cross-platform, hostile-filesystem, or release-readiness
+proof, and it does not claim v4 completion.
 
-Historical BrowserOS neo observation at `993258f4…` and the `#550` package at
-`22b1b1b…` remain on record below as superseded provenance; tip claims must use
-the tip-bound section at `f8a78c6…`.
+The prior record at `f8a78c6…` is superseded for current-tip claims. The new
+observation was built from a true standalone clean clone. An earlier linked
+worktree build was rejected from evidence because Go omitted VCS build metadata.
 
-## Tip provenance (`f8a78c6…`)
+## Provenance
 
-- Observed source / exact `origin/main`:
-  `f8a78c646877164009953401772acdb4d346175d` (`#551` behavior tip).
-- `#551` changed `internal/ctxmgr/retention.go` and `internal/session/session.go`;
-  prior `#550` long-horizon tip package at `22b1b1b…` is **STALE** and must not
-  be retained via docs-only / behavior-SHA continuity.
-- Runtime: `go-build-tags-rendered_fixture` with `vcs.revision=f8a78c6…`,
-  `vcs.modified=false` (clean clone build).
-- Fixture scenario: `rendered-multi-turn-outcome` / `-scenario long-horizon`.
-- Fixture session: `rendered-long-horizon-fixture`.
-- Browser: Playwright Chromium headless `151.0.7922.34` (darwin/arm64).
-- Seed started: `2026-09-07T10:34:37.716617Z`.
-- Reload started: `2026-09-07T10:34:45.792603Z`.
-- Both manifests: `source_sha_verified=true`, `source_tree_modified=false`.
+| Field | Value |
+| --- | --- |
+| Candidate and behavior SHA | `6914a42abddb1a789a9a655abeb4db61d9e9956c` |
+| Head / tree | `PASS` / `CLEAN` |
+| Behavior provenance | `EXACT_HEAD` |
+| Runtime | `go-build-tags-rendered_fixture`, Go `1.26.6` |
+| Fixture scenario | `rendered-multi-turn-outcome` / `long-horizon` |
+| Fixture session | `rendered-long-horizon-fixture` |
+| Browser | BrowserOS neo Chrome `148.0.0.0`, Darwin `arm64` |
+| Browser session | `codex/long-horizon`, task-owned page `37` |
+| Viewport | `1864 × 969` |
+| Seed started | `2026-09-12T03:28:15.971317Z` |
+| Reload started | `2026-09-12T03:37:02.037668Z` |
+| Final observation | `2026-09-12T03:41:27.519Z` |
+| Source metadata | `source_sha_verified=true`, `source_tree_modified=false` in both manifests |
 
-### Digests
+The fixture used a disposable home/workspace and the deterministic fixture
+provider. The seed process terminated before the reload process started; the
+reload process was terminated after the final observation and its port was
+closed before artifact retention. No live provider was used.
+
+## Digest record
+
+Secret-free artifacts remain outside the checkout at
+`/private/tmp/picogent-evidence-6914a42-long-horizon-714/`:
 
 ```text
-observation     3d1b2bde474e6207529272f6ba0c549940c02021005b9c2461e69f583d303796
-screenshot-set  acf5dd11fade1454056d4214dda1dbc13c7412550fcdb86e1fe57f309621124a
-seed-manifest   8e4504e903141f9d29fed1a3b72b0da3817257e1560497c68bda7d24e867baf4
-reload-manifest 1da12a87cc4eab59f9a23c9f44038d16795cd369b68066c8d7a06cecd9c0da4e
+observation     6626b3263b359f8d6691ab5cae7c1d4ed45580c577be469cf4da206fe4d82cbb
+seed-manifest   3430687e6eb06d84520a261316e889b41b436aa5323a7df9550316d7eb66ab86
+reload-manifest 45dc4cfd810674352413546e0fa88fce9177a483a1ce0d4c88cfbe3097037345
+screenshot      UNRECORDED (BrowserOS neo returned inline capture only)
 ```
 
-Artifacts (outside checkout): `/private/tmp/picogent-evidence-f8a78c6/long-horizon/darwin/`.
+The observation record is
+`picogent.v4.rendered-long-horizon-observation.v2`. It retains only direct UI
+strings, provenance, assertions, and digests; raw transcripts, credentials,
+browser profile data, and fixture logs were not retained.
 
-Companion Darwin rendered-recovery + exact-head matrix notes:
-[V4-RENDERED-RECOVERY-EVIDENCE-F8A78C6.md](V4-RENDERED-RECOVERY-EVIDENCE-F8A78C6.md)
-and [V4-TIP-EVIDENCE-F8A78C6.md](V4-TIP-EVIDENCE-F8A78C6.md).
+## Direct browser observations
 
-## Tip direct browser observations
+The browser stayed in Safe mode and followed the fixture runbook. Each row is a
+direct observation from the task-owned page, not an inference from the API
+contract test.
 
 | Sequence | Prompt / boundary | Directly observed UI | Outcome and freshness signal |
 | --- | --- | --- | --- |
-| 1 | Initial seed page | Safe-mode fixture session loaded without undo. | Baseline before mutation. |
-| 2 | `Create the rendered UI outcome probe` after Safe-mode allow | Probe file present; completion proof pending; mutation staged. | Contained write succeeded; completion remained fail-closed. |
-| 3 | `Verify the rendered UI outcome probe` | `PASS · verify PASS — deterministic workspace observation` visible while quality evidence still incomplete. | Deterministic verify did not promote completion. |
-| 4 | `Review the rendered UI outcome after steering its scope` | Steering text and stale-proof / `INCONCLUSIVE` signals; `Undo last change` enabled. | Steering invalidated prior proof; undo remained available. |
-| 5 | Fresh-process reload | Same durable fixture session retained history / blocked or proof-pending completion gate. | Restart/resume preserved fail-closed gate. |
-| 6 | `Verify the rendered UI outcome after reload` | Fresh rendered inspection / `INCONCLUSIVE` / fail-closed language. | Reload did not reuse stale completion proof. |
-
-Verdict `PASS` for this bounded Darwin owned-browser package at `f8a78c6…`.
+| 1 | `Create the rendered UI outcome probe` after mutation approval | `Blocked`; `Changed files (1)`; `Undo is available for the latest change`. | `INCONCLUSIVE · verify INCONCLUSIVE — rendered inspection is pending`; contained mutation staged while proof remained pending. |
+| 2 | `Verify the rendered UI outcome probe` after verifier approval | Completion remained proof-gated; `PASS · verify PASS — deterministic workspace observation`; Undo remained available. | Deterministic workspace pass did not create direct rendered proof. |
+| 3 | `Review the rendered UI outcome after steering its scope` after verifier approval | `Blocked`; `Steering changed the outcome contract; earlier proof is stale.`; `Undo last change`. | `INCONCLUSIVE · verify INCONCLUSIVE — fresh rendered inspection is required`; earlier proof was invalidated. |
+| 4 | Fresh-process reload at the second fixture URL | Same durable task and transcript; `Blocked`; `Changed files (1)`; stale-steering text; `Undo last change`. | Reload crossed the process boundary without promoting stale completion proof. |
+| 5 | `Verify the rendered UI outcome after reload` after verifier approval | `The reloaded task is still fail-closed; fresh rendered inspection is required.`; `Undo last change`. | `INCONCLUSIVE · verify INCONCLUSIVE — fresh rendered inspection is required`; fresh rendered proof remained required. |
 
 ## Interpretation
 
-- Tip-bound rendered surface preserved mutation visibility, verification,
-  steering invalidation, undo availability, and fresh-process reload recovery.
-- Steering invalidated earlier proof; reload did not promote stale proof.
-- Live-provider quality, unsupported platforms, hostile writers, broader crash
-  windows, and release authorization remain `UNVERIFIED`.
-- Tip `rendered-cross-platform` remains **STALE/UNVERIFIED** until Linux +
-  Windows are rebound at `f8a78c6…`.
+- The bounded rendered surface preserved task identity, mutation visibility,
+  verification history, steering invalidation, Undo availability, and durable
+  reload recovery.
+- The deterministic `PASS` did not promote completion because direct rendered
+  proof was still missing.
+- Steering invalidated earlier proof, and reload did not reuse stale proof.
+- `live-provider-connectivity`, `live-provider-quality`,
+  `hostile-filesystem-toctou`, unsupported platforms, cross-platform aggregate,
+  broader crash windows, and `release-authorization` remain `UNVERIFIED`.
 
-## Superseded tip package (`22b1b1b…` / `#550`)
+## Reproduction
 
-Prior tip long-horizon package at `22b1b1ba7e1aec45d57172b6be480297e57637de`
-(observation `6c6159cc…`, artifacts under
-`/private/tmp/picogent-evidence-long-horizon-22b1b1b/darwin/`) landed immediately
-before `#551` behavior changes and is **not** tip-bound after `f8a78c6…`.
+From a true standalone clean checkout at the exact SHA, with low-resource
+settings:
 
-## Historical observation (superseded; `993258f4…`)
+```sh
+GOMAXPROCS=2 GOFLAGS=-p=1 GOTOOLCHAIN=local \
+  go build -buildvcs=true -tags rendered_fixture \
+  -o /private/tmp/picogent-rendered-long-horizon-714-standalone \
+  ./cmd/picogent-rendered-fixture
+```
 
-Prior BrowserOS neo observation against
-`993258f4b97d196fd7c44cca78c235080fd062e9` (2026-09-03) exercised the same
-create → verify → steer → reload sequence with
-`source_sha_verified: true`. That package is not tip-bound to current `main`
-(`142` non-`docs/` paths changed before behavior tip `423d047…`) and must not be
-cited as current tip proof.
+Run the seed fixture with `PICOGENT_RENDERED_FIXTURE_SOURCE_SHA` set to the
+exact SHA, follow the three seed prompts in Safe mode, approving only the
+contained mutation and verifier permissions, then stop the process. Start the
+reload phase with the exact home/workspace paths from the seed manifest and
+submit `Verify the rendered UI outcome after reload`. Verify both manifests
+report `source_sha_verified=true` and `source_tree_modified=false` before
+retaining any result.
+
+Focused API coverage also passed:
+
+```text
+ok  github.com/saiaathish/picogent/internal/gui  1.918s
+```
+
+This bounded observation must not be relabeled as live-provider or release
+evidence, and it does not close #453.
