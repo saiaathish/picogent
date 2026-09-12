@@ -41,6 +41,69 @@ func TestSessionPathAndLoadRejectTraversal(t *testing.T) {
 	}
 }
 
+func TestListWaitsForSessionLockBeforeInspectingDirectory(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	dir, err := Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sessionsProcessLock.Lock()
+	released := false
+	defer func() {
+		if !released {
+			sessionsProcessLock.Unlock()
+		}
+	}()
+
+	type result struct {
+		sessions []Session
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		sessions, listErr := List()
+		done <- result{sessions: sessions, err: listErr}
+	}()
+
+	select {
+	case got := <-done:
+		t.Fatalf("List returned before acquiring the session lock: sessions=%#v err=%v", got.sessions, got.err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	s := Session{
+		ID:        "lock-first-list",
+		Title:     "lock-first",
+		Workspace: filepath.Join(t.TempDir(), "project"),
+		Updated:   time.Now().UTC(),
+	}
+	data, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, s.ID+".json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	sessionsProcessLock.Unlock()
+	released = true
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if len(got.sessions) != 1 || got.sessions[0].ID != s.ID {
+			t.Fatalf("List after lock release = %#v, want %q", got.sessions, s.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("List did not complete after the session lock was released")
+	}
+}
+
 func TestSessionDeleteRejectsSymlinkTarget(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation requires privileges on Windows")
