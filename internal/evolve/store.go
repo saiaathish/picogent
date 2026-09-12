@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,11 +142,27 @@ func Load(workspace string) (Store, error) {
 	// Probe only the parent directory before locking so a missing first-use
 	// load still creates no state. Once the state directory exists, the
 	// payload read stays under the cross-process lock.
-	if _, err := os.Stat(filepath.Dir(path)); err != nil {
+	stateDir := filepath.Dir(path)
+	stateParent := filepath.Dir(stateDir)
+	parentInfo, err := os.Stat(stateParent)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Store{Workspace: workspace}, nil
 		}
 		return Store{}, err
+	}
+	if !parentInfo.IsDir() {
+		return Store{}, fmt.Errorf("state parent %q is not a directory", stateParent)
+	}
+	stateInfo, err := os.Stat(stateDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Store{Workspace: workspace}, nil
+		}
+		return Store{}, err
+	}
+	if !stateInfo.IsDir() {
+		return Store{}, fmt.Errorf("evolve state %q is not a directory", stateDir)
 	}
 	unlock, err := acquireStoreLock(path)
 	if err != nil {
