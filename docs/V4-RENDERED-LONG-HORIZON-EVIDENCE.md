@@ -31,9 +31,9 @@ worktree build was rejected from evidence because Go omitted VCS build metadata.
 | Source metadata | `source_sha_verified=true`, `source_tree_modified=false` in both manifests |
 
 The fixture used a disposable home/workspace and the deterministic fixture
-provider. The seed process exited before the reload process started; the reload
-process also exited cleanly after the final observation. No live provider was
-used.
+provider. The seed process terminated before the reload process started; the
+reload process was terminated after the final observation and its port was
+closed before artifact retention. No live provider was used.
 
 ## Digest record
 
