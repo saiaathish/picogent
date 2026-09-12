@@ -29,6 +29,52 @@ func TestLoadDoesNotCreateStateUntilSave(t *testing.T) {
 	}
 }
 
+func TestLoadWaitsForStoreLockBeforeReadingExistingState(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	workspace := filepath.Join(t.TempDir(), "project")
+	if err := Save(Store{Workspace: workspace}); err != nil {
+		t.Fatal(err)
+	}
+
+	evolveProcessLock.Lock()
+	released := false
+	defer func() {
+		if !released {
+			evolveProcessLock.Unlock()
+		}
+	}()
+
+	type result struct {
+		store Store
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		store, err := Load(workspace)
+		done <- result{store: store, err: err}
+	}()
+
+	select {
+	case got := <-done:
+		t.Fatalf("Load returned before acquiring the store lock: store=%+v err=%v", got.store, got.err)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	evolveProcessLock.Unlock()
+	released = true
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if got.store.Workspace != workspace {
+			t.Fatalf("loaded workspace=%q, want %q", got.store.Workspace, workspace)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Load did not complete after the store lock was released")
+	}
+}
+
 func TestLoadReportsStateParentThatIsNotADirectory(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, "picogent")
