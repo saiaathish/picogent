@@ -4,6 +4,21 @@
 verification pipeline. It does not change task completion, goal persistence,
 repair authorization, or CI orchestration.
 
+## Latest exact-main refresh
+
+The exact clean main candidate
+`1ef506be13d0347d820aa0f2b857e627e928f58a` was verified on 2026-09-12 with
+`GOMAXPROCS=2`, `GOFLAGS=-p=1`, and `GOTOOLCHAIN=local`. The emitted manifest
+reported `HEAD=PASS`, `tree=CLEAN`, targeted `internal/verify=PASS` with
+`78.85939036381514%` coverage, and broader `go test ./...=PASS` across 49
+packages in `130.094415792s`.
+
+The retained external artifacts and their digests are recorded in
+[V4-RELEASE-VERIFICATION-1EF506B.md](V4-RELEASE-VERIFICATION-1EF506B.md).
+This refresh corrects the older killed-at-90-seconds observation; it does not
+upgrade live-provider, rendered, hostile-TOCTOU, or operator-authorization
+claims.
+
 Run it for a workspace with an exact expected commit:
 
 ```sh
