@@ -372,19 +372,16 @@ func List() ([]Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, err = os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
 	unlock, err := acquireSessionsLock(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	return listLocked(dir)
+	list, err := listLocked(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return list, err
 }
 
 func listLocked(dir string) ([]Session, error) {
@@ -415,18 +412,16 @@ func ListMeta(workspace string) ([]Meta, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(dir); err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
 	unlock, err := acquireSessionsLock(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer unlock()
-	return listMetaLocked(dir, workspace, MaxSessions)
+	list, err := listMetaLocked(dir, workspace, MaxSessions)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	return list, err
 }
 
 func listMetaLocked(dir, workspace string, limit int) ([]Meta, error) {
@@ -477,12 +472,6 @@ func Prune(workspace string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(dir); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
 	unlock, err := acquireSessionsLock(dir)
 	if err != nil {
 		return err
@@ -490,6 +479,9 @@ func Prune(workspace string) error {
 	defer unlock()
 	all, err := listMetaLocked(dir, workspace, 0)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return err
 	}
 	if len(all) <= MaxSessions {
@@ -513,12 +505,6 @@ func Delete(id string) error {
 	id = strings.TrimSuffix(id, ".json")
 	if !validID(id) {
 		return errors.New("invalid session id")
-	}
-	if _, err := os.Stat(dir); err != nil {
-		if os.IsNotExist(err) {
-			return os.ErrNotExist
-		}
-		return err
 	}
 	unlock, err := acquireSessionsLock(dir)
 	if err != nil {
