@@ -1,18 +1,30 @@
 # Current V4 evidence and continuity
 
-## Current documentation tip
+## Current exact behavior and evidence checkpoint
 
-The current clean main documentation tip is
-e26a57ef0e5d4c1ade67d9a87a74cd42ebbeca47, merged by PR #715. The current
-residual posture is recorded in
-V4-CURRENT-RESIDUAL-PACKET-E26A57E.md.
-PR #715 is a documentation-only descendant of behavior
-6914a42abddb1a789a9a655abeb4db61d9e9956c; it preserves the direct
-long-horizon observation without rebinding older runtime packets.
+The latest non-documentation behavior tip is
+a82f8463f9f936dcb93da83dd97485e25b5ac480, merged by PR #719. The current
+exact-head residual packet is
+[V4-CURRENT-RESIDUAL-PACKET-A82F846.md](V4-CURRENT-RESIDUAL-PACKET-A82F846.md).
 
-The broad same-UID filesystem TOCTOU row remains UNVERIFIED. Release
-authorization remains INCONCLUSIVE with authorized=false because no operator
-approval is recorded. Parent #453 remains OPEN.
+The fresh matrix was collected from a clean checkout at that exact SHA with
+HEAD=PASS, tree=CLEAN, and behavior_provenance=EXACT_HEAD. Its artifact
+SHA-256 is
+efa9c0efe1ecb5c7a75e2b884fb181c843f378a52ac317346e149bcfb58bdcea.
+The matrix summary is UNVERIFIED=12 because this refresh supplied no
+live-provider, rendered-platform, or retained hostile-runtime artifacts.
+The focused session regression suite passed with low-resource settings.
+
+PR #719 narrowed the session coordination boundary by locking List,
+ListMeta, Prune, and Delete before directory-state probes. It did not close
+the broad same-UID filesystem TOCTOU residual. Release authorization remains
+INCONCLUSIVE with authorized=false because no operator approval is recorded.
+Parent #453 remains OPEN.
+
+The evidence documents in this branch are documentation-only descendants of
+the exact behavior candidate. They may retain this packet under the
+continuity rule, but must not silently rebind its claims to a later docs
+commit or combine historical live/rendered packets into a release decision.
 
 ## Superseded exact behavior evidence checkpoint
 `3535bda907dbe8cc44ca43d5563e4e607a96d266` (PR #689 merge), with the fresh

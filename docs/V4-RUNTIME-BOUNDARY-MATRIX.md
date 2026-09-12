@@ -5,21 +5,22 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact-head checkpoint for this refresh:** `main` is clean at
-`3535bda907dbe8cc44ca43d5563e4e607a96d266`, the PR #689 merge. The typed
-browser screenshot admission remains separately tested; this packet adds
-task-owned rendered recovery observations on Darwin, Linux, and Windows. The
-fresh exact-head matrix records `HEAD=PASS`, `tree=CLEAN`, and summary
-`PASS 10 / INCONCLUSIVE 1 / UNVERIFIED 1`. Its artifact SHA-256 is
-`f9576b69a41c8d0eb3e036dc8d82b7057f1eb7c842d9ffd5086916408fada2cc`.
-Live-provider connectivity and fixed quality plus rendered-platform-local and
-rendered-cross-platform are `PASS` under their bounded artifact contracts;
-broad hostile-filesystem TOCTOU remains `UNVERIFIED`, and release
-authorization remains `INCONCLUSIVE`. The rendered packet is recorded in
-[V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md).
-The packet is exact-candidate-bound; any later non-documentation behavior
-change requires fresh collection, and later documentation-only descendants
-must not silently rebind the observation.
+**Current exact-head checkpoint for this refresh:** `main` was clean at
+`a82f8463f9f936dcb93da83dd97485e25b5ac480`, the PR #719 session-lock
+hardening merge. The fresh matrix recorded `HEAD=PASS`, `tree=CLEAN`, and
+`behavior_provenance=EXACT_HEAD`. Its artifact SHA-256 is
+`efa9c0efe1ecb5c7a75e2b884fb181c843f378a52ac317346e149bcfb58bdcea`.
+The summary is `UNVERIFIED=12`: no live-provider, rendered-platform, or
+retained hostile-runtime artifacts were supplied to this exact-head refresh.
+The focused `internal/session` regression suite passed with low-resource
+settings. This checkpoint is recorded in
+[V4-CURRENT-RESIDUAL-PACKET-A82F846.md](V4-CURRENT-RESIDUAL-PACKET-A82F846.md).
+
+This exact-candidate matrix is evidence-only. The broad hostile-filesystem
+TOCTOU row remains `UNVERIFIED`; the separate release-authorization
+predicate remains `INCONCLUSIVE` with `authorized=false`; and parent #453
+remains open. Later documentation-only descendants may retain this packet,
+but any later non-documentation behavior change requires a fresh matrix.
 
 **Prior behavior-bound checkpoint (behavior tip `9c1ca2e`; parent issue `#453`):**
 The fresh live-provider observation is bound to behavior tip

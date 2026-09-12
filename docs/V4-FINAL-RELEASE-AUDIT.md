@@ -7,20 +7,26 @@ review. It does **not** authorize a release, does **not** claim
 already closed in GitHub; its historical references below are retained for
 provenance and do not make it an open gate.
 
-## Current documentation tip
+## Current exact behavior and evidence checkpoint
 
-The current clean main documentation tip is
-e26a57ef0e5d4c1ade67d9a87a74cd42ebbeca47, merged by PR #715. The current
+The latest non-documentation behavior tip is
+a82f8463f9f936dcb93da83dd97485e25b5ac480, merged by PR #719. The current
 residual posture is recorded in
-[V4-CURRENT-RESIDUAL-PACKET-E26A57E.md](V4-CURRENT-RESIDUAL-PACKET-E26A57E.md).
+[V4-CURRENT-RESIDUAL-PACKET-A82F846.md](V4-CURRENT-RESIDUAL-PACKET-A82F846.md).
 The detailed sections below retain historical candidate labels where they
 describe older behavior-bound packets; they are not silently rebased by this
-docs-only descendant.
+documentation-only descendant.
 
-PR #715 records a bounded BrowserOS long-horizon observation at behavior SHA
-6914a42abddb1a789a9a655abeb4db61d9e9956c. The observation preserves
-fail-closed rendered proof and does not change the broad hostile TOCTOU or
-release-authorization verdicts.
+The exact-head matrix at a82f846 reports HEAD=PASS, tree=CLEAN, and
+behavior_provenance=EXACT_HEAD. Its artifact SHA-256 is
+efa9c0efe1ecb5c7a75e2b884fb181c843f378a52ac317346e149bcfb58bdcea, with
+summary UNVERIFIED=12 because no fresh live-provider, rendered-platform, or
+retained hostile-runtime artifacts were supplied.
+
+PR #719 records a bounded session coordination hardening: List, ListMeta,
+Prune, and Delete now lock before directory-state probes. It does not
+change the broad hostile TOCTOU residual, does not replace the operator
+authorization gate, and does not make a release or v4-completion claim.
 
 Operator decision checklist:
 [V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).
