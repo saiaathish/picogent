@@ -138,10 +138,10 @@ func Load(workspace string) (Store, error) {
 	if err != nil {
 		return Store{}, err
 	}
-	// Probe without creating the state directory. The bounded read keeps a
-	// missing first-use load cheap; loadLocked reopens the same validated
-	// boundary while holding the cross-process lock.
-	if _, err := securefile.ReadFilePrefix(path, 1); err != nil {
+	// Probe only the parent directory before locking so a missing first-use
+	// load still creates no state. Once the state directory exists, the
+	// payload read stays under the cross-process lock.
+	if _, err := os.Stat(filepath.Dir(path)); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Store{Workspace: workspace}, nil
 		}
