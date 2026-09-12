@@ -31,14 +31,14 @@ func TestCollectFailClosedWithoutLiveEvidence(t *testing.T) {
 		t.Fatalf("live verdict = %s", live.Verdict)
 	}
 	undoReload := claimByID(t, report, "rendered-recovery-undo-reload")
-	if undoReload.Verdict != VerdictPass {
+	if undoReload.Verdict != VerdictUnverified {
 		t.Fatalf("rendered undo/reload verdict = %s", undoReload.Verdict)
 	}
 	if report.Summary[string(VerdictUnverified)] < 1 {
 		t.Fatalf("summary = %+v", report.Summary)
 	}
 	release := claimByID(t, report, "release-authorization")
-	if release.Verdict != VerdictInconclusive {
+	if release.Verdict != VerdictUnverified {
 		t.Fatalf("release verdict = %s", release.Verdict)
 	}
 }
@@ -73,18 +73,20 @@ func TestCollectRejectsLiveFlagWithoutArtifact(t *testing.T) {
 	}
 }
 
-func TestCollectPassesBoundedHostileFilesystemWithoutTOCTOU(t *testing.T) {
+func TestCollectPassesBoundedHostileFilesystemWithCurrentDocProvenance(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
 	workspace := t.TempDir()
 	seedDocs(t, workspace)
-	write(t, workspace, "docs/V4-HOSTILE-RUNTIME-EVIDENCE.md", "# bounded hostile runtime evidence\n")
+	behaviorSHA := commitAll(t, workspace)
+	write(t, workspace, "docs/V4-HOSTILE-RUNTIME-EVIDENCE.md", "Status: `PASS`\n## Source identity\nsource: "+behaviorSHA+"\nBroadTOCTOUClaim: UNVERIFIED\n")
 	sha := commitAll(t, workspace)
 
 	report, err := Collect(Options{
 		Workspace:    workspace,
 		CandidateSHA: sha,
+		BehaviorSHA:  behaviorSHA,
 		Now:          time.Unix(1700000000, 0).UTC(),
 		Environ:      func(string) string { return "" },
 	})
@@ -114,14 +116,15 @@ func TestCollectPassesBoundedParentSwapConfinementWithoutBroadTOCTOU(t *testing.
 	}
 	workspace := t.TempDir()
 	seedDocs(t, workspace)
-	write(t, workspace, "docs/V4-HOSTILE-RUNTIME-EVIDENCE.md", "# bounded hostile runtime evidence\n")
-	write(t, workspace, "docs/V4-HOSTILE-PARENT-SWAP-DARWIN.md", "# darwin parent-swap\n")
-	write(t, workspace, "docs/V4-HOSTILE-PARENT-SWAP-LINUX.md", "# linux parent-swap\n")
+	behaviorSHA := commitAll(t, workspace)
+	write(t, workspace, "docs/V4-HOSTILE-PARENT-SWAP-DARWIN.md", "Status: bounded Darwin-only `PASS`\nsource: "+behaviorSHA+"\n")
+	write(t, workspace, "docs/V4-HOSTILE-PARENT-SWAP-LINUX.md", "Status: bounded Linux-only `PASS`\nsource: "+behaviorSHA+"\n")
 	sha := commitAll(t, workspace)
 
 	report, err := Collect(Options{
 		Workspace:    workspace,
 		CandidateSHA: sha,
+		BehaviorSHA:  behaviorSHA,
 		Now:          time.Unix(1700000000, 0).UTC(),
 		Environ:      func(string) string { return "" },
 	})
@@ -147,12 +150,14 @@ func TestCollectMarksPartialParentSwapConfinementInconclusive(t *testing.T) {
 	}
 	workspace := t.TempDir()
 	seedDocs(t, workspace)
-	write(t, workspace, "docs/V4-HOSTILE-PARENT-SWAP-DARWIN.md", "# darwin parent-swap\n")
+	behaviorSHA := commitAll(t, workspace)
+	write(t, workspace, "docs/V4-HOSTILE-PARENT-SWAP-DARWIN.md", "Status: bounded Darwin-only `PASS`\nsource: "+behaviorSHA+"\n")
 	sha := commitAll(t, workspace)
 
 	report, err := Collect(Options{
 		Workspace:    workspace,
 		CandidateSHA: sha,
+		BehaviorSHA:  behaviorSHA,
 		Now:          time.Unix(1700000000, 0).UTC(),
 		Environ:      func(string) string { return "" },
 	})
@@ -238,7 +243,7 @@ func TestCollectAcceptsBehaviorArtifactsAtDocsOnlyDescendant(t *testing.T) {
 	if got := claimByID(t, report, "rendered-cross-platform").Verdict; got != VerdictFail {
 		t.Fatalf("rendered-cross-platform = %s", got)
 	}
-	if got := claimByID(t, report, "release-authorization").Verdict; got != VerdictInconclusive {
+	if got := claimByID(t, report, "release-authorization").Verdict; got != VerdictUnverified {
 		t.Fatalf("release-authorization = %s", got)
 	}
 }

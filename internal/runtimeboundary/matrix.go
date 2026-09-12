@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/saiaathish/picogent/internal/securefile"
 	"github.com/saiaathish/picogent/internal/verify"
 )
 
@@ -172,8 +173,11 @@ func Collect(opts Options) (Report, error) {
 	if environ == nil {
 		environ = os.Getenv
 	}
+	read := func(path string) ([]byte, error) {
+		return securefile.ReadFileLimited(path, maxEvidenceDocumentBytes)
+	}
 
-	claims := defaultClaims(workspace, report.CandidateSHA, report.BehaviorSHA, now, lookup, environ)
+	claims := defaultClaims(workspace, report.CandidateSHA, report.BehaviorSHA, now, lookup, environ, read)
 	if len(claims) > MaxClaims {
 		return report, errors.New("runtime boundary matrix exceeds claim cap")
 	}
@@ -193,7 +197,7 @@ func Collect(opts Options) (Report, error) {
 	return report, nil
 }
 
-func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, lookup func(string) (bool, error), environ func(string) string) []Claim {
+func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, lookup func(string) (bool, error), environ func(string) string, read func(string) ([]byte, error)) []Claim {
 	observed := now.UTC().Format(time.RFC3339)
 	doc := func(rel string) string { return filepath.Join(workspace, filepath.FromSlash(rel)) }
 
@@ -327,7 +331,14 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		renderedLocal.Provenance = "fail-closed default without " + RenderedEvidenceEnv
 	}
 
-	renderedExists, _ := lookup(doc("docs/V4-RENDERED-LONG-HORIZON-EVIDENCE.md"))
+	renderedDoc := checkEvidenceDocument(
+		doc("docs/V4-RENDERED-LONG-HORIZON-EVIDENCE.md"),
+		behaviorSHA,
+		lookup,
+		read,
+		"Verdict `PASS`",
+		"source_sha_verified=true",
+	)
 	rendered := Claim{
 		ID:         "rendered-long-horizon-local",
 		Category:   CategoryRendered,
@@ -337,12 +348,12 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		Provenance: "docs + fixture contract",
 		ObservedAt: observed,
 	}
-	if renderedExists {
+	if renderedDoc.valid {
 		rendered.Verdict = VerdictPass
-		rendered.Reason = "local rendered evidence doc is present; unsupported platforms remain outside this claim"
+		rendered.Reason = "local rendered evidence document is bound to the expected behavior SHA; unsupported platforms remain outside this claim"
 	} else {
 		rendered.Verdict = VerdictUnverified
-		rendered.Reason = "rendered long-horizon evidence doc is missing"
+		rendered.Reason = renderedDoc.reason
 	}
 
 	renderedCross := Claim{
@@ -394,8 +405,21 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		renderedCross.Provenance = "fail-closed default without " + RenderedCrossEvidenceEnv
 	}
 
-	recoveryFixtureDoc, _ := lookup(doc("docs/V4-RENDERED-RECOVERY-FIXTURE.md"))
-	apiBoundaryDoc, _ := lookup(doc("docs/V4-RENDERED-RECOVERY-API-BOUNDARY.md"))
+	recoveryFixtureDoc := checkEvidenceDocument(
+		doc("docs/V4-RENDERED-RECOVERY-FIXTURE.md"),
+		behaviorSHA,
+		lookup,
+		read,
+		"source_sha_verified:true",
+		"source_tree_modified:false",
+	)
+	apiBoundaryDoc := checkEvidenceDocument(
+		doc("docs/V4-RENDERED-RECOVERY-API-BOUNDARY.md"),
+		behaviorSHA,
+		lookup,
+		read,
+		"TestRenderedRecoveryFixtureAPIBoundary",
+	)
 	renderedUndoReload := Claim{
 		ID:         "rendered-recovery-undo-reload",
 		Category:   CategoryRendered,
@@ -406,20 +430,27 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		ObservedAt: observed,
 	}
 	switch {
-	case apiBoundaryDoc && recoveryFixtureDoc:
+	case apiBoundaryDoc.valid && recoveryFixtureDoc.valid:
 		renderedUndoReload.Verdict = VerdictPass
-		renderedUndoReload.Reason = "deterministic allow→undo→reload API-boundary evidence is retained; browser DOM and live-provider remain outside this claim"
-	case recoveryFixtureDoc:
+		renderedUndoReload.Reason = "deterministic allow→undo→reload API-boundary evidence is source-bound; browser DOM and live-provider remain outside this claim"
+	case recoveryFixtureDoc.valid:
 		renderedUndoReload.Verdict = VerdictUnverified
-		renderedUndoReload.Reason = "recovery fixture runbook exists, but automated allow→undo→reload API-boundary evidence is missing"
+		renderedUndoReload.Reason = "recovery fixture evidence is source-bound, but automated allow→undo→reload API-boundary evidence is missing"
 		renderedUndoReload.Provenance = "runbook only"
 	default:
 		renderedUndoReload.Verdict = VerdictUnverified
-		renderedUndoReload.Reason = "rendered recovery fixture documentation is missing"
-		renderedUndoReload.Provenance = "missing docs"
+		renderedUndoReload.Reason = "rendered recovery fixture evidence documents are missing, stale, or malformed"
+		renderedUndoReload.Provenance = "documentation provenance incomplete"
 	}
 
-	hostileChildEnvExists, _ := lookup(doc("docs/V4-SECURITY-CAMPAIGN.md"))
+	hostileChildEnvDoc := checkEvidenceDocument(
+		doc("docs/V4-SECURITY-CAMPAIGN.md"),
+		behaviorSHA,
+		lookup,
+		read,
+		"Hosted evidence ledger",
+		"PASS",
+	)
 	hostile := Claim{
 		ID:         "hostile-child-env-sanitization",
 		Category:   CategoryHostile,
@@ -429,15 +460,23 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		Provenance: "merged security lanes",
 		ObservedAt: observed,
 	}
-	if hostileChildEnvExists {
+	if hostileChildEnvDoc.valid {
 		hostile.Verdict = VerdictPass
-		hostile.Reason = "bounded child-env sanitization evidence is documented; arbitrary same-UID TOCTOU remains outside this claim"
+		hostile.Reason = "bounded child-env sanitization evidence is source-bound; arbitrary same-UID TOCTOU remains outside this claim"
 	} else {
 		hostile.Verdict = VerdictUnverified
-		hostile.Reason = "security campaign evidence doc is missing"
+		hostile.Reason = hostileChildEnvDoc.reason
 	}
 
-	hostileFilesystemExists, _ := lookup(doc("docs/V4-HOSTILE-RUNTIME-EVIDENCE.md"))
+	hostileFilesystemDoc := checkEvidenceDocument(
+		doc("docs/V4-HOSTILE-RUNTIME-EVIDENCE.md"),
+		behaviorSHA,
+		lookup,
+		read,
+		"Status: `PASS`",
+		"## Source identity",
+		"BroadTOCTOUClaim: UNVERIFIED",
+	)
 	hostileFilesystem := Claim{
 		ID:         "hostile-filesystem-deterministic",
 		Category:   CategoryHostile,
@@ -447,16 +486,30 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		Provenance: "exact-head bounded hostile-runtime evidence",
 		ObservedAt: observed,
 	}
-	if hostileFilesystemExists {
+	if hostileFilesystemDoc.valid {
 		hostileFilesystem.Verdict = VerdictPass
-		hostileFilesystem.Reason = "bounded deterministic hostile-runtime evidence is documented; arbitrary same-UID filesystem TOCTOU remains outside this claim"
+		hostileFilesystem.Reason = "bounded deterministic hostile-runtime evidence is source-bound; arbitrary same-UID filesystem TOCTOU remains outside this claim"
 	} else {
 		hostileFilesystem.Verdict = VerdictUnverified
-		hostileFilesystem.Reason = "bounded hostile-runtime evidence doc is missing"
+		hostileFilesystem.Reason = hostileFilesystemDoc.reason
 	}
 
-	darwinParentSwap, _ := lookup(doc("docs/V4-HOSTILE-PARENT-SWAP-DARWIN.md"))
-	linuxParentSwap, _ := lookup(doc("docs/V4-HOSTILE-PARENT-SWAP-LINUX.md"))
+	darwinParentSwap := checkEvidenceDocument(
+		doc("docs/V4-HOSTILE-PARENT-SWAP-DARWIN.md"),
+		behaviorSHA,
+		lookup,
+		read,
+		"Status: bounded",
+		"PASS",
+	)
+	linuxParentSwap := checkEvidenceDocument(
+		doc("docs/V4-HOSTILE-PARENT-SWAP-LINUX.md"),
+		behaviorSHA,
+		lookup,
+		read,
+		"Status: bounded",
+		"PASS",
+	)
 	parentSwap := Claim{
 		ID:         "hostile-parent-swap-confinement",
 		Category:   CategoryHostile,
@@ -467,15 +520,15 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		ObservedAt: observed,
 	}
 	switch {
-	case darwinParentSwap && linuxParentSwap:
+	case darwinParentSwap.valid && linuxParentSwap.valid:
 		parentSwap.Verdict = VerdictPass
-		parentSwap.Reason = "bounded Darwin and Linux parent-swap confinement evidence is documented; arbitrary same-UID TOCTOU remains outside this claim"
-	case darwinParentSwap || linuxParentSwap:
+		parentSwap.Reason = "bounded Darwin and Linux parent-swap confinement evidence is source-bound; arbitrary same-UID TOCTOU remains outside this claim"
+	case darwinParentSwap.valid || linuxParentSwap.valid:
 		parentSwap.Verdict = VerdictInconclusive
-		parentSwap.Reason = "parent-swap confinement evidence is incomplete across Darwin and Linux"
+		parentSwap.Reason = "source-bound parent-swap confinement evidence is incomplete across Darwin and Linux"
 	default:
 		parentSwap.Verdict = VerdictUnverified
-		parentSwap.Reason = "bounded parent-swap confinement evidence docs are missing"
+		parentSwap.Reason = "bounded parent-swap confinement evidence is missing, stale, or malformed"
 	}
 
 	hostileTOCTOU := Claim{
@@ -490,7 +543,14 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		ObservedAt: observed,
 	}
 
-	steeringDoc, _ := lookup(doc("docs/V4-LONG-HORIZON-OUTCOME.md"))
+	steeringDoc := checkEvidenceDocument(
+		doc("docs/V4-LONG-HORIZON-OUTCOME.md"),
+		behaviorSHA,
+		lookup,
+		read,
+		"source_head",
+		"PASS",
+	)
 	recovery := Claim{
 		ID:         "restart-steer-undo-recovery",
 		Category:   CategoryRecovery,
@@ -500,15 +560,22 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		Provenance: "deterministic fixtures",
 		ObservedAt: observed,
 	}
-	if steeringDoc {
+	if steeringDoc.valid {
 		recovery.Verdict = VerdictPass
-		recovery.Reason = "deterministic restart/steer/undo contracts are documented; live-provider recovery remains outside this claim"
+		recovery.Reason = "deterministic restart/steer/undo contracts are source-bound; live-provider recovery remains outside this claim"
 	} else {
 		recovery.Verdict = VerdictUnverified
-		recovery.Reason = "long-horizon outcome evidence doc is missing"
+		recovery.Reason = steeringDoc.reason
 	}
 
-	sbomDoc, _ := lookup(doc("docs/V4-SBOM-ARTIFACT-EVIDENCE.md"))
+	sbomDoc := checkEvidenceDocument(
+		doc("docs/V4-SBOM-ARTIFACT-EVIDENCE.md"),
+		candidateSHA,
+		lookup,
+		read,
+		"exact source SHA",
+		"UNVERIFIED",
+	)
 	release := Claim{
 		ID:         "release-authorization",
 		Category:   CategoryRelease,
@@ -518,18 +585,25 @@ func defaultClaims(workspace, candidateSHA, behaviorSHA string, now time.Time, l
 		Provenance: "exact-head audit",
 		ObservedAt: observed,
 	}
-	auditExists, _ := lookup(doc("docs/V4-RELEASE-AUDIT.md"))
+	auditDoc := checkEvidenceDocument(
+		doc("docs/V4-RELEASE-AUDIT.md"),
+		candidateSHA,
+		lookup,
+		read,
+		"Status: `INCONCLUSIVE`",
+		"Current exact-head checkpoint",
+	)
 	switch {
-	case !auditExists:
+	case !auditDoc.valid:
 		release.Verdict = VerdictUnverified
-		release.Reason = "release audit document is missing"
-	case sbomDoc:
+		release.Reason = auditDoc.reason
+	case sbomDoc.valid:
 		release.Verdict = VerdictInconclusive
 		release.Reason = "production artifacts and audits exist, but overall release authorization remains inconclusive while live/rendered gaps and residual broad TOCTOU persist"
 		release.Provenance = "audit+sbom lane at " + candidateSHA[:12]
 	default:
 		release.Verdict = VerdictInconclusive
-		release.Reason = "release audit exists without claiming authorization"
+		release.Reason = "source-bound release audit exists without a source-bound production artifact record"
 	}
 
 	return []Claim{liveConnectivity, live, renderedLocal, rendered, renderedCross, renderedUndoReload, hostile, hostileFilesystem, parentSwap, hostileTOCTOU, recovery, release}
