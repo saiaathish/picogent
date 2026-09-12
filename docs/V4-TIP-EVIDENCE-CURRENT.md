@@ -1,6 +1,20 @@
 # Current V4 evidence and continuity
 
-Current exact evidence checkpoint:
+## Current documentation tip
+
+The current clean main documentation tip is
+e26a57ef0e5d4c1ade67d9a87a74cd42ebbeca47, merged by PR #715. The current
+residual posture is recorded in
+V4-CURRENT-RESIDUAL-PACKET-E26A57E.md.
+PR #715 is a documentation-only descendant of behavior
+6914a42abddb1a789a9a655abeb4db61d9e9956c; it preserves the direct
+long-horizon observation without rebinding older runtime packets.
+
+The broad same-UID filesystem TOCTOU row remains UNVERIFIED. Release
+authorization remains INCONCLUSIVE with authorized=false because no operator
+approval is recorded. Parent #453 remains OPEN.
+
+## Superseded exact behavior evidence checkpoint
 `3535bda907dbe8cc44ca43d5563e4e607a96d266` (PR #689 merge), with the fresh
 #690 rendered packet documented in
 [V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md](V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3535BDA.md).

@@ -1,5 +1,11 @@
 # V4 hostile filesystem TOCTOU boundary inventory
 
+The inventory below retains its behavior and artifact anchor at
+f4e489844b6fbc5d5a34ce26568937e76b97ea61. The current documentation tip is
+e26a57ef0e5d4c1ade67d9a87a74cd42ebbeca47 after docs-only PR #715. This rebind
+does not rerun the inventory, upgrade any matrix row, or project the newer
+long-horizon observation onto hostile-runtime behavior.
+
 Status: **inventory and contract slice only**. This record supports the
 remaining [#453](https://github.com/saiaathish/picogent/issues/453) audit and
 records the completed #648 artifact-boundary child. It does not claim
