@@ -10,23 +10,24 @@ provenance and do not make it an open gate.
 ## Current exact behavior and evidence checkpoint
 
 The latest non-documentation behavior tip is
-a82f8463f9f936dcb93da83dd97485e25b5ac480, merged by PR #719. The current
+4086b1f3416cde476025718139aa2c8260cc9d8e, merged by PR #723. The current
 residual posture is recorded in
-[V4-CURRENT-RESIDUAL-PACKET-A82F846.md](V4-CURRENT-RESIDUAL-PACKET-A82F846.md).
+[V4-CURRENT-RESIDUAL-PACKET-4086B1F.md](V4-CURRENT-RESIDUAL-PACKET-4086B1F.md).
 The detailed sections below retain historical candidate labels where they
 describe older behavior-bound packets; they are not silently rebased by this
 documentation-only descendant.
 
-The exact-head matrix at a82f846 reports HEAD=PASS, tree=CLEAN, and
+The exact-head matrix at 4086b1f reports HEAD=PASS, tree=CLEAN, and
 behavior_provenance=EXACT_HEAD. Its artifact SHA-256 is
-efa9c0efe1ecb5c7a75e2b884fb181c843f378a52ac317346e149bcfb58bdcea, with
+9ee2d1a56bf6fcb92cbc1e92d4944019c480c2cc4348ac7a44aa6d1a6e77441a, with
 summary UNVERIFIED=12 because no fresh live-provider, rendered-platform, or
 retained hostile-runtime artifacts were supplied.
 
-PR #719 records a bounded session coordination hardening: List, ListMeta,
-Prune, and Delete now lock before directory-state probes. It does not
-change the broad hostile TOCTOU residual, does not replace the operator
-authorization gate, and does not make a release or v4-completion claim.
+PR #723 records a bounded evolution-store coordination hardening: an existing
+state load locks before reading its payload, while first-use state remains
+non-creating. It does not change the broad hostile TOCTOU residual, does not
+replace the operator authorization gate, and does not make a release or
+v4-completion claim.
 
 Operator decision checklist:
 [V4-OPERATOR-RELEASE-CHECKLIST.md](V4-OPERATOR-RELEASE-CHECKLIST.md).

@@ -7,13 +7,13 @@ already closed in GitHub; its historical references below are retained for
 provenance.
 
 The current exact-head audit packet is
-[V4-CURRENT-RESIDUAL-PACKET-166B7D3.md](V4-CURRENT-RESIDUAL-PACKET-166B7D3.md)
-at `166b7d37d3f5b07de389741110fa62a48bb6f65e`. Its matrix is
-`PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5`: live-provider and current rendered
-claims are fail-closed without fresh artifacts, broad hostile TOCTOU remains
-`UNVERIFIED`, and release authorization remains `INCONCLUSIVE`. The matrix
-artifact digest is
-`66516803f5bec85084ff30dc4296ba661dee3c19372f91bc1a25aa4ed8d1c8d8`.
+[V4-CURRENT-RESIDUAL-PACKET-4086B1F.md](V4-CURRENT-RESIDUAL-PACKET-4086B1F.md)
+at `4086b1f3416cde476025718139aa2c8260cc9d8e`. Its matrix is
+`UNVERIFIED=12`: no exact-head live-provider, rendered, hostile-runtime, or
+release-audit artifacts were supplied. Broad hostile TOCTOU remains
+`UNVERIFIED`; the separate release predicate remains unapproved with
+`authorized=false`. The matrix artifact digest is
+`9ee2d1a56bf6fcb92cbc1e92d4944019c480c2cc4348ac7a44aa6d1a6e77441a`.
 
 The prior fully rendered candidate for this checklist refresh was
 `eabf8d6e35322170f7ab19dbd30d3cfb576f422c`. It is a documentation-only
@@ -162,18 +162,18 @@ does **not**, by itself:
 | `hostile-filesystem-toctou=PASS` | Remains `UNVERIFIED` unless separately proved |
 | Benchmark / outcome-quality “gains” | Outcome-quality gains remain **UNPROVED**; tip alloc cuts are proved in `#551` only |
 | Live streaming / tool-use / multi-hour recovery | Outside tip live evidence PASS rows |
-| Fabricating a unified current-tip `PASS` | No fresh current live-provider or rendered-platform packet was supplied for `166b7d3`; historical `3535bda`, `eabf8d6`, and `9a11719` packets remain separate records. Broad TOCTOU remains `UNVERIFIED` and release authorization remains `INCONCLUSIVE`. Historical artifacts must not be unioned, and any later non-docs candidate requires fresh collection |
+| Fabricating a unified current-tip `PASS` | No fresh current live-provider or rendered-platform packet was supplied for `4086b1f`; historical `3535bda`, `eabf8d6`, and `9a11719` packets remain separate records. Broad TOCTOU and the exact-head release row remain `UNVERIFIED`; the separate operator predicate remains unapproved. Historical artifacts must not be unioned, and any later non-docs candidate requires fresh collection |
 
 ## Current dry-run posture (no approval observed)
 
 | Field | Value |
 | --- | --- |
-| Current main evidence checkpoint | `166b7d37d3f5b07de389741110fa62a48bb6f65e` |
+| Current main evidence checkpoint | `4086b1f3416cde476025718139aa2c8260cc9d8e` |
 | Current rendered evidence candidate | None supplied for this exact-head refresh; `rendered-platform-local` and `rendered-cross-platform` are `UNVERIFIED` |
 | Live-provider evidence | None supplied for this exact-head refresh; connectivity and quality are `UNVERIFIED` |
-| Rendered evidence | Historical packets remain separate; no current rendered packet is projected onto `166b7d3` |
-| Release matrix posture | Exact-head matrix is PASS 6 / INCONCLUSIVE 1 / UNVERIFIED 5; no synthetic union; broad TOCTOU remains `UNVERIFIED` and `release-authorization` remains `INCONCLUSIVE` |
-| `release-authorization` | `INCONCLUSIVE` |
+| Rendered evidence | Historical packets remain separate; no current rendered packet is projected onto `4086b1f` |
+| Release matrix posture | Exact-head matrix is `UNVERIFIED=12`; no synthetic union; broad TOCTOU and `release-authorization` remain `UNVERIFIED` in this matrix |
+| `release-authorization` | `UNVERIFIED` in the exact-head matrix; separate operator predicate remains unapproved |
 | `authorized` | `false` |
 | Operator approval | **Absent — do not auto-sign** |
 
