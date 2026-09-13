@@ -6,15 +6,15 @@ authorize a release and never treats mocks or local builds as live-provider
 proof.
 
 **Current exact-head checkpoint for this refresh:** `main` was clean at
-`a82f8463f9f936dcb93da83dd97485e25b5ac480`, the PR #719 session-lock
-hardening merge. The fresh matrix recorded `HEAD=PASS`, `tree=CLEAN`, and
+`4086b1f3416cde476025718139aa2c8260cc9d8e`, the PR #723 evolution-store
+load-lock hardening merge. The fresh matrix recorded `HEAD=PASS`, `tree=CLEAN`, and
 `behavior_provenance=EXACT_HEAD`. Its artifact SHA-256 is
-`efa9c0efe1ecb5c7a75e2b884fb181c843f378a52ac317346e149bcfb58bdcea`.
+`9ee2d1a56bf6fcb92cbc1e92d4944019c480c2cc4348ac7a44aa6d1a6e77441a`.
 The summary is `UNVERIFIED=12`: no live-provider, rendered-platform, or
 retained hostile-runtime artifacts were supplied to this exact-head refresh.
-The focused `internal/session` regression suite passed with low-resource
+The focused `internal/evolve` regression suite passed with low-resource
 settings. This checkpoint is recorded in
-[V4-CURRENT-RESIDUAL-PACKET-A82F846.md](V4-CURRENT-RESIDUAL-PACKET-A82F846.md).
+[V4-CURRENT-RESIDUAL-PACKET-4086B1F.md](V4-CURRENT-RESIDUAL-PACKET-4086B1F.md).
 
 This exact-candidate matrix is evidence-only. The broad hostile-filesystem
 TOCTOU row remains `UNVERIFIED`; the separate release-authorization

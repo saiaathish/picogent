@@ -3,23 +3,25 @@
 ## Current exact behavior and evidence checkpoint
 
 The latest non-documentation behavior tip is
-a82f8463f9f936dcb93da83dd97485e25b5ac480, merged by PR #719. The current
+4086b1f3416cde476025718139aa2c8260cc9d8e, merged by PR #723. The current
 exact-head residual packet is
-[V4-CURRENT-RESIDUAL-PACKET-A82F846.md](V4-CURRENT-RESIDUAL-PACKET-A82F846.md).
+[V4-CURRENT-RESIDUAL-PACKET-4086B1F.md](V4-CURRENT-RESIDUAL-PACKET-4086B1F.md).
 
 The fresh matrix was collected from a clean checkout at that exact SHA with
 HEAD=PASS, tree=CLEAN, and behavior_provenance=EXACT_HEAD. Its artifact
 SHA-256 is
-efa9c0efe1ecb5c7a75e2b884fb181c843f378a52ac317346e149bcfb58bdcea.
+9ee2d1a56bf6fcb92cbc1e92d4944019c480c2cc4348ac7a44aa6d1a6e77441a.
 The matrix summary is UNVERIFIED=12 because this refresh supplied no
 live-provider, rendered-platform, or retained hostile-runtime artifacts.
-The focused session regression suite passed with low-resource settings.
+The focused evolution-store regression suite passed with low-resource
+settings.
 
-PR #719 narrowed the session coordination boundary by locking List,
-ListMeta, Prune, and Delete before directory-state probes. It did not close
-the broad same-UID filesystem TOCTOU residual. Release authorization remains
-INCONCLUSIVE with authorized=false because no operator approval is recorded.
-Parent #453 remains OPEN.
+PR #723 narrowed the evolution-store coordination boundary: existing state
+loads acquire the shared store lock before reading the payload, while missing
+first-use state still creates nothing. It did not close the broad same-UID
+filesystem TOCTOU residual. Release authorization remains unapproved with
+authorized=false because no operator approval is recorded. Parent #453 remains
+OPEN.
 
 The evidence documents in this branch are documentation-only descendants of
 the exact behavior candidate. They may retain this packet under the
