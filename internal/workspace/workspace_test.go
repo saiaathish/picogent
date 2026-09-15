@@ -327,3 +327,68 @@ func TestRemoveDoesNotFollowOutsideSymlink(t *testing.T) {
 		t.Fatalf("outside file changed: %q, %v", got, err)
 	}
 }
+
+func TestRemoveIfUnchangedRemovesMatchingFile(t *testing.T) {
+	root := t.TempDir()
+	if err := WriteAtomic(root, "state.txt", []byte("before\n")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, "state.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RemoveIfUnchanged(root, "state.txt", []byte("before\n"), info.Mode()); err != nil {
+		t.Fatalf("RemoveIfUnchanged matching file = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "state.txt")); !os.IsNotExist(err) {
+		t.Fatalf("matching file still exists: %v", err)
+	}
+}
+
+func TestRemoveIfUnchangedPreservesReplacement(t *testing.T) {
+	root := t.TempDir()
+	if err := WriteAtomic(root, "state.txt", []byte("before\n")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, "state.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = removeIfUnchangedWithHook(root, "state.txt", []byte("before\n"), info.Mode(), func() error {
+		return WriteAtomic(root, "state.txt", []byte("replacement\n"))
+	})
+	if !errors.Is(err, ErrTargetChanged) {
+		t.Fatalf("replacement removal error = %v, want ErrTargetChanged", err)
+	}
+	if got, readErr := os.ReadFile(filepath.Join(root, "state.txt")); readErr != nil || string(got) != "replacement\n" {
+		t.Fatalf("replacement after rejected removal = %q, %v", got, readErr)
+	}
+}
+
+func TestRemoveIfSameRejectsChangedIdentity(t *testing.T) {
+	root := t.TempDir()
+	if err := WriteAtomic(root, "state.txt", []byte("before\n")); err != nil {
+		t.Fatal(err)
+	}
+	current, err := OpenRead(root, "state.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteAtomic(root, "state.txt", []byte("replacement\n")); err != nil {
+		_ = current.Close()
+		t.Fatal(err)
+	}
+	err = removeIfSame(root, "state.txt", current)
+	closeErr := current.Close()
+	if !errors.Is(err, ErrTargetChanged) {
+		t.Fatalf("changed identity removal error = %v, want ErrTargetChanged", err)
+	}
+	if closeErr != nil {
+		t.Fatalf("close identity source = %v", closeErr)
+	}
+	if got, readErr := os.ReadFile(filepath.Join(root, "state.txt")); readErr != nil || string(got) != "replacement\n" {
+		t.Fatalf("replacement after direct removal rejection = %q, %v", got, readErr)
+	}
+}

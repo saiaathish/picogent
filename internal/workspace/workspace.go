@@ -17,7 +17,10 @@ import (
 
 // ErrContentConflict reports that a file changed after an edit operation read
 // it. The caller must re-read the file and recompute the edit.
-var ErrContentConflict = errors.New("workspace file changed during edit")
+var (
+	ErrContentConflict = errors.New("workspace file changed during edit")
+	ErrTargetChanged   = errors.New("workspace target identity changed")
+)
 
 func rejectHardLinkCount(count uint64) error {
 	if count > 1 {
@@ -278,10 +281,10 @@ func writeWorkspaceAll(file *os.File, data []byte) error {
 }
 
 // Remove removes the final regular-file name below root without following a
-// symlink, hard link, or reparse point. It is intentionally name-based at the final
-// component, so an attacker can cause a safe failure or removal of the
-// replaced name inside the workspace, but can never redirect deletion outside
-// the descriptor-anchored root.
+// symlink, hard link, or reparse point. The opened target identity is compared
+// with the current final name before deletion. The final Unix unlink remains a
+// pathname operation, so a replacement after that check is still outside this
+// helper's universal same-UID race guarantee.
 func Remove(root, path string) error {
 	return remove(root, path)
 }
@@ -292,6 +295,10 @@ func Remove(root, path string) error {
 // pathname removal are a best-effort boundary for uncooperative same-UID
 // writers; callers should also hold their project run lock when available.
 func RemoveIfUnchanged(root, path string, expected []byte, expectedMode os.FileMode) error {
+	return removeIfUnchangedWithHook(root, path, expected, expectedMode, nil)
+}
+
+func removeIfUnchangedWithHook(root, path string, expected []byte, expectedMode os.FileMode, beforeRemove func() error) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -309,17 +316,23 @@ func RemoveIfUnchanged(root, path string, expected []byte, expectedMode os.FileM
 		return fmt.Errorf("stat workspace file %q for removal: %w", rel, statErr)
 	}
 	currentContent, readErr := io.ReadAll(io.LimitReader(current, int64(len(expected))+1))
-	closeErr := current.Close()
 	if readErr != nil {
-		return fmt.Errorf("read workspace file %q for removal: %w", rel, readErr)
-	}
-	if closeErr != nil {
-		return fmt.Errorf("close workspace file %q after removal check: %w", rel, closeErr)
+		closeErr := current.Close()
+		return errors.Join(fmt.Errorf("read workspace file %q for removal: %w", rel, readErr), closeErr)
 	}
 	if !bytes.Equal(currentContent, expected) || comparableMode(info.Mode()) != comparableMode(expectedMode) {
-		return fmt.Errorf("%w: %s", ErrContentConflict, rel)
+		closeErr := current.Close()
+		return errors.Join(fmt.Errorf("%w: %s", ErrContentConflict, rel), closeErr)
 	}
-	return Remove(root, path)
+	if beforeRemove != nil {
+		if hookErr := beforeRemove(); hookErr != nil {
+			closeErr := current.Close()
+			return errors.Join(fmt.Errorf("prepare workspace removal %q: %w", rel, hookErr), closeErr)
+		}
+	}
+	removeErr := removeIfSame(root, path, current)
+	closeErr := current.Close()
+	return errors.Join(removeErr, closeErr)
 }
 
 func comparableMode(mode os.FileMode) os.FileMode {

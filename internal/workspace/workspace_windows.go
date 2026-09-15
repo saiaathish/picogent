@@ -313,9 +313,26 @@ func normalizeFinalPath(path string) string {
 }
 
 func remove(root, path string) error {
+	current, err := OpenRead(root, path)
+	if err != nil {
+		return err
+	}
+	removeErr := removeIfSame(root, path, current)
+	closeErr := current.Close()
+	return errors.Join(removeErr, closeErr)
+}
+
+func removeIfSame(root, path string, source *os.File) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
+	}
+	if source == nil {
+		return errors.New("workspace removal source is nil")
+	}
+	expected, err := identityForFile(source)
+	if err != nil {
+		return fmt.Errorf("identify workspace file %q for removal: %w", rel, err)
 	}
 	parts, err := pathParts(rel)
 	if err != nil {
@@ -325,61 +342,36 @@ func remove(root, path string) error {
 	if err != nil {
 		return err
 	}
-	current := parent
+	parentHandle := parent
 	for _, part := range parts[:len(parts)-1] {
-		child, openErr := openWindowsDirectory(current, part, false)
+		child, openErr := openWindowsDirectory(parentHandle, part, false)
 		if openErr != nil {
-			_ = windows.CloseHandle(current)
+			_ = windows.CloseHandle(parentHandle)
 			return fmt.Errorf("open workspace directory %q: %w", part, openErr)
 		}
-		_ = windows.CloseHandle(current)
-		current = child
+		_ = windows.CloseHandle(parentHandle)
+		parentHandle = child
 	}
 
-	objectName, err := windows.NewNTUnicodeString(parts[len(parts)-1])
+	target, err := openWorkspaceDelete(parentHandle, parts[len(parts)-1])
 	if err != nil {
-		_ = windows.CloseHandle(current)
-		return err
-	}
-	oa := objectAttributes(objectName, current)
-	var iosb windows.IO_STATUS_BLOCK
-	var allocation int64
-	var handle windows.Handle
-	err = windows.NtCreateFile(
-		&handle,
-		windows.DELETE|windows.FILE_GENERIC_READ,
-		&oa,
-		&iosb,
-		&allocation,
-		0,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
-		windows.FILE_OPEN,
-		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT,
-		0,
-		0,
-	)
-	_ = windows.CloseHandle(current)
-	if err != nil {
+		_ = windows.CloseHandle(parentHandle)
 		return fmt.Errorf("remove workspace file %q: %w", rel, translateNTError(err))
 	}
-	f := os.NewFile(uintptr(handle), path)
-	if f == nil {
-		_ = windows.CloseHandle(handle)
-		return fmt.Errorf("remove workspace file %q: could not wrap handle", rel)
-	}
-	defer f.Close()
-	if err := verifyHandle(root, f, false); err != nil {
+	_ = windows.CloseHandle(parentHandle)
+	defer target.Close()
+	if err := verifyHandle(root, target, false); err != nil {
 		return fmt.Errorf("remove workspace file %q failed containment check: %w", rel, err)
 	}
-	var disposition uint32 = windows.FILE_DISPOSITION_DELETE | windows.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE
-	if err := windows.NtSetInformationFile(
-		windows.Handle(f.Fd()),
-		&iosb,
-		(*byte)(unsafe.Pointer(&disposition)),
-		uint32(unsafe.Sizeof(disposition)),
-		windows.FileDispositionInformationEx,
-	); err != nil {
-		return fmt.Errorf("remove workspace file %q: %w", rel, translateNTError(err))
+	actual, err := identityForFile(target)
+	if err != nil {
+		return fmt.Errorf("identify workspace target %q for removal: %w", rel, err)
+	}
+	if expected != actual {
+		return fmt.Errorf("remove workspace file %q: %w", rel, ErrTargetChanged)
+	}
+	if err := deleteWorkspaceHandle(windows.Handle(target.Fd())); err != nil {
+		return fmt.Errorf("remove workspace file %q: %w", rel, err)
 	}
 	return nil
 }
