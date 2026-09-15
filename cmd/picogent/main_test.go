@@ -613,7 +613,7 @@ func TestHeadlessYesOverridesOnlyThisProcess(t *testing.T) {
 	}
 }
 
-func TestHeadlessPersistsExplicitCompletionGoalBeforeRun(t *testing.T) {
+func TestHeadlessPersistsExplicitCompletionAndReadinessGoalsBeforeRun(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()
 	cfg := config.Default()
@@ -621,14 +621,22 @@ func TestHeadlessPersistsExplicitCompletionGoalBeforeRun(t *testing.T) {
 	cfg.Workspace = workspace
 	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
 
-	if err := applyHeadlessGoalInference(a, cfg, "finish this project"); err != nil {
-		t.Fatal(err)
-	}
-	if got := a.GoalSnapshot(); got != "finish this project" {
-		t.Fatalf("agent goal = %q, want persisted completion intent", got)
-	}
-	if got, err := goal.Load(workspace); err != nil || got != "finish this project" {
-		t.Fatalf("stored goal = %q, err=%v", got, err)
+	for _, prompt := range []string{"finish this project", "make this ready to launch"} {
+		t.Run(prompt, func(t *testing.T) {
+			if err := goal.Clear(workspace); err != nil {
+				t.Fatal(err)
+			}
+			a.SetGoal("")
+			if err := applyHeadlessGoalInference(a, cfg, prompt); err != nil {
+				t.Fatal(err)
+			}
+			if got := a.GoalSnapshot(); got != prompt {
+				t.Fatalf("agent goal = %q, want persisted intent", got)
+			}
+			if got, err := goal.Load(workspace); err != nil || got != prompt {
+				t.Fatalf("stored goal = %q, err=%v", got, err)
+			}
+		})
 	}
 }
 

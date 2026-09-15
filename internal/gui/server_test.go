@@ -858,7 +858,7 @@ func TestCompletionPromptPersistsDurableGoalInGUI(t *testing.T) {
 	ag := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
 	s := &server{cfg: cfg, ag: ag, sessionID: "completion-goal", turnGen: 1}
 
-	for _, prompt := range []string{"finish this project", "finish the project"} {
+	for _, prompt := range []string{"finish this project", "finish the project", "make this ready to launch"} {
 		t.Run(prompt, func(t *testing.T) {
 			if err := goal.Clear(workspace); err != nil {
 				t.Fatal(err)

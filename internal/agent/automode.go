@@ -1,6 +1,10 @@
 package agent
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/saiaathish/picogent/internal/taskstate"
+)
 
 // AutoDecision is the result of inferring task mode and optional goal from user text.
 type AutoDecision struct {
@@ -165,6 +169,13 @@ func inferGoalPhrase(prompt string) (string, bool) {
 	// retained for resume and UI display.
 	completion := strings.Trim(strings.TrimSpace(lower), "!?.,")
 	if completion == "finish this project" || completion == "finish the project" {
+		return p, true
+	}
+
+	// Task-state inference owns readiness wording and its risk precedence. Reuse
+	// that compact contract here so automatic goal admission cannot drift from
+	// the Outcome Engine's broad-outcome classification.
+	if inferred := taskstate.Infer(p); inferred.TaskLike && inferred.Intent != nil && inferred.Intent.Class == "readiness" && inferred.Intent.Completeness == "full" {
 		return p, true
 	}
 
