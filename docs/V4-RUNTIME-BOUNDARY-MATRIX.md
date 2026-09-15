@@ -289,9 +289,9 @@ release readiness.
 ## Fixed live-provider quality evidence
 
 The quality row measures a small fixed no-tool campaign separately from the
-connectivity row. Its artifact uses schema
-`picogent.v4.live-provider-quality-evidence.v1` and campaign
-`fixed-no-tool-v1`. The campaign has three stable case identities:
+connectivity row. New artifacts use schema
+`picogent.v4.live-provider-quality-evidence.v2` and campaign
+`fixed-no-tool-v2`. The campaign has three stable case identities:
 
 | Case | Prompt used for the digest-only observation |
 | --- | --- |
@@ -300,17 +300,22 @@ connectivity row. Its artifact uses schema
 | `constraint-following` | `Return exactly three words: local first agent. Do not call tools, inspect files, or modify anything.` |
 
 The prompt text and provider result are not retained in the artifact. The
-loader binds each prompt digest to the canonical prompt text above; result
-digests, provider identity, and the provider's semantic answer remain
-self-reported because raw output and credentials are intentionally not retained.
-Each case retains only lowercase SHA-256 digests, a bounded latency measurement,
-its verdict, and explicit `tools_used` / `mutation_observed` assertions. A
-complete passing artifact has this shape:
+loader binds each prompt digest to the canonical prompt text above. For a PASS
+case, it also recomputes the result digest for the deterministic
+`exact-token` and `constraint-following` responses from the canonical UTF-8
+response bytes, so a producer cannot claim either exact result with an
+arbitrary digest. The bounded-summary semantics, provider identity, and
+tool/mutation observations remain self-reported because raw output,
+credentials, and process traces are intentionally not retained. Each case
+retains only lowercase SHA-256 digests, a bounded latency measurement, its
+verdict, and explicit `tools_used` / `mutation_observed` assertions. The v1
+artifacts in older evidence records are historical and are not accepted for a
+new v2 collection. A complete passing artifact has this shape:
 
 ```json
 {
-  "schema": "picogent.v4.live-provider-quality-evidence.v1",
-  "campaign": "fixed-no-tool-v1",
+  "schema": "picogent.v4.live-provider-quality-evidence.v2",
+  "campaign": "fixed-no-tool-v2",
   "candidate_sha": "<full lowercase commit SHA>",
   "provider": "codex",
   "environment": "task-owned-disposable",
@@ -322,7 +327,7 @@ complete passing artifact has this shape:
     {
       "id": "exact-token",
       "prompt_sha256": "<64 lowercase hex characters>",
-      "result_sha256": "<64 lowercase hex characters>",
+      "result_sha256": "46a0a304898ade94da30c281d5f6fa5d61ce783cfcea6f4735b19671bea364b0",
       "latency_ms": 100,
       "verdict": "PASS",
       "tools_used": false,
@@ -331,7 +336,7 @@ complete passing artifact has this shape:
     {
       "id": "bounded-summary",
       "prompt_sha256": "<64 lowercase hex characters>",
-      "result_sha256": "<64 lowercase hex characters>",
+      "result_sha256": "<64 lowercase hex characters for the observed one-sentence response>",
       "latency_ms": 300,
       "verdict": "PASS",
       "tools_used": false,
@@ -340,7 +345,7 @@ complete passing artifact has this shape:
     {
       "id": "constraint-following",
       "prompt_sha256": "<64 lowercase hex characters>",
-      "result_sha256": "<64 lowercase hex characters>",
+      "result_sha256": "c07d57c5cdfac32af7d21cb4a96ab1d394a125240387ff916b93d91f51c3ea65",
       "latency_ms": 200,
       "verdict": "PASS",
       "tools_used": false,
