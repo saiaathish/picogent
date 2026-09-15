@@ -11,7 +11,7 @@ completion.
 The implementation checkpoint is:
 
 ```text
-source: e4c58d65f6517684c893eb8149aba21eef225273
+source: f6ccfaa1a746d65848d557b6ffab3e8370c005bb
 branch: codex/v4-retained-read-revalidate
 ```
 
@@ -27,7 +27,10 @@ reader now:
    consuming bytes.
 
 Either identity mismatch returns `securefile.ErrReadChanged` and no payload.
-Matching entries retain the existing bounded-size and prefix semantics.
+The public path readers retry that sentinel at most eight times so a
+cooperating atomic publisher does not turn a valid snapshot transition into a
+spurious caller error; a persistent conflict still fails closed. Matching
+entries retain the existing bounded-size and prefix semantics.
 
 ## Local evidence
 
@@ -38,6 +41,10 @@ GOMAXPROCS=2 GOFLAGS=-p=1 go test ./internal/securefile
 PASS
 
 GOMAXPROCS=2 GOFLAGS=-p=1 go test -race ./internal/securefile ./internal/runtimeboundary
+PASS
+
+GOMAXPROCS=2 GOFLAGS=-p=1 go test ./internal/mcpbridge \
+  -run '^TestConcurrentReadersNeverParsePartialMCPConfig$' -count=3
 PASS
 
 GOMAXPROCS=2 GOFLAGS=-p=1 GOOS=windows GOARCH=amd64 \
