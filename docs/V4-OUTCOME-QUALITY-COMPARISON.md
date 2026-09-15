@@ -1,10 +1,6 @@
 # V4 exact-head outcome-quality comparison
 
-Status: the prior exact source-pair matrix for [#422](https://github.com/saiaathish/picogent/issues/422) and [#246](https://github.com/saiaathishkarthik/picogent/issues/246) remains preserved in the [2026-09-04 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json). The refreshed run for [#435](https://github.com/saiaathish/picogent/issues/435) is recorded in the [2026-09-05 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-05.json) and remains `INCONCLUSIVE` because it was captured before the compatible controlled-transcript metric layer. [#727](https://github.com/saiaathish/picogent/issues/727) defines that layer; [#728](https://github.com/saiaathish/picogent/issues/728) must run a new exact-head matrix before any comparison result changes.
-
-The post-#442 rerun targets candidate source `a6d3af39bb24559fe2d71b4063cb1b8411cd2c7e`.
-Both `advanced-architecture` baseline observations now reach the normal
-unsupported-telemetry boundary without the prior fixture-write failure.
+Status: the prior exact source-pair matrix for [#422](https://github.com/saiaathish/picogent/issues/422) and [#246](https://github.com/saiaathishkarthik/picogent/issues/246) remains preserved in the [2026-09-04 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json). The refreshed run for [#435](https://github.com/saiaathish/picogent/issues/435) is recorded in the [2026-09-05 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-05.json) and remains `INCONCLUSIVE` because it predates the compatible controlled-transcript metric layer. [#727](https://github.com/saiaathish/picogent/issues/727) defines that layer. The exact-head rerun for [#728](https://github.com/saiaathish/picogent/issues/728) is preserved in the [2026-09-15 report](V4-OUTCOME-QUALITY-REPORT-2026-09-15.json) and is `complete` for that deterministic measurement boundary only.
 
 The outcome-quality contract and scripted executor are already defined in
 [`V4-OUTCOME-QUALITY-BENCHMARK.md`](V4-OUTCOME-QUALITY-BENCHMARK.md). This
@@ -86,12 +82,55 @@ report requires the fixed 20-scenario catalog, at least two repetitions,
 deterministic ordering, current verification evidence, and explicit failure or
 `UNVERIFIED` reasons.
 
-The post-#442 refreshed matrix is recorded below. It does not establish live-provider
-quality, rendered behavior, arbitrary repository success, release
+The current compatible controlled-transcript matrix and the earlier
+post-#442 historical matrix are recorded below. Neither establishes
+live-provider quality, rendered behavior, arbitrary repository success, release
 authorization, or overall v4 readiness. Those claims remain outside this
 evidence boundary.
 
-## Exact matrix result
+## Current compatible controlled-transcript result
+
+Issue #728's clean exact-head rerun used separate clean source worktrees for
+the v3 baseline and current candidate. The opt-in controller at
+`d289a3d2ff4b0b617ae3a5418b1d9868e795618e` first validated the source pair,
+then completed the fixed matrix:
+
+```sh
+PICOGENT_RUN_EXACT_OUTCOME_QUALITY_MATRIX=1 \
+PICOGENT_OUTCOME_QUALITY_REPORT=/private/tmp/picogent-v4-outcome-report-d289a3d.json \
+GOMAXPROCS=2 GOFLAGS=-p=1 GOTOOLCHAIN=local \
+go test ./internal/benchmark -run '^TestRunOutcomeQualityExactSourcePairMatrix$' -count=1
+```
+
+The raw artifact is committed as
+[`V4-OUTCOME-QUALITY-REPORT-2026-09-15.json`](V4-OUTCOME-QUALITY-REPORT-2026-09-15.json).
+It passed `OutcomeQualityReport.Validate()` in the matrix test and has SHA-256
+`17328e118e55eeea2e72964c3274561b83753ab7281ea8b7bc0aa8bae6c75601`.
+
+| Field | Recorded evidence |
+| --- | --- |
+| Baseline source | `a07943b31044049afb0142f39198244cd3c75218` |
+| Candidate source | `c11608747bb82b3e820009ee3f28498931758f12` |
+| Matrix controller head | `d289a3d2ff4b0b617ae3a5418b1d9868e795618e` |
+| Host/toolchain | `darwin/arm64`, `go1.26.6` |
+| Runner | `picogent-outcome-quality-runner-v1` |
+| Shared policy | 2 repetitions, 30-second observation timeout, 16,000 maximum tokens, 64 maximum model calls, 256 maximum tool calls, 32 maximum turns |
+| Coverage | 20 scenarios × 2 variants × 2 repetitions = 80/80 observations |
+| Report status | `complete` |
+
+Every observation records `pass` outcome success, correctness, and
+verification quality with `current` evidence; none records an unverified
+reason. The repair-count range is zero for both variants, so this run supplies
+no evidence about repair effectiveness. The recorded controlled-transcript
+context-growth ranges are 785–818 bytes for the baseline and 733–765 bytes for
+the candidate. Those ranges are fixture measurements, not a broad quality or
+performance claim.
+
+This closes the compatible deterministic measurement and provenance boundary
+for #728. It does not establish a live-provider quality win, a general
+autonomous-coding result, release readiness, or v4 completion.
+
+## Historical matrix result (inconclusive)
 
 The reviewed run used the fixed 20-scenario catalog, baseline-before-candidate
 ordering, and two repetitions. It captured all 80 expected observations and
@@ -142,11 +181,10 @@ comparison purposes.
 
 ## Decision and next evidence boundary
 
-This is a complete observation-count and provenance checkpoint, not a
-quality-improvement result. The candidate full-fixture proof gap is closed for
-this deterministic lane, and the post-#442 rerun removes the two recorded
-baseline fixture-write failures. The controlled-transcript implementation in
-#727 does not relabel this historical report. #728 must declare a new candidate
-SHA, use clean source worktrees, and preserve a new report before a comparison
-can claim any compatible delta. It must not turn deterministic fixture coverage
-into a broad autonomous-coding claim.
+The current #728 artifact is a complete compatible measurement and provenance
+checkpoint for the deterministic lane, not a quality-improvement result. It
+does not relabel the historical `INCONCLUSIVE` report: that report retains its
+prior adapter boundary and the post-#442 baseline fixture-write repair history.
+The new report may support later, separately designed comparisons, but it must
+not turn deterministic fixture coverage or context-growth ranges into a broad
+autonomous-coding claim.
