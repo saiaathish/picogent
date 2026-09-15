@@ -357,7 +357,7 @@ func TestRemoveIfUnchangedPreservesReplacement(t *testing.T) {
 	}
 
 	err = removeIfUnchangedWithHook(root, "state.txt", []byte("before\n"), info.Mode(), func() error {
-		return WriteAtomic(root, "state.txt", []byte("replacement\n"))
+		return replaceTestFile(filepath.Join(root, "state.txt"), []byte("replacement\n"), info.Mode())
 	})
 	if !errors.Is(err, ErrTargetChanged) {
 		t.Fatalf("replacement removal error = %v, want ErrTargetChanged", err)
@@ -376,7 +376,7 @@ func TestRemoveIfSameRejectsChangedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteAtomic(root, "state.txt", []byte("replacement\n")); err != nil {
+	if err := replaceTestFile(filepath.Join(root, "state.txt"), []byte("replacement\n"), 0o644); err != nil {
 		_ = current.Close()
 		t.Fatal(err)
 	}
@@ -391,4 +391,11 @@ func TestRemoveIfSameRejectsChangedIdentity(t *testing.T) {
 	if got, readErr := os.ReadFile(filepath.Join(root, "state.txt")); readErr != nil || string(got) != "replacement\n" {
 		t.Fatalf("replacement after direct removal rejection = %q, %v", got, readErr)
 	}
+}
+
+func replaceTestFile(path string, data []byte, mode os.FileMode) error {
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, mode.Perm())
 }
