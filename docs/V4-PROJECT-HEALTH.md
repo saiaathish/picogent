@@ -16,6 +16,19 @@ start a watcher, or claim that an inferred command passes. `UNKNOWN` and
 `UNVERIFIED` are deliberately retained so the existing verifier and live tools
 remain the completion authority.
 
+## Automatic admission for broad readiness requests
+
+For a task-like request inferred as full-completeness readiness work, the agent
+may perform one invisible `project_health` observation before its first model
+request. The admission is skipped for read-only turns and turns with an
+explicit scope boundary. It uses the normal permission gate and a fresh runtime
+snapshot; denied, failed, malformed, stale, or unavailable observations still
+count as the one attempt, so no second health observation is made during that
+turn and the tool is removed from later tool choices. Only bounded engine focus
+is passed to the model. The raw health report is not added to events or
+conversation history, and the observation remains separate from completion and
+verification proof.
+
 ## Local cost evidence
 
 At implementation checkpoint `e4fbb90`, on an Apple M3 arm64 macOS host with

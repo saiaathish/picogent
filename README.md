@@ -110,6 +110,7 @@ Picogent implements the **useful core** of [Claude Code](https://github.com/anth
 | MCP (Cursor-compatible config) | yes |
 | Parallel tool calls | yes |
 | Project rules (`AGENTS.md`, `CLAUDE.md`) | yes |
+| Bounded project-health diagnosis for broad readiness requests | yes |
 | Self-evolution (habits + playbooks, automatic, ≤720-char budget) | yes |
 | Custom slash commands (`.claude/commands/*.md`) | yes |
 | Built-in `/commit`, `/review`, `/compact`, `/diff`, `/memory`, `/resume` | yes |
@@ -164,6 +165,7 @@ Subagents, skills marketplace, plugins, embedding indexes.
 - v4 rendered cross-platform evidence contract: [docs/V4-RENDERED-CROSS-PLATFORM.md](docs/V4-RENDERED-CROSS-PLATFORM.md)
 - v4 project-rule read evidence contract: [docs/V4-PROJECT-RULE-READ-EVIDENCE.md](docs/V4-PROJECT-RULE-READ-EVIDENCE.md)
 - v4 goal-state evidence contract: [docs/V4-GOAL-STATE-EVIDENCE.md](docs/V4-GOAL-STATE-EVIDENCE.md)
+- v4 project-health diagnosis contract: [docs/V4-PROJECT-HEALTH.md](docs/V4-PROJECT-HEALTH.md)
 - Current exact-head evidence packet: [docs/V4-TIP-EVIDENCE-CURRENT.md](docs/V4-TIP-EVIDENCE-CURRENT.md)
 - Last retained rendered evidence (historical behavior tip): [docs/V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](docs/V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md)
 - License: MIT
