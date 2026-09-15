@@ -222,16 +222,24 @@ func readOpenedFile(root secureParent, name, path string, maxBytes int, rejectOv
 		_ = file.Close()
 		return nil, err
 	}
-	matched, err := root.same(name, file)
-	if err != nil {
+	closeRead := func(readErr error) ([]byte, error) {
 		unlockErr := unlock()
 		closeErr := file.Close()
-		return nil, errors.Join(fmt.Errorf("verify secure file %q identity: %w", path, err), unlockErr, closeErr)
+		return nil, errors.Join(readErr, unlockErr, closeErr)
+	}
+	matched, err := root.sameEntry(info, file)
+	if err != nil {
+		return closeRead(fmt.Errorf("verify secure file %q opened identity: %w", path, err))
 	}
 	if !matched {
-		unlockErr := unlock()
-		closeErr := file.Close()
-		return nil, errors.Join(fmt.Errorf("secure file %q changed before read: %w", path, ErrReadChanged), unlockErr, closeErr)
+		return closeRead(fmt.Errorf("secure file %q changed before read: %w", path, ErrReadChanged))
+	}
+	matched, err = root.same(name, file)
+	if err != nil {
+		return closeRead(fmt.Errorf("verify secure file %q identity: %w", path, err))
+	}
+	if !matched {
+		return closeRead(fmt.Errorf("secure file %q changed before read: %w", path, ErrReadChanged))
 	}
 	var reader io.Reader = file
 	if maxBytes > 0 {
@@ -432,8 +440,9 @@ const (
 )
 
 type secureEntry struct {
-	kind secureEntryKind
-	mode os.FileMode
+	kind     secureEntryKind
+	mode     os.FileMode
+	identity any
 }
 
 // secureParent is a descriptor/handle-anchored parent directory. Platform
@@ -442,6 +451,7 @@ type secureEntry struct {
 type secureParent interface {
 	Close() error
 	stat(name string) (secureEntry, error)
+	sameEntry(entry secureEntry, source *os.File) (bool, error)
 	same(name string, source *os.File) (bool, error)
 	openRead(name string) (*os.File, error)
 	openLock(name string) (*os.File, error)

@@ -157,13 +157,53 @@ func windowsEntry(h windows.Handle) (secureEntry, error) {
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
 		return secureEntry{}, err
 	}
+	return windowsEntryFromInfo(&info), nil
+}
+
+func windowsEntryFromInfo(info *windows.ByHandleFileInformation) secureEntry {
+	identity := windowsFileIdentityFromInfo(info)
+	if info == nil {
+		return secureEntry{identity: identity}
+	}
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		return secureEntry{kind: secureEntrySymlink}, nil
+		return secureEntry{kind: secureEntrySymlink, identity: identity}
 	}
 	if info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
-		return secureEntry{kind: secureEntryDirectory}, nil
+		return secureEntry{kind: secureEntryDirectory, identity: identity}
 	}
-	return secureEntry{kind: secureEntryRegular}, nil
+	return secureEntry{kind: secureEntryRegular, identity: identity}
+}
+
+type windowsFileIdentity struct {
+	volume uint32
+	high   uint32
+	low    uint32
+}
+
+func windowsFileIdentityFromInfo(info *windows.ByHandleFileInformation) windowsFileIdentity {
+	if info == nil {
+		return windowsFileIdentity{}
+	}
+	return windowsFileIdentity{
+		volume: info.VolumeSerialNumber,
+		high:   info.FileIndexHigh,
+		low:    info.FileIndexLow,
+	}
+}
+
+func (p *windowsParent) sameEntry(entry secureEntry, source *os.File) (bool, error) {
+	if source == nil {
+		return false, errors.New("secure entry identity source is nil")
+	}
+	expected, ok := entry.identity.(windowsFileIdentity)
+	if !ok {
+		return false, errors.New("secure entry identity is unavailable")
+	}
+	actual, err := windowsFileInfo(windows.Handle(source.Fd()))
+	if err != nil {
+		return false, fmt.Errorf("stat secure entry identity source: %w", err)
+	}
+	return expected == windowsFileIdentityFromInfo(&actual), nil
 }
 
 func (p *windowsParent) stat(name string) (secureEntry, error) {
