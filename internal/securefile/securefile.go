@@ -193,7 +193,12 @@ func readFile(path string, maxBytes int) ([]byte, error) {
 		return nil, err
 	}
 	defer root.Close()
-	return readOpenedFile(root, name, path, maxBytes, true)
+	for attempt := 0; ; attempt++ {
+		data, readErr := readOpenedFile(root, name, path, maxBytes, true)
+		if !errors.Is(readErr, ErrReadChanged) || attempt >= maxReadIdentityRetries {
+			return data, readErr
+		}
+	}
 }
 
 func readFilePrefix(path string, maxBytes int) ([]byte, error) {
@@ -202,8 +207,15 @@ func readFilePrefix(path string, maxBytes int) ([]byte, error) {
 		return nil, err
 	}
 	defer root.Close()
-	return readOpenedFile(root, name, path, maxBytes, false)
+	for attempt := 0; ; attempt++ {
+		data, readErr := readOpenedFile(root, name, path, maxBytes, false)
+		if !errors.Is(readErr, ErrReadChanged) || attempt >= maxReadIdentityRetries {
+			return data, readErr
+		}
+	}
 }
+
+const maxReadIdentityRetries = 8
 
 func readOpenedFile(root secureParent, name, path string, maxBytes int, rejectOversized bool) ([]byte, error) {
 	info, err := root.stat(name)
