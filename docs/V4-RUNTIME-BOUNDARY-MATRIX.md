@@ -308,7 +308,11 @@ arbitrary digest. The bounded-summary semantics, provider identity, and
 tool/mutation observations remain self-reported because raw output,
 credentials, and process traces are intentionally not retained. Each case
 retains only lowercase SHA-256 digests, a bounded latency measurement, its
-verdict, and explicit `tools_used` / `mutation_observed` assertions. The v1
+verdict, and explicit `tools_used` / `mutation_observed` assertions. A `PASS`
+case must remain within the declared `latency_budget_ms`; a non-PASS observation
+may exceed that campaign budget so an honest slow `FAIL` or `INCONCLUSIVE`
+result can be retained, but no case may exceed the fixed 120000 ms global
+maximum. The v1
 artifacts in older evidence records are historical and are not accepted for a
 new v2 collection. A complete passing artifact has this shape:
 
@@ -370,7 +374,9 @@ go run ./cmd/runtime-boundary-matrix \
 valid result digests, every case within the declared latency budget, every case
 marked `PASS`, and explicit false no-tool/no-mutation assertions. A provider
 outage or incomplete campaign may remain `INCONCLUSIVE` or `UNVERIFIED`; the
-matrix does not infer either state as `PASS`. Malformed, stale-SHA,
+matrix does not infer either state as `PASS`. For non-PASS observations, the
+declared budget is informational for retention, while the fixed 120000 ms
+global maximum remains enforced. Malformed, stale-SHA,
 secret-shaped, trailing, oversized, or workspace-contained artifacts fail
 closed. The PASS is an artifact-level self-reported observation, not independent
 provider or result attestation. This campaign does not prove
