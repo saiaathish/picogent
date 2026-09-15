@@ -204,28 +204,38 @@ func workspaceRootPath(root string) (string, error) {
 }
 
 func remove(root, path string) error {
+	current, err := OpenRead(root, path)
+	if err != nil {
+		return err
+	}
+	removeErr := removeIfSame(root, path, current)
+	closeErr := current.Close()
+	return errors.Join(removeErr, closeErr)
+}
+
+func removeIfSame(root, path string, current *os.File) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
+	}
+	if current == nil {
+		return errors.New("workspace removal source is nil")
+	}
+	expected, err := identityForFile(current)
+	if err != nil {
+		return fmt.Errorf("identify workspace file %q for removal: %w", rel, err)
 	}
 	parent, leaf, err := openParent(root, rel, false)
 	if err != nil {
 		return err
 	}
 	defer unix.Close(parent)
-	// Keep the Unix behavior aligned with Windows: a caller asking to remove
-	// a workspace file must not silently remove an attacker-injected symlink
-	// or another non-regular entry. The final unlink remains name-based, so a
-	// replacement after this check can at worst remove that entry inside the
-	// already descriptor-anchored parent; it cannot follow the link outside.
-	if _, exists, err := workspaceTargetMode(parent, leaf); err != nil {
-		return fmt.Errorf("remove workspace file %q: %w", rel, err)
-	} else if !exists {
-		// Preserve the usual not-exist error and its os.IsNotExist behavior.
-		if err := unix.Unlinkat(parent, leaf, 0); err != nil {
-			return fmt.Errorf("remove workspace file %q: %w", rel, err)
-		}
-		return nil
+	actual, _, exists, err := workspaceTargetEntry(parent, leaf)
+	if err != nil {
+		return fmt.Errorf("inspect workspace file %q for removal: %w", rel, err)
+	}
+	if !exists || expected != actual {
+		return fmt.Errorf("remove workspace file %q: %w", rel, ErrTargetChanged)
 	}
 	if err := unix.Unlinkat(parent, leaf, 0); err != nil {
 		return fmt.Errorf("remove workspace file %q: %w", rel, err)
@@ -342,24 +352,29 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 }
 
 func workspaceTargetMode(parent int, leaf string) (uint32, bool, error) {
+	_, mode, exists, err := workspaceTargetEntry(parent, leaf)
+	return mode, exists, err
+}
+
+func workspaceTargetEntry(parent int, leaf string) (Identity, uint32, bool, error) {
 	var target unix.Stat_t
 	if err := unix.Fstatat(parent, leaf, &target, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		if errors.Is(err, unix.ENOENT) {
-			return 0o644, false, nil
+			return Identity{}, 0o644, false, nil
 		}
-		return 0, false, err
+		return Identity{}, 0, false, err
 	}
 	targetMode := uint32(target.Mode)
 	switch targetMode & uint32(unix.S_IFMT) {
 	case uint32(unix.S_IFREG):
 		if err := rejectHardLinkCount(uint64(target.Nlink)); err != nil {
-			return 0, false, err
+			return Identity{}, 0, false, err
 		}
-		return targetMode & 0o7777, true, nil
+		return Identity{Volume: uint64(target.Dev), File: uint64(target.Ino), Known: true}, targetMode & 0o7777, true, nil
 	case uint32(unix.S_IFLNK):
-		return 0, false, fmt.Errorf("workspace path %q is a symbolic link", leaf)
+		return Identity{}, 0, false, fmt.Errorf("workspace path %q is a symbolic link", leaf)
 	default:
-		return 0, false, fmt.Errorf("workspace path %q is not a regular file", leaf)
+		return Identity{}, 0, false, fmt.Errorf("workspace path %q is not a regular file", leaf)
 	}
 }
 
