@@ -119,6 +119,10 @@ func TestProjectRuleHostileParentSwapConfinement(t *testing.T) {
 	successfulLoads := 0
 	outsideMarkerObserved := false
 	for i := 0; i < projectRuleHostileAttempts; i++ {
+		// The helper deliberately holds the reparse point for a bounded pause.
+		// Pace the victim loop so it can observe the restored trusted window
+		// instead of consuming every attempt during one hostile interval.
+		time.Sleep(projectRuleHostilePause)
 		loaded := Load(workspace)
 		switch {
 		case strings.Contains(loaded, "outside-project-rule-marker"):
