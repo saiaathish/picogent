@@ -267,9 +267,10 @@ func (e *OutcomeQualityLegacyProcessExecutor) validateOutcomeQualitySource(ctx c
 
 // Execute runs one exact v3 headless invocation with a fresh fixture and
 // external PICOGENT_HOME/cache. Filesystem contents and the v3 verification
-// line are measured directly. v3 does not expose provider token/context or
-// structured repair telemetry, so those gaps are returned as explicit
-// unverified reasons rather than being represented as zero measurements.
+// line are measured directly. v3 does not emit structured repair/context
+// telemetry, so the controlled local provider proxy derives the shared
+// request-transcript metric instead. Any unsupported transcript shape remains
+// an explicit unverified reason rather than a passing-looking zero.
 func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, request OutcomeQualityExecutionRequest) (execution OutcomeQualityExecution, err error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -404,7 +405,7 @@ func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, reque
 	if verification == OutcomeVerificationPass || verification == OutcomeVerificationFail {
 		evidence = EvidenceCurrent
 	}
-	tokens, modelCalls, toolCalls := budgetProxy.Metrics()
+	tokens, modelCalls, toolCalls, repairCount, contextGrowthBytes, transcriptReasons := budgetProxy.Metrics()
 	metrics := OutcomeQualityMetrics{
 		OutcomeSuccess:      OutcomeAssessmentInconclusive,
 		Correctness:         OutcomeAssessmentInconclusive,
@@ -415,8 +416,8 @@ func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, reque
 		ChangedLines:        outcomeQualityChangedLines(input, actual),
 		UnnecessaryChanges:  outcomeQualityUnnecessaryChanges(changedPaths, wantChanged),
 		VerificationQuality: verification,
-		RepairCount:         0,
-		ContextGrowthBytes:  0,
+		RepairCount:         repairCount,
+		ContextGrowthBytes:  contextGrowthBytes,
 		Evidence:            evidence,
 	}
 
@@ -426,11 +427,7 @@ func (e *OutcomeQualityLegacyProcessExecutor) Execute(ctx context.Context, reque
 	} else if verification == OutcomeVerificationInconclusive || verification == OutcomeVerificationSkipped {
 		reasons = append(reasons, fmt.Sprintf("legacy v3 verification was %s", verification))
 	}
-	reasons = append(reasons,
-		"legacy v3 does not expose structured repair counts",
-		"legacy v3 does not expose context-growth measurement",
-		"legacy v3 token and model-call counts are observed at the local provider boundary, not emitted by v3",
-	)
+	reasons = append(reasons, transcriptReasons...)
 	if verification == OutcomeVerificationPass && correctContent && changedPathsMatch {
 		metrics.OutcomeSuccess = OutcomeAssessmentPass
 		metrics.Correctness = OutcomeAssessmentPass
@@ -800,6 +797,91 @@ type outcomeQualityLegacyBudgetProxy struct {
 	modelCalls int
 	toolCalls  int
 	tokens     int
+	telemetry  outcomeQualityTranscriptTelemetry
+}
+
+type outcomeQualityLegacyProviderRequest struct {
+	Model    string                                `json:"model"`
+	Messages []outcomeQualityLegacyProviderMessage `json:"messages"`
+}
+
+type outcomeQualityLegacyProviderResponse struct {
+	Choices []struct {
+		Message outcomeQualityLegacyProviderMessage `json:"message"`
+	} `json:"choices"`
+	Usage *struct {
+		PromptTokens     *int `json:"prompt_tokens"`
+		CompletionTokens *int `json:"completion_tokens"`
+	} `json:"usage"`
+}
+
+type outcomeQualityLegacyProviderMessage struct {
+	Role       string                                 `json:"role"`
+	Content    any                                    `json:"content"`
+	ToolCallID string                                 `json:"tool_call_id"`
+	Name       string                                 `json:"name"`
+	ToolCalls  []outcomeQualityLegacyProviderToolCall `json:"tool_calls"`
+}
+
+type outcomeQualityLegacyProviderToolCall struct {
+	ID       string `json:"id"`
+	Function struct {
+		Name      string `json:"name"`
+		Arguments string `json:"arguments"`
+	} `json:"function"`
+}
+
+func outcomeQualityLegacyTranscriptFromRequest(payload []byte) (string, []outcomeQualityTranscriptMessage, error) {
+	var request outcomeQualityLegacyProviderRequest
+	if err := json.Unmarshal(payload, &request); err != nil {
+		return "", nil, fmt.Errorf("decode request JSON")
+	}
+	messages, err := outcomeQualityTranscriptMessagesFromLegacy(request.Messages)
+	if err != nil {
+		return "", nil, err
+	}
+	return request.Model, messages, nil
+}
+
+func outcomeQualityTranscriptMessagesFromLegacy(messages []outcomeQualityLegacyProviderMessage) ([]outcomeQualityTranscriptMessage, error) {
+	result := make([]outcomeQualityTranscriptMessage, 0, len(messages))
+	for index, message := range messages {
+		content, err := outcomeQualityTranscriptContentFromLegacy(message.Content)
+		if err != nil {
+			return nil, fmt.Errorf("message %d: %w", index, err)
+		}
+		result = append(result, outcomeQualityTranscriptMessage{
+			Role:       message.Role,
+			Content:    content,
+			ToolCallID: message.ToolCallID,
+			Name:       message.Name,
+			ToolCalls:  outcomeQualityTranscriptToolCallsFromLegacy(message.ToolCalls),
+		})
+	}
+	return result, nil
+}
+
+func outcomeQualityTranscriptContentFromLegacy(raw any) (string, error) {
+	switch value := raw.(type) {
+	case nil:
+		return "", nil
+	case string:
+		return value, nil
+	default:
+		return "", fmt.Errorf("content type %T is unsupported", raw)
+	}
+}
+
+func outcomeQualityTranscriptToolCallsFromLegacy(calls []outcomeQualityLegacyProviderToolCall) []outcomeQualityTranscriptToolCall {
+	result := make([]outcomeQualityTranscriptToolCall, 0, len(calls))
+	for _, call := range calls {
+		result = append(result, outcomeQualityTranscriptToolCall{
+			ID:        call.ID,
+			Name:      call.Function.Name,
+			Arguments: call.Function.Arguments,
+		})
+	}
+	return result
 }
 
 func newOutcomeQualityLegacyBudgetProxy(providerURL string, policy OutcomeQualityPolicy) (*outcomeQualityLegacyBudgetProxy, error) {
@@ -841,13 +923,15 @@ func (p *outcomeQualityLegacyBudgetProxy) Close() {
 	p.server.Close()
 }
 
-func (p *outcomeQualityLegacyBudgetProxy) Metrics() (tokens, modelCalls, toolCalls int) {
+func (p *outcomeQualityLegacyBudgetProxy) Metrics() (tokens, modelCalls, toolCalls, repairCount int, contextGrowthBytes int64, unverified []string) {
 	if p == nil {
-		return 0, 0, 0
+		return 0, 0, 0, 0, 0, []string{"legacy v3 provider transcript observer is unavailable"}
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.tokens, p.modelCalls, p.toolCalls
+	tokens, modelCalls, toolCalls = p.tokens, p.modelCalls, p.toolCalls
+	p.mu.Unlock()
+	repairCount, contextGrowthBytes, unverified = p.telemetry.Metrics()
+	return tokens, modelCalls, toolCalls, repairCount, contextGrowthBytes, unverified
 }
 
 func (p *outcomeQualityLegacyBudgetProxy) handle(w http.ResponseWriter, request *http.Request) {
@@ -863,6 +947,10 @@ func (p *outcomeQualityLegacyBudgetProxy) handle(w http.ResponseWriter, request 
 	if len(body) > maxOutcomeQualityLegacyProviderPayloadBytes {
 		http.Error(w, "legacy provider request is too large", http.StatusRequestEntityTooLarge)
 		return
+	}
+	model, transcript, transcriptErr := outcomeQualityLegacyTranscriptFromRequest(body)
+	if transcriptErr != nil {
+		p.telemetry.MarkUnavailable("legacy v3 request transcript is unsupported: " + transcriptErr.Error())
 	}
 	modelLimit := p.policy.MaxModelCalls
 	if p.policy.MaxTurns < modelLimit {
@@ -915,7 +1003,7 @@ func (p *outcomeQualityLegacyBudgetProxy) handle(w http.ResponseWriter, request 
 		return
 	}
 
-	usage, toolCalls, err := outcomeQualityLegacyProviderUsage(responseBody)
+	usage, toolCalls, responseCalls, err := outcomeQualityLegacyProviderUsage(responseBody)
 	if err != nil {
 		http.Error(w, "legacy provider response cannot prove benchmark budgets: "+err.Error(), http.StatusBadGateway)
 		return
@@ -939,40 +1027,38 @@ func (p *outcomeQualityLegacyBudgetProxy) handle(w http.ResponseWriter, request 
 	p.tokens += usage
 	p.toolCalls += toolCalls
 	p.mu.Unlock()
+	if transcriptErr == nil {
+		p.telemetry.ObserveRequest(model, transcript)
+		p.telemetry.ObserveResponse(transcript, responseCalls)
+	}
 	writeOutcomeQualityLegacyProviderResponse(w, response.StatusCode, response.Header, responseBody)
 }
 
-func outcomeQualityLegacyProviderUsage(payload []byte) (int, int, error) {
-	var response struct {
-		Choices []struct {
-			Message struct {
-				ToolCalls []json.RawMessage `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage *struct {
-			PromptTokens     *int `json:"prompt_tokens"`
-			CompletionTokens *int `json:"completion_tokens"`
-		} `json:"usage"`
-	}
+func outcomeQualityLegacyProviderUsage(payload []byte) (int, int, []outcomeQualityTranscriptToolCall, error) {
+	var response outcomeQualityLegacyProviderResponse
 	if err := json.Unmarshal(payload, &response); err != nil {
-		return 0, 0, fmt.Errorf("invalid JSON")
+		return 0, 0, nil, fmt.Errorf("invalid JSON")
 	}
 	if response.Usage == nil || response.Usage.PromptTokens == nil || response.Usage.CompletionTokens == nil {
-		return 0, 0, errors.New("usage is missing prompt_tokens or completion_tokens")
+		return 0, 0, nil, errors.New("usage is missing prompt_tokens or completion_tokens")
 	}
 	if *response.Usage.PromptTokens < 0 || *response.Usage.CompletionTokens < 0 {
-		return 0, 0, errors.New("usage contains a negative token count")
+		return 0, 0, nil, errors.New("usage contains a negative token count")
 	}
 	maxInt := int(^uint(0) >> 1)
 	if *response.Usage.PromptTokens > maxInt-*response.Usage.CompletionTokens {
-		return 0, 0, errors.New("usage token count overflows integer range")
+		return 0, 0, nil, errors.New("usage token count overflows integer range")
 	}
 	usage := *response.Usage.PromptTokens + *response.Usage.CompletionTokens
 	toolCalls := 0
 	for _, choice := range response.Choices {
 		toolCalls += len(choice.Message.ToolCalls)
 	}
-	return usage, toolCalls, nil
+	var responseCalls []outcomeQualityTranscriptToolCall
+	if len(response.Choices) > 0 {
+		responseCalls = outcomeQualityTranscriptToolCallsFromLegacy(response.Choices[0].Message.ToolCalls)
+	}
+	return usage, toolCalls, responseCalls, nil
 }
 
 func writeOutcomeQualityLegacyProviderResponse(w http.ResponseWriter, status int, headers http.Header, body []byte) {

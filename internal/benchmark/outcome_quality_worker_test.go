@@ -33,7 +33,7 @@ func TestRunOutcomeQualityWorkerRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode worker response: %v", err)
 	}
-	if response.SourceHead != request.Target.SourceHead || response.Metrics.OutcomeSuccess != OutcomeAssessmentPass {
+	if response.SourceHead != request.Target.SourceHead || response.MetricContract != OutcomeQualityTranscriptMetricContract || response.Metrics.OutcomeSuccess != OutcomeAssessmentPass {
 		t.Fatalf("worker response = %#v", response)
 	}
 }
@@ -124,17 +124,25 @@ func TestRunOutcomeQualityWorkerDowngradesUnverifiedPassingMetrics(t *testing.T)
 func TestDecodeOutcomeQualityWorkerResponseRejectsTrailingAndOversizedData(t *testing.T) {
 	request := outcomeQualityWorkerTestRequest(t)
 	response := OutcomeQualityWorkerResponse{
-		Protocol:   OutcomeQualityWorkerProtocol,
-		SourceHead: request.Target.SourceHead,
-		Metrics:    passingOutcomeQualityMetrics(),
+		Protocol:       OutcomeQualityWorkerProtocol,
+		MetricContract: OutcomeQualityTranscriptMetricContract,
+		SourceHead:     request.Target.SourceHead,
+		Metrics:        passingOutcomeQualityMetrics(),
 	}
 	payload, err := json.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
 	}
+	legacyResponse := response
+	legacyResponse.MetricContract = ""
+	legacyPayload, err := json.Marshal(legacyResponse)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cases := map[string][]byte{
-		"trailing value": append(append([]byte(nil), payload...), []byte(`{}`)...),
-		"oversized":      bytes.Repeat([]byte("x"), maxOutcomeQualityWorkerResponseBytes+1),
+		"trailing value":          append(append([]byte(nil), payload...), []byte(`{}`)...),
+		"oversized":               bytes.Repeat([]byte("x"), maxOutcomeQualityWorkerResponseBytes+1),
+		"missing metric contract": legacyPayload,
 	}
 	for name, input := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -148,9 +156,10 @@ func TestDecodeOutcomeQualityWorkerResponseRejectsTrailingAndOversizedData(t *te
 func TestEncodeOutcomeQualityWorkerResponseRejectsShortWriter(t *testing.T) {
 	request := outcomeQualityWorkerTestRequest(t)
 	err := encodeOutcomeQualityWorkerResponse(shortOutcomeQualityWorkerWriter{}, OutcomeQualityWorkerResponse{
-		Protocol:   OutcomeQualityWorkerProtocol,
-		SourceHead: request.Target.SourceHead,
-		Metrics:    passingOutcomeQualityMetrics(),
+		Protocol:       OutcomeQualityWorkerProtocol,
+		MetricContract: OutcomeQualityTranscriptMetricContract,
+		SourceHead:     request.Target.SourceHead,
+		Metrics:        passingOutcomeQualityMetrics(),
 	})
 	if err == nil || !strings.Contains(err.Error(), "short write") {
 		t.Fatalf("short writer error=%v", err)
@@ -295,10 +304,11 @@ func TestOutcomeQualityWorkerChild(t *testing.T) {
 			os.Exit(1)
 		}
 		err = encodeOutcomeQualityWorkerResponse(os.Stdout, OutcomeQualityWorkerResponse{
-			Protocol:   OutcomeQualityWorkerProtocol,
-			SourceHead: sourceHead,
-			Metrics:    passingOutcomeQualityMetrics(),
-			Unverified: []string{"worker evidence was not recorded"},
+			Protocol:       OutcomeQualityWorkerProtocol,
+			MetricContract: OutcomeQualityTranscriptMetricContract,
+			SourceHead:     sourceHead,
+			Metrics:        passingOutcomeQualityMetrics(),
+			Unverified:     []string{"worker evidence was not recorded"},
 		})
 		if err != nil {
 			_, _ = fmt.Fprintln(os.Stderr, err)

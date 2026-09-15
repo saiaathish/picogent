@@ -10,9 +10,10 @@ import (
 	"testing"
 )
 
-// This is the reviewed current-main candidate for the execution evidence
-// captured by the opt-in test below. A later comparison must declare a new
-// candidate head rather than silently relabeling this report.
+// This is the historical candidate used by the preserved evidence report. It
+// predates OutcomeQualityTranscriptMetricContract, so the opt-in test below
+// must retain an inconclusive result rather than silently treating an old
+// worker response as comparable to the current adapter.
 const outcomeQualityExactCandidateHead = "a6d3af39bb24559fe2d71b4063cb1b8411cd2c7e"
 
 // TestRunOutcomeQualityExactSourcePairMatrix is opt-in because it builds two
@@ -68,10 +69,10 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 		t.Fatalf("observations=%d, want %d", len(report.Observations), wantObservations)
 	}
 	if report.Status != OutcomeReportInconclusive {
-		t.Fatalf("report status=%q, want inconclusive because v3 has unsupported metrics", report.Status)
+		t.Fatalf("report status=%q, want inconclusive because the historical candidate lacks the current metric contract", report.Status)
 	}
-	if !containsOutcomeQualityReason(report.Unverified, "legacy v3 does not expose structured repair counts") {
-		t.Fatalf("report unverified=%v, want explicit legacy metric boundary", report.Unverified)
+	if !containsOutcomeQualityReason(report.Unverified, "metric contract is unsupported") {
+		t.Fatalf("report unverified=%v, want explicit historical worker metric-contract boundary", report.Unverified)
 	}
 
 	legacyObservations := 0
@@ -80,16 +81,13 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 		switch observation.Variant {
 		case OutcomeVariantBaseline:
 			legacyObservations++
-			if observation.SourceHead != OutcomeQualityLegacySourceHead || observation.Metrics.OutcomeSuccess != OutcomeAssessmentInconclusive {
-				t.Fatalf("legacy observation=%#v, want exact head and inconclusive unsupported metrics", observation)
+			if observation.SourceHead != OutcomeQualityLegacySourceHead || observation.Metrics.OutcomeSuccess != OutcomeAssessmentPass || observation.Metrics.Correctness != OutcomeAssessmentPass || len(observation.Unverified) != 0 {
+				t.Fatalf("legacy observation=%#v, want exact head and complete controlled transcript metrics", observation)
 			}
 		case OutcomeVariantCandidate:
 			candidateObservations++
-			if observation.SourceHead != outcomeQualityExactCandidateHead || observation.Metrics.OutcomeSuccess != OutcomeAssessmentPass || observation.Metrics.Correctness != OutcomeAssessmentPass {
-				t.Fatalf("candidate observation=%#v, want exact-head passing three-file proof", observation)
-			}
-			if observation.Metrics.VerificationQuality != OutcomeVerificationPass || observation.Metrics.Evidence != EvidenceCurrent || len(observation.Unverified) != 0 {
-				t.Fatalf("candidate observation=%#v, want current verification and no unverified reasons", observation)
+			if observation.SourceHead != outcomeQualityExactCandidateHead || observation.Metrics.OutcomeSuccess != OutcomeAssessmentInconclusive || !containsOutcomeQualityReason(observation.Unverified, "metric contract is unsupported") {
+				t.Fatalf("candidate observation=%#v, want explicit historical metric-contract boundary", observation)
 			}
 		default:
 			t.Fatalf("unexpected observation variant %q", observation.Variant)

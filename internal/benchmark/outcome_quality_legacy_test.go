@@ -126,17 +126,11 @@ func TestBuildOutcomeQualityLegacyLaunchesExactV3Binary(t *testing.T) {
 	if execution.Metrics.Tokens != 80 || execution.Metrics.ModelCalls != 4 || execution.Metrics.ChangedLines != 1 || execution.Metrics.UnnecessaryChanges != 0 || execution.Metrics.ToolCalls != 5 {
 		t.Fatalf("legacy filesystem metrics=%#v, want one changed line, no extras, five tools", execution.Metrics)
 	}
-	if execution.Metrics.RepairCount != 0 || execution.Metrics.ContextGrowthBytes != 0 {
-		t.Fatalf("legacy unsupported metrics=%#v, want fail-closed zero values", execution.Metrics)
+	if execution.Metrics.RepairCount != 0 || execution.Metrics.ContextGrowthBytes <= 0 {
+		t.Fatalf("legacy transcript metrics=%#v, want zero repairs and positive context growth", execution.Metrics)
 	}
-	for _, want := range []string{
-		"legacy v3 does not expose structured repair counts",
-		"legacy v3 does not expose context-growth measurement",
-		"legacy v3 token and model-call counts are observed at the local provider boundary",
-	} {
-		if !containsOutcomeQualityReason(execution.Unverified, want) {
-			t.Fatalf("legacy unverified=%v, missing %q", execution.Unverified, want)
-		}
+	if len(execution.Unverified) != 0 {
+		t.Fatalf("legacy unverified=%v, want complete controlled transcript evidence", execution.Unverified)
 	}
 	advancedScenario := DefaultOutcomeQualityScenarios()[8]
 	advancedRequest := outcomeQualityLegacyTestRequestForScenario(t, outcomeQualityLegacySourceTarget(head), advancedScenario)
@@ -551,8 +545,67 @@ func TestOutcomeQualityLegacyProviderUsageRejectsTokenOverflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := outcomeQualityLegacyProviderUsage(payload); err == nil || !strings.Contains(err.Error(), "overflows integer range") {
+	if _, _, _, err := outcomeQualityLegacyProviderUsage(payload); err == nil || !strings.Contains(err.Error(), "overflows integer range") {
 		t.Fatalf("overflow usage error=%v, want explicit overflow rejection", err)
+	}
+}
+
+func TestOutcomeQualityLegacyBudgetProxyMeasuresRepairTranscript(t *testing.T) {
+	responses := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		responses++
+		payload := map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{}}},
+			"usage":   map[string]int{"prompt_tokens": 1, "completion_tokens": 1},
+		}
+		if responses == 2 {
+			payload["choices"] = []any{map[string]any{"message": map[string]any{
+				"tool_calls": []any{map[string]any{
+					"id":   "write-1",
+					"type": "function",
+					"function": map[string]string{
+						"name":      "write_file",
+						"arguments": `{"path":"fixture.txt","content":"after"}`,
+					},
+				}},
+			}}}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(payload); err != nil {
+			t.Errorf("encode upstream response: %v", err)
+		}
+	}))
+	defer upstream.Close()
+
+	proxy, err := newOutcomeQualityLegacyBudgetProxy(upstream.URL, validOutcomeQualityLegacyProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.Close()
+	for _, payload := range []string{
+		`{"model":"fixture-model","messages":[{"role":"user","content":"fix the fixture"}]}`,
+		`{"model":"fixture-model","messages":[{"role":"user","content":"fix the fixture"},{"role":"tool","name":"verify","content":"verify FAIL\nfixture content mismatch"}]}`,
+	} {
+		response, err := http.Post(proxy.URL()+"/chat/completions", "application/json", strings.NewReader(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, readErr := io.ReadAll(response.Body)
+		closeErr := response.Body.Close()
+		if readErr != nil || closeErr != nil {
+			t.Fatalf("read proxy response: read=%v close=%v", readErr, closeErr)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("proxy response status=%d, want 200", response.StatusCode)
+		}
+	}
+
+	tokens, modelCalls, toolCalls, repairs, growth, reasons := proxy.Metrics()
+	if tokens != 4 || modelCalls != 2 || toolCalls != 1 {
+		t.Fatalf("proxy counts=(tokens=%d model=%d tools=%d), want (4,2,1)", tokens, modelCalls, toolCalls)
+	}
+	if repairs != 1 || growth <= 0 || len(reasons) != 0 {
+		t.Fatalf("proxy transcript=(repairs=%d growth=%d reasons=%v), want one repair, positive growth, and no reasons", repairs, growth, reasons)
 	}
 }
 

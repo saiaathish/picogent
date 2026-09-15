@@ -79,6 +79,33 @@ passing correctness requires current passing verification, and passing outcome
 success requires both. Recorded invariant failures also forbid a passing
 outcome observation.
 
+### Controlled request-transcript metrics
+
+For an exact source-pair run, `context_growth_bytes` is the peak normalized
+model-request context minus the first normalized model-request context. The
+normalization includes the model identifier plus each message role, content,
+tool-call ID/name, and tool arguments. It excludes provider wire framing and
+tool schemas so the v4 counting client and the v3 OpenAI-compatible proxy use
+the same boundary.
+
+`repair_count` is one planned `write_file` or `edit_file` action returned by
+the model after the latest verification result in that request was `FAIL`.
+This counts a bounded repair action, not every later request that retains the
+same repair instruction in history.
+
+The immutable v3 source does not emit these metrics itself. Its controlled
+local provider proxy observes its complete request/response transcript; the
+v4 fixture observes the same normalized boundary in its counting client. If
+either side sees an unsupported message shape, missing request, or incomplete
+response, it records an explicit unavailable reason and the observation stays
+inconclusive. These are deterministic fixture measurements, not live-provider
+or internal-runtime telemetry claims.
+
+The isolated v4 worker also returns
+`picogent.v4.outcome-quality-transcript.v1`. The controller rejects a worker
+without that exact metric contract, so a historical binary cannot inherit a
+newer adapter's comparison semantics by accident.
+
 ## Validation command
 
 Run the contract checks with:
@@ -109,7 +136,7 @@ executor derives correctness from final fixture bytes and changed paths, and
 accepts success only when the shared durable completion proof and current
 workspace-bound verification both agree. It also records scripted token
 usage, model/tool calls, permission prompts, changed lines, repairs, and
-retained context growth. This proves local control-flow and measurement
+controlled request-transcript context growth. This proves local control-flow and measurement
 plumbing only; it is not live-provider, real-repository, rendered UI, or
 general autonomous-coding evidence.
 

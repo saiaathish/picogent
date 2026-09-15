@@ -336,8 +336,7 @@ type outcomeQualityCountingClient struct {
 	scripted             *llm.Scripted
 	modelCalls           int
 	tokens               int
-	initialContextBytes  int64
-	peakContextBytes     int64
+	telemetry            outcomeQualityTranscriptTelemetry
 	invalidTokenResponse error
 }
 
@@ -347,6 +346,12 @@ func (c *outcomeQualityCountingClient) Chat(ctx context.Context, request llm.Cha
 	}
 	if c == nil || c.scripted == nil {
 		return llm.ChatResponse{}, errors.New("scripted client is unavailable")
+	}
+	transcript, transcriptErr := outcomeQualityTranscriptMessagesFromLLM(request.Messages)
+	if transcriptErr != nil {
+		c.telemetry.MarkUnavailable("scripted v4 request transcript is unsupported: " + transcriptErr.Error())
+	} else {
+		c.telemetry.ObserveRequest(request.Model, transcript)
 	}
 	response, err := c.scripted.Chat(ctx, request)
 	if err != nil {
@@ -358,36 +363,21 @@ func (c *outcomeQualityCountingClient) Chat(ctx context.Context, request llm.Cha
 	}
 	c.modelCalls++
 	c.tokens += response.PromptTokens + response.CompletionTokens
-	requestBytes := outcomeQualityRequestBytes(request)
-	if c.modelCalls == 1 {
-		c.initialContextBytes = requestBytes
-		c.peakContextBytes = requestBytes
-	} else if requestBytes > c.peakContextBytes {
-		c.peakContextBytes = requestBytes
+	if transcriptErr == nil {
+		responseMessage, responseErr := outcomeQualityTranscriptMessageFromLLM(response.Message)
+		if responseErr != nil {
+			c.telemetry.MarkUnavailable("scripted v4 response transcript is unsupported: " + responseErr.Error())
+		} else {
+			c.telemetry.ObserveResponse(transcript, responseMessage.ToolCalls)
+		}
 	}
 	return response, nil
-}
-
-func outcomeQualityRequestBytes(request llm.ChatRequest) int64 {
-	total := int64(len(request.Model) + len(request.TaskMode) + len(request.LastToolKind))
-	for _, message := range request.Messages {
-		total += int64(len(message.Role) + len(message.Content) + len(message.ToolCallID) + len(message.Name))
-		for _, part := range message.Parts {
-			total += int64(len(part.Type) + len(part.Text) + len(part.MIME) + len(part.Name) + len(part.Data))
-		}
-		for _, call := range message.ToolCalls {
-			total += int64(len(call.ID) + len(call.ItemID) + len(call.Name) + len(call.Arguments))
-		}
-	}
-	return total
 }
 
 type outcomeQualityAgentHandler struct {
 	agent.NopHandler
 	permissionPrompts int
 	toolCalls         int
-	repairCount       int
-	pendingRepair     bool
 	errorCount        int
 	lastError         string
 }
@@ -402,22 +392,6 @@ func (h *outcomeQualityAgentHandler) OnNeedPermission(ctx context.Context, _ per
 
 func (h *outcomeQualityAgentHandler) OnToolStart(call llm.ToolCall) {
 	h.toolCalls++
-	if h.pendingRepair && (call.Name == "write_file" || call.Name == "edit_file") {
-		h.repairCount++
-		h.pendingRepair = false
-	}
-}
-
-func (h *outcomeQualityAgentHandler) OnToolEnd(call llm.ToolCall, result string, err error) {
-	if call.Name == "verify" && err == nil {
-		status := outcomeQualityStatus(result)
-		switch status {
-		case "FAIL":
-			h.pendingRepair = true
-		case "PASS":
-			h.pendingRepair = false
-		}
-	}
 }
 
 func (h *outcomeQualityAgentHandler) OnError(err error) {
@@ -435,6 +409,7 @@ func outcomeQualityAgentMetrics(workspaceRoot string, input OutcomeQualityInput,
 	changedPathsMatch := sameOutcomeQualityStrings(changedPaths, wantChanged)
 	verification := outcomeQualityVerificationState(result)
 	evidenceCurrent := verification == OutcomeVerificationPass && outcomeQualityCompletionEvidenceCurrent(result, after)
+	repairCount, contextGrowthBytes, transcriptReasons := outcomeQualityClientTranscriptMetrics(client)
 
 	metrics := OutcomeQualityMetrics{
 		OutcomeSuccess:      OutcomeAssessmentInconclusive,
@@ -446,8 +421,8 @@ func outcomeQualityAgentMetrics(workspaceRoot string, input OutcomeQualityInput,
 		ChangedLines:        outcomeQualityChangedLines(input, actualContents),
 		UnnecessaryChanges:  outcomeQualityUnnecessaryChanges(changedPaths, wantChanged),
 		VerificationQuality: verification,
-		RepairCount:         handler.repairCount,
-		ContextGrowthBytes:  outcomeQualityContextGrowth(client),
+		RepairCount:         repairCount,
+		ContextGrowthBytes:  contextGrowthBytes,
 		Evidence:            EvidenceUnverified,
 	}
 	if evidenceCurrent {
@@ -458,6 +433,7 @@ func outcomeQualityAgentMetrics(workspaceRoot string, input OutcomeQualityInput,
 	if client.invalidTokenResponse != nil {
 		reasons = append(reasons, client.invalidTokenResponse.Error())
 	}
+	reasons = append(reasons, transcriptReasons...)
 	if runErr != nil {
 		reasons = append(reasons, "agent run failed: "+runErr.Error())
 	}
@@ -651,9 +627,9 @@ func workspaceObservationCurrent(before, after workspace.Observation) bool {
 	return workspace.Compare(after, after).Fresh
 }
 
-func outcomeQualityContextGrowth(client *outcomeQualityCountingClient) int64 {
-	if client == nil || client.peakContextBytes <= client.initialContextBytes {
-		return 0
+func outcomeQualityClientTranscriptMetrics(client *outcomeQualityCountingClient) (int, int64, []string) {
+	if client == nil {
+		return 0, 0, []string{"scripted v4 request transcript observer is unavailable"}
 	}
-	return client.peakContextBytes - client.initialContextBytes
+	return client.telemetry.Metrics()
 }
