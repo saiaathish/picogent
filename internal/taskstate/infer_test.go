@@ -99,6 +99,67 @@ func TestInferBuildsIntentContractAndDefinitionOfDone(t *testing.T) {
 	}
 }
 
+func TestInferClassifiesBroadOutcomeRequests(t *testing.T) {
+	for _, prompt := range []string{
+		"Make this ready to launch",
+		"make this launch-ready",
+		"get this repo healthy",
+		"make this good enough to ship",
+	} {
+		t.Run(prompt, func(t *testing.T) {
+			got := Infer(prompt)
+			if !got.TaskLike || got.Intent == nil {
+				t.Fatalf("broad outcome was not inferred: %+v", got)
+			}
+			if got.Intent.Class != "readiness" || got.Intent.Action != "readiness" || got.Intent.Completeness != "full" || !got.Intent.NeedsTests {
+				t.Fatalf("broad outcome intent = %+v", got.Intent)
+			}
+			joined := strings.ToLower(strings.Join(got.Steps, " "))
+			for _, want := range []string{"inspect the current behavior", "targeted verification", "broader affected checks", "adjacent flows"} {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("broad outcome steps %q do not include %q", joined, want)
+				}
+			}
+		})
+	}
+}
+
+func TestInferBroadOutcomeKeepsRiskAndTargetedPrecedence(t *testing.T) {
+	security := Infer("make this ready to launch and fix the auth permission bug")
+	if !security.TaskLike || security.Intent == nil || security.Intent.Class != "security" || security.Intent.Risk != "high" || !security.Intent.NeedsApproval || security.Intent.Completeness != "full" {
+		t.Fatalf("security broad outcome intent = %+v", security.Intent)
+	}
+
+	destructive := Infer("make this ready to launch and deploy it")
+	if !destructive.TaskLike || destructive.Intent == nil || destructive.Intent.Class != "change" || destructive.Intent.Risk != "high" || !destructive.Intent.NeedsApproval || destructive.Intent.Completeness != "full" {
+		t.Fatalf("destructive broad outcome intent = %+v", destructive.Intent)
+	}
+
+	for _, tc := range []struct {
+		prompt   string
+		taskLike bool
+	}{
+		{prompt: "update button text", taskLike: true},
+		{prompt: "update internal/auth.go", taskLike: true},
+		// "change" is not currently an action trigger. Keep this baseline
+		// behavior explicit rather than broadening unrelated task admission.
+		{prompt: "change button text", taskLike: false},
+	} {
+		t.Run(tc.prompt, func(t *testing.T) {
+			got := Infer(tc.prompt)
+			if got.TaskLike != tc.taskLike {
+				t.Fatalf("targeted request task_like=%v, want %v: %+v", got.TaskLike, tc.taskLike, got)
+			}
+			if !tc.taskLike {
+				return
+			}
+			if got.Intent == nil || got.Intent.Class == "readiness" || got.Intent.Completeness != "targeted" {
+				t.Fatalf("targeted request widened unexpectedly: %+v", got.Intent)
+			}
+		})
+	}
+}
+
 func TestInferDocumentationRequestIsTaskLike(t *testing.T) {
 	got := Infer("instead, document the note workflow")
 	if !got.TaskLike || got.Intent == nil {

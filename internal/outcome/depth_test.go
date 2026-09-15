@@ -127,6 +127,21 @@ func TestPredictTaskDepthUsesBroadAuditBudgetForFullReview(t *testing.T) {
 	}
 }
 
+func TestPredictTaskDepthUsesBroadBudgetForInferredReadinessOutcome(t *testing.T) {
+	task, ok, err := taskstate.NewFromPrompt("readiness-session", "make this ready to launch")
+	if err != nil || !ok || task == nil || task.Intent == nil {
+		t.Fatalf("inferred readiness task=%+v ok=%v err=%v", task, ok, err)
+	}
+
+	got := PredictTaskDepth(task, ImpactProfile{Scope: ImpactNone, Risk: ImpactRiskLow, Confidence: "high"})
+	if got.Class != TaskDepthBroad || !containsTaskDepthSignal(got.Signals, TaskDepthSignalUserIntent) {
+		t.Fatalf("inferred readiness depth = %#v", got)
+	}
+	if got.Budget.Research != BudgetBroad || got.Budget.Verification != BudgetBroad || got.Budget.QualityLoops != maxQualityLoops {
+		t.Fatalf("inferred readiness budget = %#v", got.Budget)
+	}
+}
+
 func TestPredictTaskDepthEscalatesUnknownAndFragileState(t *testing.T) {
 	unknown := &taskstate.Task{}
 	got := PredictTaskDepth(unknown, ImpactProfile{Scope: ImpactUnknown, Risk: ImpactRiskMedium, Confidence: "low"})

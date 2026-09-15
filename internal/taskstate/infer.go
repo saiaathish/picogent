@@ -28,6 +28,18 @@ var problemPhrases = []string{
 	"error", "crash", "bug", "regression", "flaky", "stuck",
 }
 
+// broadOutcomePhrases identify compact requests whose user-visible wording
+// asks for a project-level result rather than a targeted edit. Keep the list
+// specific enough that informational questions about project health do not
+// become durable tasks merely because they mention the same nouns.
+var broadOutcomePhrases = []string{
+	"ready to launch", "launch-ready", "launch ready", "good enough to ship",
+	"get this repo healthy", "get the repo healthy",
+	"get this project healthy", "get the project healthy",
+	"make this repo healthy", "make the repo healthy",
+	"make this project healthy", "make the project healthy",
+}
+
 var informationalPrefixes = []string{
 	"what ", "why ", "how ", "when ", "where ", "who ", "explain ",
 	"tell me ", "show me ", "do you know ",
@@ -41,7 +53,8 @@ func Infer(prompt string) Inference {
 		return Inference{}
 	}
 	lower := strings.ToLower(goal)
-	action := containsDelimitedPhrase(lower, actionPhrases)
+	broadOutcome := isBroadOutcomeRequest(lower)
+	action := containsDelimitedPhrase(lower, actionPhrases) || broadOutcome
 	problem := containsDelimitedPhrase(lower, problemPhrases)
 	question := strings.HasSuffix(strings.TrimSpace(prompt), "?") || hasPrefix(lower, informationalPrefixes)
 	if question && !action && !problem {
@@ -51,7 +64,7 @@ func Infer(prompt string) Inference {
 		return Inference{}
 	}
 
-	intent, criteria := inferIntent(goal, lower, action, problem)
+	intent, criteria := inferIntent(goal, lower, action, problem, broadOutcome)
 	steps := make([]string, 0, len(criteria))
 	for _, criterion := range criteria {
 		steps = append(steps, criterion.Description)
@@ -76,7 +89,7 @@ func NewFromPrompt(sessionID, prompt string) (*Task, bool, error) {
 	return task, true, err
 }
 
-func inferIntent(goal, prompt string, action, problem bool) (*IntentContract, []Criterion) {
+func inferIntent(goal, prompt string, action, problem, broadOutcome bool) (*IntentContract, []Criterion) {
 	intent := &IntentContract{
 		Outcome:      goal,
 		Action:       "implementation",
@@ -94,6 +107,11 @@ func inferIntent(goal, prompt string, action, problem bool) (*IntentContract, []
 		class, intent.Risk, intent.NeedsApproval = "security", "high", true
 	case containsDelimitedPhrase(prompt, []string{"delete", "remove", "drop", "reset", "publish", "deploy", "send"}):
 		class, intent.Risk, intent.NeedsApproval = "change", "high", true
+	case broadOutcome:
+		// Outcome depth already treats readiness as broad. Reusing that compact
+		// intent class keeps this admission change within the existing Outcome
+		// Engine contract instead of creating a parallel project-health state.
+		class, intent.Action = "readiness", "readiness"
 	case containsDelimitedPhrase(prompt, []string{"bug", "broken", "crash", "error", "failure", "failing", "fails", "regression", "flaky", "debug", "diagnose"}):
 		class = "bug"
 	case containsDelimitedPhrase(prompt, []string{"ui", "gui", "frontend", "browser", "responsive", "layout", "button", "screen", "visual"}):
@@ -124,7 +142,7 @@ func inferIntent(goal, prompt string, action, problem bool) (*IntentContract, []
 	if containsDelimitedPhrase(prompt, []string{"ui", "gui", "frontend", "browser", "responsive", "layout", "button", "screen", "visual"}) {
 		intent.NeedsVisual = true
 	}
-	if containsDelimitedPhrase(prompt, []string{"finish", "complete", "all", "every", "professional", "make it good", "make this project good", "get this done"}) {
+	if broadOutcome || containsDelimitedPhrase(prompt, []string{"finish", "complete", "all", "every", "professional", "make it good", "make this project good", "get this done"}) {
 		intent.Completeness = "full"
 	}
 	if intent.NeedsApproval && intent.Risk == "high" {
@@ -135,6 +153,10 @@ func inferIntent(goal, prompt string, action, problem bool) (*IntentContract, []
 	}
 	intent.Class = class
 	return intent, intentCriteria(*intent)
+}
+
+func isBroadOutcomeRequest(prompt string) bool {
+	return containsDelimitedPhrase(prompt, broadOutcomePhrases)
 }
 
 func intentCriteria(intent IntentContract) []Criterion {
