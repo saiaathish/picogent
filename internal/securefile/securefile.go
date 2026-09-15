@@ -28,6 +28,12 @@ var ErrLocked = errors.New("secure file is locked")
 // depending on diagnostic text.
 var ErrReadLimit = errors.New("secure file read limit exceeded")
 
+// ErrReadChanged reports that a secure read opened an entry whose directory
+// name no longer identifies the same inode/handle before bytes were consumed.
+// Callers can use errors.Is to distinguish this fail-closed identity conflict
+// from malformed content or an ordinary read failure.
+var ErrReadChanged = errors.New("secure file changed during read")
+
 // EnsureDir creates path and its missing parents while rejecting
 // application-created symlink components. It is useful for a separate lock
 // file that must be opened before the first document write.
@@ -187,7 +193,12 @@ func readFile(path string, maxBytes int) ([]byte, error) {
 		return nil, err
 	}
 	defer root.Close()
-	return readOpenedFile(root, name, path, maxBytes, true)
+	for attempt := 0; ; attempt++ {
+		data, readErr := readOpenedFile(root, name, path, maxBytes, true)
+		if !errors.Is(readErr, ErrReadChanged) || attempt >= maxReadIdentityRetries {
+			return data, readErr
+		}
+	}
 }
 
 func readFilePrefix(path string, maxBytes int) ([]byte, error) {
@@ -196,8 +207,15 @@ func readFilePrefix(path string, maxBytes int) ([]byte, error) {
 		return nil, err
 	}
 	defer root.Close()
-	return readOpenedFile(root, name, path, maxBytes, false)
+	for attempt := 0; ; attempt++ {
+		data, readErr := readOpenedFile(root, name, path, maxBytes, false)
+		if !errors.Is(readErr, ErrReadChanged) || attempt >= maxReadIdentityRetries {
+			return data, readErr
+		}
+	}
 }
+
+const maxReadIdentityRetries = 8
 
 func readOpenedFile(root secureParent, name, path string, maxBytes int, rejectOversized bool) ([]byte, error) {
 	info, err := root.stat(name)
@@ -215,6 +233,25 @@ func readOpenedFile(root secureParent, name, path string, maxBytes int, rejectOv
 	if err != nil {
 		_ = file.Close()
 		return nil, err
+	}
+	closeRead := func(readErr error) ([]byte, error) {
+		unlockErr := unlock()
+		closeErr := file.Close()
+		return nil, errors.Join(readErr, unlockErr, closeErr)
+	}
+	matched, err := root.sameEntry(info, file)
+	if err != nil {
+		return closeRead(fmt.Errorf("verify secure file %q opened identity: %w", path, err))
+	}
+	if !matched {
+		return closeRead(fmt.Errorf("secure file %q changed before read: %w", path, ErrReadChanged))
+	}
+	matched, err = root.same(name, file)
+	if err != nil {
+		return closeRead(fmt.Errorf("verify secure file %q identity: %w", path, err))
+	}
+	if !matched {
+		return closeRead(fmt.Errorf("secure file %q changed before read: %w", path, ErrReadChanged))
 	}
 	var reader io.Reader = file
 	if maxBytes > 0 {
@@ -415,8 +452,9 @@ const (
 )
 
 type secureEntry struct {
-	kind secureEntryKind
-	mode os.FileMode
+	kind     secureEntryKind
+	mode     os.FileMode
+	identity any
 }
 
 // secureParent is a descriptor/handle-anchored parent directory. Platform
@@ -425,6 +463,7 @@ type secureEntry struct {
 type secureParent interface {
 	Close() error
 	stat(name string) (secureEntry, error)
+	sameEntry(entry secureEntry, source *os.File) (bool, error)
 	same(name string, source *os.File) (bool, error)
 	openRead(name string) (*os.File, error)
 	openLock(name string) (*os.File, error)

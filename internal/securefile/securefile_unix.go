@@ -124,17 +124,45 @@ func (p *unixParent) stat(name string) (secureEntry, error) {
 	if err := unix.Fstatat(p.fd, name, &st, unix.AT_SYMLINK_NOFOLLOW); err != nil {
 		return secureEntry{}, err
 	}
+	identity := unixFileIdentityFromStat(&st)
 	mode := uint32(st.Mode)
 	switch mode & uint32(unix.S_IFMT) {
 	case uint32(unix.S_IFREG):
-		return secureEntry{kind: secureEntryRegular, mode: os.FileMode(mode & 0o7777)}, nil
+		return secureEntry{kind: secureEntryRegular, mode: os.FileMode(mode & 0o7777), identity: identity}, nil
 	case uint32(unix.S_IFDIR):
-		return secureEntry{kind: secureEntryDirectory, mode: os.FileMode(mode & 0o7777)}, nil
+		return secureEntry{kind: secureEntryDirectory, mode: os.FileMode(mode & 0o7777), identity: identity}, nil
 	case uint32(unix.S_IFLNK):
-		return secureEntry{kind: secureEntrySymlink, mode: os.FileMode(mode & 0o7777)}, nil
+		return secureEntry{kind: secureEntrySymlink, mode: os.FileMode(mode & 0o7777), identity: identity}, nil
 	default:
-		return secureEntry{kind: secureEntryOther, mode: os.FileMode(mode & 0o7777)}, nil
+		return secureEntry{kind: secureEntryOther, mode: os.FileMode(mode & 0o7777), identity: identity}, nil
 	}
+}
+
+type unixFileIdentity struct {
+	dev uint64
+	ino uint64
+}
+
+func unixFileIdentityFromStat(st *unix.Stat_t) unixFileIdentity {
+	if st == nil {
+		return unixFileIdentity{}
+	}
+	return unixFileIdentity{dev: uint64(st.Dev), ino: uint64(st.Ino)}
+}
+
+func (p *unixParent) sameEntry(entry secureEntry, source *os.File) (bool, error) {
+	if source == nil {
+		return false, errors.New("secure entry identity source is nil")
+	}
+	expected, ok := entry.identity.(unixFileIdentity)
+	if !ok {
+		return false, errors.New("secure entry identity is unavailable")
+	}
+	var actual unix.Stat_t
+	if err := unix.Fstat(int(source.Fd()), &actual); err != nil {
+		return false, fmt.Errorf("stat secure entry identity source: %w", err)
+	}
+	return expected == unixFileIdentityFromStat(&actual), nil
 }
 
 func (p *unixParent) same(name string, source *os.File) (bool, error) {

@@ -107,7 +107,22 @@ func (p *rootParent) stat(name string) (secureEntry, error) {
 	case info.IsDir():
 		kind = secureEntryDirectory
 	}
-	return secureEntry{kind: kind, mode: info.Mode().Perm()}, nil
+	return secureEntry{kind: kind, mode: info.Mode().Perm(), identity: info}, nil
+}
+
+func (p *rootParent) sameEntry(entry secureEntry, source *os.File) (bool, error) {
+	if source == nil {
+		return false, errors.New("secure entry identity source is nil")
+	}
+	expected, ok := entry.identity.(os.FileInfo)
+	if !ok {
+		return false, errors.New("secure entry identity is unavailable")
+	}
+	actual, err := source.Stat()
+	if err != nil {
+		return false, fmt.Errorf("stat secure entry identity source: %w", err)
+	}
+	return os.SameFile(expected, actual), nil
 }
 
 func (p *rootParent) same(name string, source *os.File) (bool, error) {

@@ -52,6 +52,90 @@ func TestReadFileMissingPreservesOSNotExist(t *testing.T) {
 	}
 }
 
+type readIdentityParent struct {
+	secureParent
+	entryMatched bool
+	matched      bool
+}
+
+func (p *readIdentityParent) sameEntry(secureEntry, *os.File) (bool, error) {
+	return p.entryMatched, nil
+}
+
+func (p *readIdentityParent) same(string, *os.File) (bool, error) {
+	return p.matched, nil
+}
+
+func TestReadOpenedFileRejectsIdentityChangeBeforeConsumption(t *testing.T) {
+	parent := t.TempDir()
+	path := filepath.Join(parent, "state.json")
+	if err := os.WriteFile(path, []byte("trusted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := openSecureParent(parent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	reader := &readIdentityParent{secureParent: root, entryMatched: true, matched: false}
+	data, err := readOpenedFile(reader, "state.json", path, 1024, true)
+	if !errors.Is(err, ErrReadChanged) {
+		t.Fatalf("readOpenedFile error = %v, want ErrReadChanged", err)
+	}
+	if data != nil {
+		t.Fatalf("identity-mismatched read returned bytes: %q", data)
+	}
+}
+
+func TestReadOpenedFileRejectsPreOpenIdentityChange(t *testing.T) {
+	parent := t.TempDir()
+	path := filepath.Join(parent, "state.json")
+	if err := os.WriteFile(path, []byte("trusted\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := openSecureParent(parent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	reader := &readIdentityParent{secureParent: root, entryMatched: false, matched: true}
+	data, err := readOpenedFile(reader, "state.json", path, 1024, true)
+	if !errors.Is(err, ErrReadChanged) {
+		t.Fatalf("readOpenedFile error = %v, want ErrReadChanged", err)
+	}
+	if data != nil {
+		t.Fatalf("pre-open identity-mismatched read returned bytes: %q", data)
+	}
+}
+
+func TestReadOpenedFileAcceptsMatchingIdentity(t *testing.T) {
+	parent := t.TempDir()
+	path := filepath.Join(parent, "state.json")
+	const want = "trusted\n"
+	if err := os.WriteFile(path, []byte(want), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	root, err := openSecureParent(parent, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+
+	reader := &readIdentityParent{secureParent: root, entryMatched: true, matched: true}
+	data, err := readOpenedFile(reader, "state.json", path, 1024, true)
+	if err != nil {
+		t.Fatalf("readOpenedFile error = %v", err)
+	}
+	if string(data) != want {
+		t.Fatalf("readOpenedFile = %q, want %q", data, want)
+	}
+}
+
 func TestWriteAtomicDurableFailsBeforePublicationWhenParentSyncFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	if err := os.WriteFile(path, []byte("before\n"), 0o600); err != nil {
