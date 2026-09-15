@@ -28,6 +28,12 @@ var ErrLocked = errors.New("secure file is locked")
 // depending on diagnostic text.
 var ErrReadLimit = errors.New("secure file read limit exceeded")
 
+// ErrReadChanged reports that a secure read opened an entry whose directory
+// name no longer identifies the same inode/handle before bytes were consumed.
+// Callers can use errors.Is to distinguish this fail-closed identity conflict
+// from malformed content or an ordinary read failure.
+var ErrReadChanged = errors.New("secure file changed during read")
+
 // EnsureDir creates path and its missing parents while rejecting
 // application-created symlink components. It is useful for a separate lock
 // file that must be opened before the first document write.
@@ -215,6 +221,17 @@ func readOpenedFile(root secureParent, name, path string, maxBytes int, rejectOv
 	if err != nil {
 		_ = file.Close()
 		return nil, err
+	}
+	matched, err := root.same(name, file)
+	if err != nil {
+		unlockErr := unlock()
+		closeErr := file.Close()
+		return nil, errors.Join(fmt.Errorf("verify secure file %q identity: %w", path, err), unlockErr, closeErr)
+	}
+	if !matched {
+		unlockErr := unlock()
+		closeErr := file.Close()
+		return nil, errors.Join(fmt.Errorf("secure file %q changed before read: %w", path, ErrReadChanged), unlockErr, closeErr)
 	}
 	var reader io.Reader = file
 	if maxBytes > 0 {
