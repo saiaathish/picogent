@@ -3,6 +3,7 @@ package benchmark
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -63,13 +64,35 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 	if err := report.Validate(); err != nil {
 		t.Fatalf("validate exact source-pair report: %v", err)
 	}
-	persistOutcomeQualityExactReport(t, report)
-	wantObservations := len(DefaultOutcomeQualityScenarios()) * 2 * policy.Repetitions
+	if err := finalizeOutcomeQualityExactReport(context.Background(), report, outcomeQualityExactReportFinalization{
+		Policy:               policy,
+		Baseline:             OutcomeQualitySourceBinding{Target: baselineTarget, Workspace: baselineSource},
+		Candidate:            OutcomeQualitySourceBinding{Target: candidateTarget, Workspace: candidateSource},
+		ProviderRequestCount: provider.requestCount(),
+		ValidateSourcePair:   ValidateOutcomeQualitySourcePair,
+		Persist:              persistOutcomeQualityExactReport,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+}
+
+type outcomeQualityExactReportFinalization struct {
+	Policy               OutcomeQualityPolicy
+	Baseline             OutcomeQualitySourceBinding
+	Candidate            OutcomeQualitySourceBinding
+	ProviderRequestCount int
+	ValidateSourcePair   func(context.Context, OutcomeQualitySourceBinding, OutcomeQualitySourceBinding) error
+	Persist              func(OutcomeQualityReport) error
+}
+
+func finalizeOutcomeQualityExactReport(ctx context.Context, report OutcomeQualityReport, cfg outcomeQualityExactReportFinalization) error {
+	wantObservations := len(DefaultOutcomeQualityScenarios()) * 2 * cfg.Policy.Repetitions
 	if len(report.Observations) != wantObservations {
-		t.Fatalf("observations=%d, want %d", len(report.Observations), wantObservations)
+		return fmt.Errorf("observations=%d, want %d", len(report.Observations), wantObservations)
 	}
 	if report.Status != OutcomeReportComplete || len(report.Unverified) != 0 {
-		t.Fatalf("report status=%q unverified=%v, want complete controlled transcript evidence", report.Status, report.Unverified)
+		return fmt.Errorf("report status=%q unverified=%v, want complete controlled transcript evidence", report.Status, report.Unverified)
 	}
 
 	legacyObservations := 0
@@ -84,7 +107,7 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 				observation.Metrics.VerificationQuality != OutcomeVerificationPass ||
 				observation.Metrics.Evidence != EvidenceCurrent ||
 				len(observation.Unverified) != 0 {
-				t.Fatalf("legacy observation=%#v, want exact head and complete controlled transcript metrics", observation)
+				return fmt.Errorf("legacy observation=%#v, want exact head and complete controlled transcript metrics", observation)
 			}
 		case OutcomeVariantCandidate:
 			candidateObservations++
@@ -94,44 +117,184 @@ func TestRunOutcomeQualityExactSourcePairMatrix(t *testing.T) {
 				observation.Metrics.VerificationQuality != OutcomeVerificationPass ||
 				observation.Metrics.Evidence != EvidenceCurrent ||
 				len(observation.Unverified) != 0 {
-				t.Fatalf("candidate observation=%#v, want exact head and complete controlled transcript metrics", observation)
+				return fmt.Errorf("candidate observation=%#v, want exact head and complete controlled transcript metrics", observation)
 			}
 		default:
-			t.Fatalf("unexpected observation variant %q", observation.Variant)
+			return fmt.Errorf("unexpected observation variant %q", observation.Variant)
 		}
 	}
-	if legacyObservations != len(DefaultOutcomeQualityScenarios())*policy.Repetitions || candidateObservations != legacyObservations {
-		t.Fatalf("legacy observations=%d candidate observations=%d, want %d each", legacyObservations, candidateObservations, len(DefaultOutcomeQualityScenarios())*policy.Repetitions)
+	if legacyObservations != len(DefaultOutcomeQualityScenarios())*cfg.Policy.Repetitions || candidateObservations != legacyObservations {
+		return fmt.Errorf("legacy observations=%d candidate observations=%d, want %d each", legacyObservations, candidateObservations, len(DefaultOutcomeQualityScenarios())*cfg.Policy.Repetitions)
 	}
-	if got := provider.requestCount(); got != legacyObservations*4 {
-		t.Fatalf("legacy provider requests=%d, want four calls per v3 observation (%d)", got, legacyObservations*4)
+	if cfg.ProviderRequestCount != legacyObservations*4 {
+		return fmt.Errorf("legacy provider requests=%d, want four calls per v3 observation (%d)", cfg.ProviderRequestCount, legacyObservations*4)
 	}
-	if err := ValidateOutcomeQualitySourcePair(context.Background(),
-		OutcomeQualitySourceBinding{Target: baselineTarget, Workspace: baselineSource},
-		OutcomeQualitySourceBinding{Target: candidateTarget, Workspace: candidateSource},
-	); err != nil {
-		t.Fatalf("source pair changed during exact matrix: %v", err)
+	if cfg.ValidateSourcePair == nil {
+		return fmt.Errorf("exact source-pair validator is required")
 	}
-
+	if err := cfg.ValidateSourcePair(ctx, cfg.Baseline, cfg.Candidate); err != nil {
+		return fmt.Errorf("source pair changed during exact matrix: %w", err)
+	}
+	if cfg.Persist == nil {
+		return fmt.Errorf("exact source-pair report writer is required")
+	}
+	return cfg.Persist(report)
 }
 
-func persistOutcomeQualityExactReport(t *testing.T, report OutcomeQualityReport) {
-	t.Helper()
+func persistOutcomeQualityExactReport(report OutcomeQualityReport) error {
 	reportPath := strings.TrimSpace(os.Getenv("PICOGENT_OUTCOME_QUALITY_REPORT"))
 	if reportPath == "" {
-		return
+		return nil
 	}
+	return writeOutcomeQualityExactReport(report, reportPath)
+}
+
+func writeOutcomeQualityExactReport(report OutcomeQualityReport, reportPath string) error {
 	if !filepath.IsAbs(reportPath) {
-		t.Fatalf("PICOGENT_OUTCOME_QUALITY_REPORT must be absolute, got %q", reportPath)
+		return fmt.Errorf("PICOGENT_OUTCOME_QUALITY_REPORT must be absolute, got %q", reportPath)
 	}
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
-		t.Fatalf("encode exact source-pair report: %v", err)
+		return fmt.Errorf("encode exact source-pair report: %w", err)
 	}
 	data = append(data, '\n')
 	if err := os.WriteFile(reportPath, data, 0o600); err != nil {
-		t.Fatalf("write exact source-pair report: %v", err)
+		return fmt.Errorf("write exact source-pair report: %w", err)
 	}
+	return nil
+}
+
+func TestFinalizeOutcomeQualityExactReportPersistsOnlyAfterFinalValidation(t *testing.T) {
+	report, policy := completeOutcomeQualityExactReport(t)
+
+	t.Run("does not write after an observation-count failure", func(t *testing.T) {
+		reportPath := filepath.Join(t.TempDir(), "outcome-quality-report.json")
+		incomplete := report
+		incomplete.Observations = incomplete.Observations[:len(incomplete.Observations)-1]
+		persisted := false
+
+		err := finalizeOutcomeQualityExactReport(context.Background(), incomplete, outcomeQualityExactReportFinalization{
+			Policy:               policy,
+			ProviderRequestCount: 0,
+			ValidateSourcePair: func(context.Context, OutcomeQualitySourceBinding, OutcomeQualitySourceBinding) error {
+				t.Fatal("source-pair validation must not run after an observation-count failure")
+				return nil
+			},
+			Persist: func(report OutcomeQualityReport) error {
+				persisted = true
+				return writeOutcomeQualityExactReport(report, reportPath)
+			},
+		})
+		if err == nil || !strings.Contains(err.Error(), "observations=") {
+			t.Fatalf("finalization error=%v, want observation-count failure", err)
+		}
+		if persisted {
+			t.Fatal("report writer ran after an observation-count failure")
+		}
+		if _, statErr := os.Stat(reportPath); !os.IsNotExist(statErr) {
+			t.Fatalf("report path exists after an observation-count failure: %v", statErr)
+		}
+	})
+
+	t.Run("does not write after a post-run source-pair failure", func(t *testing.T) {
+		reportPath := filepath.Join(t.TempDir(), "outcome-quality-report.json")
+		persisted := false
+
+		err := finalizeOutcomeQualityExactReport(context.Background(), report, outcomeQualityExactReportFinalization{
+			Policy:               policy,
+			ProviderRequestCount: len(DefaultOutcomeQualityScenarios()) * policy.Repetitions * 4,
+			ValidateSourcePair: func(context.Context, OutcomeQualitySourceBinding, OutcomeQualitySourceBinding) error {
+				return fmt.Errorf("source worktree is no longer clean")
+			},
+			Persist: func(report OutcomeQualityReport) error {
+				persisted = true
+				return writeOutcomeQualityExactReport(report, reportPath)
+			},
+		})
+		if err == nil || !strings.Contains(err.Error(), "source pair changed during exact matrix") {
+			t.Fatalf("finalization error=%v, want source-pair failure", err)
+		}
+		if persisted {
+			t.Fatal("report writer ran after a source-pair failure")
+		}
+		if _, statErr := os.Stat(reportPath); !os.IsNotExist(statErr) {
+			t.Fatalf("report path exists after a source-pair failure: %v", statErr)
+		}
+	})
+
+	t.Run("writes one valid report after every final check passes", func(t *testing.T) {
+		reportPath := filepath.Join(t.TempDir(), "outcome-quality-report.json")
+		writes := 0
+
+		err := finalizeOutcomeQualityExactReport(context.Background(), report, outcomeQualityExactReportFinalization{
+			Policy:               policy,
+			Baseline:             OutcomeQualitySourceBinding{Target: outcomeQualityExactSourceTarget(OutcomeQualityLegacySourceHead), Workspace: "baseline"},
+			Candidate:            OutcomeQualitySourceBinding{Target: outcomeQualityExactSourceTarget(outcomeQualityExactCandidateHead), Workspace: "candidate"},
+			ProviderRequestCount: len(DefaultOutcomeQualityScenarios()) * policy.Repetitions * 4,
+			ValidateSourcePair: func(_ context.Context, baseline, candidate OutcomeQualitySourceBinding) error {
+				if baseline.Target.SourceHead != OutcomeQualityLegacySourceHead || candidate.Target.SourceHead != outcomeQualityExactCandidateHead {
+					return fmt.Errorf("unexpected source heads baseline=%q candidate=%q", baseline.Target.SourceHead, candidate.Target.SourceHead)
+				}
+				return nil
+			},
+			Persist: func(report OutcomeQualityReport) error {
+				writes++
+				return writeOutcomeQualityExactReport(report, reportPath)
+			},
+		})
+		if err != nil {
+			t.Fatalf("finalize exact source-pair report: %v", err)
+		}
+		if writes != 1 {
+			t.Fatalf("writes=%d, want 1", writes)
+		}
+		info, err := os.Stat(reportPath)
+		if err != nil {
+			t.Fatalf("stat persisted report: %v", err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Fatalf("persisted report permissions=%#o, want 0600", got)
+		}
+		data, err := os.ReadFile(reportPath)
+		if err != nil {
+			t.Fatalf("read persisted report: %v", err)
+		}
+		var got OutcomeQualityReport
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Fatalf("decode persisted report: %v", err)
+		}
+		if err := got.Validate(); err != nil {
+			t.Fatalf("validate persisted report: %v", err)
+		}
+		if got.Baseline.SourceHead != OutcomeQualityLegacySourceHead || got.Candidate.SourceHead != outcomeQualityExactCandidateHead {
+			t.Fatalf("persisted report heads baseline=%q candidate=%q", got.Baseline.SourceHead, got.Candidate.SourceHead)
+		}
+	})
+}
+
+func completeOutcomeQualityExactReport(t *testing.T) (OutcomeQualityReport, OutcomeQualityPolicy) {
+	t.Helper()
+	cfg := testOutcomeQualityRunnerConfig(2)
+	report, err := RunOutcomeQualityMatrix(context.Background(), cfg, NewOutcomeQualityAgentExecutor())
+	if err != nil {
+		t.Fatalf("run complete exact-report fixture: %v", err)
+	}
+	report.Baseline = outcomeQualityExactSourceTarget(OutcomeQualityLegacySourceHead)
+	report.Candidate = outcomeQualityExactSourceTarget(outcomeQualityExactCandidateHead)
+	for index := range report.Observations {
+		switch report.Observations[index].Variant {
+		case OutcomeVariantBaseline:
+			report.Observations[index].SourceHead = OutcomeQualityLegacySourceHead
+		case OutcomeVariantCandidate:
+			report.Observations[index].SourceHead = outcomeQualityExactCandidateHead
+		default:
+			t.Fatalf("fixture observation variant=%q", report.Observations[index].Variant)
+		}
+	}
+	if err := report.Validate(); err != nil {
+		t.Fatalf("validate complete exact-report fixture: %v", err)
+	}
+	return report, cfg.Policy
 }
 
 func outcomeQualityExactSourceTarget(head string) OutcomeQualityTarget {
