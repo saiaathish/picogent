@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/saiaathish/picogent/internal/agent"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
@@ -41,11 +42,12 @@ func TestSubmitBroadOutcomeUsesBoundedAdmission(t *testing.T) {
 	cfg.Workspace = workspace
 	client := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}
 	ag := agent.New(cfg, client, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	var emitted []tea.Msg
 	m := &model{
 		cfg:       cfg,
 		ag:        ag,
 		vp:        viewport.New(80, 20),
-		h:         &handler{permCh: make(chan perm.Decision, 1)},
+		h:         &handler{permCh: make(chan perm.Decision, 1), send: func(msg tea.Msg) { emitted = append(emitted, msg) }},
 		sessionID: "tui-admission-surface",
 	}
 
@@ -70,8 +72,8 @@ func TestSubmitBroadOutcomeUsesBoundedAdmission(t *testing.T) {
 			t.Fatalf("raw project-health payload reached TUI history: %q", message.Content)
 		}
 	}
-	for _, line := range m.lines {
-		if strings.Contains(line.Text, "project_health") || strings.Contains(line.Text, "picogent.project-health.v1") {
+	for _, msg := range emitted {
+		if line, ok := msg.(logMsg); ok && (strings.Contains(line.Text, "project_health") || strings.Contains(line.Text, "picogent.project-health.v1")) {
 			t.Fatalf("TUI exposed admission output: %#v", line)
 		}
 	}
