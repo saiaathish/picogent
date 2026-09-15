@@ -1,6 +1,6 @@
 # V4 exact-head outcome-quality comparison
 
-Status: the prior exact source-pair matrix for [#422](https://github.com/saiaathish/picogent/issues/422) and [#246](https://github.com/saiaathishkarthik/picogent/issues/246) remains preserved in the [2026-09-04 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json). The refreshed run for [#435](https://github.com/saiaathish/picogent/issues/435) is recorded in the [2026-09-05 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-05.json) and remains `INCONCLUSIVE` because the v3 baseline still lacks comparable structured telemetry.
+Status: the prior exact source-pair matrix for [#422](https://github.com/saiaathish/picogent/issues/422) and [#246](https://github.com/saiaathishkarthik/picogent/issues/246) remains preserved in the [2026-09-04 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json). The refreshed run for [#435](https://github.com/saiaathish/picogent/issues/435) is recorded in the [2026-09-05 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-05.json) and remains `INCONCLUSIVE` because it was captured before the compatible controlled-transcript metric layer. [#727](https://github.com/saiaathish/picogent/issues/727) defines that layer; [#728](https://github.com/saiaathish/picogent/issues/728) must run a new exact-head matrix before any comparison result changes.
 
 The post-#442 rerun targets candidate source `a6d3af39bb24559fe2d71b4063cb1b8411cd2c7e`.
 Both `advanced-architecture` baseline observations now reach the normal
@@ -123,7 +123,7 @@ The recorded result is not a v4 quality win or regression claim:
 
 | Variant | Observations | Observed boundary |
 | --- | ---: | --- |
-| v3 baseline | 40 | All remain `INCONCLUSIVE` because the exact v3 source does not expose structured repair-count/context-growth telemetry; both `advanced-architecture` observations reached the same boundary without a fixture-write failure. |
+| v3 baseline | 40 | All remain `INCONCLUSIVE` because the historical report used the prior adapter, which lacked compatible repair-count/context-growth telemetry; both `advanced-architecture` observations reached the same boundary without a fixture-write failure. |
 | v4 candidate | 40 | All passed the deterministic fixture with current verification, including the required full three-file capture. |
 | Comparison | 80 | No v3/v4 quality delta is claimable because the baseline telemetry boundary remains incomplete; candidate fixture proof is complete and the prior baseline fixture failures are gone. |
 
@@ -145,6 +145,8 @@ comparison purposes.
 This is a complete observation-count and provenance checkpoint, not a
 quality-improvement result. The candidate full-fixture proof gap is closed for
 this deterministic lane, and the post-#442 rerun removes the two recorded
-baseline fixture-write failures. A future comparison must still add explicit
-compatible proof for the v3 telemetry boundary. It must not turn deterministic
-fixture coverage into a broad autonomous-coding claim.
+baseline fixture-write failures. The controlled-transcript implementation in
+#727 does not relabel this historical report. #728 must declare a new candidate
+SHA, use clean source worktrees, and preserve a new report before a comparison
+can claim any compatible delta. It must not turn deterministic fixture coverage
+into a broad autonomous-coding claim.

@@ -18,6 +18,12 @@ import (
 // protocol used to isolate a benchmark target process.
 const OutcomeQualityWorkerProtocol = "picogent.v4.outcome-quality-worker.v1"
 
+// OutcomeQualityTranscriptMetricContract identifies the common request/
+// response measurement semantics required for a source-pair comparison. A
+// worker that predates this declaration cannot be treated as comparable just
+// because it still speaks the surrounding worker protocol.
+const OutcomeQualityTranscriptMetricContract = "picogent.v4.outcome-quality-transcript.v1"
+
 const (
 	maxOutcomeQualityWorkerRequestBytes  = 2 << 20
 	maxOutcomeQualityWorkerResponseBytes = 64 << 10
@@ -44,10 +50,11 @@ type OutcomeQualityWorkerRequest struct {
 // SourceHead is checked against the controller's target before the result is
 // admitted to the comparison report.
 type OutcomeQualityWorkerResponse struct {
-	Protocol   string                `json:"protocol"`
-	SourceHead string                `json:"source_head"`
-	Metrics    OutcomeQualityMetrics `json:"metrics"`
-	Unverified []string              `json:"unverified,omitempty"`
+	Protocol       string                `json:"protocol"`
+	MetricContract string                `json:"metric_contract"`
+	SourceHead     string                `json:"source_head"`
+	Metrics        OutcomeQualityMetrics `json:"metrics"`
+	Unverified     []string              `json:"unverified,omitempty"`
 }
 
 // OutcomeQualityProcessExecutor runs a worker command with one JSON request
@@ -128,10 +135,11 @@ func RunOutcomeQualityWorker(ctx context.Context, input io.Reader, output io.Wri
 		return fmt.Errorf("outcome-quality worker canceled: %w", err)
 	}
 	response := OutcomeQualityWorkerResponse{
-		Protocol:   OutcomeQualityWorkerProtocol,
-		SourceHead: sourceHead,
-		Metrics:    metrics,
-		Unverified: reasons,
+		Protocol:       OutcomeQualityWorkerProtocol,
+		MetricContract: OutcomeQualityTranscriptMetricContract,
+		SourceHead:     sourceHead,
+		Metrics:        metrics,
+		Unverified:     reasons,
 	}
 	return encodeOutcomeQualityWorkerResponse(output, response)
 }
@@ -382,6 +390,9 @@ func decodeOutcomeQualityWorkerResponse(input io.Reader) (OutcomeQualityWorkerRe
 	}
 	if response.Protocol != OutcomeQualityWorkerProtocol {
 		return OutcomeQualityWorkerResponse{}, fmt.Errorf("outcome-quality worker response protocol is unsupported")
+	}
+	if response.MetricContract != OutcomeQualityTranscriptMetricContract {
+		return OutcomeQualityWorkerResponse{}, fmt.Errorf("outcome-quality worker metric contract is unsupported")
 	}
 	if !validSHA(response.SourceHead) {
 		return OutcomeQualityWorkerResponse{}, fmt.Errorf("outcome-quality worker response source head is invalid")
