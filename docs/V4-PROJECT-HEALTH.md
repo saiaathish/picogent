@@ -52,6 +52,33 @@ a probability, health percentage, or security rating. Repository filenames and
 manifest-derived values remain untrusted data and are redacted before the
 bounded tool result is returned.
 
+## Admission routing cost control
+
+The agent also has a provider-independent control for the boundary that
+decides whether to admit one health observation. It exercises the real
+`admitProjectHealth` seam with a bounded synthetic report, so the broad case
+measures routing and contract construction while the tiny case must return
+before the health runner can be called:
+
+```sh
+GOMAXPROCS=2 GOFLAGS=-p=1 GOTOOLCHAIN=local go test ./internal/agent -run '^$' \
+  -bench '^BenchmarkProjectHealthAdmissionRouting$' -benchtime=100ms -benchmem -count=3
+```
+
+On 2026-09-15 on an Apple M3 arm64 macOS host with Go `1.26.6`, the three-run
+control measured:
+
+| Case | Time (min / median / max) | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| Broad admission | 341,977 / 343,605 / 343,967 ns/op | 34,776 | 367 |
+| Tiny request | 751.6 / 754.8 / 757.5 ns/op | 136 | 4 |
+
+The broad row performs one synthetic bounded attempt per benchmark iteration;
+the tiny row performs none. Setup, repository diagnosis, network, browser, and
+provider work are deliberately excluded. These values are local regression
+signals for the admission boundary, not a latency SLA, provider-quality
+measurement, or release evidence.
+
 ## Acceptance contract
 
 The slice is acceptable only when:
