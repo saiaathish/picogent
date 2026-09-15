@@ -170,8 +170,11 @@ func validateLiveProviderQualityEvidence(evidence LiveProviderQualityEvidence, e
 		if !ok || observed.PromptSHA256 != expectedPromptDigest {
 			return fmt.Errorf("live-provider quality evidence case %q has a non-canonical prompt digest", observed.ID)
 		}
-		if observed.LatencyMS < 1 || observed.LatencyMS > evidence.LatencyBudgetMS {
-			return fmt.Errorf("live-provider quality evidence case %q latency is outside the budget", observed.ID)
+		if observed.LatencyMS < 1 || observed.LatencyMS > maxLiveProviderQualityLatencyMS {
+			return fmt.Errorf("live-provider quality evidence case %q latency is outside the global maximum", observed.ID)
+		}
+		if observed.Verdict == VerdictPass && observed.LatencyMS > evidence.LatencyBudgetMS {
+			return fmt.Errorf("live-provider quality evidence case %q PASS latency is outside the budget", observed.ID)
 		}
 		if !observed.Verdict.valid() {
 			return fmt.Errorf("live-provider quality evidence case %q verdict is invalid: %q", observed.ID, observed.Verdict)
