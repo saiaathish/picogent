@@ -179,6 +179,60 @@ func TestLoadLiveProviderQualityEvidenceAllowsObservedFailedResult(t *testing.T)
 	}
 }
 
+func TestLoadLiveProviderQualityEvidenceAllowsSlowNonPassObservations(t *testing.T) {
+	for _, verdict := range []Verdict{VerdictFail, VerdictInconclusive} {
+		t.Run(string(verdict), func(t *testing.T) {
+			workspace := t.TempDir()
+			sha := strings.Repeat("2", 40)
+			evidence := validLiveProviderQualityEvidence(sha)
+			evidence.Verdict = verdict
+			evidence.Cases[0].Verdict = verdict
+			evidence.Cases[0].LatencyMS = maxLiveProviderQualityLatencyMS
+			evidence.LatencyMaxMS = maxLiveProviderQualityLatencyMS
+			artifact := filepath.Join(t.TempDir(), "live-provider-quality.json")
+			writeLiveProviderQualityEvidence(t, artifact, evidence)
+
+			loaded, _, err := loadLiveProviderQualityEvidence(workspace, artifact, sha)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.Verdict != verdict || loaded.Cases[0].LatencyMS != maxLiveProviderQualityLatencyMS {
+				t.Fatalf("loaded evidence = %+v", loaded)
+			}
+		})
+	}
+}
+
+func TestLoadLiveProviderQualityEvidenceRejectsSlowPassObservation(t *testing.T) {
+	workspace := t.TempDir()
+	sha := strings.Repeat("3", 40)
+	evidence := validLiveProviderQualityEvidence(sha)
+	evidence.Cases[0].LatencyMS = evidence.LatencyBudgetMS + 1
+	evidence.LatencyMaxMS = evidence.Cases[0].LatencyMS
+	artifact := filepath.Join(t.TempDir(), "live-provider-quality.json")
+	writeLiveProviderQualityEvidence(t, artifact, evidence)
+
+	if _, _, err := loadLiveProviderQualityEvidence(workspace, artifact, sha); err == nil || !strings.Contains(err.Error(), "PASS latency is outside the budget") {
+		t.Fatalf("slow PASS error = %v", err)
+	}
+}
+
+func TestLoadLiveProviderQualityEvidenceRejectsLatencyAboveGlobalMaximum(t *testing.T) {
+	workspace := t.TempDir()
+	sha := strings.Repeat("4", 40)
+	evidence := validLiveProviderQualityEvidence(sha)
+	evidence.Verdict = VerdictInconclusive
+	evidence.Cases[0].Verdict = VerdictInconclusive
+	evidence.Cases[0].LatencyMS = maxLiveProviderQualityLatencyMS + 1
+	evidence.LatencyMaxMS = evidence.Cases[0].LatencyMS
+	artifact := filepath.Join(t.TempDir(), "live-provider-quality.json")
+	writeLiveProviderQualityEvidence(t, artifact, evidence)
+
+	if _, _, err := loadLiveProviderQualityEvidence(workspace, artifact, sha); err == nil || !strings.Contains(err.Error(), "latency is outside the global maximum") {
+		t.Fatalf("over-maximum latency error = %v", err)
+	}
+}
+
 func validLiveProviderQualityEvidence(sha string) LiveProviderQualityEvidence {
 	promptDigest := func(id string) string {
 		digest, ok := fixedLiveProviderQualityPromptDigest(id)
