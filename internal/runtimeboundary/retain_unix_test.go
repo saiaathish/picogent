@@ -182,6 +182,9 @@ func TestLoadReportParentSwapNeverReadsOutside(t *testing.T) {
 	successfulLoads := 0
 	outsideMarkerObserved := false
 	for i := 0; i < hostileRetainLoadAttempts; i++ {
+		// Pace the victim loop so the restored trusted parent remains visible
+		// long enough to observe a valid in-tree load on hosted runners.
+		time.Sleep(hostileRetainLoadTrustedPause)
 		loaded, loadErr := LoadReport(artifact, sha)
 		if loadErr != nil {
 			continue
