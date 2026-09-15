@@ -1,6 +1,6 @@
 # V4 exact-head outcome-quality comparison
 
-Status: the prior exact source-pair matrix for [#422](https://github.com/saiaathish/picogent/issues/422) and [#246](https://github.com/saiaathishkarthik/picogent/issues/246) remains preserved in the [2026-09-04 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json). The refreshed run for [#435](https://github.com/saiaathish/picogent/issues/435) is recorded in the [2026-09-05 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-05.json) and remains `INCONCLUSIVE` because it predates the compatible controlled-transcript metric layer. [#727](https://github.com/saiaathish/picogent/issues/727) defines that layer. The exact-head rerun for [#728](https://github.com/saiaathish/picogent/issues/728) is preserved in the [2026-09-15 report](V4-OUTCOME-QUALITY-REPORT-2026-09-15.json) and is `complete` for that deterministic measurement boundary only.
+Status: the prior exact source-pair matrix for [#422](https://github.com/saiaathish/picogent/issues/422) and [#246](https://github.com/saiaathishkarthik/picogent/issues/246) remains preserved in the [2026-09-04 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-04.json). The refreshed run for [#435](https://github.com/saiaathish/picogent/issues/435) is recorded in the [2026-09-05 bounded report](V4-OUTCOME-QUALITY-REPORT-2026-09-05.json) and remains `INCONCLUSIVE` because it predates the compatible controlled-transcript metric layer. [#727](https://github.com/saiaathish/picogent/issues/727) defines that layer. The exact-head rerun for [#728](https://github.com/saiaathish/picogent/issues/728), refreshed after [#731](https://github.com/saiaathish/picogent/issues/731)'s artifact-finalization hardening, is preserved in the [2026-09-15 report](V4-OUTCOME-QUALITY-REPORT-2026-09-15.json) and is `complete` for that deterministic measurement boundary only.
 
 The outcome-quality contract and scripted executor are already defined in
 [`V4-OUTCOME-QUALITY-BENCHMARK.md`](V4-OUTCOME-QUALITY-BENCHMARK.md). This
@@ -91,13 +91,14 @@ evidence boundary.
 ## Current compatible controlled-transcript result
 
 Issue #728's clean exact-head rerun used separate clean source worktrees for
-the v3 baseline and current candidate. The opt-in controller at
-`d289a3d2ff4b0b617ae3a5418b1d9868e795618e` first validated the source pair,
-then completed the fixed matrix:
+the v3 baseline and current candidate. [#731](https://github.com/saiaathish/picogent/issues/731)
+reran that matrix from controller commit
+`c90acfbd95b07fba3659b8519779840613de2ca2`; it validates the source pair and
+every final evidence condition before persisting the artifact:
 
 ```sh
 PICOGENT_RUN_EXACT_OUTCOME_QUALITY_MATRIX=1 \
-PICOGENT_OUTCOME_QUALITY_REPORT=/private/tmp/picogent-v4-outcome-report-d289a3d.json \
+PICOGENT_OUTCOME_QUALITY_REPORT=/private/tmp/picogent-v4-outcome-report-c90acfb.json \
 GOMAXPROCS=2 GOFLAGS=-p=1 GOTOOLCHAIN=local \
 go test ./internal/benchmark -run '^TestRunOutcomeQualityExactSourcePairMatrix$' -count=1
 ```
@@ -105,13 +106,13 @@ go test ./internal/benchmark -run '^TestRunOutcomeQualityExactSourcePairMatrix$'
 The raw artifact is committed as
 [`V4-OUTCOME-QUALITY-REPORT-2026-09-15.json`](V4-OUTCOME-QUALITY-REPORT-2026-09-15.json).
 It passed `OutcomeQualityReport.Validate()` in the matrix test and has SHA-256
-`17328e118e55eeea2e72964c3274561b83753ab7281ea8b7bc0aa8bae6c75601`.
+`62487dddb39df5248f42c6aa3dbf9f4537c2a2b8bece75233eb56c2b0f537b09`.
 
 | Field | Recorded evidence |
 | --- | --- |
 | Baseline source | `a07943b31044049afb0142f39198244cd3c75218` |
 | Candidate source | `c11608747bb82b3e820009ee3f28498931758f12` |
-| Matrix controller head | `d289a3d2ff4b0b617ae3a5418b1d9868e795618e` |
+| Matrix controller head | `c90acfbd95b07fba3659b8519779840613de2ca2` |
 | Host/toolchain | `darwin/arm64`, `go1.26.6` |
 | Runner | `picogent-outcome-quality-runner-v1` |
 | Shared policy | 2 repetitions, 30-second observation timeout, 16,000 maximum tokens, 64 maximum model calls, 256 maximum tool calls, 32 maximum turns |
@@ -125,6 +126,11 @@ no evidence about repair effectiveness. The recorded controlled-transcript
 context-growth ranges are 785–818 bytes for the baseline and 733–765 bytes for
 the candidate. Those ranges are fixture measurements, not a broad quality or
 performance claim.
+
+The #731 controller retains the same bounded measurement result while making
+the artifact itself fail closed: a failed count, metric, provider-request, or
+post-run source-pair check writes no report. This is artifact-integrity evidence
+only; it does not broaden the deterministic measurement boundary.
 
 This closes the compatible deterministic measurement and provenance boundary
 for #728. It does not establish a live-provider quality win, a general
