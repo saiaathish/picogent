@@ -17,6 +17,8 @@ import (
 // than silently retaining the historical adapter gap.
 const outcomeQualityExactCandidateHead = "c11608747bb82b3e820009ee3f28498931758f12"
 
+const outcomeQualityExactReportFileMode = 0o600
+
 // TestRunOutcomeQualityExactSourcePairMatrix is opt-in because it builds two
 // source trees and launches 80 isolated observations. Hosted CI exercises the
 // fast contract and process-boundary tests by default; the exact evidence run
@@ -158,7 +160,7 @@ func writeOutcomeQualityExactReport(report OutcomeQualityReport, reportPath stri
 		return fmt.Errorf("encode exact source-pair report: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(reportPath, data, 0o600); err != nil {
+	if err := os.WriteFile(reportPath, data, outcomeQualityExactReportFileMode); err != nil {
 		return fmt.Errorf("write exact source-pair report: %w", err)
 	}
 	return nil
@@ -252,8 +254,8 @@ func TestFinalizeOutcomeQualityExactReportPersistsOnlyAfterFinalValidation(t *te
 		if err != nil {
 			t.Fatalf("stat persisted report: %v", err)
 		}
-		if got := info.Mode().Perm(); got != 0o600 {
-			t.Fatalf("persisted report permissions=%#o, want 0600", got)
+		if runtime.GOOS != "windows" && info.Mode().Perm() != outcomeQualityExactReportFileMode {
+			t.Fatalf("persisted report permissions=%#o, want %#o", info.Mode().Perm(), outcomeQualityExactReportFileMode)
 		}
 		data, err := os.ReadFile(reportPath)
 		if err != nil {
