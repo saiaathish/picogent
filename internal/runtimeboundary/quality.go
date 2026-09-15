@@ -14,11 +14,11 @@ import (
 )
 
 const (
-	LiveProviderQualityEvidenceSchema   = "picogent.v4.live-provider-quality-evidence.v1"
+	LiveProviderQualityEvidenceSchema   = "picogent.v4.live-provider-quality-evidence.v2"
 	MaxLiveProviderQualityEvidenceBytes = 48 << 10
 	LiveProviderQualityEvidenceEnv      = "PICOGENT_LIVE_PROVIDER_QUALITY_EVIDENCE"
 	LiveProviderQualityArtifactEnv      = "PICOGENT_LIVE_PROVIDER_QUALITY_ARTIFACT"
-	liveProviderQualityCampaign         = "fixed-no-tool-v1"
+	liveProviderQualityCampaign         = "fixed-no-tool-v2"
 	maxLiveProviderQualityLatencyMS     = int64(120000)
 )
 
@@ -34,10 +34,16 @@ var fixedLiveProviderQualityPrompts = map[string]string{
 	"constraint-following": "Return exactly three words: local first agent. Do not call tools, inspect files, or modify anything.",
 }
 
+var fixedLiveProviderQualityCanonicalResults = map[string]string{
+	"exact-token":          "LIVE_PROVIDER_QUALITY_OK",
+	"constraint-following": "local first agent",
+}
+
 // LiveProviderQualityEvidence is a secret-free record of a bounded quality
-// campaign. The loader binds prompt digests to the fixed prompt contract, but
-// result digests and provider identity remain self-reported because raw output
-// and credentials are intentionally not retained.
+// campaign. The loader binds prompt digests and deterministic PASS result
+// digests to the fixed prompt contract, but bounded-summary semantics and
+// provider identity remain self-reported because raw output and credentials
+// are intentionally not retained.
 type LiveProviderQualityEvidence struct {
 	Schema          string                            `json:"schema"`
 	Campaign        string                            `json:"campaign"`
@@ -170,6 +176,12 @@ func validateLiveProviderQualityEvidence(evidence LiveProviderQualityEvidence, e
 		if !observed.Verdict.valid() {
 			return fmt.Errorf("live-provider quality evidence case %q verdict is invalid: %q", observed.ID, observed.Verdict)
 		}
+		if observed.Verdict == VerdictPass {
+			expectedResultDigest, ok := fixedLiveProviderQualityCanonicalResultDigest(observed.ID)
+			if ok && observed.ResultSHA256 != expectedResultDigest {
+				return fmt.Errorf("live-provider quality evidence case %q has a non-canonical result digest", observed.ID)
+			}
+		}
 		if observed.LatencyMS > maxLatency {
 			maxLatency = observed.LatencyMS
 		}
@@ -206,5 +218,14 @@ func fixedLiveProviderQualityPromptDigest(id string) (string, bool) {
 		return "", false
 	}
 	digest := sha256.Sum256([]byte(prompt))
+	return hex.EncodeToString(digest[:]), true
+}
+
+func fixedLiveProviderQualityCanonicalResultDigest(id string) (string, bool) {
+	result, ok := fixedLiveProviderQualityCanonicalResults[id]
+	if !ok {
+		return "", false
+	}
+	digest := sha256.Sum256([]byte(result))
 	return hex.EncodeToString(digest[:]), true
 }

@@ -86,6 +86,17 @@ func TestLoadLiveProviderQualityEvidenceRejectsAdversarialArtifacts(t *testing.T
 		t.Fatal(err)
 	}
 
+	var resultMismatch map[string]any
+	if err := json.Unmarshal(validJSON, &resultMismatch); err != nil {
+		t.Fatal(err)
+	}
+	resultMismatchCases := resultMismatch["cases"].([]any)
+	resultMismatchCases[0].(map[string]any)["result_sha256"] = strings.Repeat("0", 64)
+	resultMismatchJSON, err := json.Marshal(resultMismatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	cases := []struct {
 		name string
 		data []byte
@@ -97,6 +108,7 @@ func TestLoadLiveProviderQualityEvidenceRejectsAdversarialArtifacts(t *testing.T
 		{name: "secret-shaped-unknown-field", data: secretJSON, want: "unknown field"},
 		{name: "missing-assertion", data: missingAssertionJSON, want: "explicitly assert"},
 		{name: "non-canonical-prompt-digest", data: promptMismatchJSON, want: "non-canonical prompt digest"},
+		{name: "non-canonical-result-digest", data: resultMismatchJSON, want: "non-canonical result digest"},
 	}
 
 	for _, tc := range cases {
@@ -148,11 +160,37 @@ func TestLoadLiveProviderQualityEvidenceRejectsIncompletePass(t *testing.T) {
 	}
 }
 
+func TestLoadLiveProviderQualityEvidenceAllowsObservedFailedResult(t *testing.T) {
+	workspace := t.TempDir()
+	sha := strings.Repeat("1", 40)
+	evidence := validLiveProviderQualityEvidence(sha)
+	evidence.Verdict = VerdictFail
+	evidence.Cases[0].Verdict = VerdictFail
+	evidence.Cases[0].ResultSHA256 = strings.Repeat("0", 64)
+	artifact := filepath.Join(t.TempDir(), "live-provider-quality.json")
+	writeLiveProviderQualityEvidence(t, artifact, evidence)
+
+	loaded, _, err := loadLiveProviderQualityEvidence(workspace, artifact, sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Verdict != VerdictFail || loaded.Cases[0].Verdict != VerdictFail {
+		t.Fatalf("loaded failed evidence = %+v", loaded)
+	}
+}
+
 func validLiveProviderQualityEvidence(sha string) LiveProviderQualityEvidence {
 	promptDigest := func(id string) string {
 		digest, ok := fixedLiveProviderQualityPromptDigest(id)
 		if !ok {
 			panic("missing fixed live-provider quality prompt: " + id)
+		}
+		return digest
+	}
+	resultDigest := func(id string) string {
+		digest, ok := fixedLiveProviderQualityCanonicalResultDigest(id)
+		if !ok {
+			return strings.Repeat("4", 64)
 		}
 		return digest
 	}
@@ -167,9 +205,9 @@ func validLiveProviderQualityEvidence(sha string) LiveProviderQualityEvidence {
 		ObservedAt:      "2026-09-06T12:00:00Z",
 		Verdict:         VerdictPass,
 		Cases: []LiveProviderQualityCaseEvidence{
-			{ID: "exact-token", PromptSHA256: promptDigest("exact-token"), ResultSHA256: strings.Repeat("2", 64), LatencyMS: 100, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
+			{ID: "exact-token", PromptSHA256: promptDigest("exact-token"), ResultSHA256: resultDigest("exact-token"), LatencyMS: 100, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
 			{ID: "bounded-summary", PromptSHA256: promptDigest("bounded-summary"), ResultSHA256: strings.Repeat("4", 64), LatencyMS: 300, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
-			{ID: "constraint-following", PromptSHA256: promptDigest("constraint-following"), ResultSHA256: strings.Repeat("6", 64), LatencyMS: 200, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
+			{ID: "constraint-following", PromptSHA256: promptDigest("constraint-following"), ResultSHA256: resultDigest("constraint-following"), LatencyMS: 200, Verdict: VerdictPass, ToolsUsed: false, MutationObserved: false},
 		},
 	}
 }
