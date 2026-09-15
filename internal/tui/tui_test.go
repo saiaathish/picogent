@@ -240,7 +240,7 @@ func TestAutomaticScopePrioritizesFocusedTurnOverDurableGoal(t *testing.T) {
 	fake := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}
 	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
 	m := &model{cfg: cfg, ag: a, vp: viewport.New(80, 20), h: &handler{permCh: make(chan perm.Decision, 1)}, sessionID: "scope-boundary"}
-	const broadGoal = "fix all flaky tests and make CI green"
+	const broadGoal = "make this ready to launch"
 	cmd := m.submit(broadGoal)
 	if cmd == nil {
 		t.Fatal("automatic scope did not start")

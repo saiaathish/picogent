@@ -99,3 +99,37 @@ func TestInferAutoPersistsExplicitProjectCompletionIntent(t *testing.T) {
 		})
 	}
 }
+
+func TestInferAutoPersistsClassifiedBroadOutcomeIntent(t *testing.T) {
+	for _, prompt := range []string{
+		"make this ready to launch",
+		"make this launch-ready",
+		"get this repo healthy",
+		"make this good enough to ship",
+	} {
+		t.Run(prompt, func(t *testing.T) {
+			decision := InferAuto(prompt, TaskAgent, "")
+			if !decision.GoalSet || decision.Goal != prompt {
+				t.Fatalf("decision = %#v, want persisted broad outcome %q", decision, prompt)
+			}
+		})
+	}
+}
+
+func TestInferAutoKeepsRiskPrecedenceOverBroadOutcomeGoal(t *testing.T) {
+	decision := InferAuto("make this ready to launch and delete old user data", TaskAgent, "")
+	if decision.GoalSet {
+		t.Fatalf("risk-bound request set inferred broad goal: %#v", decision)
+	}
+}
+
+func TestInferAutomaticScopeRetainsClassifiedBroadOutcomeGoal(t *testing.T) {
+	const prompt = "make this ready to launch"
+	decision := InferAutomaticScope(prompt, TaskPlan, "")
+	if decision.TaskMode != TaskPlan {
+		t.Fatalf("scoped task mode = %q, want %q", decision.TaskMode, TaskPlan)
+	}
+	if !decision.GoalSet || decision.Goal != prompt {
+		t.Fatalf("scoped decision = %#v, want retained broad outcome", decision)
+	}
+}
