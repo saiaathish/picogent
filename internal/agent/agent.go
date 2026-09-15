@@ -512,10 +512,15 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	lastVerification := ""
 	lastVerificationEvidence := verificationEvidence{}
 	taskBlocker := ""
-	// Give the first model request the latest durable task contract. The helper
-	// uses an explicitly unknown health observation, so recovery and steering
-	// state can guide the turn without reusing stale project-health data.
+	// Give the first model request the latest durable task contract. Broad turns
+	// may replace this with one fresh, bounded health observation; all other
+	// turns keep the explicit unknown-health boundary.
 	nextOutcomeFocus := outcomeFocusForTask(a.TaskSnapshot())
+	healthAdmission := a.admitProjectHealth(ctx, userText, taskMode, opts.ScopeBoundary, state, regCtx, gate)
+	if healthAdmission.attempted {
+		nextOutcomeFocus = healthAdmission.focus
+	}
+	healthAdmissionAttempted := healthAdmission.attempted
 	var pendingVisualParts []llm.Part
 	turnClosed := turnSequence == 0
 	var turnCloseErr error
@@ -598,10 +603,14 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			requestMessages = append(requestMessages, llm.Message{Role: "system", Content: nextOutcomeFocus})
 			nextOutcomeFocus = ""
 		}
+		toolSpecs := reg.Specs()
+		if healthAdmissionAttempted {
+			toolSpecs = withoutProjectHealth(toolSpecs)
+		}
 		out, err := state.LLM.Chat(ctx, llm.ChatRequest{
 			Model:        cfg.Model,
 			Messages:     requestMessages,
-			Tools:        reg.Specs(),
+			Tools:        toolSpecs,
 			ToolRound:    round,
 			Escalate:     round >= 10,
 			TaskMode:     string(taskMode),
@@ -781,6 +790,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		var pending []executed
 
 		for _, call := range msg.ToolCalls {
+			if call.Name == "project_health" && healthAdmissionAttempted {
+				// A provider may still emit a tool call that was not advertised. Keep
+				// the conversation structurally valid without running a second
+				// observation or exposing any health payload.
+				pending = append(pending, executed{call: call, text: projectHealthAdmissionAlreadyAttempted})
+				continue
+			}
 			if call.Name == "verify" {
 				if task := a.TaskSnapshot(); task != nil {
 					call.Arguments = includeChangedVerificationTargets(call.Arguments, task.ChangedFiles)
