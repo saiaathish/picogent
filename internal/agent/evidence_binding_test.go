@@ -154,6 +154,23 @@ func TestResumeInvalidatesWorkspaceEvidenceAfterRootReplacement(t *testing.T) {
 }
 
 func TestCompletionRejectsMutationAfterVerificationObservation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		goal string
+		text string
+	}{
+		{"explicit-goal", "finish this project", "Goal complete: the fix is verified"},
+		{"inferred-with-marker", "", "Goal complete: the fix is verified"},
+		{"inferred-without-marker", "", "The fix is verified."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testCompletionRejectsMutationAfterVerificationObservation(t, tc.goal, tc.text)
+		})
+	}
+}
+
+func testCompletionRejectsMutationAfterVerificationObservation(t *testing.T, explicitGoal, finalText string) {
+	t.Helper()
 	root := t.TempDir()
 	args, err := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
 	if err != nil {
@@ -161,7 +178,7 @@ func TestCompletionRejectsMutationAfterVerificationObservation(t *testing.T) {
 	}
 	fake := &llm.Scripted{Responses: []llm.ChatResponse{
 		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: string(args)}}}},
-		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the fix is verified"}},
+		{Message: llm.Message{Role: "assistant", Content: finalText}},
 	}}
 	cfg := config.Default()
 	cfg.Workspace = root
@@ -173,7 +190,9 @@ func TestCompletionRejectsMutationAfterVerificationObservation(t *testing.T) {
 		},
 	})
 	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, root, nil))
-	a.SetGoal("finish this project")
+	if explicitGoal != "" {
+		a.SetGoal(explicitGoal)
+	}
 	a.TaskStore = taskstate.NewStore(t.TempDir())
 	a.SetTaskSession("completion-event-mutation")
 	h := &rewriteAfterVerificationHandler{root: root}
@@ -187,6 +206,16 @@ func TestCompletionRejectsMutationAfterVerificationObservation(t *testing.T) {
 	latest := result.Task.Verification[len(result.Task.Verification)-1]
 	if latest.Passed || !strings.HasPrefix(latest.Summary, "verify INCONCLUSIVE") {
 		t.Fatalf("event-mutated verification = %#v", latest)
+	}
+	if result.Completion.Ready {
+		t.Fatal("stale evidence was projected as completion-ready")
+	}
+	loaded, err := a.TaskStore.Load(result.Task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status == taskstate.StatusDone || loaded.Verification[len(loaded.Verification)-1].Passed {
+		t.Fatal("stale completion evidence remained authoritative on disk")
 	}
 }
 

@@ -671,7 +671,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified, a.repeatedVerificationFailure())})
 				continue
 			}
-			if completionEvidenceRequired && verificationStatus(lastVerification) == "PASS" {
+			// Inferred tasks can also reach StatusDone without an explicit goal
+			// or completion marker. Their proof must describe the live workspace
+			// at finalization, not just the bytes observed by the verifier.
+			if (completionEvidenceRequired || a.TaskSnapshot() != nil) && verificationStatus(lastVerification) == "PASS" {
 				if refreshed, ok := a.revalidateVerificationBeforeCompletion(ctx, regCtx.Workspace, lastVerificationEvidence, ev); !ok {
 					lastVerification = refreshed
 					res.Verified = refreshed
