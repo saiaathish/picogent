@@ -49,9 +49,9 @@ type Record struct {
 }
 
 // RecordEntry contains the pre-turn state and the expected publication
-// fingerprint for one workspace-relative regular file. Published is only used
-// by a pending record when a later same-path write was prepared but not yet
-// published.
+// fingerprint for one workspace-relative regular file. Published retains a
+// known earlier publication when a later same-path write was prepared and its
+// publication is unresolved, including a sealed record with a live conflict.
 type RecordEntry struct {
 	Path         string `json:"path"`
 	BeforeExists bool   `json:"before_exists"`
@@ -228,7 +228,9 @@ func (c *Checkpoint) Paths() []string {
 // exact publication fingerprint unless the live state matches the captured
 // pre-turn state or a known earlier publication. An unfamiliar live state must
 // remain a restore conflict, including when it was written before Seal. Paths
-// without a prepared write are fingerprinted here.
+// with an unresolved later write also retain a known earlier publication for
+// an exact-match restore retry. Paths without a prepared write are
+// fingerprinted here.
 func (c *Checkpoint) Seal() error {
 	if c == nil {
 		return ErrNotSealed
@@ -250,6 +252,7 @@ func (c *Checkpoint) Seal() error {
 	for i := range c.entries {
 		item := &c.entries[i]
 		current := states[i].sum
+		retainPublished := false
 		switch {
 		case !item.expectedSet:
 			item.expected = current
@@ -269,18 +272,25 @@ func (c *Checkpoint) Seal() error {
 			if item.expected == item.before.sum && item.publishedSet {
 				item.expected = item.published
 			}
+			// A user edit leaves the later publication unresolved. Keep the
+			// exact known earlier state so a conflict retry can undo it, even
+			// after export/import; never fingerprint the unfamiliar live bytes.
+			retainPublished = item.publishedSet && item.published != item.before.sum && item.published != item.expected
 		}
 		item.expectedSet = true
-		item.published = fingerprint{}
-		item.publishedSet = false
+		if !retainPublished {
+			item.published = fingerprint{}
+			item.publishedSet = false
+		}
 	}
 	c.sealed = true
 	return nil
 }
 
 // PrepareExpected records the exact regular-file state that an imminent
-// atomic write will publish. It is used by durable undo to publish a pending
-// recovery record before the workspace rename. The checkpoint remains
+// atomic write will publish. Native undo uses it to protect its in-memory
+// expectation and, for durable turns, to publish a pending recovery record
+// before the workspace rename. The checkpoint remains
 // unsealed so later tool writes can update their own expected state. Before
 // replacing an earlier expectation, it records whether that expectation was
 // actually published or whether the workspace is still at the pre-turn state.
@@ -548,7 +558,10 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 			result.Unchanged = append(result.Unchanged, filepath.ToSlash(c.entries[i].path))
 			continue
 		}
-		if current.sum != c.entries[i].expected {
+		// A sealed conflict may retain an earlier known publication alongside
+		// the unresolved prepared expectation. Either exact state can be
+		// undone; arbitrary user bytes still block the entire restore.
+		if current.sum != c.entries[i].expected && (!c.entries[i].publishedSet || current.sum != c.entries[i].published) {
 			result.Conflicts = append(result.Conflicts, Conflict{
 				Path:   filepath.ToSlash(c.entries[i].path),
 				Reason: "file changed after checkpoint was sealed",

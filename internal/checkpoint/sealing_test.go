@@ -188,6 +188,111 @@ func TestSealResolvesPreparedWriteFailure(t *testing.T) {
 	}
 }
 
+func TestSealRetainsEarlierPublicationThroughConflict(t *testing.T) {
+	for _, fresh := range []bool{false, true} {
+		name := "in-process"
+		if fresh {
+			name = "imported"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			write(t, root, "note.txt", "before", 0o644)
+			write(t, root, "other.txt", "other before", 0o644)
+			cp, err := checkpoint.Capture(root, []string{"note.txt", "other.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cp.PrepareExpected("note.txt", []byte("first"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			write(t, root, "note.txt", "first", 0o644)
+			if _, err := cp.PrepareExpected("note.txt", []byte("second"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// The second write fails before rename; only "first" was published.
+			prepared, err := cp.Export()
+			if err != nil || len(prepared.Entries) != 1 || prepared.Entries[0].Published == "" {
+				t.Fatalf("prepared publication history = %+v, err=%v", prepared, err)
+			}
+			if _, err := cp.PrepareExpected("other.txt", []byte("other agent"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			write(t, root, "other.txt", "other agent", 0o644)
+			write(t, root, "note.txt", "user", 0o644)
+			if err := cp.Seal(); err != nil {
+				t.Fatal(err)
+			}
+			record, err := cp.Export()
+			if err != nil || len(record.Entries) != 2 || record.Version != checkpoint.RecordVersion || record.Entries[0].Expected != prepared.Entries[0].Expected || record.Entries[0].Published != prepared.Entries[0].Published {
+				t.Fatalf("seal lost the known earlier publication: prepared=%+v sealed=%+v err=%v", prepared, record, err)
+			}
+			if fresh {
+				cp = importSealedRecord(t, root, record)
+			}
+			result, err := cp.Restore()
+			if !errors.Is(err, checkpoint.ErrConflict) || result.Complete || len(result.Conflicts) != 1 || result.Conflicts[0].Path != "note.txt" {
+				t.Fatalf("undo accepted unknown user bytes: result=%+v err=%v", result, err)
+			}
+			assertContents(t, root, "note.txt", "user")
+			assertContents(t, root, "other.txt", "other agent")
+			write(t, root, "note.txt", "first", 0o644)
+			result, err = cp.Restore()
+			if err != nil || !result.Complete || !slices.Equal(result.Restored, []string{"note.txt", "other.txt"}) {
+				t.Fatalf("undo rejected known earlier publication: result=%+v err=%v", result, err)
+			}
+			assertContents(t, root, "note.txt", "before")
+			assertContents(t, root, "other.txt", "other before")
+		})
+	}
+}
+
+func TestSealDropsEarlierPublicationAfterKnownLaterPublication(t *testing.T) {
+	for _, fresh := range []bool{false, true} {
+		name := "in-process"
+		if fresh {
+			name = "imported"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			write(t, root, "note.txt", "before", 0o644)
+			cp, err := checkpoint.Capture(root, []string{"note.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cp.PrepareExpected("note.txt", []byte("first"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			write(t, root, "note.txt", "first", 0o644)
+			if _, err := cp.PrepareExpected("note.txt", []byte("second"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			write(t, root, "note.txt", "second", 0o644)
+			if err := cp.Seal(); err != nil {
+				t.Fatal(err)
+			}
+			record, err := cp.Export()
+			if err != nil || len(record.Entries) != 1 || record.Entries[0].Published != "" {
+				t.Fatalf("seal retained stale earlier publication: record=%+v err=%v", record, err)
+			}
+			if fresh {
+				cp = importSealedRecord(t, root, record)
+			}
+			write(t, root, "note.txt", "first", 0o644)
+			result, err := cp.Restore()
+			if !errors.Is(err, checkpoint.ErrConflict) || result.Complete {
+				t.Fatalf("undo accepted an obsolete publication: result=%+v err=%v", result, err)
+			}
+			assertContents(t, root, "note.txt", "first")
+			write(t, root, "note.txt", "second", 0o644)
+			result, err = cp.Restore()
+			if err != nil || !result.Complete {
+				t.Fatalf("undo rejected the final publication: result=%+v err=%v", result, err)
+			}
+			assertContents(t, root, "note.txt", "before")
+		})
+	}
+}
+
 func importSealedRecord(t *testing.T, root string, record checkpoint.Record) *checkpoint.Checkpoint {
 	t.Helper()
 	encoded, err := json.Marshal(record)

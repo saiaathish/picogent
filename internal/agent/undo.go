@@ -34,12 +34,12 @@ func newTurnUndo(workspace, sessionID string, sessionGeneration uint64) *turnUnd
 	return &turnUndo{workspace: workspace, sessionID: sessionID, sessionGeneration: sessionGeneration}
 }
 
-// preparePublish persists a recovery-pending record immediately before the
-// workspace atomic rename. The record contains only paths whose expected
-// post-write state is already known, so a crash during a multi-file turn can
-// recover the writes that actually reached publication.
+// preparePublish records the exact native publication expectation immediately
+// before the workspace atomic rename, including for process-local undo. When a
+// durable turn identity is available, it also persists a recovery-pending
+// record so a crash during a multi-file turn can recover published writes.
 func (u *turnUndo) preparePublish(path string, data []byte, mode os.FileMode) (err error) {
-	if u == nil || u.checkpoint == nil || u.sessionID == "" || u.turnSequence == 0 {
+	if u == nil || u.checkpoint == nil {
 		return nil
 	}
 	defer func() {
@@ -53,6 +53,11 @@ func (u *turnUndo) preparePublish(path string, data []byte, mode os.FileMode) (e
 	changed, err := u.checkpoint.PrepareExpected(path, data, mode)
 	if err != nil {
 		return err
+	}
+	// Session and sequence identify a recovery journal; they do not gate the
+	// in-memory expectation that keeps Seal from adopting a later user edit.
+	if u.sessionID == "" || u.turnSequence == 0 {
+		return nil
 	}
 	record, err := u.checkpoint.Export()
 	if err != nil {

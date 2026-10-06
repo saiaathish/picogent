@@ -495,15 +495,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	sessionID, sessionGeneration := a.taskSessionSnapshot()
 	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
 	turnUndo.turnSequence = turnSequence
-	// Non-durable turns cannot publish a recovery journal. Leave the hook nil
-	// for them so atomic workspace writes do not perform the hook-only temporary
-	// file stat and callback dispatch. Durable turns retain the pre-publication
-	// journal boundary unchanged.
-	regCtx.BeforeWorkspacePublish = nil
-	if sessionID != "" && turnSequence != 0 {
-		regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
-			return turnUndo.preparePublish(path, data, mode)
-		}
+	// Every native write needs its expected fingerprint before publication,
+	// including process-only undo. Recovery journal eligibility is separate.
+	regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+		return turnUndo.preparePublish(path, data, mode)
 	}
 	nativeWriteRan := false
 	mutationCount := 0
@@ -643,6 +638,23 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		msgs = append(msgs, msg)
 
 		if len(msg.ToolCalls) == 0 {
+			// A successful side effect can create a fallback durable task after
+			// admission. Give it a turn identity before verification/finalization
+			// so it uses the same ownership and atomic proof boundary.
+			if turnSequence == 0 {
+				if task := a.TaskSnapshot(); task != nil {
+					var started bool
+					turnSequence, started = a.beginDurableTurn(durableTurnStartRoute(task, taskMode), ev)
+					if !started {
+						res.FilesChanged = sortedChanged(changed)
+						a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
+						res.Task = a.TaskSnapshot()
+						return msgs, res, errors.New("durable turn could not be started")
+					}
+					turnClosed = false
+					turnUndo.turnSequence = turnSequence
+				}
+			}
 			text := strings.TrimSpace(msg.Content)
 			if a.continueAfterDeferral(text, round, ev, cfg.MaxToolRounds) {
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableContinuePrompt})
@@ -671,10 +683,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				msgs = append(msgs, llm.Message{Role: "system", Content: durableRepairPrompt(res.Verified, a.repeatedVerificationFailure())})
 				continue
 			}
-			// Inferred tasks can also reach StatusDone without an explicit goal
-			// or completion marker. Their proof must describe the live workspace
-			// at finalization, not just the bytes observed by the verifier.
-			if (completionEvidenceRequired || turnSequence != 0) && verificationStatus(lastVerification) == "PASS" {
+			// Durable proof is rechecked against the authoritative candidate in
+			// its final CAS transaction. Process-only turns still need a fresh
+			// observation before projecting completion, but never mutate a task.
+			if turnSequence == 0 && completionEvidenceRequired && verificationStatus(lastVerification) == "PASS" {
 				if refreshed, ok := a.revalidateVerificationBeforeCompletion(ctx, regCtx.Workspace, lastVerificationEvidence, ev); !ok {
 					lastVerification = refreshed
 					res.Verified = refreshed
@@ -696,15 +708,20 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			res.ToolRounds = round
 			supersededTurn := false
 			if turnSequence != 0 {
-				finalTask, completion, goalDone, closed, superseded, err := a.finishAndCloseDurableTurn(turnSequence, text, taskBlocker, taskMode, lastVerification, res.FilesChanged, completionMarker, state.Goal, opts.ScopeBoundary, res.ToolRounds, mutationCount, ev)
+				finalTask, completion, goalDone, closed, superseded, err := a.finishAndCloseDurableTurn(ctx, regCtx.Workspace, turnSequence, text, taskBlocker, taskMode, lastVerification, res.FilesChanged, completionMarker, state.Goal, opts.ScopeBoundary, res.ToolRounds, mutationCount, ev)
 				if err != nil {
 					res.Task = a.TaskSnapshot()
 					res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
+					res.Completion.Ready = false
+					res.Completion.Reason = "durable completion could not be saved"
 					res.GoalDone = false
 					return msgs, res, err
 				}
 				if closed {
 					res.Task = finalTask
+					if finalTask != nil && len(finalTask.Verification) > 0 {
+						res.Verified = finalTask.Verification[len(finalTask.Verification)-1].Summary
+					}
 					res.Completion = completion
 					res.GoalDone = goalDone
 				} else {

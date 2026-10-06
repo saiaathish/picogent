@@ -328,6 +328,9 @@ func TestRunWithOptionsReturnsTurnClosePersistenceFailure(t *testing.T) {
 	if result.GoalDone {
 		t.Fatal("turn close persistence failure must not report GoalDone")
 	}
+	if result.Completion.Ready {
+		t.Fatal("turn close persistence failure must not project completion-ready")
+	}
 	persisted, err := store.Load(sessionID)
 	if err != nil {
 		t.Fatal(err)

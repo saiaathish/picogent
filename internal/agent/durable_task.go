@@ -496,6 +496,13 @@ func verificationStatus(output string) string {
 }
 
 func revalidatePersistedTask(root string, task *taskstate.Task) (bool, error) {
+	return revalidateTaskProof(context.Background(), root, task)
+}
+
+// revalidateTaskProof operates only on an isolated candidate. Finalization
+// must commit invalidation and the terminal state together; a failed save
+// cannot leave a later finish able to reuse stale in-memory trust.
+func revalidateTaskProof(ctx context.Context, root string, task *taskstate.Task) (bool, error) {
 	if task == nil || len(task.Verification) == 0 {
 		return false, nil
 	}
@@ -511,7 +518,7 @@ func revalidatePersistedTask(root string, task *taskstate.Task) (bool, error) {
 			observation:       cloneWorkspaceObservation(latest.Observation),
 			observationUsable: latest.Observation != nil,
 		}
-		observation, fresh, checkReason := recheckVerificationEvidenceObservation(context.Background(), root, evidence)
+		observation, fresh, checkReason := recheckVerificationEvidenceObservation(ctx, root, evidence)
 		if fresh {
 			// Persisted verification records intentionally lose their runtime trust
 			// bit when serialized. A fresh comparison against the live workspace is
@@ -553,20 +560,7 @@ func (a *Agent) revalidateVerificationBeforeCompletion(ctx context.Context, root
 		reason = "workspace evidence is not fresh"
 	}
 	inconclusive := inconclusiveVerification("completion evidence is stale: " + reason)
-	a.invalidateLatestTaskVerification(reason, ev)
 	return inconclusive, false
-}
-
-func (a *Agent) invalidateLatestTaskVerification(reason string, ev EventHandler) bool {
-	return a.mutateTask(ev, func(task *taskstate.Task) error {
-		if !task.InvalidateLatestVerification(reason) {
-			return errTaskMutationSkipped
-		}
-		if task.Status == taskstate.StatusDone {
-			return task.SetStatus(taskstate.StatusVerifying)
-		}
-		return nil
-	})
 }
 
 func (a *Agent) blockDurableTask(reason string, ev EventHandler) {
