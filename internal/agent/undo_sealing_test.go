@@ -1,0 +1,188 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/taskstate"
+	"github.com/saiaathish/picogent/internal/tools"
+)
+
+func TestUndoSealPreservesUserEditBeforeTurnSeal(t *testing.T) {
+	for _, toolName := range []string{"write_file", "edit_file"} {
+		for _, reportError := range []bool{false, true} {
+			name := toolName + "/success"
+			if reportError {
+				name = toolName + "/error after publication"
+			}
+			t.Run(name, func(t *testing.T) {
+				root := t.TempDir()
+				path := filepath.Join(root, "note.txt")
+				if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				store := taskstate.NewStore(t.TempDir())
+				first := newUndoHookAgent(t, root)
+				first.SetTaskStore(store)
+				const sessionID = "pre-seal-user-edit"
+				if err := first.SetTaskSession(sessionID); err != nil {
+					t.Fatal(err)
+				}
+				args := map[string]string{"path": "note.txt", "content": "after"}
+				if toolName == "edit_file" {
+					args = map[string]string{"path": "note.txt", "old_string": "before", "new_string": "after"}
+				}
+				raw, err := json.Marshal(args)
+				if err != nil {
+					t.Fatal(err)
+				}
+				first.SetClient(&llm.Scripted{Responses: []llm.ChatResponse{
+					{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "native-write", Name: toolName, Arguments: string(raw)}}}},
+					{Message: llm.Message{Role: "assistant", Content: "done"}},
+				}})
+				if reportError {
+					first.runTool = func(ctx context.Context, call llm.ToolCall, tool tools.Tool, c tools.Context) (string, error) {
+						out, err := tool.Run(ctx, call.Arguments, c)
+						if err != nil {
+							return out, err
+						}
+						return out, errors.New("simulated error after native publication")
+					}
+				}
+				events := &undoSealUserEditHandler{t: t, path: path, root: root, sessionID: sessionID, toolName: toolName}
+				_, result, err := first.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, events)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !events.edited || !result.UndoAvailable || result.UndoError != "" {
+					t.Fatalf("turn did not publish a sealed undo record: edited=%v result=%+v", events.edited, result)
+				}
+				sealed, err := loadUndoJournal(root, sessionID, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(sealed.Checkpoint.Entries) != 1 || sealed.Checkpoint.Entries[0].Expected != events.expected || sealed.Checkpoint.Entries[0].Published != "" {
+					t.Fatalf("sealed journal adopted the user's edit: %+v; prepared fingerprint=%s", sealed.Checkpoint, events.expected)
+				}
+				if _, err := first.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "newer changes") {
+					t.Fatalf("in-process undo did not block the newer edit: %v", err)
+				}
+				assertUndoFileContent(t, path, "user")
+
+				second := newUndoHookAgent(t, root)
+				second.SetTaskStore(store)
+				if err := second.SetTaskSession(sessionID); err != nil {
+					t.Fatal(err)
+				}
+				if !second.UndoAvailable() {
+					t.Fatal("fresh agent did not retain the conflicted sealed undo")
+				}
+				if _, err := second.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "newer changes") {
+					t.Fatalf("fresh-agent undo did not block the newer edit: %v", err)
+				}
+				assertUndoFileContent(t, path, "user")
+				if !first.UndoAvailable() || !second.UndoAvailable() {
+					t.Fatal("conflicted undo was consumed")
+				}
+			})
+		}
+	}
+}
+
+func TestUndoSealRetainsEarlierPublicationAfterLaterWriteFailure(t *testing.T) {
+	for _, fresh := range []bool{false, true} {
+		name := "in-process"
+		if fresh {
+			name = "fresh-agent"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "note.txt")
+			if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			store := taskstate.NewStore(t.TempDir())
+			first := newUndoHookAgent(t, root)
+			first.SetTaskStore(store)
+			const sessionID = "failed-later-publication"
+			if err := first.SetTaskSession(sessionID); err != nil {
+				t.Fatal(err)
+			}
+			first.SetClient(&llm.Scripted{Responses: []llm.ChatResponse{
+				{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{
+					{ID: "first", Name: "write_file", Arguments: `{"path":"note.txt","content":"after"}`},
+					{ID: "later", Name: "write_file", Arguments: `{"path":"note.txt","content":"before"}`},
+				}}},
+				{Message: llm.Message{Role: "assistant", Content: "done"}},
+			}})
+			first.runTool = func(ctx context.Context, call llm.ToolCall, tool tools.Tool, c tools.Context) (string, error) {
+				if call.ID == "later" {
+					prepare := c.BeforeWorkspacePublish
+					if prepare == nil {
+						t.Fatal("native publication has no recovery hook")
+					}
+					c.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+						if err := prepare(path, data, mode); err != nil {
+							return err
+						}
+						// The recovery record was prepared, but this native
+						// publication will be aborted before its rename.
+						return errors.New("simulated failure before later publication")
+					}
+				}
+				return tool.Run(ctx, call.Arguments, c)
+			}
+			_, result, err := first.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt twice"}, allowUndoTest{})
+			if err != nil || !result.UndoAvailable || result.UndoError != "" {
+				t.Fatalf("earlier publication lost undo: result=%+v err=%v", result, err)
+			}
+			assertUndoFileContent(t, path, "after")
+			undo := first
+			if fresh {
+				undo = newUndoHookAgent(t, root)
+				undo.SetTaskStore(store)
+				if err := undo.SetTaskSession(sessionID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := undo.UndoLastTurn(); err != nil {
+				t.Fatal(err)
+			}
+			assertUndoFileContent(t, path, "before")
+		})
+	}
+}
+
+type undoSealUserEditHandler struct {
+	allowUndoTest
+	t         *testing.T
+	path      string
+	root      string
+	sessionID string
+	toolName  string
+	expected  string
+	edited    bool
+}
+
+func (h *undoSealUserEditHandler) OnToolEnd(call llm.ToolCall, _ string, _ error) {
+	if call.Name != h.toolName || h.edited {
+		return
+	}
+	// This callback runs after the real native rename and before finishTurnUndo.
+	assertUndoFileContent(h.t, h.path, "after")
+	pending, err := loadUndoJournal(h.root, h.sessionID, true)
+	if err != nil || len(pending.Checkpoint.Entries) != 1 {
+		h.t.Fatalf("native publication has no prepared recovery record: journal=%+v err=%v", pending, err)
+	}
+	h.expected = pending.Checkpoint.Entries[0].Expected
+	if err := os.WriteFile(h.path, []byte("user"), 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+	h.edited = true
+}

@@ -48,9 +48,10 @@ type Record struct {
 	Entries []RecordEntry `json:"entries"`
 }
 
-// RecordEntry contains the pre-turn state and the post-seal fingerprint for
-// one workspace-relative regular file. Published is only used by a pending
-// record when a later same-path write was prepared but not yet published.
+// RecordEntry contains the pre-turn state and the expected publication
+// fingerprint for one workspace-relative regular file. Published is only used
+// by a pending record when a later same-path write was prepared but not yet
+// published.
 type RecordEntry struct {
 	Path         string `json:"path"`
 	BeforeExists bool   `json:"before_exists"`
@@ -60,7 +61,7 @@ type RecordEntry struct {
 	Published    string `json:"published,omitempty"`
 }
 
-// Conflict identifies a path changed after the checkpoint was sealed.
+// Conflict identifies a path that no longer matches the checkpoint's expected state.
 type Conflict struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
@@ -223,8 +224,11 @@ func (c *Checkpoint) Paths() []string {
 	return out
 }
 
-// Seal fingerprints the files produced by the turn. Restore later refuses to
-// replace any path whose bytes, existence, or mode no longer matches this seal.
+// Seal finalizes the expected states for the turn. Prepared writes retain their
+// exact publication fingerprint unless the live state matches the captured
+// pre-turn state or a known earlier publication. An unfamiliar live state must
+// remain a restore conflict, including when it was written before Seal. Paths
+// without a prepared write are fingerprinted here.
 func (c *Checkpoint) Seal() error {
 	if c == nil {
 		return ErrNotSealed
@@ -244,10 +248,31 @@ func (c *Checkpoint) Seal() error {
 		states[i] = state
 	}
 	for i := range c.entries {
-		c.entries[i].expected = states[i].sum
-		c.entries[i].expectedSet = true
-		c.entries[i].published = fingerprint{}
-		c.entries[i].publishedSet = false
+		item := &c.entries[i]
+		current := states[i].sum
+		switch {
+		case !item.expectedSet:
+			item.expected = current
+		case current == item.expected:
+			// The exact prepared state reached publication, even if the tool
+			// subsequently reported a close or directory-sync error.
+		case current == item.before.sum:
+			item.expected = item.before.sum
+		case item.publishedSet && current == item.published:
+			// A later same-path write failed before its rename. Retain the
+			// earlier publication so it can still be undone after restart.
+			item.expected = item.published
+		default:
+			// Never adopt arbitrary live bytes as an agent publication. If
+			// the prepared write would return to the pre-turn state, retain
+			// the earlier publication instead of silently dropping its undo.
+			if item.expected == item.before.sum && item.publishedSet {
+				item.expected = item.published
+			}
+		}
+		item.expectedSet = true
+		item.published = fingerprint{}
+		item.publishedSet = false
 	}
 	c.sealed = true
 	return nil
