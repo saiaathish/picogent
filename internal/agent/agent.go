@@ -1000,10 +1000,11 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				}
 				verificationCurrent = false
 			}
-			if (ex.call.Name == "write_file" || ex.call.Name == "edit_file") && ex.ran && ex.err != nil && !turnUndo.publishRejected && !errors.Is(ex.err, workspace.ErrContentConflict) {
+			if (ex.call.Name == "write_file" || ex.call.Name == "edit_file") && ex.ran && ex.err != nil && !errors.Is(ex.err, workspace.ErrContentConflict) {
 				// Some integrations can mutate a file and then report an error.
-				// Keep that existing undo guarantee, but never infer a mutation
-				// from a write rejected by the pre-publication recovery hook.
+				// SealPrepared decides ownership from per-path expectations. A
+				// later rejection in this batch must not hide an earlier publish
+				// that returned an error after its bytes reached the workspace.
 				nativeWriteRan = true
 			}
 			if (ex.call.Name == "write_file" || ex.call.Name == "edit_file") && ex.ran && errors.Is(ex.err, workspace.ErrContentConflict) {

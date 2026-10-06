@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -91,11 +92,17 @@ func TestUndoSealDoesNotAdoptUserEditAfterUnpreparedFailure(t *testing.T) {
 
 func TestUndoSealRetainsProcessUndoAfterRejectedLaterPublication(t *testing.T) {
 	for _, kind := range []string{"write-hook", "edit-content-conflict"} {
-		t.Run(kind, func(t *testing.T) { testProcessUndoAfterRejectedPublication(t, kind) })
+		for _, postError := range []bool{false, true} {
+			name := kind + "/success"
+			if postError {
+				name = kind + "/error-after-publication"
+			}
+			t.Run(name, func(t *testing.T) { testProcessUndoAfterRejectedPublication(t, kind, postError) })
+		}
 	}
 }
 
-func testProcessUndoAfterRejectedPublication(t *testing.T, kind string) {
+func testProcessUndoAfterRejectedPublication(t *testing.T, kind string, postError bool) {
 	t.Helper()
 	root := t.TempDir()
 	path := filepath.Join(root, "note.txt")
@@ -103,14 +110,18 @@ func testProcessUndoAfterRejectedPublication(t *testing.T, kind string) {
 		t.Fatal(err)
 	}
 	a := newUndoHookAgent(t, root)
-	if kind == "edit-content-conflict" {
+	if kind == "edit-content-conflict" || postError {
 		a.runTool = func(ctx context.Context, call llm.ToolCall, tool tools.Tool, c tools.Context) (string, error) {
-			if call.ID == "later" {
+			if call.ID == "later" && kind == "edit-content-conflict" {
 				// Model a native edit's final compare detecting a user edit
 				// after its read. No new publication belongs to this call.
 				return "", workspace.ErrContentConflict
 			}
-			return tool.Run(ctx, call.Arguments, c)
+			text, err := tool.Run(ctx, call.Arguments, c)
+			if call.ID == "first" && err == nil && postError {
+				err = errors.New("simulated failure after first publication")
+			}
+			return text, err
 		}
 	}
 	laterTool := "write_file"
@@ -127,8 +138,8 @@ func testProcessUndoAfterRejectedPublication(t *testing.T, kind string) {
 	edited := false
 	events := &undoSealToolEndHandler{onToolEnd: func(call llm.ToolCall, _ string, err error) {
 		if call.ID == "first" {
-			if err != nil {
-				t.Fatal(err)
+			if (err != nil) != postError {
+				t.Fatalf("first publication error = %v, want postError=%v", err, postError)
 			}
 			if err := os.WriteFile(path, []byte("user"), 0o644); err != nil {
 				t.Fatal(err)
