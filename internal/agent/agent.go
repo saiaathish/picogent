@@ -964,10 +964,8 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		// write then records the current change sequence, while a later write still
 		// invalidates evidence that was collected before it.
 		var successfulWrites []string
-		// A content conflict invalidates the path for this turn even if the model
-		// queues another same-path call later. Keeping that path out of undo is
-		// conservative: the checkpoint cannot prove which bytes the later call
-		// was intended to supersede.
+		// A rejected edit owns no new bytes. Drop only unprepared captures;
+		// exact earlier publications remain available for conflict-aware undo.
 		contentConflictPaths := map[string]string{}
 		durableTransition := visualEvidenceTransition || measurementEvidenceTransition
 		for _, ex := range pending {

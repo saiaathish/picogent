@@ -158,6 +158,17 @@ func (c *Checkpoint) Add(paths []string) error {
 // mutation that undo may safely replace. Paths may not be dropped after the
 // checkpoint is sealed.
 func (c *Checkpoint) Drop(path string) error {
+	return c.drop(path, false)
+}
+
+// DropUnprepared removes a rejected native path only when it has no known
+// publication. An earlier prepared write remains available for conflict-aware
+// undo even if a later same-path edit is rejected.
+func (c *Checkpoint) DropUnprepared(path string) error {
+	return c.drop(path, true)
+}
+
+func (c *Checkpoint) drop(path string, unpreparedOnly bool) error {
 	if c == nil {
 		return errors.New("checkpoint is nil")
 	}
@@ -173,6 +184,9 @@ func (c *Checkpoint) Drop(path string) error {
 	for i := range c.entries {
 		if pathIdentity(c.entries[i].path) != pathIdentity(rel) {
 			continue
+		}
+		if unpreparedOnly && c.entries[i].expectedSet {
+			return nil
 		}
 		copy(c.entries[i:], c.entries[i+1:])
 		c.entries = c.entries[:len(c.entries)-1]
@@ -232,6 +246,18 @@ func (c *Checkpoint) Paths() []string {
 // an exact-match restore retry. Paths without a prepared write are
 // fingerprinted here.
 func (c *Checkpoint) Seal() error {
+	return c.seal(false)
+}
+
+// SealPrepared seals native-file undo without adopting live bytes for a path
+// whose write never reached PrepareExpected. A rejected pre-publication write
+// may be followed by a user edit; its original capture is not ownership proof.
+// Generic callers that own their mutation boundary may still use Seal.
+func (c *Checkpoint) SealPrepared() error {
+	return c.seal(true)
+}
+
+func (c *Checkpoint) seal(preparedOnly bool) error {
 	if c == nil {
 		return ErrNotSealed
 	}
@@ -241,16 +267,25 @@ func (c *Checkpoint) Seal() error {
 		return ErrAlreadySealed
 	}
 
-	states := make([]fileState, len(c.entries))
-	for i := range c.entries {
-		state, err := readWorkspaceFile(c.root, c.entries[i].path)
+	entries := c.entries
+	if preparedOnly {
+		entries = make([]entry, 0, len(c.entries))
+		for _, item := range c.entries {
+			if item.expectedSet {
+				entries = append(entries, item)
+			}
+		}
+	}
+	states := make([]fileState, len(entries))
+	for i := range entries {
+		state, err := readWorkspaceFile(c.root, entries[i].path)
 		if err != nil {
-			return fmt.Errorf("seal %q: %w", filepath.ToSlash(c.entries[i].path), err)
+			return fmt.Errorf("seal %q: %w", filepath.ToSlash(entries[i].path), err)
 		}
 		states[i] = state
 	}
-	for i := range c.entries {
-		item := &c.entries[i]
+	for i := range entries {
+		item := &entries[i]
 		current := states[i].sum
 		retainPublished := false
 		switch {
@@ -283,6 +318,7 @@ func (c *Checkpoint) Seal() error {
 			item.publishedSet = false
 		}
 	}
+	c.entries = entries
 	c.sealed = true
 	return nil
 }

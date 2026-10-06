@@ -293,6 +293,47 @@ func TestSealDropsEarlierPublicationAfterKnownLaterPublication(t *testing.T) {
 	}
 }
 
+func TestSealPreparedExcludesUnpublishedUserEdits(t *testing.T) {
+	for _, imported := range []bool{false, true} {
+		name := "in-process"
+		if imported {
+			name = "imported"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			write(t, root, "native.txt", "before", 0o644)
+			write(t, root, "unprepared.txt", "before", 0o644)
+			cp, err := checkpoint.Capture(root, []string{"native.txt", "unprepared.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := cp.PrepareExpected("native.txt", []byte("agent"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			write(t, root, "native.txt", "agent", 0o644)
+			write(t, root, "unprepared.txt", "user", 0o644)
+			if err := cp.DropUnprepared("native.txt"); err != nil {
+				t.Fatal(err)
+			}
+			if err := cp.SealPrepared(); err != nil {
+				t.Fatal(err)
+			}
+			record, err := cp.Export()
+			if err != nil || len(record.Entries) != 1 || record.Entries[0].Path != "native.txt" {
+				t.Fatalf("prepared record adopted unowned changes: %+v, %v", record, err)
+			}
+			if imported {
+				cp = importSealedRecord(t, root, record)
+			}
+			if result, err := cp.Restore(); err != nil || !result.Complete {
+				t.Fatalf("undo of prepared file = %+v, %v", result, err)
+			}
+			assertContents(t, root, "native.txt", "before")
+			assertContents(t, root, "unprepared.txt", "user")
+		})
+	}
+}
+
 func importSealedRecord(t *testing.T, root string, record checkpoint.Record) *checkpoint.Checkpoint {
 	t.Helper()
 	encoded, err := json.Marshal(record)
