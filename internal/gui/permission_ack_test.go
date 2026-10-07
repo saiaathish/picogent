@@ -181,3 +181,90 @@ func TestGUIPermissionResponseFailedPreferenceSaveStillAcknowledgesDelivery(t *t
 		t.Fatal("preference save failure was hidden")
 	}
 }
+
+func TestGUIPermissionResponseAlwaysSerializesWithSettingsSave(t *testing.T) {
+	s, ch := permissionAckFixture(t, true)
+	settingsSaving := make(chan struct{})
+	releaseSettings := make(chan struct{})
+	saved := make(chan config.Config, 2)
+	s.saveConfig = func(cfg config.Config) error {
+		if !containsString(cfg.Extensions.AlwaysAllowTools, "write_file") {
+			close(settingsSaving)
+			<-releaseSettings
+		}
+		saved <- cfg
+		return nil
+	}
+	settingsDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		res := httptest.NewRecorder()
+		s.settings(res, loopbackAPIRequest(http.MethodPost, "/api/settings", `{"max_tool_rounds":99}`))
+		settingsDone <- res
+	}()
+	select {
+	case <-settingsSaving:
+	case <-time.After(time.Second):
+		close(releaseSettings)
+		t.Fatal("settings did not reach persistence")
+	}
+	permissionDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		permissionDone <- postPermissionAck(s, context.Background(), `{"always":true,"permission_id":"7"}`)
+	}()
+	select {
+	case d := <-ch:
+		if d != perm.AllowAlways {
+			t.Errorf("delivered decision=%v", d)
+		}
+	case <-time.After(time.Second):
+		close(releaseSettings)
+		t.Fatal("permission did not reach delivery")
+	}
+	close(releaseSettings)
+	for _, done := range []<-chan *httptest.ResponseRecorder{settingsDone, permissionDone} {
+		select {
+		case res := <-done:
+			if res.Code < 200 || res.Code >= 300 {
+				t.Fatalf("transaction status=%d: %s", res.Code, res.Body.String())
+			}
+		case <-time.After(time.Second):
+			t.Fatal("configuration transaction did not finish")
+		}
+	}
+	first, second := <-saved, <-saved
+	if first.MaxToolRounds != 99 || containsString(first.Extensions.AlwaysAllowTools, "write_file") {
+		t.Fatalf("first saved configuration=%+v", first.Extensions)
+	}
+	if second.MaxToolRounds != 99 || !containsString(second.Extensions.AlwaysAllowTools, "write_file") {
+		t.Fatalf("permission save lost concurrent settings: rounds=%d tools=%v", second.MaxToolRounds, second.Extensions.AlwaysAllowTools)
+	}
+	if s.cfg.MaxToolRounds != 99 || !containsString(s.cfg.Extensions.AlwaysAllowTools, "write_file") {
+		t.Fatal("published configuration lost settings or Always preference")
+	}
+}
+
+func TestGUIPermissionResponseAcceptedAlwaysPreservesSameTurnNextPrompt(t *testing.T) {
+	s, ch := permissionAckFixture(t, true)
+	nextCh := make(chan perm.Decision, 1)
+	s.beforePermissionResponseCleanup = func() {
+		s.mu.Lock()
+		s.pendingPerm = perm.Request{Tool: "edit_file", Summary: "next change"}
+		s.pendingPermID = 8
+		s.pendingPermCh = nextCh
+		s.mu.Unlock()
+	}
+	res := postPermissionAck(s, context.Background(), `{"always":true,"permission_id":"7"}`)
+	if res.Code != http.StatusNoContent || len(ch) != 1 || <-ch != perm.AllowAlways {
+		t.Fatalf("accepted Always status=%d", res.Code)
+	}
+	if s.pendingPerm.Tool != "edit_file" || s.pendingPermID != 8 || s.pendingPermCh != nextCh || len(nextCh) != 0 {
+		t.Fatal("accepted older response changed the next prompt")
+	}
+	if !containsString(s.cfg.Extensions.AlwaysAllowTools, "write_file") || !containsString(s.ag.Gate.AlwaysAllowedTools(), "write_file") {
+		t.Fatal("accepted Always was not published")
+	}
+	saved, err := config.Load()
+	if err != nil || !containsString(saved.Extensions.AlwaysAllowTools, "write_file") {
+		t.Fatalf("accepted Always not durable: %v", err)
+	}
+}

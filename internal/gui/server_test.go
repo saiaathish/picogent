@@ -1989,8 +1989,8 @@ func TestGUIPermissionResponseDoesNotClearReplacementRequest(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://"+loopbackTestHost)
 	s.permission(res, req)
-	if res.Code != http.StatusConflict {
-		t.Fatalf("replaced permission response status = %d, want %d", res.Code, http.StatusConflict)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("delivered permission response status = %d, want %d", res.Code, http.StatusNoContent)
 	}
 
 	s.mu.Lock()

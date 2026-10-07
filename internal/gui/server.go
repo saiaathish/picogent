@@ -1912,27 +1912,33 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	if hook := s.beforePermissionResponseCleanup; hook != nil {
 		hook()
 	}
+	// Settings and mode changes also save complete config snapshots. Serialize
+	// the Always preference with them so a concurrent save cannot erase it.
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	s.mu.Lock()
-	// Only the request that was visible when the user clicked may be cleared
-	// or promoted to Always. A reset/new turn or a subsequent prompt can replace
-	// pendingPerm while the HTTP request is waiting on the old turn's channel.
-	if s.pendingPermGen != pendingGen || s.pendingPermID != pendingID || s.turnGen != turnGen {
-		s.mu.Unlock()
-		http.Error(w, "permission request was replaced", http.StatusConflict)
-		return
+	// Delivery already succeeded. A later prompt must not make the accepted
+	// choice look rejected, but only the original prompt may be cleared.
+	if s.pendingPermGen == pendingGen && s.pendingPermID == pendingID && s.turnGen == turnGen && s.pendingPermCh == permCh {
+		s.pendingPerm = perm.Request{}
+		s.pendingPermGen = 0
+		s.pendingPermCh = nil
 	}
-	s.pendingPerm = perm.Request{}
-	s.pendingPermGen = 0
-	s.pendingPermCh = nil
 	preferenceUnconfirmed := false
-	if d == perm.AllowAlways && s.ag != nil && s.ag.Gate != nil && tool != "" {
-		candidate := s.cfg
-		candidate.Extensions.AlwaysAllowTools = appendUnique(append([]string(nil), s.cfg.Extensions.AlwaysAllowTools...), tool)
-		if err := config.Save(candidate); err != nil {
+	if d == perm.AllowAlways {
+		// A same-turn next prompt does not revoke the accepted Always choice.
+		// A new turn/workspace owns different policy; do not publish into it.
+		if s.turnGen != turnGen || s.ag == nil || s.ag.Gate == nil {
 			preferenceUnconfirmed = true
 		} else {
-			s.cfg = candidate
-			s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
+			candidate := s.cfg
+			candidate.Extensions.AlwaysAllowTools = appendUnique(append([]string(nil), s.cfg.Extensions.AlwaysAllowTools...), tool)
+			if err := s.persistConfig(candidate); err != nil {
+				preferenceUnconfirmed = true
+			} else {
+				s.cfg = candidate
+				s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
+			}
 		}
 	}
 	s.mu.Unlock()
