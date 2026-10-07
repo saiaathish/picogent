@@ -166,6 +166,9 @@ func recentDurableVerifications(items []taskstate.Verification, limit int) []str
 		if item.Passed {
 			status = "PASS"
 		}
+		if item.Retired {
+			status = "HISTORICAL " + status + " (retired outcome; not current proof)"
+		}
 		out = append(out, status+" command="+item.Command+" summary="+item.Summary)
 	}
 	return out

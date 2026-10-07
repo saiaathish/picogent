@@ -14,6 +14,7 @@ import (
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 func replacementAgent(t *testing.T, cfg config.Config, store *taskstate.Store, client *llm.Scripted) *Agent {
@@ -392,5 +393,46 @@ func TestReplacementProviderUsesAdmittedGoalTuple(t *testing.T) {
 	text, rev := a.GoalStateSnapshot()
 	if text != handler.goal || rev != handler.revision {
 		t.Fatal("old turn changed newer runtime goal")
+	}
+}
+
+func TestReplacementReloadKeepsHistoricalVerificationRetired(t *testing.T) {
+	a, store, cfg := replacementFixture(t)
+	observation, err := workspace.Capture(context.Background(), cfg.Workspace, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.mutateTaskResult(func(task *taskstate.Task) error {
+		task.AddVerificationForCriteria(task.RequiredCriterionIndices(), "check old outcome", true, "verify PASS — original checks passed", &observation)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if failed, err := a.beginDurableTask("replace the current task with document the API", NopHandler{}); failed || err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.Load("replacement-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "Blocked: documentation evidence still needs collection."}}}}
+	restarted := replacementAgent(t, cfg, store, client)
+	after := restarted.TaskSnapshot()
+	if !reflect.DeepEqual(before.Verification, after.Verification) || !reflect.DeepEqual(before.Evidence, after.Evidence) {
+		t.Fatal("session restore rewrote retired historical results or rebound new criteria")
+	}
+	if len(after.Verification) == 0 || !after.Verification[0].Passed || !after.Verification[0].Retired || after.ConsecutiveVerificationFailures() != 0 {
+		t.Fatal("historical success changed into a current failure")
+	}
+	_, result, err := restarted.Run(context.Background(), nil, llm.Message{Role: "user", Content: "continue"}, NopHandler{})
+	if err != nil || result.Verified != "" || result.Completion.Ready || result.GoalDone {
+		t.Fatalf("old proof projected as current: %+v %v", result, err)
+	}
+	final, err := store.Load("replacement-session")
+	if err != nil || !reflect.DeepEqual(before.Verification, final.Verification) {
+		t.Fatalf("turn revalidation rewrote retired history: %+v %v", final, err)
+	}
+	if len(client.Calls) == 0 || !strings.Contains(client.Calls[0].Messages[0].Content, "HISTORICAL PASS") {
+		t.Fatal("provider context did not distinguish historical check results")
 	}
 }

@@ -73,7 +73,7 @@ func (a *Agent) repeatedVerificationFailure() bool {
 	}
 	last := task.Verification[len(task.Verification)-1]
 	previous := task.Verification[len(task.Verification)-2]
-	if last.Passed || previous.Passed {
+	if last.Retired || previous.Retired || last.Passed || previous.Passed {
 		return false
 	}
 	lastFingerprint := verificationFailureFingerprint(last.Summary)
@@ -119,7 +119,7 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, evidenc
 		return false
 	}
 	a.taskMu.RLock()
-	if a.task == nil || len(a.task.Verification) == 0 {
+	if a.task == nil || len(a.task.Verification) == 0 || a.task.Verification[len(a.task.Verification)-1].Retired {
 		a.taskMu.RUnlock()
 		return false
 	}
@@ -540,7 +540,7 @@ func revalidateTaskProof(ctx context.Context, root string, task *taskstate.Task)
 		return false, nil
 	}
 	latest := task.Verification[len(task.Verification)-1]
-	if !latest.Passed {
+	if latest.Retired || !latest.Passed {
 		return false, nil
 	}
 	reason := "persisted verification has no complete PASS status"

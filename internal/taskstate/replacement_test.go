@@ -221,12 +221,62 @@ func TestReplaceOutcomeRetainsVerificationDiagnosticsWithoutAuthority(t *testing
 		if verification.Command != before[i].Command || verification.Summary != before[i].Summary || verification.At != before[i].At || verification.Passed != before[i].Passed {
 			t.Fatalf("historical verification changed: %#v", verification)
 		}
-		if verification.trusted || verification.Observation != nil || verification.Coverage != VerificationCoverageUnbound {
+		if !verification.Retired || verification.trusted || verification.Observation != nil || verification.Coverage != VerificationCoverageUnbound {
 			t.Fatalf("retired verification retained authority: %#v", verification)
 		}
 	}
 	if task.VerifiedChangeSeq != -1 || !task.NeedsVerification() {
 		t.Fatal("replacement did not require new verification")
+	}
+}
+
+func TestReplaceOutcomeRetiresOldFailureBudget(t *testing.T) {
+	task := replacementTask(t, "fix the cache")
+	task.AddVerification("old check", false, "verify FAIL — old error")
+	task.AddVerification("old check", false, "verify FAIL — old error")
+	if task.ConsecutiveVerificationFailures() != 2 {
+		t.Fatal("fixture lacks old failures")
+	}
+	if err := task.ReplaceOutcome("document the API"); err != nil {
+		t.Fatal(err)
+	}
+	store := NewStore(t.TempDir())
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := store.Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reloaded.ConsecutiveVerificationFailures() != 0 {
+		t.Fatal("retired failures consumed the new outcome's retry budget")
+	}
+	for i := 1; i <= 2; i++ {
+		reloaded.AddVerification("new check", false, "verify FAIL — new error")
+		if reloaded.ConsecutiveVerificationFailures() != i {
+			t.Fatal("old failure history contaminated current retry count")
+		}
+	}
+}
+
+func TestReplacementStoreRejectsOversizedRetirementBeforePublication(t *testing.T) {
+	task := replacementTask(t, "fix the cache")
+	store := NewStore(t.TempDir())
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+	beforeRevision := task.Revision
+	candidate := *task
+	candidate.ReplacedWorkspaceGoal = &GoalRetirement{Text: strings.Repeat("x", maxTaskFileBytes), Revision: 1}
+	if err := store.Save(&candidate); err == nil {
+		t.Fatal("unrestorable retirement was published")
+	}
+	if candidate.Revision != beforeRevision {
+		t.Fatal("failed save changed caller revision")
+	}
+	persisted, err := store.Load(task.SessionID)
+	if err != nil || persisted.Revision != beforeRevision || persisted.ReplacedWorkspaceGoal != nil {
+		t.Fatalf("oversized save damaged previous durable task: revision=%d err=%v", beforeRevision, err)
 	}
 }
 

@@ -53,7 +53,7 @@ func FailureIntelligenceForTask(task *taskstate.Task) FailureIntelligence {
 		return FailureIntelligence{}
 	}
 	latest := task.Verification[len(task.Verification)-1]
-	if latest.Passed || unavailableVerification(latest) {
+	if latest.Retired || latest.Passed || unavailableVerification(latest) {
 		return FailureIntelligence{}
 	}
 	fingerprint := verificationFingerprint(latest)
@@ -64,7 +64,7 @@ func FailureIntelligenceForTask(task *taskstate.Task) FailureIntelligence {
 	repeatCount := 0
 	for i := len(task.Verification) - 1; i >= 0; i-- {
 		verification := task.Verification[i]
-		if verification.Passed {
+		if verification.Retired || verification.Passed {
 			break
 		}
 		// The latest record already established that these exact fields describe

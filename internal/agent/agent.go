@@ -733,7 +733,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				}
 				if closed {
 					res.Task = finalTask
-					if finalTask != nil && len(finalTask.Verification) > 0 {
+					if finalTask != nil && len(finalTask.Verification) > 0 && !finalTask.Verification[len(finalTask.Verification)-1].Retired {
 						res.Verified = finalTask.Verification[len(finalTask.Verification)-1].Summary
 					}
 					res.Completion = completion

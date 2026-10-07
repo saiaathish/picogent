@@ -56,6 +56,7 @@ func (t *Task) ReplaceOutcome(prompt string) error {
 		// Passed remains the historical check result, not current authority.
 		// Rewriting old successes as failures would also distort retry budgets.
 		next.Verification[i].trusted = false
+		next.Verification[i].Retired = true
 		next.Verification[i].Coverage = VerificationCoverageUnbound
 		next.Verification[i].Observation = nil
 	}
