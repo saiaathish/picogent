@@ -56,11 +56,13 @@ func InferAuto(prompt string, current TaskMode, activeGoal string) AutoDecision 
 	}
 
 	// Replacement is a durable task transaction, not automatic workspace-goal
-	// inference. Callers must not overwrite the old goal before its task CAS.
-	_, replacing := taskstate.ExplicitReplacement(prompt)
-	if g, ok := inferGoalPhrase(prompt); !replacing && ok && g != activeGoal {
-		d.Goal = g
-		d.GoalSet = true
+	// inference. Even a quoted, question, conditional, or negated mention must
+	// not let a payload trigger overwrite the old goal before task admission.
+	if !taskstate.MentionsReplacement(prompt) {
+		if g, ok := inferGoalPhrase(prompt); ok && g != activeGoal {
+			d.Goal = g
+			d.GoalSet = true
+		}
 	}
 
 	mode, why := inferTaskMode(p, current, activeGoal != "" || d.GoalSet)
