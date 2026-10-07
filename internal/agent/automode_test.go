@@ -2,6 +2,19 @@ package agent
 
 import "testing"
 
+func TestInferAutoDoesNotPublishReplacementAsWorkspaceGoal(t *testing.T) {
+	for _, prompt := range []string{
+		"replace the current goal with fix all tests",
+		"replace the current task with make this ready to launch",
+		"cancel the previous task; instead migrate all endpoints",
+	} {
+		decision := InferAuto(prompt, TaskAgent, "finish the backend")
+		if decision.GoalSet || decision.Goal != "" {
+			t.Fatalf("replacement changed the workspace goal before task admission: %+v", decision)
+		}
+	}
+}
+
 func TestInferTaskModeDebug(t *testing.T) {
 	m, why := inferTaskMode("the login form crashes on submit", TaskAgent, false)
 	if m != TaskDebug || why == "" {

@@ -55,7 +55,10 @@ func InferAuto(prompt string, current TaskMode, activeGoal string) AutoDecision 
 		return d
 	}
 
-	if g, ok := inferGoalPhrase(prompt); ok && g != activeGoal {
+	// Replacement is a durable task transaction, not automatic workspace-goal
+	// inference. Callers must not overwrite the old goal before its task CAS.
+	_, replacing := taskstate.ExplicitReplacement(prompt)
+	if g, ok := inferGoalPhrase(prompt); !replacing && ok && g != activeGoal {
 		d.Goal = g
 		d.GoalSet = true
 	}

@@ -475,12 +475,26 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	if durablePrompt == "" {
 		durablePrompt = userText
 	}
-	if failed, taskErr := a.beginDurableTask(durablePrompt, ev); failed {
+	// Finish a previous save-before-retire crash window before task admission
+	// can recreate a terminal task or otherwise lose its pending retirement.
+	admittedGoal, admittedRevision, err := a.reconcileReplacedWorkspaceGoal(cfg.Workspace, state.Goal, state.GoalRevision)
+	if err != nil {
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
+	}
+	state.Goal, state.GoalRevision = admittedGoal, admittedRevision
+	if failed, taskErr := a.beginDurableTaskInState(durablePrompt, ev, false, state); failed {
 		if taskErr == nil {
 			taskErr = errors.New("durable task state is unavailable")
 		}
 		return history, Result{Task: a.TaskSnapshot()}, taskErr
 	}
+	admittedGoal, admittedRevision, err = a.reconcileReplacedWorkspaceGoal(cfg.Workspace, state.Goal, state.GoalRevision)
+	if err != nil {
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
+	}
+	state.Goal, state.GoalRevision = admittedGoal, admittedRevision
 	var turnSequence uint64
 	if task := a.TaskSnapshot(); task != nil {
 		var started bool
