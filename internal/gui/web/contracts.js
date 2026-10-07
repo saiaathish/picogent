@@ -182,5 +182,135 @@
     return "Contradictory evidence is unverified (" + count + " " + label + truncated + "); it cannot select an action";
   }
 
-  return Object.freeze({ createPrimaryEventDispatcher, mainPromptRequest, createPermissionResponseController, completionProofSummary, contradictionSummary });
+  // One server-owned deletion record and one request; no transcript or ID history.
+  function createChatDeletionRecoveryController({ send, render, onDelete, onRestore, onError,
+    getViewEpoch = () => 0, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
+    let epoch = getViewEpoch();
+    let revision = 0;
+    let recovery = null;
+    let attempt = null;
+    let error = "";
+    let timer = null;
+    const snapshot = () => ({ recovery: recovery ? { ...recovery } : null,
+      pending: !!attempt, action: attempt?.action || "", error });
+    const paint = () => render(snapshot());
+    const stopTimer = () => {
+      if (timer !== null) clearTimer(timer.handle);
+      timer = null;
+    };
+    const syncView = () => {
+      const next = getViewEpoch();
+      if (next === epoch) return;
+      epoch = next;
+      recovery = null;
+      attempt = null;
+      error = "";
+      revision++;
+      stopTimer();
+      paint();
+    };
+    const expire = () => {
+      if (!recovery || recovery.expires_at > now()) return;
+      recovery = null;
+      error = "";
+      revision++;
+      stopTimer();
+      paint();
+    };
+    const armExpiry = () => {
+      stopTimer();
+      if (!recovery) return;
+      const scheduled = { handle: null };
+      timer = scheduled;
+      scheduled.handle = setTimer(() => {
+        if (timer !== scheduled) return;
+        timer = null;
+        syncView();
+        expire();
+        armExpiry();
+      }, Math.max(0, recovery.expires_at - now()));
+    };
+    const readRecovery = (record) => {
+      if (!record || typeof record.id !== "string" || !record.id ||
+          typeof record.undo_id !== "string" || !record.undo_id) return null;
+      const expires = typeof record.expires_at === "number"
+        ? record.expires_at : Date.parse(record.expires_at);
+      if (!Number.isFinite(expires) || expires <= now()) return null;
+      return { id: record.id, title: String(record.title || "New chat").slice(0, 160),
+        undo_id: record.undo_id, expires_at: Math.min(expires, now() + 30000),
+        was_current: record.was_current === true };
+    };
+    const owns = (owner) => attempt === owner && epoch === owner.epoch && getViewEpoch() === owner.epoch;
+
+    async function request(action, id) {
+      syncView();
+      expire();
+      if (attempt || !id || (action === "undo_delete" && recovery?.undo_id !== id)) return false;
+      const owner = { epoch, action, id, recovery };
+      attempt = owner;
+      error = "";
+      revision++;
+      paint(); // Claim and disable synchronously, before transport can yield.
+      const failure = action === "delete" ? "Couldn't delete this chat" : "Couldn't restore this chat";
+      try {
+        const response = await send(action === "delete" ? { action, id } : { action, undo_id: id });
+        if (!owns(owner)) return false;
+        if (response?.status !== 200) {
+          throw new Error(failure + (response?.status ? " (HTTP " + response.status + ")" : "") + ". Please try again.");
+        }
+        const data = await response.json();
+        if (!owns(owner)) return false;
+        if (!data || typeof data.id !== "string" ||
+            data.id !== (action === "delete" ? id : owner.recovery.id) ||
+            typeof data.current_id !== "string" || !data.current_id) {
+          throw new Error(failure + ". Please try again.");
+        }
+        if (action === "delete" && (typeof data.undo_id !== "string" || !data.undo_id ||
+            !Number.isFinite(Date.parse(data.undo_expires_at)) || typeof data.was_current !== "boolean")) {
+          throw new Error(failure + ". Please try again.");
+        }
+        recovery = action === "delete" ? readRecovery({ ...data, expires_at: data.undo_expires_at }) : null;
+        attempt = null;
+        revision++;
+        armExpiry();
+        paint();
+        if (action === "delete") onDelete?.(data);
+        else onRestore?.(data);
+        return true;
+      } catch (err) {
+        if (!owns(owner)) return false;
+        attempt = null;
+        error = err?.message?.startsWith(failure) ? err.message : failure + ". Please try again.";
+        revision++;
+        paint();
+        onError?.(error);
+        return false;
+      }
+    }
+
+    return {
+      getState() { syncView(); expire(); return snapshot(); },
+      getRevision() { syncView(); expire(); return revision; },
+      reconcile(record, expectedRevision, expectedEpoch) {
+        syncView();
+        expire();
+        if (expectedEpoch !== epoch || expectedRevision !== revision || attempt) return false;
+        const next = readRecovery(record);
+        if (next?.undo_id === recovery?.undo_id && next) {
+          next.expires_at = Math.min(next.expires_at, recovery.expires_at);
+        } else {
+          error = "";
+        }
+        recovery = next;
+        revision++;
+        armExpiry();
+        paint();
+        return true;
+      },
+      delete: (id) => request("delete", id),
+      restore: (undoID) => request("undo_delete", undoID),
+    };
+  }
+
+  return Object.freeze({ createPrimaryEventDispatcher, mainPromptRequest, createPermissionResponseController, completionProofSummary, contradictionSummary, createChatDeletionRecoveryController });
 });

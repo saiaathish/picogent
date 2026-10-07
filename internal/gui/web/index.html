@@ -148,6 +148,10 @@
 
       <footer class="dock">
         <div id="ext-toasts" class="ext-toasts" aria-live="polite"></div>
+        <div id="delete-recovery" class="turn-recovery delete-recovery" hidden role="status" aria-live="polite">
+          <span id="delete-recovery-text"></span>
+          <button type="button" id="undo-delete" disabled>Undo delete</button>
+        </div>
         <div id="turn-recovery" class="turn-recovery" hidden aria-live="polite">
           <span id="turn-recovery-text">Changes from the last turn can be restored.</span>
           <button type="button" id="undo-turn" disabled>Undo last change</button>

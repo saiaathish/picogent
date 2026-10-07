@@ -656,6 +656,7 @@ async function applyProjectSwitch(data) {
 }
 
 async function pickProjectFolder() {
+  if (chatDeletionRecovery.getState().pending) return;
   if (busy) return;
   viewEpoch++;
   const epoch = viewEpoch;
@@ -681,6 +682,7 @@ async function pickProjectFolder() {
 }
 
 async function switchProject(id) {
+  if (chatDeletionRecovery.getState().pending) return;
   if (busy) return;
   viewEpoch++;
   const epoch = viewEpoch;
@@ -999,38 +1001,99 @@ function replayMessages(msgs) {
   }
 }
 
-async function loadThreads(epoch = viewEpoch, generation = refreshGeneration) {
-  const data = await (await fetch("/api/sessions")).json();
-  if (epoch !== viewEpoch || generation !== refreshGeneration) return;
-  threadsCache = data.sessions || [];
-  renderThreads();
-  renderRecentSessions();
+const chatDeletionRecovery = window.PicogentWebContracts.createChatDeletionRecoveryController({
+  getViewEpoch: () => viewEpoch,
+  send: (payload) => fetch("/api/sessions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  }),
+  render: (state) => {
+    renderDeleteRecovery(state);
+    renderThreads(state.pending);
+    renderRecentSessions(state.pending);
+  },
+  onDelete: applyThreadDeletion,
+  onRestore: applyThreadRestore,
+  onError: (message) => {
+    add("error", message);
+    // A lost response can follow an accepted delete/restore. Read authority
+    // rather than retrying a mutation whose result is unknown.
+    refresh().catch(() => { loadThreads(); });
+  },
+});
+
+function renderDeleteRecovery(state) {
+  const banner = $("delete-recovery");
+  const button = $("undo-delete");
+  if (banner && button) {
+    banner.hidden = !state.recovery;
+    banner.setAttribute("aria-busy", String(state.pending));
+    $("delete-recovery-text").textContent = state.recovery
+      ? 'Deleted “' + state.recovery.title + '”.' + (state.error ? " " + state.error : "") : "";
+    button.disabled = state.pending || !state.recovery;
+    button.textContent = state.action === "undo_delete" ? "Restoring…" : "Undo delete";
+  }
+  for (const id of ["new-chat", "new-chat-top"]) {
+    const control = $(id);
+    if (control) control.disabled = state.pending;
+  }
 }
 
-function renderThreads() {
+$("undo-delete")?.addEventListener("click", () => undoDeleteThread());
+
+async function loadThreads(epoch = viewEpoch, generation = refreshGeneration) {
+  // Both owners must be captured before GET, including on reload/reconnect.
+  const revision = chatDeletionRecovery.getRevision();
+  if (epoch !== viewEpoch || generation !== refreshGeneration) return false;
+  try {
+    const response = await fetch("/api/sessions");
+    if (response.status !== 200) throw new Error("Couldn't load chats. Please try again.");
+    const data = await response.json();
+    if (epoch !== viewEpoch || generation !== refreshGeneration ||
+        revision !== chatDeletionRecovery.getRevision()) return false;
+    const sessions = data?.sessions === null ? [] : data?.sessions;
+    if (!Array.isArray(sessions)) throw new Error("Couldn't load chats. Please try again.");
+    if (!chatDeletionRecovery.reconcile(data.delete_undo, revision, epoch)) return false;
+    threadsCache = sessions;
+    renderThreads();
+    renderRecentSessions();
+    return true;
+  } catch (_) {
+    if (epoch === viewEpoch && generation === refreshGeneration &&
+        revision === chatDeletionRecovery.getRevision()) add("error", "Couldn't load chats. Please try again.");
+    return false;
+  }
+}
+
+function renderThreads(pending = chatDeletionRecovery.getState().pending) {
   const q = (threadSearch.value || "").toLowerCase().trim();
   threadList.innerHTML = "";
   for (const s of threadsCache) {
     if (q && !(s.title || "").toLowerCase().includes(q)) continue;
-    const row = document.createElement("button");
-    row.type = "button";
+    const row = document.createElement("div");
     row.className = "thread-item" + (s.id === sessionId ? " is-active" : "");
     row.dataset.id = s.id;
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "thread-open";
+    open.disabled = pending;
+    open.setAttribute("aria-label", "Open chat: " + (s.title || "New chat"));
+    open.onclick = () => loadThread(s.id);
     const title = document.createElement("span");
     title.className = "thread-title";
     title.textContent = s.title || "New chat";
     const del = document.createElement("button");
     del.type = "button";
     del.className = "thread-del";
+    del.disabled = pending;
     del.textContent = "×";
-    del.title = "Delete";
-    del.onclick = (e) => {
-      e.stopPropagation();
-      deleteThread(s.id);
-    };
-    row.appendChild(title);
+    del.title = "Delete chat";
+    del.setAttribute("aria-label", "Delete chat: " + (s.title || "New chat"));
+    del.onclick = () => deleteThread(s.id);
+    open.appendChild(title);
+    row.appendChild(open);
     row.appendChild(del);
-    row.onclick = () => loadThread(s.id);
     threadList.appendChild(row);
   }
 }
@@ -1041,7 +1104,7 @@ function formatRecentDate(value) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
 }
 
-function renderRecentSessions() {
+function renderRecentSessions(pending = chatDeletionRecovery.getState().pending) {
   if (!recentRecoveryEl || !recentSessionListEl) return;
   const recent = threadsCache.filter((s) => s.id !== sessionId).slice(0, 3);
   if (!recent.length) {
@@ -1055,6 +1118,7 @@ function renderRecentSessions() {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "recent-session";
+    row.disabled = pending;
     row.setAttribute("aria-label", "Resume chat: " + title);
     row.addEventListener("click", () => loadThread(s.id));
 
@@ -1077,12 +1141,13 @@ function renderRecentSessions() {
   recentSessionListEl.replaceChildren(...rows);
 }
 
-threadSearch.addEventListener("input", renderThreads);
+threadSearch.addEventListener("input", () => renderThreads());
 
 async function loadThread(id) {
-  if (busy) return;
+  if (busy || chatDeletionRecovery.getState().pending) return;
   viewEpoch++;
   const epoch = viewEpoch;
+  chatDeletionRecovery.getState();
   historyReplayPending = false;
   const data = await (
     await fetch("/api/sessions", {
@@ -1101,8 +1166,10 @@ async function loadThread(id) {
 }
 
 async function newChat() {
+  if (chatDeletionRecovery.getState().pending) return;
   viewEpoch++;
   const epoch = viewEpoch;
+  chatDeletionRecovery.getState();
   historyReplayPending = false;
   setChatsOpen(false);
   if (busy) {
@@ -1136,14 +1203,49 @@ async function newChat() {
   promptEl.focus();
 }
 
-async function deleteThread(id) {
-  await fetch("/api/sessions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "delete", id }),
-  });
-  if (id === sessionId) await newChat();
-  else await loadThreads();
+function deleteThread(id) {
+  if (chatDeletionRecovery.getState().pending) return Promise.resolve(false);
+  refreshGeneration++; // State reads begun before this mutation cannot rotate the UI back.
+  return chatDeletionRecovery.delete(id);
+}
+
+function undoDeleteThread() {
+  const state = chatDeletionRecovery.getState();
+  if (state.pending || !state.recovery) return Promise.resolve(false);
+  refreshGeneration++;
+  return chatDeletionRecovery.restore(state.recovery.undo_id);
+}
+
+function applyThreadDeletion(data) {
+  refreshGeneration++;
+  threadsCache = threadsCache.filter((s) => s.id !== data.id);
+  if (data.was_current && sessionId === data.id) {
+    sessionId = data.current_id; // The server has already rotated; never request another new chat.
+    historyReplayPending = false;
+    clearTaskProgress();
+    setUndoAvailable(false);
+    clearLog();
+    emptyEl.hidden = false;
+    const epoch = viewEpoch;
+    refresh(true).catch(() => {
+      if (epoch === viewEpoch) add("error", "Couldn't refresh this chat. Please try again.");
+    });
+  } else {
+    loadThreads();
+  }
+  renderThreads();
+  renderRecentSessions();
+}
+
+function applyThreadRestore(data) {
+  refreshGeneration++;
+  if (!threadsCache.some((s) => s.id === data.id)) {
+    threadsCache = [{ id: data.id, title: data.title }, ...threadsCache];
+  }
+  // Undo restores only history metadata. Keep the currently open transcript.
+  renderThreads();
+  renderRecentSessions();
+  loadThreads();
 }
 
 async function refresh(reconcileHistory = false) {

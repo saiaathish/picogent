@@ -48,7 +48,7 @@ func TestEmbeddedIndex(t *testing.T) {
 		!strings.Contains(string(js), "primaryEventDispatcher?.dispatch(e)") {
 		t.Fatal("gui primary SSE events are not wired through executable contracts")
 	}
-	if !strings.Contains(string(js), "function renderRecentSessions()") || !strings.Contains(string(js), "setUndoAvailable(true)") || !strings.Contains(string(js), `prompt: "/undo"`) {
+	if !strings.Contains(string(js), "function renderRecentSessions(") || !strings.Contains(string(js), "setUndoAvailable(true)") || !strings.Contains(string(js), `prompt: "/undo"`) {
 		t.Fatal("gui recovery controls are not wired to session resume and undo")
 	}
 	if !strings.Contains(string(js), `fetch("/api/permission"`) ||
@@ -91,9 +91,9 @@ func TestEmbeddedIndex(t *testing.T) {
 		t.Fatal("gui reconnect refresh does not reconcile durable session history")
 	}
 	threadsStart := strings.Index(string(js), "async function loadThreads(")
-	threadsEnd := strings.Index(string(js), "function renderThreads()")
+	threadsEnd := strings.Index(string(js), "function renderThreads(")
 	if threadsStart < 0 || threadsEnd < threadsStart || strings.Contains(string(js)[threadsStart:threadsEnd], "sessionId = data.current_id") ||
-		!strings.Contains(string(js)[threadsStart:threadsEnd], "if (epoch !== viewEpoch || generation !== refreshGeneration) return;") {
+		!strings.Contains(string(js)[threadsStart:threadsEnd], "if (epoch !== viewEpoch || generation !== refreshGeneration) return false;") {
 		t.Fatal("chat-list refresh can overwrite the selected session")
 	}
 	projectsStart := strings.Index(string(js), "async function loadProjects(")
