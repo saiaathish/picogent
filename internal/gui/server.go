@@ -121,6 +121,8 @@ type server struct {
 	cfg        config.Config
 	ag         *agent.Agent
 	saveConfig func(config.Config) error
+	// buildConfig isolates prepared runtime construction in transaction tests.
+	buildConfig func(config.Config) (*agent.Agent, error)
 	// undoExtension is a test seam; production uses extensions.Undo.
 	undoExtension   func(extensions.UndoEntry) error
 	configTxMu      sync.Mutex
@@ -1021,7 +1023,7 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		writeGUIError(w, "POST only", 405)
 		return
 	}
-	log, err := setup.InstallCores()
+	log, err := setup.InstallCoresWithConfig(s.ensureSetupConfig)
 	// Model discovery may invoke installed CLIs and public catalogs, so keep it
 	// on the explicit install action rather than the setup-status GET path.
 	llm.RefreshCLIModels(true)
@@ -1036,6 +1038,27 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	out["status"] = st
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+// The installer must not create a default config outside GUI transactions.
+// Initialize missing config from the current runtime, not stale defaults, and
+// release configTxMu before any potentially slow CLI installation begins.
+func (s *server) ensureSetupConfig() error {
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
+	path, err := config.Path()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	s.mu.Lock()
+	cfg := s.cfg
+	s.mu.Unlock()
+	return s.persistConfig(cfg)
 }
 
 func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
@@ -1124,25 +1147,39 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 		writeGUIError(w, err.Error(), 400)
 		return
 	}
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
+	s.sessionTxMu.Lock()
+	defer s.sessionTxMu.Unlock()
 	s.mu.Lock()
 	cfg := s.cfg
+	sid := s.sessionID
 	s.mu.Unlock()
-	next, err := setup.Apply(cfg, in.Workspace, in.Mode, in.Model)
+	next, err := setup.Prepare(cfg, in.Workspace, in.Mode, in.Model)
 	if err != nil {
 		writeGUIError(w, err.Error(), 400)
 		return
 	}
-	a, err := app.Build(next)
+	a, err := s.buildCandidateAgent(next)
 	if err != nil {
 		writeGUIError(w, err.Error(), 500)
 		return
 	}
-	s.mu.Lock()
-	if err := a.SetTaskSession(s.sessionID); err != nil {
-		s.mu.Unlock()
+	// Loading task state can wait on a project run lock; GUI callbacks remain
+	// able to acquire s.mu while this candidate is prepared.
+	if err := a.SetTaskSession(sid); err != nil {
+		closeCandidateAgent(a)
 		writeGUIError(w, "couldn't load durable task state: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if err := s.persistPreparedConfig(&next); err != nil {
+		closeCandidateAgent(a)
+		writeGUIError(w, "couldn't save setup: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.mu.Lock()
+	mergeRouterObservations(&next, s.cfg)
+	a.UpdateConfig(func(current *config.Config) { *current = next })
 	s.abortTurnLocked()
 	s.cfg = next
 	s.ag = a
@@ -1196,6 +1233,34 @@ func (s *server) persistConfig(cfg config.Config) error {
 		return s.saveConfig(cfg)
 	}
 	return config.Save(cfg)
+}
+
+func (s *server) buildCandidateAgent(cfg config.Config) (*agent.Agent, error) {
+	if s.buildConfig != nil {
+		return s.buildConfig(cfg)
+	}
+	return app.Build(cfg)
+}
+
+// Call with configTxMu held. Routing callbacks cannot wait on that mutex:
+// transitions may own it while waiting for their active turn to finish. Merge
+// their current observations without replacing user-selected router options.
+func (s *server) persistPreparedConfig(cfg *config.Config) error {
+	s.mu.Lock()
+	mergeRouterObservations(cfg, s.cfg)
+	s.mu.Unlock()
+	return s.persistConfig(*cfg)
+}
+
+// Call with s.mu held when the source is s.cfg. Repeat before publication so
+// observations made during persistence aren't overwritten in the live state.
+func mergeRouterObservations(dst *config.Config, src config.Config) {
+	dst.Router.LastTier = src.Router.LastTier
+	dst.Router.LastModel = src.Router.LastModel
+	dst.Router.LastReason = src.Router.LastReason
+	dst.Router.LastReasoning = src.Router.LastReasoning
+	dst.Router.LastTaskKind = src.Router.LastTaskKind
+	dst.Router.LastRouteMode = src.Router.LastRouteMode
 }
 
 func closeCandidateAgent(a *agent.Agent) {
@@ -3096,7 +3161,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		var nextSession string
 		var nextHistory []llm.Message
 		if rebuildAgent {
-			built, err := app.Build(cfg)
+			built, err := s.buildCandidateAgent(cfg)
 			if err != nil {
 				http.Error(w, err.Error(), 500)
 				return
@@ -3124,13 +3189,17 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		// held by /api/mode, so Settings and direct mode changes cannot reorder
 		// their saved config. A failed write changes neither the live agent nor
 		// its permission gate.
-		if err := s.persistConfig(cfg); err != nil {
+		if err := s.persistPreparedConfig(&cfg); err != nil {
 			closeCandidateAgent(nextAgent)
 			http.Error(w, "couldn't save settings: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
 		var sessionSaveErr error
 		s.mu.Lock()
+		mergeRouterObservations(&cfg, s.cfg)
+		if nextAgent != nil {
+			nextAgent.UpdateConfig(func(current *config.Config) { *current = cfg })
+		}
 		if workspaceChanged {
 			oldWorkspace := s.cfg.Workspace
 			oldSession := s.sessionID
