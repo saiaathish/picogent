@@ -1218,31 +1218,41 @@ func (s *server) setTaskMode(w http.ResponseWriter, r *http.Request) {
 		writeGUIError(w, "invalid task mode", 400)
 		return
 	}
-	s.mu.Lock()
-	s.cfg.TaskMode = string(m)
-	s.liveTask = m
-	if s.ag != nil {
-		s.ag.SetTaskMode(m)
+	if err := s.persistTaskMode(m); err != nil {
+		writeGUIError(w, "couldn't save task mode: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
-	_ = config.Save(s.cfg)
-	s.mu.Unlock()
 	s.emit(event{Type: "system", Text: "mode: " + strings.ToLower(m.Label())})
 	s.emit(event{Type: "task_mode", Text: string(m)})
 	w.WriteHeader(204)
 }
 
-func (s *server) applyTaskMode(payload string) {
+func (s *server) applyTaskMode(payload string) error {
 	m := agent.ParseTaskMode(strings.TrimPrefix(payload, "task:"))
+	if err := s.persistTaskMode(m); err != nil {
+		return err
+	}
+	s.emit(event{Type: "system", Text: "mode: " + strings.ToLower(m.Label())})
+	s.emit(event{Type: "task_mode", Text: string(m)})
+	return nil
+}
+
+func (s *server) persistTaskMode(m agent.TaskMode) error {
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	s.mu.Lock()
-	s.cfg.TaskMode = string(m)
+	defer s.mu.Unlock()
+	next := s.cfg
+	next.TaskMode = string(m)
+	if err := s.persistConfig(next); err != nil {
+		return err
+	}
+	s.cfg = next
 	s.liveTask = m
 	if s.ag != nil {
 		s.ag.SetTaskMode(m)
 	}
-	_ = config.Save(s.cfg)
-	s.mu.Unlock()
-	s.emit(event{Type: "system", Text: "mode: " + strings.ToLower(m.Label())})
-	s.emit(event{Type: "task_mode", Text: string(m)})
+	return nil
 }
 
 func (s *server) autoApplyFromUserPrompt(prompt string, expectedGen uint64) error {
@@ -1750,9 +1760,13 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't clear completed goal: %v", err)})
 			}
 		}
+		// RunWithOptions has returned and released the project run lock. It is
+		// now safe to wait for configTxMu; active-turn callbacks must not do so.
+		s.configTxMu.Lock()
 		s.mu.Lock()
 		if s.turnGen != myGen {
 			s.mu.Unlock()
+			s.configTxMu.Unlock()
 			return
 		}
 		if s.liveTask.Valid() && s.ag != nil {
@@ -1763,9 +1777,13 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 		sid := s.sessionID
 		llmClient := runAgent.ClientSnapshot()
 		model := runAgent.ConfigSnapshot().Model
-		_ = config.Save(s.cfg)
+		configSaveErr := s.persistConfig(s.cfg)
 		saveErr := session.SaveMessages(ws, sid, next)
 		s.mu.Unlock()
+		s.configTxMu.Unlock()
+		if configSaveErr != nil {
+			s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save turn settings: %v", configSaveErr)})
+		}
 		if saveErr != nil {
 			s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
 		}
@@ -2214,7 +2232,10 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 			s.emit(event{Type: "system", Text: "goal cleared"})
 		default:
 			if strings.HasPrefix(payload, "task:") {
-				s.applyTaskMode(payload)
+				if err := s.applyTaskMode(payload); err != nil {
+					writeGUIError(w, "couldn't save task mode: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
 			} else if strings.HasPrefix(payload, "memory:") {
 				text := strings.TrimPrefix(payload, "memory:")
 				if text == "" {
