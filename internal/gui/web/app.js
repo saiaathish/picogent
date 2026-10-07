@@ -1149,6 +1149,7 @@ async function deleteThread(id) {
 async function refresh(reconcileHistory = false) {
   const epoch = viewEpoch;
   const generation = ++refreshGeneration;
+  const permissionRevision = permissionResponses.getRevision();
   const s = await (await fetch("/api/state")).json();
   if (epoch !== viewEpoch || generation !== refreshGeneration) return;
   renderTopContext(s);
@@ -1180,11 +1181,7 @@ async function refresh(reconcileHistory = false) {
   });
   renderContext(s.context);
   renderTaskProgress(s.task, s.session_id, s.completion, s.outcome);
-  if (s.pending_perm) {
-    showPermission(s.pending_perm);
-  } else if (!s.busy) {
-    permEl.classList.remove("is-on");
-  }
+  permissionResponses.reconcile(s.pending_perm || null, permissionRevision, s.permission_epoch || "");
   const preserveLocalTurn = clientBusy && !sessionChanged &&
     (serverBusy || chatRequestsPending > 0);
   if (reconcileHistory || sessionChanged || historyReplayPending) {
@@ -1353,24 +1350,35 @@ $("open-chats")?.addEventListener("click", () => {
 });
 undoTurnBtn?.addEventListener("click", undoLastChange);
 
+const permissionResponses = window.PicogentWebContracts.createPermissionResponseController({
+  send: (permissionID, choice, permissionEpoch) => {
+    if (permEl.dataset.permissionId === permissionID) {
+      return fetch("/api/permission", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          allow: choice.allow,
+          turn: choice.turn,
+          always: choice.always,
+          permission_id: permissionID,
+          ...(permissionEpoch ? { permission_epoch: permissionEpoch } : {}),
+        }),
+      });
+    }
+    throw new Error("Permission prompt changed before sending");
+  },
+  render: renderPermission,
+  onReconcile: () => { refresh().catch(() => {}); },
+});
 permEl.addEventListener("click", async (e) => {
   const t = e.target.closest("[data-allow], [data-turn], [data-always]");
-  if (!t) return;
+  if (!t || t.disabled) return;
   const permissionID = permEl.dataset.permissionId || "";
-  if (!permissionID) return;
-  await fetch("/api/permission", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      allow: t.dataset.allow === "1",
-      turn: t.dataset.turn === "1",
-      always: t.dataset.always === "1",
-      permission_id: permissionID,
-    }),
+  await permissionResponses.respond(permissionID, {
+    allow: t.dataset.allow === "1",
+    turn: t.dataset.turn === "1",
+    always: t.dataset.always === "1",
   });
-  if (permEl.dataset.permissionId === permissionID) {
-    permEl.classList.remove("is-on");
-  }
 });
 
 /* ─── Extensions finder ─── */
@@ -2091,11 +2099,7 @@ const primaryEventDispatcher = window.PicogentWebContracts?.createPrimaryEventDi
     }
   },
   done: () => {
-    permEl.classList.remove("is-on");
-    if (permHint) {
-      permHint.hidden = true;
-      permHint.textContent = "";
-    }
+    permissionResponses.invalidateSnapshots();
     finishTurnUI();
     if ($("panel-activity") && !$("panel-activity").hidden) refreshActivity();
   },
@@ -2110,12 +2114,24 @@ function verificationPresentation(status) {
     default: return { className: "is-inconclusive", label: "INCONCLUSIVE" };
   }
 }
-function showPermission(e) {
-  if (!e) return;
+function renderPermission(state) {
+  permEl.querySelectorAll("[data-allow], [data-turn], [data-always]").forEach((button) => {
+    button.disabled = state.pending;
+  });
+  const e = state.permission;
+  if (!e) {
+    permEl.dataset.permissionId = "";
+    permEl.classList.remove("is-on");
+    if (permHint) {
+      permHint.hidden = true;
+      permHint.textContent = "";
+    }
+    return;
+  }
   permEl.dataset.permissionId = e.permission_id || "";
   permText.textContent = e.summary || e.text || "";
   if (permHint) {
-    const hint = e.hint || "";
+    const hint = [e.hint || "", state.error].filter(Boolean).join(" ");
     permHint.textContent = hint;
     permHint.hidden = !hint;
   }
@@ -2128,6 +2144,9 @@ function showPermission(e) {
   permEl.classList.add("is-on");
   setThinking(false);
 }
+function showPermission(e) {
+  permissionResponses.show(e);
+}
 
 function connectEvents() {
   if (ev) ev.close();
@@ -2138,6 +2157,7 @@ function connectEvents() {
   ev.onmessage = (m) => {
     const e = JSON.parse(m.data);
     if (e.type === "hello") {
+      permissionResponses.setEpoch(e.permission_epoch || "");
       ready = true;
       sendBtn.disabled = !ready;
       return;

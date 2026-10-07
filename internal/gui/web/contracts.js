@@ -45,6 +45,109 @@
     };
   }
 
+  function createPermissionResponseController({ send, render, onReconcile }) {
+    const emptyState = () => ({ permission: null, pending: false, error: "", attempt: null });
+    let state = emptyState();
+    let revision = 0;
+    let epoch = "";
+    let reconcileAfterSettled = false;
+    // Server IDs are increasing decimal uint64s. One high-water mark blocks
+    // old events without an ID history; fresh authority can reset it on restart.
+    let acknowledgedID = "";
+    const wasAcknowledged = (id) => {
+      if (!acknowledgedID) return false;
+      if (id === acknowledgedID) return true;
+      if (/^[1-9]\d*$/.test(id) && /^[1-9]\d*$/.test(acknowledgedID)) {
+        return BigInt(id) <= BigInt(acknowledgedID);
+      }
+      return false;
+    };
+    const getState = () => ({ permission: state.permission, pending: state.pending, error: state.error });
+    const paint = () => render(getState());
+    const replace = (permission) => {
+      if (permission && state.permission?.permission_id === permission.permission_id) {
+        state.permission = permission; // Same-ID redraws retain the owned attempt/error.
+      } else {
+        state = { ...emptyState(), permission };
+      }
+      revision++;
+      paint();
+    };
+    const setEpoch = (nextEpoch = "") => {
+      if (nextEpoch === epoch) return;
+      epoch = nextEpoch;
+      acknowledgedID = "";
+      reconcileAfterSettled = false;
+      replace(null); // Invalidate responses from the previous process, even while idle.
+    };
+
+    return {
+      getState,
+      setEpoch,
+      getRevision: () => revision,
+      invalidateSnapshots() { revision++; reconcileAfterSettled = true; },
+      show(permission) {
+        if (permission?.permission_epoch && !epoch) setEpoch(permission.permission_epoch);
+        if ((permission?.permission_epoch || "") !== epoch) return false;
+        if (!permission?.permission_id || wasAcknowledged(permission.permission_id)) return false;
+        replace(permission);
+        return true;
+      },
+      reconcile(permission, expectedRevision, nextEpoch = "") {
+        if (expectedRevision !== revision) return false;
+        setEpoch(nextEpoch);
+        reconcileAfterSettled = false;
+        const next = permission?.permission_id ? permission : null;
+        // Legacy fixtures have no process identity. Production epochs must
+        // change before acknowledged IDs can become actionable again.
+        if (!epoch && next && wasAcknowledged(next.permission_id)) acknowledgedID = "";
+        replace(next);
+        return true;
+      },
+      async respond(permissionID, choice) {
+        if (!permissionID || state.permission?.permission_id !== permissionID || state.pending) return false;
+        const owner = state;
+        const attempt = {};
+        const ownsAttempt = () => state === owner && state.attempt === attempt;
+        owner.attempt = attempt;
+        owner.pending = true;
+        owner.error = "";
+        revision++;
+        paint(); // Disable every choice before sending or yielding to another click.
+        try {
+          const response = await send(permissionID, {
+            allow: choice.allow === true,
+            turn: choice.turn === true,
+            always: choice.always === true,
+          }, epoch);
+          if (!ownsAttempt()) return false;
+          if (response?.status !== 204) {
+            owner.error = "Choice wasn't acknowledged" +
+              (response?.status ? " (HTTP " + response.status + ")" : "") + ". Please try again.";
+            return false;
+          }
+          acknowledgedID = permissionID;
+          replace(null);
+          return true;
+        } catch (_) {
+          if (ownsAttempt()) owner.error = "Couldn't send this choice. Please try again.";
+          return false;
+        } finally {
+          if (ownsAttempt()) {
+            owner.pending = false;
+            owner.attempt = null;
+            revision++;
+            paint();
+            if (reconcileAfterSettled && owner.error) {
+              reconcileAfterSettled = false;
+              if (typeof onReconcile === "function") onReconcile();
+            }
+          }
+        }
+      },
+    };
+  }
+
   function completionProofSummary(proof) {
     if (!proof || typeof proof !== "object") return "";
     if (proof.ready === true) return "Completion proof ready";
@@ -79,5 +182,5 @@
     return "Contradictory evidence is unverified (" + count + " " + label + truncated + "); it cannot select an action";
   }
 
-  return Object.freeze({ createPrimaryEventDispatcher, mainPromptRequest, completionProofSummary, contradictionSummary });
+  return Object.freeze({ createPrimaryEventDispatcher, mainPromptRequest, createPermissionResponseController, completionProofSummary, contradictionSummary });
 });

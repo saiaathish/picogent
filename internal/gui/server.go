@@ -2,6 +2,8 @@ package gui
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,29 +54,30 @@ import (
 )
 
 type event struct {
-	Type         string                     `json:"type"`
-	Text         string                     `json:"text,omitempty"`
-	Summary      string                     `json:"summary,omitempty"`
-	Hint         string                     `json:"hint,omitempty"`
-	Path         string                     `json:"path,omitempty"`
-	Line         int                        `json:"line,omitempty"`
-	LineEnd      int                        `json:"line_end,omitempty"`
-	Added        int                        `json:"added,omitempty"`
-	Removed      int                        `json:"removed,omitempty"`
-	Count        int                        `json:"count,omitempty"`
-	Kind         string                     `json:"kind,omitempty"`
-	Status       string                     `json:"status,omitempty"`
-	Available    bool                       `json:"available,omitempty"`
-	Tokens       int                        `json:"tokens,omitempty"`
-	Budget       int                        `json:"budget,omitempty"`
-	Pct          float64                    `json:"pct,omitempty"`
-	Level        string                     `json:"level,omitempty"`
-	SessionID    string                     `json:"session_id,omitempty"`
-	PermissionID string                     `json:"permission_id,omitempty"`
-	Task         *taskstate.Task            `json:"task"`
-	Completion   *taskstate.CompletionCheck `json:"completion,omitempty"`
-	Outcome      *outcome.TurnContract      `json:"outcome,omitempty"`
-	turnGen      uint64                     `json:"-"`
+	Type            string                     `json:"type"`
+	Text            string                     `json:"text,omitempty"`
+	Summary         string                     `json:"summary,omitempty"`
+	Hint            string                     `json:"hint,omitempty"`
+	Path            string                     `json:"path,omitempty"`
+	Line            int                        `json:"line,omitempty"`
+	LineEnd         int                        `json:"line_end,omitempty"`
+	Added           int                        `json:"added,omitempty"`
+	Removed         int                        `json:"removed,omitempty"`
+	Count           int                        `json:"count,omitempty"`
+	Kind            string                     `json:"kind,omitempty"`
+	Status          string                     `json:"status,omitempty"`
+	Available       bool                       `json:"available,omitempty"`
+	Tokens          int                        `json:"tokens,omitempty"`
+	Budget          int                        `json:"budget,omitempty"`
+	Pct             float64                    `json:"pct,omitempty"`
+	Level           string                     `json:"level,omitempty"`
+	SessionID       string                     `json:"session_id,omitempty"`
+	PermissionID    string                     `json:"permission_id,omitempty"`
+	PermissionEpoch string                     `json:"permission_epoch,omitempty"`
+	Task            *taskstate.Task            `json:"task"`
+	Completion      *taskstate.CompletionCheck `json:"completion,omitempty"`
+	Outcome         *outcome.TurnContract      `json:"outcome,omitempty"`
+	turnGen         uint64                     `json:"-"`
 }
 
 type transcriptLine struct {
@@ -115,29 +118,33 @@ type turnAdmission struct {
 }
 
 type server struct {
-	cfg            config.Config
-	ag             *agent.Agent
-	saveConfig     func(config.Config) error
-	configTxMu     sync.Mutex
-	sessionTxMu    sync.Mutex
-	mu             sync.Mutex
-	hist           []llm.Message
-	sessionID      string
-	permCh         chan perm.Decision
-	subs           []chan event
-	busy           bool
-	shuttingDown   bool
-	activeTurns    int
-	turnWG         sync.WaitGroup
-	cancel         context.CancelFunc
-	steerMu        sync.Mutex
-	steerQueue     []queuedTurn
-	undoStack      []extensions.UndoEntry
-	pendingPerm    perm.Request
-	pendingPermGen uint64
-	pendingPermID  uint64
-	pendingPermCh  chan perm.Decision
-	liveTask       agent.TaskMode
+	cfg             config.Config
+	ag              *agent.Agent
+	saveConfig      func(config.Config) error
+	configTxMu      sync.Mutex
+	sessionTxMu     sync.Mutex
+	mu              sync.Mutex
+	hist            []llm.Message
+	sessionID       string
+	permCh          chan perm.Decision
+	subs            []chan event
+	busy            bool
+	shuttingDown    bool
+	activeTurns     int
+	turnWG          sync.WaitGroup
+	cancel          context.CancelFunc
+	steerMu         sync.Mutex
+	steerQueue      []queuedTurn
+	undoStack       []extensions.UndoEntry
+	pendingPerm     perm.Request
+	pendingPermGen  uint64
+	pendingPermID   uint64
+	pendingPermCh   chan perm.Decision
+	permissionEpoch string
+	// A prompt may have one in-flight HTTP choice. IDs are monotonic, so a
+	// replacement prompt is independent of an older response's cleanup.
+	pendingPermResponseID uint64
+	liveTask              agent.TaskMode
 	// turnMode is a temporary scope boundary for the admitted turn. It is
 	// exposed in state while the turn runs but never replaces liveTask.
 	turnMode  *agent.TaskMode
@@ -203,7 +210,11 @@ func RunContext(ctx context.Context) error {
 			return fmt.Errorf("load durable task state: %w", err)
 		}
 	}
-	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
+	var permissionNonce [16]byte
+	if _, err := rand.Read(permissionNonce[:]); err != nil {
+		return fmt.Errorf("prepare permission identity: %w", err)
+	}
+	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist, permissionEpoch: hex.EncodeToString(permissionNonce[:])}
 	s.attachRouterHook()
 	s.ensureProject()
 	addr := "127.0.0.1:7420"
@@ -789,6 +800,7 @@ func (s *server) snapshot() map[string]any {
 	hist := append([]llm.Message(nil), s.hist...)
 	pend := s.pendingPerm
 	pendID := s.pendingPermID
+	permissionEpoch := s.permissionEpoch
 	liveTask := s.liveTask
 	var turnMode *agent.TaskMode
 	if s.turnMode != nil {
@@ -845,6 +857,7 @@ func (s *server) snapshot() map[string]any {
 		"setup":               !cfg.SetupComplete,
 		"mcp_tools":           mcpToolCount(ag),
 		"session_id":          sessionID,
+		"permission_epoch":    permissionEpoch,
 		"undo_available":      undoAvailable,
 		"task":                sanitizeTask(task),
 		"router":              s.routerSnapshot(),
@@ -880,7 +893,7 @@ func (s *server) snapshot() map[string]any {
 		out["messages"] = messagesToTranscript(hist)
 	}
 	if pend.Tool != "" {
-		out["pending_perm"] = permissionProjectionWithID(pend, pendID)
+		out["pending_perm"] = permissionProjectionWithID(pend, pendID, permissionEpoch)
 	}
 	budget := ctxmgr.BudgetForModel(cfg.Model)
 	ctxStats := ctxmgr.StatsFor(hist, budget)
@@ -1849,10 +1862,11 @@ func (s *server) reset(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Allow        bool   `json:"allow"`
-		Turn         bool   `json:"turn"`
-		Always       bool   `json:"always"`
-		PermissionID string `json:"permission_id"`
+		Allow           bool   `json:"allow"`
+		Turn            bool   `json:"turn"`
+		Always          bool   `json:"always"`
+		PermissionID    string `json:"permission_id"`
+		PermissionEpoch string `json:"permission_epoch"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -1868,7 +1882,7 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	}
 	requestedID, err := strconv.ParseUint(strings.TrimSpace(in.PermissionID), 10, 64)
 	if err != nil || requestedID == 0 {
-		w.WriteHeader(http.StatusNoContent)
+		http.Error(w, "permission request ID is required", http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
@@ -1877,37 +1891,74 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	pendingGen := s.pendingPermGen
 	pendingID := s.pendingPermID
 	turnGen := s.turnGen
-	s.mu.Unlock()
-	if permCh == nil || tool == "" || requestedID != pendingID {
-		w.WriteHeader(204)
+	if permCh == nil || tool == "" || requestedID != pendingID || pendingGen != turnGen || in.PermissionEpoch != s.permissionEpoch || s.pendingPermResponseID == requestedID {
+		s.mu.Unlock()
+		http.Error(w, "permission request is no longer available", http.StatusConflict)
 		return
 	}
+	s.pendingPermResponseID = requestedID
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		if s.pendingPermResponseID == requestedID {
+			s.pendingPermResponseID = 0
+		}
+		s.mu.Unlock()
+	}()
+	if r.Context().Err() != nil {
+		http.Error(w, "permission response was canceled", http.StatusRequestTimeout)
+		return
+	}
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
 	select {
 	case permCh <- d:
-	case <-time.After(2 * time.Second):
+	case <-r.Context().Done():
+		http.Error(w, "permission response was canceled", http.StatusRequestTimeout)
+		return
+	case <-timer.C:
+		http.Error(w, "permission response was not delivered; try again", http.StatusServiceUnavailable)
+		return
 	}
 	if hook := s.beforePermissionResponseCleanup; hook != nil {
 		hook()
 	}
+	// Settings and mode changes also save complete config snapshots. Serialize
+	// the Always preference with them so a concurrent save cannot erase it.
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	s.mu.Lock()
-	// Only the request that was visible when the user clicked may be cleared
-	// or promoted to Always. A reset/new turn or a subsequent prompt can replace
-	// pendingPerm while the HTTP request is waiting on the old turn's channel.
-	if s.pendingPermGen != pendingGen || s.pendingPermID != pendingID || s.turnGen != turnGen {
-		s.mu.Unlock()
-		w.WriteHeader(204)
-		return
+	// Delivery already succeeded. A later prompt must not make the accepted
+	// choice look rejected, but only the original prompt may be cleared.
+	if s.pendingPermGen == pendingGen && s.pendingPermID == pendingID && s.turnGen == turnGen && s.pendingPermCh == permCh {
+		s.pendingPerm = perm.Request{}
+		s.pendingPermGen = 0
+		s.pendingPermCh = nil
 	}
-	s.pendingPerm = perm.Request{}
-	s.pendingPermGen = 0
-	s.pendingPermCh = nil
-	if d == perm.AllowAlways && s.ag != nil && s.ag.Gate != nil && tool != "" {
-		s.cfg.Extensions.AlwaysAllowTools = appendUnique(s.cfg.Extensions.AlwaysAllowTools, tool)
-		s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
-		_ = config.Save(s.cfg)
+	preferenceUnconfirmed := false
+	if d == perm.AllowAlways {
+		// A same-turn next prompt does not revoke the accepted Always choice.
+		// A new turn/workspace owns different policy; do not publish into it.
+		if s.turnGen != turnGen || s.ag == nil || s.ag.Gate == nil {
+			preferenceUnconfirmed = true
+		} else {
+			candidate := s.cfg
+			candidate.Extensions.AlwaysAllowTools = appendUnique(append([]string(nil), s.cfg.Extensions.AlwaysAllowTools...), tool)
+			if err := s.persistConfig(candidate); err != nil {
+				preferenceUnconfirmed = true
+			} else {
+				s.cfg = candidate
+				s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
+			}
+		}
 	}
 	s.mu.Unlock()
-	w.WriteHeader(204)
+	if preferenceUnconfirmed {
+		// Delivery has already succeeded. Do not ask the user to submit the
+		// same choice again or claim that a future-session policy was saved.
+		s.emit(event{Type: "error", Text: "Your choice applied, but saving it for future sessions could not be confirmed."})
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) events(w http.ResponseWriter, r *http.Request) {
@@ -1934,14 +1985,18 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-	fmt.Fprintf(w, "data: {\"type\":\"hello\"}\n\n")
+	s.mu.Lock()
+	permissionEpoch := s.permissionEpoch
+	s.mu.Unlock()
+	hello, _ := json.Marshal(event{Type: "hello", PermissionEpoch: permissionEpoch})
+	fmt.Fprintf(w, "data: %s\n\n", hello)
 	fl.Flush()
 	s.mu.Lock()
 	pend := s.pendingPerm
 	pendID := s.pendingPermID
 	s.mu.Unlock()
 	if pend.Tool != "" {
-		b, _ := json.Marshal(sanitizeEvent(permissionEventWithID(pend, pendID)))
+		b, _ := json.Marshal(sanitizeEvent(permissionEventWithID(pend, pendID, permissionEpoch)))
 		fmt.Fprintf(w, "data: %s\n\n", b)
 		fl.Flush()
 	}
@@ -2509,6 +2564,7 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 	h.s.pendingPermGen = h.turnGen
 	responseCh := make(chan perm.Decision, 1)
 	h.s.pendingPermCh = responseCh
+	permissionEpoch := h.s.permissionEpoch
 	ag := h.s.ag
 	h.s.mu.Unlock()
 	if ag != nil {
@@ -2516,7 +2572,7 @@ func (h *guiHandler) OnNeedPermission(ctx context.Context, req perm.Request) (pe
 			_ = traceLog.Append("perm", req.Tool, req.Summary, nil, 0)
 		}
 	}
-	h.emit(permissionEventWithID(req, pendingID))
+	h.emit(permissionEventWithID(req, pendingID, permissionEpoch))
 	select {
 	case <-ctx.Done():
 		h.s.mu.Lock()
@@ -2541,19 +2597,24 @@ func permissionEvent(req perm.Request) event {
 	return permissionEventWithID(req, 0)
 }
 
-func permissionEventWithID(req perm.Request, id uint64) event {
+func permissionEventWithID(req perm.Request, id uint64, epochs ...string) event {
 	kind := req.Tool
 	if strings.HasPrefix(kind, "mcp_") || kind == "mcp_manage" {
 		kind = "mcp"
 	}
+	var epoch string
+	if len(epochs) > 0 {
+		epoch = epochs[0]
+	}
 	return event{
-		Type:         "permission",
-		Summary:      req.Summary,
-		Hint:         req.Hint,
-		Text:         req.Tool,
-		Kind:         kind,
-		Status:       permStatus(req),
-		PermissionID: permissionIDString(id),
+		Type:            "permission",
+		Summary:         req.Summary,
+		Hint:            req.Hint,
+		Text:            req.Tool,
+		Kind:            kind,
+		Status:          permStatus(req),
+		PermissionID:    permissionIDString(id),
+		PermissionEpoch: epoch,
 	}
 }
 
@@ -2561,8 +2622,8 @@ func permissionProjection(req perm.Request) map[string]any {
 	return permissionProjectionWithID(req, 0)
 }
 
-func permissionProjectionWithID(req perm.Request, id uint64) map[string]any {
-	e := sanitizeEvent(permissionEvent(req))
+func permissionProjectionWithID(req perm.Request, id uint64, epochs ...string) map[string]any {
+	e := sanitizeEvent(permissionEventWithID(req, id, epochs...))
 	e.PermissionID = permissionIDString(id)
 	projection := map[string]any{
 		"tool":    e.Text,
@@ -2573,6 +2634,9 @@ func permissionProjectionWithID(req perm.Request, id uint64) map[string]any {
 	}
 	if e.PermissionID != "" {
 		projection["permission_id"] = e.PermissionID
+	}
+	if e.PermissionEpoch != "" {
+		projection["permission_epoch"] = e.PermissionEpoch
 	}
 	return projection
 }
