@@ -217,6 +217,30 @@ func externalLook(name string) string {
 }
 
 func InstallCores() (string, error) {
+	return InstallCoresWithConfig(func() error {
+		path, err := config.Path()
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		cfg := config.Default()
+		if wd, err := os.Getwd(); err == nil {
+			cfg.Workspace = wd
+		}
+		return config.Save(cfg)
+	})
+}
+
+// InstallCoresWithConfig creates the home directory, then calls ensureConfig
+// before discovering or installing CLIs. The callback owns config persistence.
+func InstallCoresWithConfig(ensureConfig func() error) (string, error) {
+	if ensureConfig == nil {
+		return "", fmt.Errorf("config initializer is required")
+	}
 	mu.Lock()
 	if busy {
 		mu.Unlock()
@@ -250,22 +274,10 @@ func InstallCores() (string, error) {
 	}
 	say("ok  picogent home  " + dir)
 
-	path, err := config.Path()
-	if err != nil {
+	if err := ensureConfig(); err != nil {
 		return log.String(), err
 	}
-	if _, err := os.Stat(path); err != nil {
-		cfg := config.Default()
-		if wd, e := os.Getwd(); e == nil {
-			cfg.Workspace = wd
-		}
-		if err := config.Save(cfg); err != nil {
-			return log.String(), err
-		}
-		say("ok  wrote " + path)
-	} else {
-		say("ok  config already exists")
-	}
+	say("ok  config ready")
 
 	if look("git") == "" {
 		say("miss git  — install Git first (on a Mac: Xcode Command Line Tools)")
@@ -410,6 +422,18 @@ func RunCodexCLILogin() error {
 }
 
 func Apply(cfg config.Config, workspace, mode, model string) (config.Config, error) {
+	cfg, err := Prepare(cfg, workspace, mode, model)
+	if err != nil {
+		return cfg, err
+	}
+	if err := config.Save(cfg); err != nil {
+		return cfg, err
+	}
+	return cfg, nil
+}
+
+// Prepare validates setup options and returns the updated config without saving it.
+func Prepare(cfg config.Config, workspace, mode, model string) (config.Config, error) {
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
 		return cfg, fmt.Errorf("pick a folder")
@@ -448,8 +472,5 @@ func Apply(cfg config.Config, workspace, mode, model string) (config.Config, err
 		cfg.Provider = config.ProviderCodex
 	}
 	cfg.SetupComplete = true
-	if err := config.Save(cfg); err != nil {
-		return cfg, err
-	}
 	return cfg, nil
 }
