@@ -745,9 +745,14 @@ func cloneAgentForSession(src *agent.Agent, sessionID string) (*agent.Agent, err
 // potentially blocking project-run lock is acquired without holding s.mu. A
 // canceled turn may still be unwinding through a GUI callback that needs s.mu.
 func (s *server) newSession() (string, error, error) {
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	s.sessionTxMu.Lock()
 	defer s.sessionTxMu.Unlock()
+	return s.newSessionLocked()
+}
 
+func (s *server) newSessionLocked() (string, error, error) {
 	s.mu.Lock()
 	workspace := s.cfg.Workspace
 	oldSession := s.sessionID
@@ -2741,21 +2746,27 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"sessions":   metas,
-			"current_id": cur,
+			"sessions":    metas,
+			"current_id":  cur,
+			"delete_undo": s.chatDeleteUndoProjection(ws),
 		})
 	case http.MethodPost:
 		var in struct {
 			Action string `json:"action"`
 			ID     string `json:"id"`
+			UndoID string `json:"undo_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
+		s.configTxMu.Lock()
+		defer s.configTxMu.Unlock()
+		s.sessionTxMu.Lock()
+		defer s.sessionTxMu.Unlock()
 		switch in.Action {
 		case "new":
-			id, saveErr, taskErr := s.newSession()
+			id, saveErr, taskErr := s.newSessionLocked()
 			if taskErr != nil {
 				writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
 				return
@@ -2818,41 +2829,11 @@ func (s *server) sessions(w http.ResponseWriter, r *http.Request) {
 				"task":     sanitizeTask(task),
 			})
 		case "delete":
-			if in.ID == "" {
-				http.Error(w, "id required", 400)
-				return
-			}
-			rotated := false
-			var saveErr error
-			var taskErr error
-			s.mu.Lock()
-			isCurrent := s.sessionID == in.ID
-			s.mu.Unlock()
-			if isCurrent {
-				_, saveErr, taskErr = s.newSession()
-				rotated = taskErr == nil
-			}
-			s.mu.Lock()
-			currentID := s.sessionID
-			s.mu.Unlock()
-			if taskErr != nil {
-				writeGUIError(w, "couldn't load durable task state: "+taskErr.Error(), http.StatusInternalServerError)
-				return
-			}
-			if saveErr != nil {
-				s.emit(event{Type: "error", Text: fmt.Sprintf("couldn't save session: %v", saveErr)})
-			}
-			s.emitTaskSnapshot(currentID)
-			if rotated {
-				s.emit(event{Type: "undo", Status: "cleared"})
-			}
-			if err := session.Delete(in.ID); err != nil && !os.IsNotExist(err) {
-				http.Error(w, err.Error(), 500)
-				return
-			}
-			w.WriteHeader(204)
+			s.deleteChatWithRecovery(w, in.ID)
+		case "undo_delete":
+			s.restoreDeletedChat(w, in.UndoID)
 		default:
-			http.Error(w, "action must be new, load, or delete", 400)
+			http.Error(w, "action must be new, load, delete, or undo_delete", 400)
 		}
 	default:
 		http.Error(w, "GET or POST only", 405)
