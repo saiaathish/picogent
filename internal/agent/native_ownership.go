@@ -70,11 +70,8 @@ func (a *Agent) checkNativeTaskBinding(ctx context.Context, b nativeTaskBinding)
 }
 
 func (a *Agent) checkTaskBindingLocked(b nativeTaskBinding) error {
-	if a.TaskStore != b.store || a.TaskSession != b.sessionID || a.taskSessionGeneration != b.generation || a.taskStoreGeneration != b.storeGeneration || !b.owns(a.task) {
-		return errTaskOwnershipChanged
-	}
-	if a.taskLoadErr != nil {
-		return fmt.Errorf("native write requires available task state: %w", a.taskLoadErr)
+	if err := a.checkTaskBindingMemoryLocked(b); err != nil {
+		return err
 	}
 	if b.store == nil || b.sessionID == "" {
 		return nil // process-only undo still uses the caller's session binding
@@ -88,6 +85,16 @@ func (a *Agent) checkTaskBindingLocked(b nativeTaskBinding) error {
 	}
 	if !b.owns(current) {
 		return errTaskOwnershipChanged
+	}
+	return nil
+}
+
+func (a *Agent) checkTaskBindingMemoryLocked(b nativeTaskBinding) error {
+	if a.TaskStore != b.store || a.TaskSession != b.sessionID || a.taskSessionGeneration != b.generation || a.taskStoreGeneration != b.storeGeneration || !b.owns(a.task) {
+		return errTaskOwnershipChanged
+	}
+	if a.taskLoadErr != nil {
+		return fmt.Errorf("native write requires available task state: %w", a.taskLoadErr)
 	}
 	return nil
 }

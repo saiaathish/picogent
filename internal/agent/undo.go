@@ -269,11 +269,15 @@ func formatUndoRestore(result checkpoint.RestoreResult, err error) (string, bool
 // UndoLastTurn restores the latest completed turn that changed native workspace
 // files. Read-only turns do not discard the most recent undo checkpoint.
 func (a *Agent) UndoLastTurn() (string, error) {
-	releaseRun, err := a.acquireProjectRunLockForWorkspace(a.ConfigSnapshot().Workspace)
+	binding := a.nativeTaskBinding()
+	releaseRun, err := a.acquireProjectRunLockForWorkspace(a.ConfigSnapshot().Workspace, binding)
 	if err != nil {
 		return "", fmt.Errorf("project run is unavailable: %w", err)
 	}
 	defer releaseRun()
+	if err := a.checkTaskLockBinding(binding); err != nil {
+		return "", fmt.Errorf("undo authority changed while acquiring its lock: %w", err)
+	}
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
 	if a.latestUndo == nil {

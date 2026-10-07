@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/saiaathish/picogent/internal/config"
@@ -382,6 +383,7 @@ func systemPromptFor(state RuntimeState, userHint, taskSuffix, scopeBoundary str
 // settings. A nil TaskMode leaves the agent's configured mode unchanged.
 type RunOptions struct {
 	beforeProjectRunLock func() // deterministic stale-admission regression seam
+	afterProjectRunLock  func() // deterministic lock/authority regression seam
 	TaskMode             *TaskMode
 	TracePrompt          string
 	DurablePrompt        string
@@ -399,8 +401,8 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	return a.RunWithOptions(ctx, history, user, ev, RunOptions{})
 }
 
-func (a *Agent) acquireProjectRunLockForWorkspace(workspace string) (func() error, error) {
-	store := a.TaskStoreSnapshot()
+func (a *Agent) acquireProjectRunLockForWorkspace(workspace string, binding nativeTaskBinding) (func() error, error) {
+	store := binding.store
 	var storeErr error
 	if store != nil {
 		release, err := store.AcquireRunLock()
@@ -432,10 +434,11 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		ev = NopHandler{}
 	}
 	state := a.RuntimeSnapshot()
+	lockOwner := a.nativeTaskBinding()
 	if opts.beforeProjectRunLock != nil {
 		opts.beforeProjectRunLock()
 	}
-	releaseRun, err := a.acquireProjectRunLockForWorkspace(state.CFG.Workspace)
+	releaseRun, err := a.acquireProjectRunLockForWorkspace(state.CFG.Workspace, lockOwner)
 	if err != nil {
 		wrapped := fmt.Errorf("project run is unavailable: %w", err)
 		ev.OnError(wrapped)
@@ -446,6 +449,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			ev.OnError(fmt.Errorf("project run lock release failed: %w", err))
 		}
 	}()
+	if opts.afterProjectRunLock != nil {
+		opts.afterProjectRunLock()
+	}
+	if err := a.checkTaskLockBinding(lockOwner); err != nil {
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
+	}
 	// An admission can wait behind another turn that replaces or retires its
 	// goal. Reject that captured identity rather than dispatching stale context
 	// or silently injecting the newer tuple into this request.
@@ -512,10 +522,15 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		return history, Result{Task: a.TaskSnapshot()}, err
 	}
 	state.Goal, state.GoalRevision = admittedGoal, admittedRevision
-	nativeOwner := a.nativeTaskBinding()
+	nativeOwner := lockOwner
+	// Freeze the locked substrate, but admit task progress only after waiting:
+	// an earlier cooperative turn may have closed while this request queued.
+	nativeOwner.owner = nil
+	nativeOwner = nativeOwner.withAdmittedTask(a.TaskSnapshot())
 	if err := a.claimTaskRun(nativeOwner); err != nil {
 		return history, Result{Task: a.TaskSnapshot()}, err
 	}
+	var textDelivered atomic.Bool
 	defer func() {
 		if err := a.checkTaskRun(nil); err != nil {
 			returnedErr = errors.Join(returnedErr, err)
@@ -523,6 +538,15 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			returnedResult.GoalDone = false
 			returnedResult.Completion.Ready = false
 			returnedResult.Completion.Reason = "turn authority changed before return"
+			returnedResult.Text = ""
+			returnedHistory = history // never persist this revoked turn's narration
+			if textDelivered.Load() {
+				if finalizer, ok := ev.(FinalTextHandler); ok {
+					finalizer.OnTextFinal("")
+				} else {
+					ev.OnText("")
+				}
+			}
 		}
 		snapshot, err := a.releaseTaskRun()
 		if snapshot != nil {
@@ -731,7 +755,8 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		if healthAdmissionAttempted {
 			toolSpecs = withoutProjectHealth(toolSpecs)
 		}
-		out, err := state.LLM.Chat(ctx, llm.ChatRequest{
+		providerCtx, cancelProvider := context.WithCancel(ctx)
+		out, err := state.LLM.Chat(providerCtx, llm.ChatRequest{
 			Model:        cfg.Model,
 			Messages:     requestMessages,
 			Tools:        toolSpecs,
@@ -744,10 +769,19 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				if delta == "" {
 					return
 				}
+				if err := a.checkTaskRunMemory(); err != nil {
+					cancelProvider()
+					return
+				}
 				streamed = true
+				textDelivered.Store(true)
 				ev.OnTextDelta(delta)
+				if err := a.checkTaskRunMemory(); err != nil {
+					cancelProvider()
+				}
 			},
 		})
+		cancelProvider()
 		pendingVisualParts = nil
 		if authorityErr := a.checkTaskRun(nil); authorityErr != nil {
 			res.FilesChanged = sortedChanged(changed)
@@ -889,6 +923,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				res.Task = a.TaskSnapshot()
 				res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
 				res.GoalDone = completionMarker && res.Completion.Ready
+			}
+			if err := a.checkTaskRun(nil); err != nil {
+				res.Task = a.TaskSnapshot()
+				return msgs, res, err
+			}
+			if !supersededTurn && text != "" {
+				textDelivered.Store(true)
 			}
 			if supersededTurn {
 				// The assistant response belongs to the stale turn and must not

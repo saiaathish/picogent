@@ -177,7 +177,8 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, evidenc
 // stays outside chat history, so compaction cannot erase execution progress.
 func (a *Agent) SetTaskSession(sessionID string) error {
 	workspaceRoot := a.ConfigSnapshot().Workspace
-	releaseRun, err := a.acquireProjectRunLockForWorkspace(workspaceRoot)
+	binding := a.nativeTaskBinding()
+	releaseRun, err := a.acquireProjectRunLockForWorkspace(workspaceRoot, binding)
 	if err != nil {
 		return fmt.Errorf("project run is unavailable: %w", err)
 	}
@@ -186,6 +187,9 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	defer a.undoMu.Unlock()
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
+	if a.TaskStore != binding.store || a.taskStoreGeneration != binding.storeGeneration {
+		return errTaskOwnershipChanged
+	}
 	a.TaskSession = strings.TrimSpace(sessionID)
 	a.taskSessionGeneration++
 	a.latestUndo = nil

@@ -241,3 +241,139 @@ func TestTurnAuthorityAutoVerificationPreservesPendingUndo(t *testing.T) {
 		})
 	}
 }
+
+func TestTurnAuthorityRejectsStoreChangedAfterLockAcquisition(t *testing.T) {
+	for _, change := range []string{"copied store", "same pointer", "ABA"} {
+		t.Run(change, func(t *testing.T) {
+			a := newUndoHookAgent(t, t.TempDir())
+			defer a.Close()
+			original := taskstate.NewStore(t.TempDir())
+			a.SetTaskStore(original)
+			client := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "stale answer"}}}}
+			a.SetClient(client)
+			opts := RunOptions{afterProjectRunLock: func() {
+				if change != "same pointer" {
+					a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+				}
+				if change != "copied store" {
+					a.SetTaskStore(original)
+				}
+			}}
+			_, _, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "explain this project"}, NopHandler{}, opts)
+			if err == nil || !strings.Contains(err.Error(), "ownership changed") || len(client.Calls) != 0 {
+				t.Fatalf("claimed a different authority from the held lock: err=%v calls=%d", err, len(client.Calls))
+			}
+		})
+	}
+}
+
+func TestTurnAuthorityAdmitsClosedProgressAfterLockWait(t *testing.T) {
+	a := newUndoHookAgent(t, t.TempDir())
+	defer a.Close()
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("queued-closed-progress"); err != nil {
+		t.Fatal(err)
+	}
+	if failed, err := a.beginDurableTask("investigate the broken build", NopHandler{}); failed || err != nil {
+		t.Fatal(err)
+	}
+	sequence, started := a.beginDurableTurn(taskstate.TurnRouteInspect, NopHandler{})
+	if !started {
+		t.Fatal("start prior cooperative turn")
+	}
+	client := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "inspection result"}}}}
+	a.SetClient(client)
+	opts := RunOptions{beforeProjectRunLock: func() {
+		closed, err := a.closeDurableTurn(sequence, false, taskstate.TurnRouteInspect, "earlier inspection finished", "", taskstate.StopNone, 0, 0, NopHandler{})
+		if err != nil || !closed {
+			t.Fatalf("close preceding turn: %v", err)
+		}
+	}}
+	_, result, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "continue investigating the build"}, NopHandler{}, opts)
+	if err != nil || len(client.Calls) != 1 || result.Task == nil || result.Task.TurnRevision <= sequence {
+		t.Fatalf("locked substrate refused legitimate queued progress: result=%+v calls=%d err=%v", result, len(client.Calls), err)
+	}
+}
+
+type authorityStreamingClient struct{ canceled bool }
+
+func (c *authorityStreamingClient) Chat(ctx context.Context, req llm.ChatRequest) (llm.ChatResponse, error) {
+	req.OnDelta("Goal complete: ")
+	c.canceled = ctx.Err() != nil
+	// Deliberately violate cancellation so the delivery gate must also refuse.
+	req.OnDelta("stale narration")
+	return llm.ChatResponse{Message: llm.Message{Role: "assistant", Content: "Goal complete: stale narration"}}, nil
+}
+
+type authorityTextEvents struct {
+	nativeOwnershipEvents
+	onDelta func()
+	visible string
+	finals  []string
+}
+
+func (h *authorityTextEvents) OnTextDelta(text string) {
+	h.visible += text
+	if h.onDelta != nil {
+		h.onDelta()
+	}
+}
+
+func (h *authorityTextEvents) OnText(text string) { h.visible += text }
+func (h *authorityTextEvents) OnTextFinal(text string) {
+	h.visible = text
+	h.finals = append(h.finals, text)
+}
+
+func TestTurnAuthorityRetractsRevokedStreamingNarration(t *testing.T) {
+	a := newUndoHookAgent(t, t.TempDir())
+	defer a.Close()
+	store := taskstate.NewStore(t.TempDir())
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession("revoked-stream"); err != nil {
+		t.Fatal(err)
+	}
+	client := &authorityStreamingClient{}
+	a.SetClient(client)
+	h := &authorityTextEvents{}
+	h.onDelta = func() {
+		if h.visible == "Goal complete: " {
+			a.SetTaskStore(store)
+		}
+	}
+	history, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish the project"}, h)
+	if err == nil || !strings.Contains(err.Error(), "ownership changed") || !client.canceled || h.visible != "" || len(h.finals) != 1 || result.GoalDone || result.Text != "" {
+		t.Fatalf("revoked stream reached the surface: canceled=%v visible=%q finals=%v result=%+v err=%v", client.canceled, h.visible, h.finals, result, err)
+	}
+	for _, message := range history {
+		if message.Role == "assistant" && strings.Contains(message.Content, "stale narration") {
+			t.Fatal("revoked narration was retained in history")
+		}
+	}
+}
+
+func TestTurnAuthorityRefusesTextAfterTerminalCallbackRevocation(t *testing.T) {
+	a := newUndoHookAgent(t, t.TempDir())
+	defer a.Close()
+	store := taskstate.NewStore(t.TempDir())
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession("terminal-callback"); err != nil {
+		t.Fatal(err)
+	}
+	a.SetClient(&llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "stale terminal answer"}}}})
+	h := &authorityTextEvents{}
+	h.state = func(task *taskstate.Task) {
+		if last := task.LastTurn(); last != nil && last.State == taskstate.TurnCompleted {
+			a.SetTaskStore(store)
+		}
+	}
+	history, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "investigate the broken build"}, h)
+	if err == nil || h.visible != "" || result.Text != "" || result.GoalDone {
+		t.Fatalf("terminal callback revocation published a result: visible=%q result=%+v err=%v", h.visible, result, err)
+	}
+	for _, message := range history {
+		if message.Role == "assistant" && strings.Contains(message.Content, "stale terminal answer") {
+			t.Fatal("revoked terminal response was retained in history")
+		}
+	}
+}
