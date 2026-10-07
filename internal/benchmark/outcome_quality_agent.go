@@ -611,7 +611,7 @@ func outcomeQualityCompletionEvidenceCurrent(result agent.Result, current worksp
 		return false
 	}
 	latest := result.Task.Verification[len(result.Task.Verification)-1]
-	if !latest.Passed || latest.Observation == nil || latest.Observation.FilesTruncated || result.Task.VerifiedChangeSeq != result.Task.ChangeSeq {
+	if latest.Retired || !latest.Passed || latest.Observation == nil || latest.Observation.FilesTruncated || result.Task.VerifiedChangeSeq != result.Task.ChangeSeq {
 		return false
 	}
 	return workspace.Compare(*latest.Observation, current).Fresh

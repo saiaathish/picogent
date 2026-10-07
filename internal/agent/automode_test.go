@@ -2,6 +2,84 @@ package agent
 
 import "testing"
 
+func TestInferAutoDoesNotPublishReplacementAsWorkspaceGoal(t *testing.T) {
+	for _, prompt := range []string{
+		"replace the current goal with fix all tests",
+		"replace the current task with make this ready to launch",
+		"cancel the previous task; instead migrate all endpoints",
+		"replace the current task with fix all the user's profiles",
+		"replace the current task with fix all the user’s profiles",
+	} {
+		decision := InferAuto(prompt, TaskAgent, "finish the backend")
+		if decision.GoalSet || decision.Goal != "" {
+			t.Fatalf("replacement changed the workspace goal before task admission: %+v", decision)
+		}
+	}
+}
+
+func TestAutoInferenceDoesNotPublishReplacementMentions(t *testing.T) {
+	for _, prompt := range []string{
+		`replace the current goal with "fix all tests"`,
+		"replace the current task with 'fix all tests'",
+		"replace the current goal with ‘fix all the user’s profiles’",
+		"replace the current task with fix all tests?",
+		"replace the current goal with fix all tests if needed",
+		"replace the current goal with don't fix all tests",
+		"replace the current goal with don’t fix all tests",
+		"replace the current goal with don't, under any circumstances, fix all tests",
+		"replace the current goal with don’t, under any circumstances, fix all tests",
+		`"replace the current goal with fix all tests"`,
+		"`replace the current task with fix all tests`",
+		"should we replace the current goal with fix all tests?",
+		"if needed, replace the current task with fix all tests",
+		"do not replace the current goal with fix all tests",
+		"don't replace the current task with fix all tests",
+		"don’t replace the current task with fix all tests",
+		"suppose we cancel the previous task; instead fix all tests",
+		"cancel the previous task; instead fix all tests unless needed",
+		"  NEVER\nREPLACE\tthe current GOAL with fix all tests  ",
+	} {
+		t.Run(prompt, func(t *testing.T) {
+			for _, infer := range []struct {
+				name string
+				run  func(string, TaskMode, string) AutoDecision
+			}{
+				{"auto", InferAuto},
+				{"automatic scope", InferAutomaticScope},
+			} {
+				for _, goal := range []string{"", "finish the backend"} {
+					decision := infer.run(prompt, TaskPlan, goal)
+					if decision.GoalSet || decision.Goal != "" {
+						t.Fatalf("%s published a replacement mention with active goal %q: %+v", infer.name, goal, decision)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestAutoInferenceStillPublishesOrdinaryFixAllGoals(t *testing.T) {
+	for _, prompt := range []string{
+		"fix all flaky tests and make CI green",
+		"fix all tests for replacement tasks",
+		"fix all the user's profiles",
+		"fix all the user’s profiles",
+	} {
+		for _, infer := range []struct {
+			name string
+			run  func(string, TaskMode, string) AutoDecision
+		}{
+			{"auto", InferAuto},
+			{"automatic scope", InferAutomaticScope},
+		} {
+			decision := infer.run(prompt, TaskPlan, "finish the backend")
+			if !decision.GoalSet || decision.Goal != prompt {
+				t.Fatalf("%s failed to publish ordinary goal %q: %+v", infer.name, prompt, decision)
+			}
+		}
+	}
+}
+
 func TestInferTaskModeDebug(t *testing.T) {
 	m, why := inferTaskMode("the login form crashes on submit", TaskAgent, false)
 	if m != TaskDebug || why == "" {

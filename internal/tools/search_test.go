@@ -5,11 +5,89 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/procenv"
 )
+
+func TestRipgrepArgumentsKeepUntrustedValuesAttached(t *testing.T) {
+	for _, value := range []string{"--help", "-m", "--pre=program", "--glob=*.go", "--", "", "-e needle", "needle\n--pre=program"} {
+		args := ripgrepArguments(value, value)
+		want := []string{"--no-config", "--line-number", "--no-heading", "--color", "never", "-m", "50", "--max-filesize", "1M"}
+		if value != "" {
+			want = append(want, "--glob="+value)
+		}
+		want = append(want, "--regexp="+value, "--", ".")
+		if !reflect.DeepEqual(args, want) {
+			t.Fatalf("untrusted value escaped its attached argument: got %q, want %q", args, want)
+		}
+	}
+}
+
+func TestWalkGrepKeepsOrdinaryMatchesAndBoundsLargeFiles(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "fixture.txt"), []byte("ordinary needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := walkGrep(ws, "ordinary needle", "*.txt")
+	if err != nil || !strings.Contains(got, "fixture.txt:1:ordinary needle") {
+		t.Fatalf("ordinary fallback search failed: %q %v", got, err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "large.txt"), []byte(strings.Repeat("large marker\n", 100000)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err = walkGrep(ws, "large marker", "*.txt")
+	if err != nil || got != "no matches" {
+		t.Fatal("fallback search did not skip its bounded large-file input")
+	}
+}
+
+func TestRunRipgrepTreatsOptionShapedPatternsAsData(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("ripgrep is not installed; portable argument tests cover this boundary")
+	}
+	ws := t.TempDir()
+	patterns := []string{"--help", "-m", "--pre=missing-program", "--glob=*.go", "--"}
+	// grep accepts regular expressions: '*' quantifies the preceding '=', so
+	// this glob-shaped pattern legitimately matches '--glob=.go'.
+	fixture := "--help\n-m\n--pre=missing-program\n--glob=.go\n--\n"
+	if err := os.WriteFile(filepath.Join(ws, "fixture.txt"), []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, pattern := range patterns {
+		t.Run(pattern, func(t *testing.T) {
+			got, err := runRipgrep(context.Background(), ws, pattern, "")
+			if err != nil || !strings.Contains(got, "fixture.txt:") {
+				t.Fatalf("pattern became a command option instead of matching the fixture: err=%v", err)
+			}
+		})
+	}
+	if err := os.WriteFile(filepath.Join(ws, "--help"), []byte("ordinary needle\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := runRipgrep(context.Background(), ws, "ordinary needle", "--help")
+	if err != nil || !strings.Contains(got, "--help:") {
+		t.Fatalf("option-shaped glob was not kept as a value: err=%v", err)
+	}
+}
+
+func TestWalkGrepDoesNotFollowOutsideWorkspaceSymlink(t *testing.T) {
+	ws := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	const marker = "OUTSIDE_GREP_SENTINEL"
+	if err := os.WriteFile(outside, []byte(marker+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(ws, "linked.txt")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	got, err := walkGrep(ws, marker, "")
+	if err != nil || got != "no matches" {
+		t.Fatal("fallback search read a path outside its workspace")
+	}
+}
 
 func TestGlobMatch(t *testing.T) {
 	cases := []struct {

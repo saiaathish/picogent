@@ -73,7 +73,7 @@ func (a *Agent) repeatedVerificationFailure() bool {
 	}
 	last := task.Verification[len(task.Verification)-1]
 	previous := task.Verification[len(task.Verification)-2]
-	if last.Passed || previous.Passed {
+	if last.Retired || previous.Retired || last.Passed || previous.Passed {
 		return false
 	}
 	lastFingerprint := verificationFailureFingerprint(last.Summary)
@@ -119,7 +119,7 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, evidenc
 		return false
 	}
 	a.taskMu.RLock()
-	if a.task == nil || len(a.task.Verification) == 0 {
+	if a.task == nil || len(a.task.Verification) == 0 || a.task.Verification[len(a.task.Verification)-1].Retired {
 		a.taskMu.RUnlock()
 		return false
 	}
@@ -246,9 +246,25 @@ func (a *Agent) beginDurableTask(prompt string, ev EventHandler) (bool, error) {
 // even when the original user wording looked informational. The fallback is
 // only used after execution reaches that boundary.
 func (a *Agent) beginDurableTaskWithFallback(prompt string, ev EventHandler, fallback bool) (bool, error) {
+	return a.beginDurableTaskInState(prompt, ev, fallback, a.RuntimeSnapshot())
+}
+
+// Admission uses the turn's original runtime identity. A later UI update must
+// not silently become the workspace goal authorized for retirement.
+func (a *Agent) beginDurableTaskInState(prompt string, ev EventHandler, fallback bool, runtime RuntimeState) (bool, error) {
+	replacement, replacing := taskstate.ExplicitReplacement(prompt)
+	admissionPrompt := prompt
+	if replacing {
+		admissionPrompt = replacement
+	}
 	a.taskMu.Lock()
 	if a.TaskStore == nil || a.TaskSession == "" {
 		a.taskMu.Unlock()
+		if replacing {
+			err := errors.New("outcome replacement requires durable task storage")
+			a.reportTaskUpdateError(ev, err)
+			return true, err
+		}
 		return false, nil
 	}
 	if a.taskLoadErr != nil {
@@ -259,19 +275,25 @@ func (a *Agent) beginDurableTaskWithFallback(prompt string, ev EventHandler, fal
 		return true, err
 	}
 	var candidate *taskstate.Task
-	if a.task == nil || (a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification()) {
-		task, ok, err := taskstate.NewFromPrompt(a.TaskSession, prompt)
+	if a.task == nil || (!replacing && a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification()) {
+		task, ok, err := taskstate.NewFromPrompt(a.TaskSession, admissionPrompt)
 		if err != nil {
 			a.taskMu.Unlock()
 			a.reportTaskUpdateError(ev, err)
 			return true, err
 		}
 		if !ok {
+			if replacing {
+				a.taskMu.Unlock()
+				err := errors.New("replacement outcome must be a nonempty task-like request")
+				a.reportTaskUpdateError(ev, err)
+				return true, err
+			}
 			if !fallback {
 				a.taskMu.Unlock()
 				return false, nil
 			}
-			goal := strings.TrimSpace(prompt)
+			goal := strings.TrimSpace(admissionPrompt)
 			if goal == "" {
 				goal = "complete the requested action"
 			}
@@ -286,12 +308,23 @@ func (a *Agent) beginDurableTaskWithFallback(prompt string, ev EventHandler, fal
 	} else {
 		candidate = cloneTask(a.task)
 	}
+	expectedID, expectedIntent, expectedTurn := candidate.ID, candidate.IntentRevision, candidate.TurnRevision
 	prepare := func(candidate *taskstate.Task) error {
 		// Keep the original durable outcome and definition of done stable while
 		// recording a changed interpretation of a later user request. This makes
 		// steering visible to routing and recovery without letting one short
 		// follow-up silently erase the larger outcome.
-		if inferred := taskstate.Infer(prompt); inferred.TaskLike && inferred.Intent != nil && !strings.EqualFold(strings.TrimSpace(inferred.Goal), strings.TrimSpace(candidate.Goal)) {
+		if replacing {
+			if candidate.ID != expectedID || candidate.IntentRevision != expectedIntent || candidate.TurnRevision != expectedTurn {
+				return errors.New("outcome changed before replacement could be saved")
+			}
+			if err := candidate.ReplaceOutcome(replacement); err != nil {
+				return err
+			}
+			if runtime.Goal != "" {
+				candidate.ReplacedWorkspaceGoal = &taskstate.GoalRetirement{Text: runtime.Goal, Revision: runtime.GoalRevision}
+			}
+		} else if inferred := taskstate.Infer(prompt); inferred.TaskLike && inferred.Intent != nil && !strings.EqualFold(strings.TrimSpace(inferred.Goal), strings.TrimSpace(candidate.Goal)) {
 			intent := *inferred.Intent
 			intent.Outcome = candidate.Goal
 			candidate.SetIntent(&intent)
@@ -507,7 +540,7 @@ func revalidateTaskProof(ctx context.Context, root string, task *taskstate.Task)
 		return false, nil
 	}
 	latest := task.Verification[len(task.Verification)-1]
-	if !latest.Passed {
+	if latest.Retired || !latest.Passed {
 		return false, nil
 	}
 	reason := "persisted verification has no complete PASS status"
@@ -787,6 +820,10 @@ func cloneTask(task *taskstate.Task) *taskstate.Task {
 	if task.Intent != nil {
 		intent := *task.Intent
 		cp.Intent = &intent
+	}
+	if task.ReplacedWorkspaceGoal != nil {
+		retired := *task.ReplacedWorkspaceGoal
+		cp.ReplacedWorkspaceGoal = &retired
 	}
 	cp.ChangedFiles = append([]string(nil), task.ChangedFiles...)
 	cp.Verification = append([]taskstate.Verification(nil), task.Verification...)

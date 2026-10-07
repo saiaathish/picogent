@@ -9,6 +9,37 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
+func TestFailureIntelligenceExcludesRetiredOutcomeChecks(t *testing.T) {
+	for _, passed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "failed", true: "passed"}[passed], func(t *testing.T) {
+			task, ok, err := taskstate.NewFromPrompt("retired-checks", "fix the cache")
+			if err != nil || !ok {
+				t.Fatal(err)
+			}
+			summary := "verify FAIL — old compiler error"
+			if passed {
+				summary = "verify PASS — old checks passed"
+			}
+			task.AddVerification("old check", passed, summary)
+			task.AddVerification("old check", passed, summary)
+			if err := task.ReplaceOutcome("document the API"); err != nil {
+				t.Fatal(err)
+			}
+			if failure := FailureIntelligenceForTask(task); failure != (FailureIntelligence{}) {
+				t.Fatalf("retired checks drove repair: %+v", failure)
+			}
+			contract := Build(task, projecthealth.Report{Schema: projecthealth.Schema})
+			if contract.Evidence.Current || contract.Evidence.LatestStatus == "PASS" || contract.CompletionReady {
+				t.Fatalf("retired success projected as current proof: %+v", contract.Evidence)
+			}
+			task.AddVerification("new check", false, "verify FAIL — new compiler error")
+			if failure := FailureIntelligenceForTask(task); failure.RepeatCount != 1 {
+				t.Fatalf("new failure reused old failure count: %+v", failure)
+			}
+		})
+	}
+}
+
 func TestClassifyFailureUsesFixedProjectRelevantCategories(t *testing.T) {
 	tests := []struct {
 		name    string
