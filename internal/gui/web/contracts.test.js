@@ -452,6 +452,19 @@ for (const failure of ["http", "network"]) {
   });
 }
 
+test("clicking an enabled retained prompt after done still reconciles its rejection", async () => {
+  const app = permissionAppHarness(() => ({ status: 409 }));
+  app.showPermission(permissionPrompt("17"));
+  app.dispatch({ type: "done" });
+  await app.click(3);
+  assert.equal(app.snapshots.length, 2);
+  app.snapshots[0].resolve({ busy: false });
+  await app.refreshes[0];
+  app.snapshots[1].resolve({ busy: false });
+  await app.refreshes[1];
+  assert.equal(app.view().visible, false);
+});
+
 function setupHarness(installResponse) {
   const elements = new Map();
   const makeElement = (id) => ({

@@ -85,7 +85,7 @@
       getState,
       setEpoch,
       getRevision: () => revision,
-      invalidateSnapshots() { revision++; reconcileAfterSettled = state.pending; },
+      invalidateSnapshots() { revision++; reconcileAfterSettled = true; },
       show(permission) {
         if (permission?.permission_epoch && !epoch) setEpoch(permission.permission_epoch);
         if ((permission?.permission_epoch || "") !== epoch) return false;
