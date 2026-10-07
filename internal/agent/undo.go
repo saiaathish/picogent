@@ -15,20 +15,22 @@ import (
 // run. A path is captured once, even when the model edits it in several tool
 // rounds during the same turn.
 type turnUndo struct {
-	workspace         string
-	checkpoint        *checkpoint.Checkpoint
-	sessionID         string
-	sessionGeneration uint64
-	taskStore         *taskstate.Store
-	taskStoreEpoch    uint64
-	taskStoreBound    bool
-	turnSequence      uint64
-	durable           bool
-	journalSlot       string
-	publishRejected   bool
-	restored          bool
-	restoreMessage    string
-	restoreErr        error
+	workspace          string
+	checkpoint         *checkpoint.Checkpoint
+	sessionID          string
+	sessionGeneration  uint64
+	taskID             string
+	turnIntentRevision uint64
+	taskStore          *taskstate.Store
+	taskStoreEpoch     uint64
+	taskStoreBound     bool
+	turnSequence       uint64
+	durable            bool
+	journalSlot        string
+	publishRejected    bool
+	restored           bool
+	restoreMessage     string
+	restoreErr         error
 }
 
 type undoTaskStoreAuthority struct {
@@ -49,6 +51,23 @@ func (u *turnUndo) bindTaskStore(store *taskstate.Store, epoch uint64) {
 	u.taskStore = store
 	u.taskStoreEpoch = epoch
 	u.taskStoreBound = true
+}
+
+func (u *turnUndo) bindDurableTurn(task *taskstate.Task, sequence uint64) error {
+	if u == nil || sequence == 0 {
+		return nil
+	}
+	if task == nil || strings.TrimSpace(task.ID) == "" {
+		return errors.New("durable undo requires the admitted task identity")
+	}
+	for _, turn := range task.Turns {
+		if turn.Sequence == sequence {
+			u.taskID = task.ID
+			u.turnIntentRevision = turn.IntentRevision
+			return nil
+		}
+	}
+	return fmt.Errorf("durable undo cannot find admitted turn %d in task %s", sequence, task.ID)
 }
 
 // preparePublish records the exact native publication expectation immediately
@@ -105,17 +124,22 @@ func (u *turnUndo) saveJournalAt(record checkpoint.Record, state string, pending
 	if u == nil || u.sessionID == "" || u.turnSequence == 0 {
 		return nil
 	}
+	if strings.TrimSpace(u.taskID) == "" {
+		return errors.New("durable undo journal has no task owner identity")
+	}
 	identity, err := undoWorkspaceIdentity(u.workspace)
 	if err != nil {
 		return err
 	}
 	j := undoJournal{
-		Version:      undoJournalVersion,
-		State:        state,
-		Workspace:    identity,
-		SessionID:    u.sessionID,
-		TurnSequence: u.turnSequence,
-		Checkpoint:   record,
+		Version:        undoJournalVersion,
+		State:          state,
+		Workspace:      identity,
+		SessionID:      u.sessionID,
+		TurnSequence:   u.turnSequence,
+		TaskID:         u.taskID,
+		IntentRevision: u.turnIntentRevision,
+		Checkpoint:     record,
 	}
 	return saveUndoJournal(u.workspace, u.sessionID, j, pending)
 }
@@ -297,6 +321,9 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	}
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
+	if a.undoReattachRequired {
+		return "", errors.New("task store authority changed; explicitly reattach the session before undo recovery")
+	}
 	if err := a.checkTaskLockBinding(binding); err != nil {
 		return "", fmt.Errorf("undo authority changed while acquiring its lock: %w", err)
 	}
@@ -312,11 +339,9 @@ func (a *Agent) UndoLastTurn() (string, error) {
 				a.undoLoadErr = loadErr
 				return "", fmt.Errorf("undo is unavailable: %w", loadErr)
 			}
-			if task := a.TaskSnapshot(); task != nil {
-				if validationErr := validateDurableUndoTask(loaded, task); validationErr != nil {
-					a.undoLoadErr = validationErr
-					return "", fmt.Errorf("undo is unavailable: %w", validationErr)
-				}
+			if validationErr := validateDurableUndoTask(loaded, a.TaskSnapshot()); validationErr != nil {
+				a.undoLoadErr = validationErr
+				return "", fmt.Errorf("undo is unavailable: %w", validationErr)
 			}
 			a.undoLoadErr = nil
 			a.latestUndo = loaded
@@ -426,7 +451,7 @@ func (a *Agent) persistUndoTaskMutation(mutate func(*taskstate.Task) error) erro
 func (a *Agent) UndoAvailable() bool {
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
-	return a.latestUndo != nil && a.undoLoadErr == nil && a.undoBelongsToCurrentSession(a.latestUndo)
+	return !a.undoReattachRequired && a.latestUndo != nil && a.undoLoadErr == nil && a.undoBelongsToCurrentSession(a.latestUndo)
 }
 
 // refreshDurableUndoLocked re-reads the journal while the project run lock is
@@ -481,10 +506,8 @@ func (a *Agent) refreshDurableUndoLocked() error {
 		a.undoLoadErr = nil
 		return nil
 	}
-	if task := a.TaskSnapshot(); task != nil {
-		if err := validateDurableUndoTask(loaded, task); err != nil {
-			return err
-		}
+	if err := validateDurableUndoTask(loaded, a.TaskSnapshot()); err != nil {
+		return err
 	}
 	a.latestUndo = loaded
 	a.undoLoadErr = nil
@@ -538,13 +561,11 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 			a.latestUndo = nil
 			return
 		}
-		if task := a.TaskSnapshot(); task != nil {
-			if err := validateDurableUndoTask(loaded, task); err != nil {
-				res.UndoError = fmt.Errorf("durable undo journal is unavailable after rejected publication: %w", err).Error()
-				a.undoLoadErr = err
-				a.latestUndo = nil
-				return
-			}
+		if err := validateDurableUndoTask(loaded, a.TaskSnapshot()); err != nil {
+			res.UndoError = fmt.Errorf("durable undo journal is unavailable after rejected publication: %w", err).Error()
+			a.undoLoadErr = err
+			a.latestUndo = nil
+			return
 		}
 		a.undoLoadErr = nil
 		a.latestUndo = loaded
@@ -635,15 +656,27 @@ func (a *Agent) undoBelongsToCurrentSession(u *turnUndo) bool {
 // no longer present, the bounded history cannot prove that the record is
 // current, so recovery fails closed.
 func validateDurableUndoTask(u *turnUndo, task *taskstate.Task) error {
-	if u == nil || task == nil {
+	if u == nil {
 		return nil
+	}
+	if task == nil {
+		return errors.New("durable undo task state is unavailable for owner validation")
 	}
 	if task.SessionID != u.sessionID {
 		return fmt.Errorf("durable undo journal task session mismatch")
 	}
+	if strings.TrimSpace(u.taskID) == "" {
+		return errors.New("durable undo journal lacks task owner identity")
+	}
+	if task.ID != u.taskID {
+		return fmt.Errorf("durable undo journal task identity mismatch")
+	}
 	found := false
 	for _, turn := range task.Turns {
 		if turn.Sequence == u.turnSequence {
+			if turn.IntentRevision != u.turnIntentRevision {
+				return fmt.Errorf("durable undo journal turn intent mismatch")
+			}
 			found = true
 			continue
 		}

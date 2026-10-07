@@ -190,6 +190,7 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	if a.TaskStore != binding.store || a.taskStoreGeneration != binding.storeGeneration {
 		return errTaskOwnershipChanged
 	}
+	requireReattachment := a.undoReattachRequired
 	a.TaskSession = strings.TrimSpace(sessionID)
 	a.taskSessionGeneration++
 	a.latestUndo = nil
@@ -199,26 +200,39 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	if a.TaskSession == "" {
 		return nil
 	}
+	finishAttachment := func() error {
+		if requireReattachment && a.undoLoadErr != nil {
+			return fmt.Errorf("validate undo recovery during session reattachment: %w", a.undoLoadErr)
+		}
+		if requireReattachment {
+			a.undoReattachRequired = false
+		}
+		return nil
+	}
 	loadUndo := func(task *taskstate.Task) {
 		undo, loadErr := loadLatestDurableUndo(workspaceRoot, a.TaskSession, a.taskSessionGeneration, undoTaskStoreAuthority{store: a.TaskStore, epoch: a.taskStoreGeneration})
 		if loadErr != nil {
 			a.undoLoadErr = loadErr
 			return
 		}
-		if task != nil {
-			if validationErr := validateDurableUndoTask(undo, task); validationErr != nil {
-				a.undoLoadErr = validationErr
-				return
-			}
+		if validationErr := validateDurableUndoTask(undo, task); validationErr != nil {
+			a.undoLoadErr = validationErr
+			return
 		}
 		a.latestUndo = undo
 	}
 	if a.TaskStore == nil {
 		loadUndo(nil)
-		return nil
+		return finishAttachment()
 	}
 	task, err := a.TaskStore.Load(a.TaskSession)
 	if err == nil {
+		if requireReattachment {
+			loadUndo(task)
+			if a.undoLoadErr != nil {
+				return finishAttachment()
+			}
+		}
 		changed, revalidateErr := revalidatePersistedTask(workspaceRoot, task)
 		if revalidateErr != nil {
 			a.taskLoadErr = revalidateErr
@@ -239,12 +253,14 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 			}
 		}
 		a.task = task
-		loadUndo(task)
-		return nil
+		if !requireReattachment {
+			loadUndo(task)
+		}
+		return finishAttachment()
 	}
 	if errors.Is(err, taskstate.ErrNotFound) {
 		loadUndo(nil)
-		return nil
+		return finishAttachment()
 	}
 	a.taskLoadErr = err
 	return err

@@ -128,6 +128,7 @@ type Agent struct {
 	undoMu                sync.Mutex
 	latestUndo            *turnUndo
 	undoLoadErr           error
+	undoReattachRequired  bool
 	runTool               func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
 }
 
@@ -248,6 +249,9 @@ func (a *Agent) SetTaskStore(store *taskstate.Store) {
 	a.taskStoreGeneration++
 	a.TaskStore = store
 	a.taskLoadErr = nil
+	if strings.TrimSpace(a.TaskSession) != "" {
+		a.undoReattachRequired = true
+	}
 }
 
 func (a *Agent) TaskStoreSnapshot() *taskstate.Store {
@@ -602,6 +606,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
 	turnUndo.bindTaskStore(nativeOwner.store, nativeOwner.storeGeneration)
 	turnUndo.turnSequence = turnSequence
+	if turnSequence != 0 {
+		if err := turnUndo.bindDurableTurn(admission.snapshot, turnSequence); err != nil {
+			ev.OnError(err)
+			return history, Result{Task: a.TaskSnapshot()}, err
+		}
+	}
 	turnClosed := turnSequence == 0
 	regCtx.BeforeWorkspaceMutation = func(string) error {
 		if err := a.checkTaskRun(ctx); err != nil {
@@ -637,6 +647,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			turnSequence = sequence
 			turnUndo.turnSequence = sequence
+			if err := turnUndo.bindDurableTurn(admission.snapshot, sequence); err != nil {
+				return err
+			}
 			turnClosed = false
 			// Retain the original store/session generation while adopting only
 			// the exact saved turn, not a callback's replacement identity.

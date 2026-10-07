@@ -238,6 +238,30 @@ func TestTurnAuthorityAutoVerificationPreservesPendingUndo(t *testing.T) {
 				t.Fatalf("revoked terminal sealed undo: %v", err)
 			}
 			assertUndoFileContent(t, filepath.Join(root, "note.txt"), "after")
+			if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "reattach") {
+				t.Fatalf("undo without session reattachment = %v", err)
+			}
+			got, err = replacement.Load(session)
+			if err != nil || !reflect.DeepEqual(expected, got) {
+				t.Fatalf("refused undo changed replacement store: err=%v unchanged=%v", err, reflect.DeepEqual(expected, got))
+			}
+			pendingAfter, err = os.ReadFile(pending)
+			if err != nil || string(pendingAfter) != string(pendingBefore) {
+				t.Fatalf("refused undo changed pending journal: %v", err)
+			}
+			assertUndoFileContent(t, filepath.Join(root, "note.txt"), "after")
+			if err := a.SetTaskSession(session); err != nil {
+				t.Fatalf("valid explicit session reattachment: %v", err)
+			}
+			if !a.UndoAvailable() {
+				t.Fatal("explicit reattachment did not admit pending recovery")
+			}
+			if _, err := a.UndoLastTurn(); err != nil {
+				t.Fatalf("undo after valid explicit reattachment: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "note.txt")); !os.IsNotExist(err) {
+				t.Fatalf("explicit recovery did not remove the newly created file: %v", err)
+			}
 		})
 	}
 }

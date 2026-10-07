@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -221,13 +222,15 @@ func TestCachedUndoRefreshesAfterNewerDurableTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	newUndo := &turnUndo{
-		workspace:         a.ConfigSnapshot().Workspace,
-		checkpoint:        newCheckpoint,
-		sessionID:         task.SessionID,
-		sessionGeneration: oldUndo.sessionGeneration,
-		turnSequence:      sequence,
-		durable:           true,
-		journalSlot:       undoJournalSealed,
+		workspace:          a.ConfigSnapshot().Workspace,
+		checkpoint:         newCheckpoint,
+		sessionID:          task.SessionID,
+		sessionGeneration:  oldUndo.sessionGeneration,
+		turnSequence:       sequence,
+		taskID:             current.ID,
+		turnIntentRevision: current.LastTurn().IntentRevision,
+		durable:            true,
+		journalSlot:        undoJournalSealed,
 	}
 	newRecord, err := newCheckpoint.Export()
 	if err != nil {
@@ -349,6 +352,74 @@ func TestLateTurnCannotRepublishUndoAfterSessionChange(t *testing.T) {
 	}
 }
 
+func TestLegacyUndoJournalParsesButCannotRecoverWithoutOwner(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "legacy-undo"
+	identity, err := undoWorkspaceIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(undoJournal{
+		Version:      undoJournalLegacyVersion,
+		State:        undoJournalSealed,
+		Workspace:    identity,
+		SessionID:    sessionID,
+		TurnSequence: 1,
+		Checkpoint:   record,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, ".picogent", "undo")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	journalPath := filepath.Join(dir, sessionID+".json")
+	if err := os.WriteFile(journalPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := loadUndoJournal(root, sessionID, false)
+	if err != nil || parsed == nil || parsed.Version != undoJournalLegacyVersion {
+		t.Fatalf("legacy journal parse = (%#v, %v)", parsed, err)
+	}
+	if loaded, err := loadLatestDurableUndo(root, sessionID, 1); err == nil || loaded != nil || !strings.Contains(err.Error(), "owner identity") {
+		t.Fatalf("legacy journal recovery = (%#v, %v)", loaded, err)
+	}
+	assertUndoFileContent(t, path, "after\n")
+	journalAfter, err := os.ReadFile(journalPath)
+	if err != nil || !reflect.DeepEqual(data, journalAfter) {
+		t.Fatalf("legacy journal was not preserved: err=%v unchanged=%v", err, reflect.DeepEqual(data, journalAfter))
+	}
+}
+
+func TestDurableUndoRequiresMatchingTurnIntent(t *testing.T) {
+	a, _, task := newDurableUndoFixture(t, taskstate.StatusWorking)
+	undo := a.latestUndo
+	undo.turnSequence = task.LastTurn().Sequence
+	undo.turnIntentRevision++
+	if err := validateDurableUndoTask(undo, task); err == nil || !strings.Contains(err.Error(), "turn intent mismatch") {
+		t.Fatalf("undo with a different turn intent = %v", err)
+	}
+}
+
 func newDurableUndoFixture(t *testing.T, status taskstate.Status) (*Agent, *taskstate.Store, *taskstate.Task) {
 	t.Helper()
 	root := t.TempDir()
@@ -405,7 +476,10 @@ func newDurableUndoFixture(t *testing.T, status taskstate.Status) (*Agent, *task
 	if err := cp.Seal(); err != nil {
 		t.Fatal(err)
 	}
-	a.latestUndo = &turnUndo{workspace: root, checkpoint: cp, sessionID: task.SessionID}
+	a.latestUndo = &turnUndo{
+		workspace: root, checkpoint: cp, sessionID: task.SessionID,
+		taskID: task.ID, turnIntentRevision: task.LastTurn().IntentRevision,
+	}
 	return a, store, task
 }
 

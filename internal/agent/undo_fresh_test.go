@@ -172,6 +172,89 @@ func TestCachedUndoRequiresOriginalTaskStoreAuthority(t *testing.T) {
 	}
 }
 
+func TestFreshUndoRejectsDifferentTaskWithSameSessionAndTurn(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "same-session-owner-collision"
+	storeA := taskstate.NewStore(t.TempDir())
+	storeB := taskstate.NewStore(t.TempDir())
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "agent edit\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		toolResponse("write", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	first.SetTaskStore(storeA)
+	if err := first.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := first.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{}); err != nil {
+		t.Fatal(err)
+	}
+	owner := first.TaskSnapshot()
+	if owner == nil || owner.LastTurn() == nil {
+		t.Fatal("native write did not persist its task and turn")
+	}
+	sealed := filepath.Join(workspace, ".picogent", "undo", sessionID+".json")
+	journalBefore, err := os.ReadFile(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unrelated, err := taskstate.New(sessionID, "unrelated task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelated.IntentRevision = owner.LastTurn().IntentRevision
+	sequence, ok := unrelated.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok || sequence != owner.LastTurn().Sequence {
+		t.Fatalf("collision fixture sequence = %d, want %d", sequence, owner.LastTurn().Sequence)
+	}
+	if !unrelated.FinishTurn(sequence, taskstate.TurnRouteImplement, "unrelated work", "UNVERIFIED", taskstate.StopNone, 1, 0) {
+		t.Fatal("unrelated task turn did not finish")
+	}
+	if err := storeB.Save(unrelated); err != nil {
+		t.Fatal(err)
+	}
+	unrelatedBefore, err := storeB.Load(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first.SetTaskStore(storeB)
+	if err := first.SetTaskSession(sessionID); err == nil || !strings.Contains(err.Error(), "task identity mismatch") {
+		t.Fatalf("reattachment to unrelated task = %v", err)
+	}
+	if first.UndoAvailable() {
+		t.Fatal("undo for a different task was advertised")
+	}
+	if _, err := first.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "reattach") {
+		t.Fatalf("undo after rejected reattachment = %v", err)
+	}
+	assertFreshUndoFileContent(t, path, "agent edit\n")
+	unrelatedAfter, err := storeB.Load(sessionID)
+	if err != nil || !reflect.DeepEqual(unrelatedBefore, unrelatedAfter) {
+		t.Fatalf("rejected recovery changed unrelated task: err=%v unchanged=%v", err, reflect.DeepEqual(unrelatedBefore, unrelatedAfter))
+	}
+	ownerAfter, err := storeA.Load(sessionID)
+	if err != nil || !reflect.DeepEqual(owner, ownerAfter) {
+		t.Fatalf("rejected recovery changed original task: err=%v unchanged=%v", err, reflect.DeepEqual(owner, ownerAfter))
+	}
+	journalAfter, err := os.ReadFile(sealed)
+	if err != nil || !reflect.DeepEqual(journalBefore, journalAfter) {
+		t.Fatalf("rejected recovery changed journal: err=%v unchanged=%v", err, reflect.DeepEqual(journalBefore, journalAfter))
+	}
+}
+
 func TestFreshUndoConflictPreservesNewerWorkspaceEdit(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "note.txt")
@@ -289,7 +372,7 @@ func TestMalformedFreshUndoFailsClosed(t *testing.T) {
 	}
 }
 
-func TestFreshUndoRetainsRecoveryWhenTaskStateIsMissing(t *testing.T) {
+func TestFreshUndoFailsClosedWhenTaskOwnerIsMissing(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "note.txt")
 	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
@@ -319,17 +402,26 @@ func TestFreshUndoRetainsRecoveryWhenTaskStateIsMissing(t *testing.T) {
 	if err := os.Remove(taskPath); err != nil {
 		t.Fatal(err)
 	}
+	sealed := filepath.Join(workspace, ".picogent", "undo", "missing-task.json")
+	journalBefore, err := os.ReadFile(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
 	second := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
 	second.SetTaskStore(store)
 	if err := second.SetTaskSession("missing-task"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "durable task state is unavailable") {
+	if _, err := second.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "owner validation") {
 		t.Fatalf("missing task state error = %v", err)
 	}
-	assertFreshUndoFileContent(t, path, "before\n")
-	if !second.UndoAvailable() {
-		t.Fatal("undo candidate was discarded after missing task state")
+	assertFreshUndoFileContent(t, path, "after\n")
+	if second.UndoAvailable() {
+		t.Fatal("undo candidate without a durable owner was advertised")
+	}
+	journalAfter, err := os.ReadFile(sealed)
+	if err != nil || !reflect.DeepEqual(journalBefore, journalAfter) {
+		t.Fatalf("missing task owner changed recovery journal: err=%v unchanged=%v", err, reflect.DeepEqual(journalBefore, journalAfter))
 	}
 }
 
