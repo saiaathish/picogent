@@ -593,6 +593,7 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 .turn-recovery button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 10%, var(--card)); }
 .turn-recovery button:disabled { cursor: not-allowed; opacity: .65; }
+.delete-recovery > span { min-width: 0; overflow-wrap: anywhere; }
 .prompt {
   display: flex;
   flex-direction: column;
@@ -984,6 +985,18 @@ button, input, textarea { font: inherit; color: inherit; }
 .thread-item:hover { background: color-mix(in srgb, var(--ink) 5%, transparent); }
 .thread-item.is-active { background: var(--paper); color: var(--ink); }
 .thread-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
 .thread-del {
   border: 0;
   background: transparent;
@@ -991,7 +1004,14 @@ button, input, textarea { font: inherit; color: inherit; }
   cursor: pointer;
   color: var(--mute);
 }
-.thread-item:hover .thread-del { opacity: 1; }
+.thread-item:hover .thread-del,
+.thread-item:focus-within .thread-del { opacity: 1; }
+.thread-open:focus-visible,
+.thread-del:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.thread-open:disabled,
+.thread-del:disabled,
+.recent-session:disabled { cursor: not-allowed; opacity: .65; }
+@media (hover: none) { .thread-del { opacity: 1; } }
 .drawer-foot {
   display: flex;
   gap: 16px;
