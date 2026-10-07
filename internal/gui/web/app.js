@@ -1019,7 +1019,7 @@ const chatDeletionRecovery = window.PicogentWebContracts.createChatDeletionRecov
     add("error", message);
     // A lost response can follow an accepted delete/restore. Read authority
     // rather than retrying a mutation whose result is unknown.
-    refresh(true).catch(() => { loadThreads(); });
+    refresh().catch(() => { loadThreads(); });
   },
 });
 

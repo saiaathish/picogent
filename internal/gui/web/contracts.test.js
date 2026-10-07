@@ -841,15 +841,51 @@ function deletionAppHarness(send = ({ payload }) => sessionResponse(
   return {
     ...app, clock, calls, snapshots, errors, refreshes, elements,
     getEpoch: () => context.viewEpoch,
-    refreshViaList() {
+    addDiagnostics() { context.transcript.push("visible diagnostic", "reasoning detail"); },
+    useRealRefresh() {
       const pending = [];
-      context.refresh = (history) => {
-        refreshes.push(history);
-        const read = app.loadThreads();
-        pending.push(read);
-        return read;
+      const states = [];
+      const replays = [];
+      const noop = () => {};
+      Object.assign(context, {
+        permissionResponses: { getRevision: () => 0, reconcile: noop },
+        renderTopContext: noop, renderTaskMode: noop, fillModelPick: noop,
+        renderAuthBanner: noop, renderOverview: noop, renderContext: noop,
+        renderTaskProgress: noop, syncUndoControl: noop, setThinking: noop, syncEmpty: noop,
+        loadProjects: async () => {}, modeSeg: { querySelectorAll: () => [] },
+        logEl: { children: context.transcript.map((text) => ({ textContent: text })) },
+        sendBtn: element("send"), ready: true, chatRequestsPending: 0, userModelChoice: "auto",
+        add(role, message) {
+          assert.equal(role, "error");
+          errors.push(message);
+          context.transcript.push(message);
+          context.logEl.children.push({ textContent: message });
+        },
+        replayMessages(messages) {
+          replays.push(messages);
+          context.transcript = messages;
+          context.logEl.children = messages.map((text) => ({ textContent: text }));
+        },
+      });
+      const sessionFetch = context.fetch;
+      context.fetch = (url, options) => {
+        if (url !== "/api/state") return sessionFetch(url, options);
+        const request = deferred();
+        states.push(request);
+        return request.promise.then((state) => ({ json: async () => state }));
       };
-      return pending;
+      const refreshEnd = script.indexOf("\nlet authPollTimer", end);
+      assert.ok(refreshEnd > end, "actual refresh wiring is present");
+      context.recordRefresh = (history, read) => { refreshes.push(history); pending.push(read); };
+      vm.runInNewContext(script.slice(end, refreshEnd) + `
+        const realDeletionRefresh = refresh;
+        refresh = (history) => {
+          const read = realDeletionRefresh(history);
+          recordRefresh(history, read);
+          return read;
+        };
+      `, context, { filename: "app-deletion-refresh.js" });
+      return { pending, states, replays };
     },
     moveView() { context.viewEpoch++; },
     moveWorkspace() {
@@ -1166,10 +1202,13 @@ for (const action of ["delete", "undo_delete"]) {
         return { status: 200, json: async () => { throw new Error("lost body"); } };
       });
       if (action === "undo_delete") await app.seed(deletionRecord(deletedChat("other", "accepted-token")));
-      const reads = app.refreshViaList();
+      app.addDiagnostics();
+      const reads = app.useRealRefresh();
       const pending = action === "delete" ? app.deleteThread("other") : app.undoDeleteThread();
       assert.equal(await pending, false);
-      assert.deepEqual(app.refreshes, [true], "ambiguous result must request authority");
+      assert.deepEqual(app.refreshes, [undefined], "ambiguous result must not force transcript replay");
+      reads.states[0].resolve({ session_id: "current", busy: false, messages: ["durable transcript"] });
+      await new Promise((resolve) => setImmediate(resolve));
       const snapshot = app.snapshots.at(-1);
       snapshot.resolve(sessionResponse({
         sessions: action === "delete" ? [{ id: "current", title: "Current" }] :
@@ -1177,9 +1216,10 @@ for (const action of ["delete", "undo_delete"]) {
         current_id: "current",
         delete_undo: action === "delete" ? deletionRecord(deletedChat("other", "accepted-token")) : null,
       }));
-      await reads[0];
+      await reads.pending[0];
       assert.equal(app.view().id, "current");
-      assert.deepEqual(app.view().transcript, ["current transcript"]);
+      assert.deepEqual(app.view().transcript, ["current transcript", "visible diagnostic", "reasoning detail", app.errors[0]]);
+      assert.equal(reads.replays.length, 0, "unchanged idle chat keeps live transcript and recovery error");
       if (action === "delete") {
         assert.equal(app.controller.getState().recovery.undo_id, "accepted-token");
         assert.equal(app.view().threads.some((chat) => chat.id === "other"), false);
@@ -1189,6 +1229,29 @@ for (const action of ["delete", "undo_delete"]) {
       }
     });
   }
+}
+
+for (const failure of ["network", "json"]) {
+  test("lost current-chat deletion " + failure + " response reconciles the rotated session through real refresh", async () => {
+    const app = deletionAppHarness(() => {
+      if (failure === "network") return Promise.reject(new Error("lost response"));
+      return { status: 200, json: async () => { throw new Error("lost body"); } };
+    });
+    const reads = app.useRealRefresh();
+    assert.equal(await app.deleteThread("current"), false);
+    reads.states[0].resolve({ session_id: "rotated", busy: false, messages: ["replacement transcript"] });
+    await new Promise((resolve) => setImmediate(resolve));
+    app.snapshots.at(-1).resolve(sessionResponse({
+      sessions: [{ id: "rotated", title: "New chat" }], current_id: "rotated",
+      delete_undo: deletionRecord(),
+    }));
+    await reads.pending[0];
+    assert.equal(app.view().id, "rotated");
+    assert.deepEqual(app.view().transcript, ["replacement transcript"]);
+    assert.equal(reads.replays.length, 1);
+    assert.equal(app.controller.getState().recovery.undo_id, "undo-1");
+    assert.equal(app.calls.length, 1, "server rotation must not trigger a second mutation");
+  });
 }
 
 test("pending deletion blocks folder pick and project switch before changing view ownership", async () => {
