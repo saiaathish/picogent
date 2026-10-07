@@ -13,6 +13,14 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
+// Keep successful external undo separate from preference persistence. A save
+// retry must not restore external state again over intervening user changes.
+// configTxMu serializes record transitions; mu protects stack access.
+type extensionUndoRecord struct {
+	extensions.UndoEntry
+	externalApplied bool
+}
+
 func (s *server) extensionsAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -150,6 +158,8 @@ func (s *server) extensionsInstall(w http.ResponseWriter, id string, approved bo
 		return
 	}
 
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	s.mu.Lock()
 	cfg := s.cfg
 	mode := cfg.Mode
@@ -173,11 +183,12 @@ func (s *server) extensionsInstall(w http.ResponseWriter, id string, approved bo
 				writeGUIError(w, actErr.Error(), 500)
 				return
 			}
-			s.mu.Lock()
-			cfg.Extensions.ActiveTransient = appendUnique(cfg.Extensions.ActiveTransient, id)
-			s.cfg = cfg
-			_ = config.Save(cfg)
-			s.mu.Unlock()
+			if err := s.persistExtensionUpdate(func(ext *config.ExtensionsConfig) {
+				ext.ActiveTransient = appendUnique(ext.ActiveTransient, id)
+			}); err != nil {
+				writeGUIError(w, "extension activated, but couldn't save settings: "+err.Error(), 500)
+				return
+			}
 			_ = s.rebuildAgent()
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -191,16 +202,19 @@ func (s *server) extensionsInstall(w http.ResponseWriter, id string, approved bo
 	}
 
 	s.mu.Lock()
-	s.undoStack = append(s.undoStack, entry)
-	switch it.Kind {
-	case extensions.KindSkill:
-		cfg.Extensions.InstalledSkills = appendUnique(cfg.Extensions.InstalledSkills, it.SkillPath)
-	case extensions.KindPlugin:
-		cfg.Extensions.InstalledPlugins = appendUnique(cfg.Extensions.InstalledPlugins, it.ID)
-	}
-	s.cfg = cfg
-	_ = config.Save(cfg)
+	s.undoStack = append(s.undoStack, extensionUndoRecord{UndoEntry: entry})
 	s.mu.Unlock()
+	if err := s.persistExtensionUpdate(func(ext *config.ExtensionsConfig) {
+		switch it.Kind {
+		case extensions.KindSkill:
+			ext.InstalledSkills = appendUnique(ext.InstalledSkills, it.SkillPath)
+		case extensions.KindPlugin:
+			ext.InstalledPlugins = appendUnique(ext.InstalledPlugins, it.ID)
+		}
+	}); err != nil {
+		writeGUIError(w, "extension installed, but couldn't save settings: "+err.Error(), 500)
+		return
+	}
 
 	if err := s.rebuildAgent(); err != nil {
 		writeGUIError(w, err.Error(), 500)
@@ -236,39 +250,52 @@ func (s *server) extensionsInstall(w http.ResponseWriter, id string, approved bo
 }
 
 func (s *server) extensionsUndo(w http.ResponseWriter, undoID string) {
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	s.mu.Lock()
-	var entry *extensions.UndoEntry
-	rest := s.undoStack[:0]
-	for _, e := range s.undoStack {
+	var entry extensionUndoRecord
+	index := -1
+	for i, e := range s.undoStack {
 		if e.ID == undoID {
-			copy := e
-			entry = &copy
-			continue
+			entry, index = e, i
+			break
 		}
-		rest = append(rest, e)
 	}
-	s.undoStack = rest
-	cfg := s.cfg
 	s.mu.Unlock()
 
-	if entry == nil {
+	if index < 0 {
 		writeGUIError(w, "undo entry not found", 404)
 		return
 	}
-	if err := extensions.Undo(*entry); err != nil {
-		writeGUIError(w, err.Error(), 500)
-		return
+	if !entry.externalApplied {
+		undo := extensions.Undo
+		if s.undoExtension != nil {
+			undo = s.undoExtension
+		}
+		if err := undo(entry.UndoEntry.Clone()); err != nil {
+			writeGUIError(w, err.Error(), 500)
+			return
+		}
+		s.mu.Lock()
+		s.undoStack[index].externalApplied = true
+		s.mu.Unlock()
 	}
 
+	if err := s.persistExtensionUpdate(func(ext *config.ExtensionsConfig) {
+		if entry.Kind == extensions.KindSkill && entry.SkillPath != "" {
+			ext.InstalledSkills = removeString(ext.InstalledSkills, filepathBase(entry.SkillPath))
+		}
+		if entry.Kind == extensions.KindPlugin {
+			ext.InstalledPlugins = removeString(ext.InstalledPlugins, entry.ExtID)
+		}
+	}); err != nil {
+		writeGUIError(w, "extension removed, but couldn't save settings: "+err.Error(), 500)
+		return
+	}
 	s.mu.Lock()
-	if entry.Kind == extensions.KindSkill && entry.SkillPath != "" {
-		cfg.Extensions.InstalledSkills = removeString(cfg.Extensions.InstalledSkills, filepathBase(entry.SkillPath))
-	}
-	if entry.Kind == extensions.KindPlugin {
-		cfg.Extensions.InstalledPlugins = removeString(cfg.Extensions.InstalledPlugins, entry.ExtID)
-	}
-	s.cfg = cfg
-	_ = config.Save(cfg)
+	copy(s.undoStack[index:], s.undoStack[index+1:])
+	s.undoStack[len(s.undoStack)-1] = extensionUndoRecord{}
+	s.undoStack = s.undoStack[:len(s.undoStack)-1]
 	s.mu.Unlock()
 
 	_ = s.rebuildAgent()
@@ -282,12 +309,14 @@ func (s *server) extensionsDismiss(w http.ResponseWriter, id string) {
 		writeGUIError(w, "id required", 400)
 		return
 	}
-	s.mu.Lock()
-	cfg := s.cfg
-	cfg.Extensions.Dismissed = appendUnique(cfg.Extensions.Dismissed, id)
-	s.cfg = cfg
-	_ = config.Save(cfg)
-	s.mu.Unlock()
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
+	if err := s.persistExtensionUpdate(func(ext *config.ExtensionsConfig) {
+		ext.Dismissed = appendUnique(ext.Dismissed, id)
+	}); err != nil {
+		writeGUIError(w, "couldn't save extension preference: "+err.Error(), 500)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
@@ -357,7 +386,6 @@ func (s *server) rebuildAgent() error {
 func (s *server) maybeRecommendExtensions(prompt string) {
 	s.mu.Lock()
 	cfg := s.cfg
-	mode := cfg.Mode
 	ws := cfg.Workspace
 	s.mu.Unlock()
 
@@ -390,49 +418,30 @@ func (s *server) maybeRecommendExtensions(prompt string) {
 		})
 	}
 
-	if mode == config.ModeFast {
-		pool := extensions.NewPool(ws, cfg.Extensions.EssentialPlugins, cfg.Extensions.ActiveTransient)
-		activated, _ := pool.EnsureForPrompt(prompt)
-		if len(activated) > 0 {
-			s.mu.Lock()
-			cfg.Extensions.ActiveTransient = pool.Transient
-			s.cfg = cfg
-			_ = config.Save(cfg)
-			s.mu.Unlock()
-			_ = s.rebuildAgent()
-			for _, id := range activated {
-				s.emit(event{
-					Type:    "extension_installed",
-					Text:    "Loaded extension for this task",
-					Summary: id,
-					Kind:    "plugin",
-					Status:  "transient",
-					Path:    id,
-				})
-			}
-		}
-	}
 }
 
-func (s *server) cleanupExtensionPool() {
+func (s *server) cleanupExtensionPool() error {
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	s.mu.Lock()
 	suppressRebuild := s.suppressExtensionRebuild
 	cfg := s.cfg
 	ws := cfg.Workspace
 	s.mu.Unlock()
 	if suppressRebuild {
-		return
+		return nil
 	}
 
 	pool := extensions.NewPool(ws, cfg.Extensions.EssentialPlugins, cfg.Extensions.ActiveTransient)
-	_ = pool.CleanupTransient()
-
-	s.mu.Lock()
-	cfg.Extensions.ActiveTransient = pool.Transient
-	s.cfg = cfg
-	_ = config.Save(cfg)
-	s.mu.Unlock()
-	_ = s.rebuildAgent()
+	if err := pool.CleanupTransient(); err != nil {
+		return fmt.Errorf("clean up extensions: %w", err)
+	}
+	if err := s.persistExtensionUpdate(func(ext *config.ExtensionsConfig) {
+		ext.ActiveTransient = append([]string(nil), pool.Transient...)
+	}); err != nil {
+		return fmt.Errorf("extensions cleaned up, but couldn't save settings: %w", err)
+	}
+	return s.rebuildAgent()
 }
 
 func (s *server) extensionsActivate(w http.ResponseWriter, id string) {
@@ -440,6 +449,8 @@ func (s *server) extensionsActivate(w http.ResponseWriter, id string) {
 		writeGUIError(w, "id required", 400)
 		return
 	}
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	if strings.HasPrefix(id, "claude:") {
 		if err := extensions.ActivateClaudePlugin(strings.TrimPrefix(id, "claude:")); err != nil {
 			writeGUIError(w, err.Error(), 500)
@@ -451,12 +462,12 @@ func (s *server) extensionsActivate(w http.ResponseWriter, id string) {
 			return
 		}
 	}
-	s.mu.Lock()
-	cfg := s.cfg
-	cfg.Extensions.ActiveTransient = appendUnique(cfg.Extensions.ActiveTransient, id)
-	s.cfg = cfg
-	_ = config.Save(cfg)
-	s.mu.Unlock()
+	if err := s.persistExtensionUpdate(func(ext *config.ExtensionsConfig) {
+		ext.ActiveTransient = appendUnique(ext.ActiveTransient, id)
+	}); err != nil {
+		writeGUIError(w, "extension activated, but couldn't save settings: "+err.Error(), 500)
+		return
+	}
 	_ = s.rebuildAgent()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
@@ -467,21 +478,47 @@ func (s *server) extensionsEssential(w http.ResponseWriter, id string) {
 		writeGUIError(w, "id required", 400)
 		return
 	}
-	s.mu.Lock()
-	cfg := s.cfg
-	cfg.Extensions.EssentialPlugins = extensions.MarkEssential(cfg.Extensions.EssentialPlugins, id)
-	cfg.Extensions.ActiveTransient = appendUnique(cfg.Extensions.ActiveTransient, id)
-	s.cfg = cfg
-	_ = config.Save(cfg)
-	s.mu.Unlock()
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
+	if err := s.persistExtensionUpdate(func(ext *config.ExtensionsConfig) {
+		ext.EssentialPlugins = extensions.MarkEssential(ext.EssentialPlugins, id)
+		ext.ActiveTransient = appendUnique(ext.ActiveTransient, id)
+	}); err != nil {
+		writeGUIError(w, "couldn't save extension preference: "+err.Error(), 500)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 func (s *server) extensionsCleanup(w http.ResponseWriter) {
-	s.cleanupExtensionPool()
+	if err := s.cleanupExtensionPool(); err != nil {
+		writeGUIError(w, err.Error(), 500)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// persistExtensionUpdate requires configTxMu for the surrounding operation.
+// Clone slice storage before prospective mutations: removing a value in-place
+// must not mutate the live config when persistence fails.
+func (s *server) persistExtensionUpdate(mutate func(*config.ExtensionsConfig)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.cfg
+	next.Extensions.AlwaysAllowTools = append([]string(nil), next.Extensions.AlwaysAllowTools...)
+	next.Extensions.Dismissed = append([]string(nil), next.Extensions.Dismissed...)
+	next.Extensions.InstalledSkills = append([]string(nil), next.Extensions.InstalledSkills...)
+	next.Extensions.InstalledPlugins = append([]string(nil), next.Extensions.InstalledPlugins...)
+	next.Extensions.EssentialPlugins = append([]string(nil), next.Extensions.EssentialPlugins...)
+	next.Extensions.ActiveTransient = append([]string(nil), next.Extensions.ActiveTransient...)
+	mutate(&next.Extensions)
+	if err := s.persistConfig(next); err != nil {
+		return err
+	}
+	s.cfg = next
+	return nil
 }
 
 func dismissedSet(list []string) map[string]bool {
