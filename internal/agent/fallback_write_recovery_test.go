@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
@@ -105,6 +107,9 @@ func TestFallbackNativeWritePersistsBeforePublication(t *testing.T) {
 			if err != nil || publications != want || !result.UndoAvailable || len(a.TaskSnapshot().Turns) != 1 {
 				t.Fatalf("fallback native turn=%+v publications=%d err=%v", result, publications, err)
 			}
+			if last := a.TaskSnapshot().LastTurn(); last.State != taskstate.TurnCompleted || last.Sequence != sequence {
+				t.Fatalf("fallback publication turn was not closed with its original identity: %+v", last)
+			}
 			if _, err := a.UndoLastTurn(); err != nil {
 				t.Fatal(err)
 			}
@@ -114,6 +119,112 @@ func TestFallbackNativeWritePersistsBeforePublication(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Abruptly exit an owned subprocess at two real native publication windows.
+// The first crash precedes even the tool result; the second includes a staged
+// but unpublished creation. Recovery must restore only bytes that published.
+func TestFallbackNativeWriteCrashRecovery(t *testing.T) {
+	if os.Getenv("PICOGENT_FALLBACK_CRASH_PHASE") != "" {
+		t.Skip("helper process")
+	}
+	for _, phase := range []string{"after-first", "before-second"} {
+		t.Run(phase, func(t *testing.T) {
+			base := t.TempDir()
+			root, storeDir := filepath.Join(base, "workspace"), filepath.Join(base, "store")
+			if err := os.Mkdir(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("before"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFallbackNativeWriteCrashHelper$", "-test.count=1")
+			cmd.Env = append(os.Environ(),
+				"PICOGENT_FALLBACK_CRASH_PHASE="+phase,
+				"PICOGENT_FALLBACK_CRASH_WORKSPACE="+root,
+				"PICOGENT_FALLBACK_CRASH_STORE="+storeDir,
+			)
+			output, err := cmd.CombinedOutput()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 73 {
+				t.Fatalf("helper missed actual crash boundary: %v\n%s", err, output)
+			}
+			store := taskstate.NewStore(storeDir)
+			const session = "fallback-crash"
+			persisted, err := store.Load(session)
+			if err != nil || persisted.LastTurn() == nil || persisted.LastTurn().State != taskstate.TurnActive {
+				t.Fatalf("crash left no durable active turn: %+v %v", persisted, err)
+			}
+			journal, err := loadUndoJournal(root, session, true)
+			wantEntries := 1
+			if phase == "before-second" {
+				wantEntries = 2
+			}
+			if err != nil || journal.TurnSequence != persisted.LastTurn().Sequence || len(journal.Checkpoint.Entries) != wantEntries {
+				t.Fatalf("crash left no matching prepublication journal: %+v %v", journal, err)
+			}
+			assertUndoFileContent(t, filepath.Join(root, "note.txt"), "after")
+			if _, err := os.Stat(filepath.Join(root, "created.txt")); !os.IsNotExist(err) {
+				t.Fatalf("helper published second file before intended crash: %v", err)
+			}
+			fresh := newUndoHookAgent(t, root)
+			defer fresh.Close()
+			fresh.SetTaskStore(store)
+			if err := fresh.SetTaskSession(session); err != nil {
+				t.Fatal(err)
+			}
+			last := fresh.TaskSnapshot().LastTurn()
+			if last.State != taskstate.TurnInterrupted || last.StopReason != taskstate.StopProcessRestart || last.EvidenceState != "UNVERIFIED" || !fresh.UndoAvailable() {
+				t.Fatalf("fresh process did not recover interrupted fallback: %+v", last)
+			}
+			if _, err := fresh.UndoLastTurn(); err != nil {
+				t.Fatal(err)
+			}
+			assertUndoFileContent(t, filepath.Join(root, "note.txt"), "before")
+			if _, err := os.Stat(filepath.Join(root, "created.txt")); !os.IsNotExist(err) {
+				t.Fatalf("undo created unpublished file: %v", err)
+			}
+		})
+	}
+}
+
+func TestFallbackNativeWriteCrashHelper(t *testing.T) {
+	phase := os.Getenv("PICOGENT_FALLBACK_CRASH_PHASE")
+	if phase == "" {
+		t.Skip("helper process")
+	}
+	root := os.Getenv("PICOGENT_FALLBACK_CRASH_WORKSPACE")
+	store := taskstate.NewStore(os.Getenv("PICOGENT_FALLBACK_CRASH_STORE"))
+	a := newUndoHookAgent(t, root)
+	a.SetTaskStore(store)
+	const session = "fallback-crash"
+	if err := a.SetTaskSession(session); err != nil {
+		t.Fatal(err)
+	}
+	first := fallbackCall(t, "first", "write_file", map[string]string{"path": "note.txt", "content": "after"})
+	second := fallbackCall(t, "second", "write_file", map[string]string{"path": "created.txt", "content": "created"})
+	a.SetClient(&llm.Scripted{Responses: fallbackResponses(first, second)})
+	a.runTool = func(ctx context.Context, call llm.ToolCall, tool tools.Tool, c tools.Context) (string, error) {
+		hook := c.BeforeWorkspacePublish
+		c.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+			if err := hook(path, data, mode); err != nil {
+				return err
+			}
+			if phase == "before-second" && call.ID == "second" {
+				os.Exit(73)
+			}
+			return nil
+		}
+		out, err := tool.Run(ctx, call.Arguments, c)
+		if err == nil && phase == "after-first" && call.ID == "first" {
+			os.Exit(73)
+		}
+		return out, err
+	}
+	_, _, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: fallbackWritePrompt}, allowUndoTest{})
+	t.Fatalf("helper missed crash boundary: %v", err)
 }
 
 type fallbackTaskObserver struct {
