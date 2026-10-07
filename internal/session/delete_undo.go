@@ -74,6 +74,22 @@ func DeleteWithUndo(id string, undo *DeleteUndo) error {
 	}
 	defer unlock()
 
+	// The caller's transcript may be stale after another process saved this
+	// session. Capture the latest acknowledged bytes under the same lock as
+	// journal publication and deletion; never turn a stale UI read into undo.
+	current, err := loadLocked(filepath.Join(dir, id+".json"), id)
+	if err != nil {
+		return fmt.Errorf("inspect delete session: %w", err)
+	}
+	if filepath.Clean(current.Workspace) != filepath.Clean(prepared.Session.Workspace) {
+		return errors.New("delete session workspace changed")
+	}
+	prepared.Session = current
+	data, prepared, err = marshalDeleteUndo(prepared)
+	if err != nil {
+		return err
+	}
+
 	stage := deleteUndoStagePath(dir)
 	if staged, _, stageErr := loadDeleteUndoFileLocked(stage); stageErr == nil {
 		// A stage with its session file still present can only be left by a
@@ -84,11 +100,19 @@ func DeleteWithUndo(id string, undo *DeleteUndo) error {
 		if missingErr != nil {
 			return fmt.Errorf("inspect staged delete session: %w", missingErr)
 		}
-		if missing {
+		if missing && !deleteUndoExpired(staged, time.Now().UTC()) {
 			return ErrDeleteUndoInFlight
 		}
-		if err := removeDeleteUndoFileLocked(stage); err != nil {
-			return fmt.Errorf("retire stale delete undo staging: %w", err)
+		// An expired removed-session stage superseded the previous undo; retire
+		// both, exactly as the loader does, without requiring a prior GET.
+		var retireErr error
+		if missing {
+			retireErr = clearDeleteUndoLocked(dir)
+		} else {
+			retireErr = removeDeleteUndoFileLocked(stage)
+		}
+		if retireErr != nil {
+			return fmt.Errorf("retire stale delete undo staging: %w", retireErr)
 		}
 	} else if !errors.Is(stageErr, os.ErrNotExist) {
 		return fmt.Errorf("inspect delete undo staging: %w", stageErr)
