@@ -356,6 +356,129 @@ func TestReplacementAcknowledgementFailureRetriesAfterGoalClear(t *testing.T) {
 	}
 }
 
+func TestReplacementConflictCanRecoverWithoutRetiringNewerGoal(t *testing.T) {
+	for _, beforeClear := range []bool{false, true} {
+		t.Run(map[bool]string{false: "after-clear", true: "before-clear"}[beforeClear], func(t *testing.T) {
+			a, store, cfg := replacementFixture(t)
+			const old = "finish the backend"
+			revision, err := goal.SetState(cfg.Workspace, old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.SetGoalState(old, revision)
+			if failed, err := a.beginDurableTask("replace the current goal with document the API", NopHandler{}); failed || err != nil {
+				t.Fatal(err)
+			}
+			if !beforeClear {
+				if cleared, err := goal.ClearIfState(cfg.Workspace, old, revision); err != nil || !cleared {
+					t.Fatalf("could not reach cleared-before-ack crash window: %v", err)
+				}
+			}
+			// Same-text ABA must also remain independent of the old marker.
+			newRevision, err := goal.SetState(cfg.Workspace, old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "Blocked: inspect the new outcome."}}}}
+			restarted := replacementAgent(t, cfg, store, client)
+			restarted.SetGoalState(old, newRevision)
+			_, _, err = restarted.Run(context.Background(), nil, llm.Message{Role: "user", Content: "continue"}, NopHandler{})
+			if err == nil || len(client.Calls) != 0 {
+				t.Fatal("conflict did not stop the admitted turn before dispatch")
+			}
+			persisted, err := store.Load("replacement-session")
+			if err != nil || persisted.ReplacedWorkspaceGoal != nil || persisted.Goal != "Document the API" {
+				t.Fatalf("obsolete marker stranded the session: %+v %v", persisted, err)
+			}
+			if text, rev := restarted.GoalStateSnapshot(); text != old || rev != newRevision {
+				t.Fatal("conflict changed newer runtime goal")
+			}
+			current, err := goal.LoadState(cfg.Workspace)
+			if err != nil || current.Text != old || current.Revision != newRevision {
+				t.Fatal("conflict retired the newer persisted goal")
+			}
+			_, _, err = restarted.Run(context.Background(), nil, llm.Message{Role: "user", Content: "replace the current goal with fix the frontend bug"}, NopHandler{})
+			if err != nil || len(client.Calls) == 0 || restarted.TaskSnapshot().Goal != "Fix the frontend bug" {
+				t.Fatalf("fresh replacement could not recover the session: %v", err)
+			}
+		})
+	}
+}
+
+func TestReplacementConflictRefreshesOnlyObsoleteRuntime(t *testing.T) {
+	a, store, cfg := replacementFixture(t)
+	const old = "finish the backend"
+	revision, err := goal.SetState(cfg.Workspace, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetGoalState(old, revision)
+	if failed, err := a.beginDurableTask("replace the current goal with document the API", NopHandler{}); failed || err != nil {
+		t.Fatal(err)
+	}
+	const newer = "finish the mobile app"
+	newRevision, err := goal.SetState(cfg.Workspace, newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &llm.Scripted{}
+	a.SetClient(client)
+	_, _, err = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "continue"}, NopHandler{})
+	if err == nil || len(client.Calls) != 0 {
+		t.Fatal("stale admission was dispatched")
+	}
+	if text, rev := a.GoalStateSnapshot(); text != newer || rev != newRevision {
+		t.Fatal("next admission retained an obsolete runtime identity")
+	}
+	persisted, err := store.Load("replacement-session")
+	if err != nil || persisted.ReplacedWorkspaceGoal != nil {
+		t.Fatal("obsolete retirement marker was not acknowledged")
+	}
+}
+
+func TestReplacementConflictAcknowledgementFailureKeepsRetryableMarker(t *testing.T) {
+	a, store, cfg := replacementFixture(t)
+	const old = "finish the backend"
+	revision, err := goal.SetState(cfg.Workspace, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetGoalState(old, revision)
+	if failed, err := a.beginDurableTask("replace the current goal with document the API", NopHandler{}); failed || err != nil {
+		t.Fatal(err)
+	}
+	const newer = "finish the mobile app"
+	newRevision, err := goal.SetState(cfg.Workspace, newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetGoalState(newer, newRevision)
+	blocked := filepath.Join(t.TempDir(), "blocked-store")
+	if err := os.WriteFile(blocked, []byte("blocked"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.SetTaskStore(taskstate.NewStore(blocked))
+	if _, _, err := a.reconcileReplacedWorkspaceGoal(cfg.Workspace, newer, newRevision); err == nil {
+		t.Fatal("failed conflict acknowledgement was accepted")
+	}
+	pending, err := store.Load("replacement-session")
+	if err != nil || pending.ReplacedWorkspaceGoal == nil {
+		t.Fatal("failed conflict acknowledgement lost its retryable marker")
+	}
+	current, err := goal.LoadState(cfg.Workspace)
+	if err != nil || current.Text != newer || current.Revision != newRevision {
+		t.Fatal("failed conflict acknowledgement changed the newer goal")
+	}
+	restarted := replacementAgent(t, cfg, store, &llm.Scripted{})
+	restarted.SetGoalState(newer, newRevision)
+	if _, _, err := restarted.reconcileReplacedWorkspaceGoal(cfg.Workspace, newer, newRevision); err == nil {
+		t.Fatal("conflict retry should still stop its admitted turn")
+	}
+	if text, rev, err := restarted.reconcileReplacedWorkspaceGoal(cfg.Workspace, newer, newRevision); err != nil || text != newer || rev != newRevision {
+		t.Fatal("acknowledged conflict still stranded the next admission")
+	}
+}
+
 type replacementNewGoalHandler struct {
 	NopHandler
 	agent     *Agent
