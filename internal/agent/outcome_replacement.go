@@ -8,7 +8,7 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
-var errReplacedGoalConflict = errors.New("a newer workspace goal conflicts with the replaced outcome; retry with the current goal")
+var errReplacedGoalConflict = errors.New("a newer workspace goal conflicts with the replaced outcome; explicitly replace the current goal to resolve it")
 
 // reconcileReplacedWorkspaceGoal completes a durable save-before-retire
 // transaction. It returns the admitted tuple, never a later runtime snapshot.
@@ -20,13 +20,9 @@ func (a *Agent) reconcileReplacedWorkspaceGoal(workspace, admittedGoal string, a
 		return admittedGoal, admittedRevision, nil
 	}
 	expected := *task.ReplacedWorkspaceGoal
-	retirementErr := a.retireWorkspaceGoal(workspace, expected)
-	if retirementErr != nil && !errors.Is(retirementErr, errReplacedGoalConflict) {
-		return admittedGoal, admittedRevision, retirementErr
+	if err := a.retireWorkspaceGoal(workspace, expected); err != nil {
+		return admittedGoal, admittedRevision, err
 	}
-	// A conflicting goal has a different identity and must never be cleared by
-	// this historical replacement. Acknowledge the obsolete marker, but stop
-	// this admission: a fresh turn must capture the current runtime tuple.
 	_, err := a.mutateTaskResult(func(candidate *taskstate.Task) error {
 		if candidate.ID != task.ID || candidate.IntentRevision != task.IntentRevision || candidate.TurnRevision != task.TurnRevision {
 			return errors.New("outcome changed before replacement retirement was acknowledged")
@@ -39,9 +35,6 @@ func (a *Agent) reconcileReplacedWorkspaceGoal(workspace, admittedGoal string, a
 	})
 	if err != nil {
 		return admittedGoal, admittedRevision, fmt.Errorf("acknowledge replaced workspace goal: %w", err)
-	}
-	if retirementErr != nil {
-		return admittedGoal, admittedRevision, retirementErr
 	}
 	return "", 0, nil
 }

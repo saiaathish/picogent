@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/goal"
@@ -387,8 +388,8 @@ func TestReplacementConflictCanRecoverWithoutRetiringNewerGoal(t *testing.T) {
 				t.Fatal("conflict did not stop the admitted turn before dispatch")
 			}
 			persisted, err := store.Load("replacement-session")
-			if err != nil || persisted.ReplacedWorkspaceGoal != nil || persisted.Goal != "Document the API" {
-				t.Fatalf("obsolete marker stranded the session: %+v %v", persisted, err)
+			if err != nil || persisted.ReplacedWorkspaceGoal == nil || persisted.Goal != "Document the API" {
+				t.Fatalf("conflict provenance was lost: %+v %v", persisted, err)
 			}
 			if text, rev := restarted.GoalStateSnapshot(); text != old || rev != newRevision {
 				t.Fatal("conflict changed newer runtime goal")
@@ -396,6 +397,10 @@ func TestReplacementConflictCanRecoverWithoutRetiringNewerGoal(t *testing.T) {
 			current, err := goal.LoadState(cfg.Workspace)
 			if err != nil || current.Text != old || current.Revision != newRevision {
 				t.Fatal("conflict retired the newer persisted goal")
+			}
+			_, _, err = restarted.Run(context.Background(), nil, llm.Message{Role: "user", Content: "continue"}, NopHandler{})
+			if err == nil || len(client.Calls) != 0 {
+				t.Fatal("ordinary retry dispatched against an unrelated goal contract")
 			}
 			_, _, err = restarted.Run(context.Background(), nil, llm.Message{Role: "user", Content: "replace the current goal with fix the frontend bug"}, NopHandler{})
 			if err != nil || len(client.Calls) == 0 || restarted.TaskSnapshot().Goal != "Fix the frontend bug" {
@@ -431,12 +436,12 @@ func TestReplacementConflictRefreshesOnlyObsoleteRuntime(t *testing.T) {
 		t.Fatal("next admission retained an obsolete runtime identity")
 	}
 	persisted, err := store.Load("replacement-session")
-	if err != nil || persisted.ReplacedWorkspaceGoal != nil {
-		t.Fatal("obsolete retirement marker was not acknowledged")
+	if err != nil || persisted.ReplacedWorkspaceGoal == nil {
+		t.Fatal("conflict provenance was not retained")
 	}
 }
 
-func TestReplacementConflictAcknowledgementFailureKeepsRetryableMarker(t *testing.T) {
+func TestReplacementConflictRebindingFailureKeepsRetryableMarker(t *testing.T) {
 	a, store, cfg := replacementFixture(t)
 	const old = "finish the backend"
 	revision, err := goal.SetState(cfg.Workspace, old)
@@ -458,24 +463,86 @@ func TestReplacementConflictAcknowledgementFailureKeepsRetryableMarker(t *testin
 		t.Fatal(err)
 	}
 	a.SetTaskStore(taskstate.NewStore(blocked))
-	if _, _, err := a.reconcileReplacedWorkspaceGoal(cfg.Workspace, newer, newRevision); err == nil {
-		t.Fatal("failed conflict acknowledgement was accepted")
+	if failed, err := a.beginDurableTaskInState("replace the current goal with fix the frontend bug", NopHandler{}, false, a.RuntimeSnapshot()); !failed || err == nil {
+		t.Fatal("failed contract rebinding was accepted")
 	}
 	pending, err := store.Load("replacement-session")
 	if err != nil || pending.ReplacedWorkspaceGoal == nil {
-		t.Fatal("failed conflict acknowledgement lost its retryable marker")
+		t.Fatal("failed contract rebinding lost its retryable marker")
 	}
 	current, err := goal.LoadState(cfg.Workspace)
 	if err != nil || current.Text != newer || current.Revision != newRevision {
-		t.Fatal("failed conflict acknowledgement changed the newer goal")
+		t.Fatal("failed contract rebinding changed the newer goal")
 	}
 	restarted := replacementAgent(t, cfg, store, &llm.Scripted{})
 	restarted.SetGoalState(newer, newRevision)
 	if _, _, err := restarted.reconcileReplacedWorkspaceGoal(cfg.Workspace, newer, newRevision); err == nil {
 		t.Fatal("conflict retry should still stop its admitted turn")
 	}
-	if text, rev, err := restarted.reconcileReplacedWorkspaceGoal(cfg.Workspace, newer, newRevision); err != nil || text != newer || rev != newRevision {
-		t.Fatal("acknowledged conflict still stranded the next admission")
+	if failed, err := restarted.beginDurableTaskInState("replace the current goal with fix the frontend bug", NopHandler{}, false, restarted.RuntimeSnapshot()); failed || err != nil {
+		t.Fatal("fresh explicit contract rebinding was stranded")
+	}
+	if text, rev, err := restarted.reconcileReplacedWorkspaceGoal(cfg.Workspace, newer, newRevision); err != nil || text != "" || rev != 0 {
+		t.Fatal("explicitly rebound replacement could not retire its own tuple")
+	}
+}
+
+func TestReplacementRejectsQueuedStaleRuntimeAdmission(t *testing.T) {
+	a, store, cfg := replacementFixture(t)
+	const old = "finish the backend"
+	revision, err := goal.SetState(cfg.Workspace, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetGoalState(old, revision)
+	if failed, err := a.beginDurableTask("replace the current goal with document the API", NopHandler{}); failed || err != nil {
+		t.Fatal(err)
+	}
+	const newer = "finish the mobile app"
+	newRevision, err := goal.SetState(cfg.Workspace, newer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "Blocked: inspect the new outcome."}}}}
+	a.SetClient(client)
+	snapshotted, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	waiterDone := make(chan error, 1)
+	go func() {
+		_, _, err := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "continue"}, NopHandler{}, RunOptions{
+			beforeProjectRunLock: func() { close(snapshotted); <-release },
+		})
+		waiterDone <- err
+	}()
+	select {
+	case <-snapshotted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("waiter did not capture the obsolete runtime tuple")
+	}
+	if _, _, err := a.reconcileReplacedWorkspaceGoal(cfg.Workspace, old, revision); err == nil {
+		t.Fatal("persisted newer goal did not stop the old admission")
+	}
+	if text, rev := a.GoalStateSnapshot(); text != newer || rev != newRevision {
+		t.Fatal("fresh admission was not available")
+	}
+	_, _, err = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "replace the current goal with fix the frontend bug"}, NopHandler{})
+	if err != nil || len(client.Calls) != 1 {
+		t.Fatalf("fresh explicit recovery failed: %v", err)
+	}
+	persisted, err := store.Load("replacement-session")
+	if err != nil || persisted.ReplacedWorkspaceGoal != nil {
+		t.Fatal("fresh recovery did not finish its own retirement")
+	}
+	// Unblock without closing twice: one send lets the waiter acquire the lock
+	// after the fresh request has replaced and retired its captured identity.
+	release <- struct{}{}
+	select {
+	case err := <-waiterDone:
+		if err == nil || len(client.Calls) != 1 {
+			t.Fatal("queued stale admission dispatched after conflict recovery")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued stale admission did not finish")
 	}
 }
 

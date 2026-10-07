@@ -374,9 +374,10 @@ func systemPromptFor(state RuntimeState, userHint, taskSuffix, scopeBoundary str
 // RunOptions describes per-turn controls that must not become sticky session
 // settings. A nil TaskMode leaves the agent's configured mode unchanged.
 type RunOptions struct {
-	TaskMode      *TaskMode
-	TracePrompt   string
-	DurablePrompt string
+	beforeProjectRunLock func() // deterministic stale-admission regression seam
+	TaskMode             *TaskMode
+	TracePrompt          string
+	DurablePrompt        string
 	// ScopeBoundary is a temporary first-pass instruction. It is appended after
 	// durable task and active-goal context so a broad resumable objective cannot
 	// override the selected work for this turn.
@@ -424,6 +425,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		ev = NopHandler{}
 	}
 	state := a.RuntimeSnapshot()
+	if opts.beforeProjectRunLock != nil {
+		opts.beforeProjectRunLock()
+	}
 	releaseRun, err := a.acquireProjectRunLockForWorkspace(state.CFG.Workspace)
 	if err != nil {
 		wrapped := fmt.Errorf("project run is unavailable: %w", err)
@@ -435,6 +439,14 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			ev.OnError(fmt.Errorf("project run lock release failed: %w", err))
 		}
 	}()
+	// An admission can wait behind another turn that replaces or retires its
+	// goal. Reject that captured identity rather than dispatching stale context
+	// or silently injecting the newer tuple into this request.
+	if currentGoal, currentRevision := a.GoalStateSnapshot(); currentGoal != state.Goal || currentRevision != state.GoalRevision {
+		err := errors.New("workspace goal changed while this turn waited; retry the request")
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
+	}
 	cfg := state.CFG
 	taskMode := state.TaskMode
 	if opts.TaskMode != nil && opts.TaskMode.Valid() {
@@ -478,6 +490,16 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	// Finish a previous save-before-retire crash window before task admission
 	// can recreate a terminal task or otherwise lose its pending retirement.
 	admittedGoal, admittedRevision, err := a.reconcileReplacedWorkspaceGoal(cfg.Workspace, state.Goal, state.GoalRevision)
+	if errors.Is(err, errReplacedGoalConflict) {
+		// Only a validated explicit replacement may rebind the contract that
+		// conflicts with this goal. Ordinary retries retain the conflict marker
+		// and cannot use unrelated task proof to retire the newer goal.
+		_, replacing := taskstate.ExplicitReplacement(durablePrompt)
+		currentGoal, currentRevision := a.GoalStateSnapshot()
+		if replacing && currentGoal == state.Goal && currentRevision == state.GoalRevision {
+			admittedGoal, admittedRevision, err = state.Goal, state.GoalRevision, nil
+		}
+	}
 	if err != nil {
 		ev.OnError(err)
 		return history, Result{Task: a.TaskSnapshot()}, err
