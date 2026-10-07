@@ -531,9 +531,34 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	sessionID, sessionGeneration := a.taskSessionSnapshot()
 	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
 	turnUndo.turnSequence = turnSequence
+	turnClosed := turnSequence == 0
 	// Every native write needs its expected fingerprint before publication,
 	// including process-only undo. Recovery journal eligibility is separate.
 	regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+		// Informational prompts do not eagerly create tasks. Once an approved
+		// native write is about to publish, admit its durable ownership before
+		// journaling/rename, not after a successful tool result can be lost.
+		if turnSequence == 0 && a.TaskStoreSnapshot() != nil && sessionID != "" {
+			if a.TaskSnapshot() == nil {
+				if failed, err := a.beginDurableTaskInState(durablePrompt, ev, true, state); failed {
+					if err == nil {
+						err = errors.New("durable task state is unavailable")
+					}
+					return err
+				}
+			}
+			task := a.TaskSnapshot()
+			if task == nil {
+				return errors.New("native publication requires a durable task")
+			}
+			sequence, started := a.beginDurableTurn(durableTurnStartRoute(task, taskMode), ev)
+			if !started || sequence == 0 {
+				return errors.New("native publication requires a durable turn")
+			}
+			turnSequence = sequence
+			turnUndo.turnSequence = sequence
+			turnClosed = false
+		}
 		return turnUndo.preparePublish(path, data, mode)
 	}
 	nativeWriteRan := false
@@ -553,7 +578,6 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	}
 	healthAdmissionAttempted := healthAdmission.attempted
 	var pendingVisualParts []llm.Part
-	turnClosed := turnSequence == 0
 	var turnCloseErr error
 	closeTurn := func(interrupted bool, route taskstate.TurnRoute, hypothesis, evidence string, stop taskstate.StopReason, toolRounds int) {
 		if turnSequence == 0 || turnClosed || turnCloseErr != nil {
