@@ -22,6 +22,28 @@ const durableRepairMarker = "Internal verification-repair instruction:"
 // persistence failure to the user.
 var errTaskMutationSkipped = errors.New("durable task mutation skipped")
 
+var errTaskOwnershipChanged = errors.New("durable task ownership changed")
+
+// Progress/evidence callbacks own a task/intent/turn tuple, not whichever
+// contract happens to occupy the same session file after a CAS conflict.
+type taskMutationOwner struct {
+	taskID, sessionID string
+	intent, turn      uint64
+	lastSequence      uint64
+	lastIntent        uint64
+	lastState         taskstate.TurnState
+}
+
+func taskOwner(task *taskstate.Task) taskMutationOwner {
+	owner := taskMutationOwner{taskID: task.ID, sessionID: task.SessionID, intent: task.IntentRevision, turn: task.TurnRevision}
+	if last := task.LastTurn(); last != nil {
+		owner.lastSequence = last.Sequence
+		owner.lastIntent = last.IntentRevision
+		owner.lastState = last.State
+	}
+	return owner
+}
+
 // maxTaskMutationAttempts bounds recovery from a compare-and-swap conflict.
 // A task mutation is replayed only against a freshly loaded durable snapshot;
 // it never overwrites a newer cross-process update or retries an arbitrary
@@ -353,7 +375,7 @@ func (a *Agent) beginDurableTaskInState(prompt string, ev EventHandler, fallback
 		a.reportTaskUpdateError(ev, err)
 		return true, err
 	}
-	snapshot, err := a.persistTaskCandidateWithRetryLocked(candidate, prepare)
+	snapshot, err := a.persistTaskCandidateWithRetryLocked(candidate, prepare, nil)
 	if err != nil {
 		a.taskMu.Unlock()
 		a.reportTaskPersistenceError(ev, err)
@@ -681,7 +703,7 @@ func (a *Agent) setTaskStatus(status taskstate.Status, ev EventHandler) {
 // failed Save therefore cannot produce a task snapshot that looks persisted;
 // the last successfully persisted state remains available for resume.
 func (a *Agent) mutateTask(ev EventHandler, mutate func(*taskstate.Task) error) bool {
-	snapshot, err := a.mutateTaskResult(mutate)
+	snapshot, err := a.mutateTaskResultBound(mutate, true)
 	if err != nil {
 		if errors.Is(err, errTaskMutationSkipped) {
 			return false
@@ -709,6 +731,12 @@ func (a *Agent) mutateTask(ev EventHandler, mutate func(*taskstate.Task) error) 
 // durable task is attached to this agent; callers that need to surface
 // persistence failures can inspect the returned error.
 func (a *Agent) mutateTaskResult(mutate func(*taskstate.Task) error) (*taskstate.Task, error) {
+	// Terminal completion and undo have their own explicit ownership/proof
+	// predicates. Keep those consumers' fresh-snapshot refusal semantics.
+	return a.mutateTaskResultBound(mutate, false)
+}
+
+func (a *Agent) mutateTaskResultBound(mutate func(*taskstate.Task) error, bindOwnership bool) (*taskstate.Task, error) {
 	if mutate == nil {
 		return nil, nil
 	}
@@ -717,11 +745,16 @@ func (a *Agent) mutateTaskResult(mutate func(*taskstate.Task) error) (*taskstate
 	if a.task == nil || a.TaskStore == nil {
 		return nil, nil
 	}
+	var owner *taskMutationOwner
+	if bindOwnership {
+		captured := taskOwner(a.task)
+		owner = &captured
+	}
 	candidate := cloneTask(a.task)
 	if err := mutate(candidate); err != nil {
 		return nil, err
 	}
-	snapshot, err := a.persistTaskCandidateWithRetryLocked(candidate, mutate)
+	snapshot, err := a.persistTaskCandidateWithRetryLocked(candidate, mutate, owner)
 	if err != nil {
 		return nil, &taskPersistenceError{err: err}
 	}
@@ -731,8 +764,9 @@ func (a *Agent) mutateTaskResult(mutate func(*taskstate.Task) error) (*taskstate
 // persistTaskCandidateWithRetryLocked commits a prepared candidate without
 // overwriting a newer cross-process task revision. On a CAS conflict it loads
 // the current durable task and replays the candidate mutation before trying
-// again. The caller must hold taskMu; mutate must only change its argument.
-func (a *Agent) persistTaskCandidateWithRetryLocked(candidate *taskstate.Task, mutate func(*taskstate.Task) error) (*taskstate.Task, error) {
+// again, provided the captured intermediate owner still matches. The caller
+// must hold taskMu; mutate must only change its argument.
+func (a *Agent) persistTaskCandidateWithRetryLocked(candidate *taskstate.Task, mutate func(*taskstate.Task) error, owner *taskMutationOwner) (*taskstate.Task, error) {
 	if candidate == nil || mutate == nil {
 		return nil, errors.New("durable task mutation is not configured")
 	}
@@ -747,6 +781,11 @@ func (a *Agent) persistTaskCandidateWithRetryLocked(candidate *taskstate.Task, m
 		current, loadErr := a.TaskStore.Load(candidate.SessionID)
 		if loadErr != nil {
 			return nil, errors.Join(err, fmt.Errorf("reload durable task after revision conflict: %w", loadErr))
+		}
+		if owner != nil && taskOwner(current) != *owner {
+			// Do not adopt the replacement into memory. Later callbacks from
+			// this old turn must continue to fail rather than acquire its owner.
+			return nil, errors.Join(err, errTaskOwnershipChanged)
 		}
 		a.task = current
 		candidate = cloneTask(current)
