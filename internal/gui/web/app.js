@@ -656,6 +656,7 @@ async function applyProjectSwitch(data) {
 }
 
 async function pickProjectFolder() {
+  if (chatDeletionRecovery.getState().pending) return;
   if (busy) return;
   viewEpoch++;
   const epoch = viewEpoch;
@@ -681,6 +682,7 @@ async function pickProjectFolder() {
 }
 
 async function switchProject(id) {
+  if (chatDeletionRecovery.getState().pending) return;
   if (busy) return;
   viewEpoch++;
   const epoch = viewEpoch;
@@ -1013,7 +1015,12 @@ const chatDeletionRecovery = window.PicogentWebContracts.createChatDeletionRecov
   },
   onDelete: applyThreadDeletion,
   onRestore: applyThreadRestore,
-  onError: (message) => add("error", message),
+  onError: (message) => {
+    add("error", message);
+    // A lost response can follow an accepted delete/restore. Read authority
+    // rather than retrying a mutation whose result is unknown.
+    refresh(true).catch(() => { loadThreads(); });
+  },
 });
 
 function renderDeleteRecovery(state) {
@@ -1045,9 +1052,10 @@ async function loadThreads(epoch = viewEpoch, generation = refreshGeneration) {
     const data = await response.json();
     if (epoch !== viewEpoch || generation !== refreshGeneration ||
         revision !== chatDeletionRecovery.getRevision()) return false;
-    if (!Array.isArray(data?.sessions)) throw new Error("Couldn't load chats. Please try again.");
+    const sessions = data?.sessions === null ? [] : data?.sessions;
+    if (!Array.isArray(sessions)) throw new Error("Couldn't load chats. Please try again.");
     if (!chatDeletionRecovery.reconcile(data.delete_undo, revision, epoch)) return false;
-    threadsCache = data.sessions;
+    threadsCache = sessions;
     renderThreads();
     renderRecentSessions();
     return true;

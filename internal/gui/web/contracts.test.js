@@ -829,15 +829,28 @@ function deletionAppHarness(send = ({ payload }) => sessionResponse(
       return send(call);
     },
   };
-  vm.runInNewContext(script.slice(start, end) + `
+  const projectStart = script.indexOf("async function pickProjectFolder()");
+  const projectEnd = script.indexOf('\n$("add-project").onclick', projectStart);
+  vm.runInNewContext(script.slice(projectStart, projectEnd) + script.slice(start, end) + `
     globalThis.deletionApp = { controller: chatDeletionRecovery, loadThreads, deleteThread, undoDeleteThread,
-      loadThread, newChat, renderThreads, renderRecentSessions };
+      loadThread, newChat, renderThreads, renderRecentSessions, pickProjectFolder, switchProject };
   `, context, { filename: "app-session-wiring.js" });
   const app = context.deletionApp;
   app.renderThreads();
   app.renderRecentSessions();
   return {
     ...app, clock, calls, snapshots, errors, refreshes, elements,
+    getEpoch: () => context.viewEpoch,
+    refreshViaList() {
+      const pending = [];
+      context.refresh = (history) => {
+        refreshes.push(history);
+        const read = app.loadThreads();
+        pending.push(read);
+        return read;
+      };
+      return pending;
+    },
     moveView() { context.viewEpoch++; },
     moveWorkspace() {
       context.viewEpoch++;
@@ -1133,6 +1146,63 @@ test("a late old controller attempt cannot settle a new pending request or its r
   assert.equal(await newDelete, false);
   assert.equal(h.controller.getState().recovery.undo_id, "previous-token");
   assert.match(h.controller.getState().error, /HTTP 503.*try again/);
+});
+
+test("null history still exposes reload recovery for the only deleted chat", async () => {
+  const app = deletionAppHarness();
+  const read = app.loadThreads();
+  app.snapshots[0].resolve(sessionResponse({ sessions: null, current_id: "rotated", delete_undo: deletionRecord() }));
+  assert.equal(await read, true);
+  assert.equal(app.view().threads.length, 0);
+  assert.equal(app.view().bannerHidden, false);
+  assert.equal(app.controller.getState().recovery.undo_id, "undo-1");
+});
+
+for (const action of ["delete", "undo_delete"]) {
+  for (const failure of ["network", "json"]) {
+    test("accepted " + action + " with lost " + failure + " acknowledgement discovers authority", async () => {
+      const app = deletionAppHarness(() => {
+        if (failure === "network") return Promise.reject(new Error("lost response"));
+        return { status: 200, json: async () => { throw new Error("lost body"); } };
+      });
+      if (action === "undo_delete") await app.seed(deletionRecord(deletedChat("other", "accepted-token")));
+      const reads = app.refreshViaList();
+      const pending = action === "delete" ? app.deleteThread("other") : app.undoDeleteThread();
+      assert.equal(await pending, false);
+      assert.deepEqual(app.refreshes, [true], "ambiguous result must request authority");
+      const snapshot = app.snapshots.at(-1);
+      snapshot.resolve(sessionResponse({
+        sessions: action === "delete" ? [{ id: "current", title: "Current" }] :
+          [{ id: "current", title: "Current" }, { id: "other", title: "Restored" }],
+        current_id: "current",
+        delete_undo: action === "delete" ? deletionRecord(deletedChat("other", "accepted-token")) : null,
+      }));
+      await reads[0];
+      assert.equal(app.view().id, "current");
+      assert.deepEqual(app.view().transcript, ["current transcript"]);
+      if (action === "delete") {
+        assert.equal(app.controller.getState().recovery.undo_id, "accepted-token");
+        assert.equal(app.view().threads.some((chat) => chat.id === "other"), false);
+      } else {
+        assert.equal(app.view().bannerHidden, true);
+        assert.equal(app.view().threads.some((chat) => chat.id === "other"), true);
+      }
+    });
+  }
+}
+
+test("pending deletion blocks folder pick and project switch before changing view ownership", async () => {
+  const response = deferred();
+  const app = deletionAppHarness(() => response.promise);
+  const deletion = app.deleteThread("other");
+  const epoch = app.getEpoch();
+  await app.pickProjectFolder();
+  await app.switchProject("another-project");
+  assert.equal(app.getEpoch(), epoch);
+  assert.equal(app.calls.length, 1, "neither project request may start during deletion");
+  response.resolve(sessionResponse(deletedChat("other")));
+  assert.equal(await deletion, true);
+  assert.deepEqual(app.view().newDisabled, [false, false]);
 });
 
 for (const failure of ["http", "network", "json"]) {
