@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/folderpick"
 	"github.com/saiaathish/picogent/internal/projects"
@@ -175,14 +174,7 @@ func (s *server) switchWorkspace(path string) (projectSwitchResult, error) {
 	cfg := s.cfg
 	s.mu.Unlock()
 	cfg.Workspace = path
-	res, err := s.replaceWorkspace(cfg)
-	if err != nil {
-		return projectSwitchResult{}, err
-	}
-	if err := s.persistConfig(cfg); err != nil {
-		return projectSwitchResult{}, fmt.Errorf("save workspace config: %w", err)
-	}
-	return res, nil
+	return s.replaceWorkspace(cfg)
 }
 
 // replaceWorkspace rebuilds every project-scoped runtime resource together:
@@ -190,7 +182,7 @@ func (s *server) switchWorkspace(path string) (projectSwitchResult, error) {
 // history. The old generation is invalidated at the swap, so a turn that was
 // already running can only finish against its captured old agent/session.
 func (s *server) replaceWorkspace(cfg config.Config) (projectSwitchResult, error) {
-	a, err := app.Build(cfg)
+	a, err := s.buildCandidateAgent(cfg)
 	if err != nil {
 		return projectSwitchResult{}, err
 	}
@@ -201,8 +193,14 @@ func (s *server) replaceWorkspace(cfg config.Config) (projectSwitchResult, error
 		closeCandidateAgent(a)
 		return projectSwitchResult{}, fmt.Errorf("load durable task state: %w", err)
 	}
+	if err := s.persistPreparedConfig(&cfg); err != nil {
+		closeCandidateAgent(a)
+		return projectSwitchResult{}, fmt.Errorf("save workspace config: %w", err)
+	}
 
 	s.mu.Lock()
+	mergeRouterObservations(&cfg, s.cfg)
+	a.UpdateConfig(func(current *config.Config) { *current = cfg })
 	oldWorkspace := s.cfg.Workspace
 	oldSession := s.sessionID
 	oldHist := s.hist
