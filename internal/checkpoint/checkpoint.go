@@ -48,9 +48,10 @@ type Record struct {
 	Entries []RecordEntry `json:"entries"`
 }
 
-// RecordEntry contains the pre-turn state and the post-seal fingerprint for
-// one workspace-relative regular file. Published is only used by a pending
-// record when a later same-path write was prepared but not yet published.
+// RecordEntry contains the pre-turn state and the expected publication
+// fingerprint for one workspace-relative regular file. Published retains a
+// known earlier publication when a later same-path write was prepared and its
+// publication is unresolved, including a sealed record with a live conflict.
 type RecordEntry struct {
 	Path         string `json:"path"`
 	BeforeExists bool   `json:"before_exists"`
@@ -60,7 +61,7 @@ type RecordEntry struct {
 	Published    string `json:"published,omitempty"`
 }
 
-// Conflict identifies a path changed after the checkpoint was sealed.
+// Conflict identifies a path that no longer matches the checkpoint's expected state.
 type Conflict struct {
 	Path   string `json:"path"`
 	Reason string `json:"reason"`
@@ -157,6 +158,17 @@ func (c *Checkpoint) Add(paths []string) error {
 // mutation that undo may safely replace. Paths may not be dropped after the
 // checkpoint is sealed.
 func (c *Checkpoint) Drop(path string) error {
+	return c.drop(path, false)
+}
+
+// DropUnprepared removes a rejected native path only when it has no known
+// publication. An earlier prepared write remains available for conflict-aware
+// undo even if a later same-path edit is rejected.
+func (c *Checkpoint) DropUnprepared(path string) error {
+	return c.drop(path, true)
+}
+
+func (c *Checkpoint) drop(path string, unpreparedOnly bool) error {
 	if c == nil {
 		return errors.New("checkpoint is nil")
 	}
@@ -172,6 +184,9 @@ func (c *Checkpoint) Drop(path string) error {
 	for i := range c.entries {
 		if pathIdentity(c.entries[i].path) != pathIdentity(rel) {
 			continue
+		}
+		if unpreparedOnly && c.entries[i].expectedSet {
+			return nil
 		}
 		copy(c.entries[i:], c.entries[i+1:])
 		c.entries = c.entries[:len(c.entries)-1]
@@ -223,9 +238,26 @@ func (c *Checkpoint) Paths() []string {
 	return out
 }
 
-// Seal fingerprints the files produced by the turn. Restore later refuses to
-// replace any path whose bytes, existence, or mode no longer matches this seal.
+// Seal finalizes the expected states for the turn. Prepared writes retain their
+// exact publication fingerprint unless the live state matches the captured
+// pre-turn state or a known earlier publication. An unfamiliar live state must
+// remain a restore conflict, including when it was written before Seal. Paths
+// with an unresolved later write also retain a known earlier publication for
+// an exact-match restore retry. Paths without a prepared write are
+// fingerprinted here.
 func (c *Checkpoint) Seal() error {
+	return c.seal(false)
+}
+
+// SealPrepared seals native-file undo without adopting live bytes for a path
+// whose write never reached PrepareExpected. A rejected pre-publication write
+// may be followed by a user edit; its original capture is not ownership proof.
+// Generic callers that own their mutation boundary may still use Seal.
+func (c *Checkpoint) SealPrepared() error {
+	return c.seal(true)
+}
+
+func (c *Checkpoint) seal(preparedOnly bool) error {
 	if c == nil {
 		return ErrNotSealed
 	}
@@ -235,27 +267,66 @@ func (c *Checkpoint) Seal() error {
 		return ErrAlreadySealed
 	}
 
-	states := make([]fileState, len(c.entries))
-	for i := range c.entries {
-		state, err := readWorkspaceFile(c.root, c.entries[i].path)
+	entries := c.entries
+	if preparedOnly {
+		entries = make([]entry, 0, len(c.entries))
+		for _, item := range c.entries {
+			if item.expectedSet {
+				entries = append(entries, item)
+			}
+		}
+	}
+	states := make([]fileState, len(entries))
+	for i := range entries {
+		state, err := readWorkspaceFile(c.root, entries[i].path)
 		if err != nil {
-			return fmt.Errorf("seal %q: %w", filepath.ToSlash(c.entries[i].path), err)
+			return fmt.Errorf("seal %q: %w", filepath.ToSlash(entries[i].path), err)
 		}
 		states[i] = state
 	}
-	for i := range c.entries {
-		c.entries[i].expected = states[i].sum
-		c.entries[i].expectedSet = true
-		c.entries[i].published = fingerprint{}
-		c.entries[i].publishedSet = false
+	for i := range entries {
+		item := &entries[i]
+		current := states[i].sum
+		retainPublished := false
+		switch {
+		case !item.expectedSet:
+			item.expected = current
+		case current == item.expected:
+			// The exact prepared state reached publication, even if the tool
+			// subsequently reported a close or directory-sync error.
+		case current == item.before.sum:
+			item.expected = item.before.sum
+		case item.publishedSet && current == item.published:
+			// A later same-path write failed before its rename. Retain the
+			// earlier publication so it can still be undone after restart.
+			item.expected = item.published
+		default:
+			// Never adopt arbitrary live bytes as an agent publication. If
+			// the prepared write would return to the pre-turn state, retain
+			// the earlier publication instead of silently dropping its undo.
+			if item.expected == item.before.sum && item.publishedSet {
+				item.expected = item.published
+			}
+			// A user edit leaves the later publication unresolved. Keep the
+			// exact known earlier state so a conflict retry can undo it, even
+			// after export/import; never fingerprint the unfamiliar live bytes.
+			retainPublished = item.publishedSet && item.published != item.before.sum && item.published != item.expected
+		}
+		item.expectedSet = true
+		if !retainPublished {
+			item.published = fingerprint{}
+			item.publishedSet = false
+		}
 	}
+	c.entries = entries
 	c.sealed = true
 	return nil
 }
 
 // PrepareExpected records the exact regular-file state that an imminent
-// atomic write will publish. It is used by durable undo to publish a pending
-// recovery record before the workspace rename. The checkpoint remains
+// atomic write will publish. Native undo uses it to protect its in-memory
+// expectation and, for durable turns, to publish a pending recovery record
+// before the workspace rename. The checkpoint remains
 // unsealed so later tool writes can update their own expected state. Before
 // replacing an earlier expectation, it records whether that expectation was
 // actually published or whether the workspace is still at the pre-turn state.
@@ -523,7 +594,10 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 			result.Unchanged = append(result.Unchanged, filepath.ToSlash(c.entries[i].path))
 			continue
 		}
-		if current.sum != c.entries[i].expected {
+		// A sealed conflict may retain an earlier known publication alongside
+		// the unresolved prepared expectation. Either exact state can be
+		// undone; arbitrary user bytes still block the entire restore.
+		if current.sum != c.entries[i].expected && (!c.entries[i].publishedSet || current.sum != c.entries[i].published) {
 			result.Conflicts = append(result.Conflicts, Conflict{
 				Path:   filepath.ToSlash(c.entries[i].path),
 				Reason: "file changed after checkpoint was sealed",

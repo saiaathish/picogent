@@ -26,9 +26,14 @@ func TestUndoCapturesToolThatMutatesThenReturnsError(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := newUndoHookAgent(t, dir)
-	a.runTool = func(_ context.Context, call llm.ToolCall, _ tools.Tool, _ tools.Context) (string, error) {
+	a.runTool = func(_ context.Context, call llm.ToolCall, _ tools.Tool, c tools.Context) (string, error) {
 		if call.Name != "write_file" {
 			t.Fatalf("unexpected tool %q", call.Name)
+		}
+		// Native integrations must announce exact bytes before publication;
+		// an error alone cannot distinguish their writes from a user edit.
+		if err := c.BeforeWorkspacePublish(path, []byte("partial mutation"), 0o644); err != nil {
+			return "", err
 		}
 		if err := os.WriteFile(path, []byte("partial mutation"), 0o644); err != nil {
 			return "", err
@@ -245,7 +250,10 @@ func TestSealFailureReportsUndoUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := newUndoHookAgent(t, dir)
-	a.runTool = func(_ context.Context, _ llm.ToolCall, _ tools.Tool, _ tools.Context) (string, error) {
+	a.runTool = func(_ context.Context, _ llm.ToolCall, _ tools.Tool, c tools.Context) (string, error) {
+		if err := c.BeforeWorkspacePublish(path, []byte("intended regular file"), 0o644); err != nil {
+			return "", err
+		}
 		if err := os.Symlink(target, path); err != nil {
 			return "", err
 		}
@@ -281,11 +289,17 @@ func TestFailedJournalPublicationDoesNotAdvertiseProcessLocalUndo(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(dir, ".picogent", "undo"), []byte("not a directory"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	a.runTool = func(_ context.Context, _ llm.ToolCall, _ tools.Tool, _ tools.Context) (string, error) {
+	a.runTool = func(_ context.Context, _ llm.ToolCall, _ tools.Tool, c tools.Context) (string, error) {
+		// Simulate a broken integration that ignores a rejected recovery
+		// journal and still publishes. It must not obtain process-only undo
+		// by bypassing the durable publication contract.
+		if err := c.BeforeWorkspacePublish(path, []byte("after"), 0o644); err == nil {
+			t.Fatal("fixture did not reject recovery journal publication")
+		}
 		if err := os.WriteFile(path, []byte("after"), 0o644); err != nil {
 			return "", err
 		}
-		return "", errors.New("simulated tool failure after mutation")
+		return "wrote note.txt", nil
 	}
 
 	_, res, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note"}, allowUndoTest{})

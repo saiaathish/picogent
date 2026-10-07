@@ -154,6 +154,70 @@ func TestResumeInvalidatesWorkspaceEvidenceAfterRootReplacement(t *testing.T) {
 }
 
 func TestCompletionRejectsMutationAfterVerificationObservation(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		goal   string
+		text   string
+		prompt string
+	}{
+		{"explicit-goal", "finish this project", "Goal complete: the fix is verified", "fix the broken file"},
+		{"inferred-with-marker", "", "Goal complete: the fix is verified", "fix the broken file"},
+		{"inferred-without-marker", "", "The fix is verified.", "fix the broken file"},
+		{"late-fallback-task", "", "The fix is verified.", "what is in the file?"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testCompletionRejectsMutationAfterVerificationObservation(t, tc.goal, tc.text, tc.prompt)
+		})
+	}
+}
+
+func TestCompletionRechecksRetainedProofWithoutCurrentVerifier(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		name := "unchanged"
+		if changed {
+			name = "user-edited"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			store := taskstate.NewStore(t.TempDir())
+			task := seedBoundPassingTaskInStore(t, root, store, "retained-proof")
+			// A task may have verified its file while other planned work is
+			// unfinished. Keep it active so admission retains this proof.
+			task.Status = taskstate.StatusWorking
+			if err := store.Save(task); err != nil {
+				t.Fatal(err)
+			}
+			cfg := config.Default()
+			cfg.Workspace = root
+			cfg.Provider = config.ProviderOllama
+			client := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "The fix is verified."}}}}
+			a := agent.New(cfg, client, tools.NewRegistry(tools.Context{Workspace: root}), perm.New(config.ModeFast, root, nil))
+			a.SetTaskStore(store)
+			if err := a.SetTaskSession(task.SessionID); err != nil {
+				t.Fatal(err)
+			}
+			if changed {
+				if err := os.WriteFile(filepath.Join(root, "fixed.txt"), []byte("user edit after attachment"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the file"}, allowAll{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed {
+				if result.Task.Status == taskstate.StatusDone || result.Completion.Ready || result.GoalDone || !strings.HasPrefix(result.Verified, "verify INCONCLUSIVE") {
+					t.Fatalf("stale retained proof completed: %#v", result)
+				}
+			} else if result.Task.Status != taskstate.StatusDone || !result.Completion.Ready {
+				t.Fatalf("fresh retained proof refused: %#v", result)
+			}
+		})
+	}
+}
+
+func testCompletionRejectsMutationAfterVerificationObservation(t *testing.T, explicitGoal, finalText, prompt string) {
+	t.Helper()
 	root := t.TempDir()
 	args, err := json.Marshal(map[string]string{"path": "fixed.txt", "content": "fixed"})
 	if err != nil {
@@ -161,7 +225,7 @@ func TestCompletionRejectsMutationAfterVerificationObservation(t *testing.T) {
 	}
 	fake := &llm.Scripted{Responses: []llm.ChatResponse{
 		{Message: llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "write", Name: "write_file", Arguments: string(args)}}}},
-		{Message: llm.Message{Role: "assistant", Content: "Goal complete: the fix is verified"}},
+		{Message: llm.Message{Role: "assistant", Content: finalText}},
 	}}
 	cfg := config.Default()
 	cfg.Workspace = root
@@ -173,11 +237,13 @@ func TestCompletionRejectsMutationAfterVerificationObservation(t *testing.T) {
 		},
 	})
 	a := agent.New(cfg, fake, reg, perm.New(config.ModeFast, root, nil))
-	a.SetGoal("finish this project")
+	if explicitGoal != "" {
+		a.SetGoal(explicitGoal)
+	}
 	a.TaskStore = taskstate.NewStore(t.TempDir())
 	a.SetTaskSession("completion-event-mutation")
 	h := &rewriteAfterVerificationHandler{root: root}
-	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken file"}, h)
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: prompt}, h)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +253,19 @@ func TestCompletionRejectsMutationAfterVerificationObservation(t *testing.T) {
 	latest := result.Task.Verification[len(result.Task.Verification)-1]
 	if latest.Passed || !strings.HasPrefix(latest.Summary, "verify INCONCLUSIVE") {
 		t.Fatalf("event-mutated verification = %#v", latest)
+	}
+	if result.Completion.Ready {
+		t.Fatal("stale evidence was projected as completion-ready")
+	}
+	if last := result.Task.LastTurn(); last == nil || last.State != taskstate.TurnCompleted || last.EvidenceState == "PASS" {
+		t.Fatalf("completion did not close an owned turn with invalidated proof: %#v", last)
+	}
+	loaded, err := a.TaskStore.Load(result.Task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status == taskstate.StatusDone || loaded.Verification[len(loaded.Verification)-1].Passed {
+		t.Fatal("stale completion evidence remained authoritative on disk")
 	}
 }
 

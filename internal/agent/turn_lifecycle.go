@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -66,11 +67,24 @@ func (a *Agent) closeDurableTurn(sequence uint64, interrupted bool, route taskst
 // example, proof is still missing), the old task state is restored in the
 // candidate and the turn is still closed, matching finishDurableTask followed
 // by closeDurableTurn without an intermediate durable write.
-func (a *Agent) finishAndCloseDurableTurn(sequence uint64, text, blocker string, mode TaskMode, evidence string, filesChanged []string, completionMarker bool, goal, scopeBoundary string, toolRounds, mutations int, ev EventHandler) (*taskstate.Task, CompletionProjection, bool, bool, bool, error) {
+func (a *Agent) finishAndCloseDurableTurn(ctx context.Context, root string, sequence uint64, text, blocker string, mode TaskMode, evidence string, filesChanged []string, completionMarker bool, goal, scopeBoundary string, toolRounds, mutations int, ev EventHandler) (*taskstate.Task, CompletionProjection, bool, bool, bool, error) {
 	var finishErr error
 	var completion CompletionProjection
 	var goalDone bool
 	snapshot, err := a.mutateTaskResult(func(task *taskstate.Task) error {
+		last := task.LastTurn()
+		if last == nil || last.Sequence != sequence || last.State != taskstate.TurnActive || last.IntentRevision != task.IntentRevision {
+			return errTaskMutationSkipped
+		}
+		if _, err := revalidateTaskProof(ctx, root, task); err != nil {
+			return err
+		}
+		// Use the candidate's latest proof, including retained proof or a
+		// changed record loaded on CAS retry, not this turn's narration.
+		currentEvidence := evidence
+		if len(task.Verification) > 0 {
+			currentEvidence = task.Verification[len(task.Verification)-1].Summary
+		}
 		before := cloneTask(task)
 		finishErr = applyDurableTaskFinish(task, text, blocker)
 		if finishErr != nil {
@@ -79,7 +93,7 @@ func (a *Agent) finishAndCloseDurableTurn(sequence uint64, text, blocker string,
 			// reporting the refusal after the combined commit succeeds.
 			*task = *before
 		}
-		completion = completionProjection(task, goal, completionMarker, verificationStatus(evidence) == "PASS", len(filesChanged), scopeBoundary)
+		completion = completionProjection(task, goal, completionMarker, verificationStatus(currentEvidence) == "PASS", len(filesChanged), scopeBoundary)
 		goalDone = completionMarker && completion.Ready
 		stop := taskstate.StopNone
 		if goalDone || task.Status == taskstate.StatusDone {
@@ -87,9 +101,9 @@ func (a *Agent) finishAndCloseDurableTurn(sequence uint64, text, blocker string,
 		} else if task.Status == taskstate.StatusBlocked {
 			stop = task.StopReason
 		}
-		route := durableTurnRouteForOutcome(task, mode, evidence, blocker, filesChanged, goalDone, false, false)
-		hypothesis := durableTurnHypothesis(task, mode, evidence, blocker, filesChanged, goalDone, false, false)
-		closed := task.FinishTurn(sequence, route, hypothesis, evidence, stop, toolRounds, mutations)
+		route := durableTurnRouteForOutcome(task, mode, currentEvidence, blocker, filesChanged, goalDone, false, false)
+		hypothesis := durableTurnHypothesis(task, mode, currentEvidence, blocker, filesChanged, goalDone, false, false)
+		closed := task.FinishTurn(sequence, route, hypothesis, currentEvidence, stop, toolRounds, mutations)
 		if !closed {
 			return errTaskMutationSkipped
 		}
