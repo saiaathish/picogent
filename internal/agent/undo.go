@@ -484,6 +484,9 @@ func (a *Agent) refreshDurableUndoLocked() error {
 		return err
 	}
 	if loaded == nil {
+		if err := prepareDurableUndoTask(workspace, binding.store, task); err != nil {
+			return err
+		}
 		a.taskMu.Lock()
 		a.task = task
 		a.taskLoadErr = nil
@@ -493,16 +496,8 @@ func (a *Agent) refreshDurableUndoLocked() error {
 		return nil
 	}
 	if task != nil {
-		changed := task.NormalizeLegacyCompletion()
-		revalidated, revalidateErr := revalidatePersistedTask(workspace, task)
-		if revalidateErr != nil {
-			return fmt.Errorf("revalidate durable task for undo: %w", revalidateErr)
-		}
-		changed = changed || revalidated
-		if changed {
-			if err := binding.store.Save(task); err != nil {
-				return fmt.Errorf("persist revalidated durable task for undo: %w", err)
-			}
+		if err := prepareDurableUndoTask(workspace, binding.store, task); err != nil {
+			return err
 		}
 		if err := validateDurableUndoTask(loaded, task); err != nil {
 			return err
@@ -519,6 +514,29 @@ func (a *Agent) refreshDurableUndoLocked() error {
 	}
 	a.latestUndo = loaded
 	a.undoLoadErr = nil
+	return nil
+}
+
+// prepareDurableUndoTask restores the same trust checks used during task
+// attachment before an ownership-only snapshot is published into the agent.
+func prepareDurableUndoTask(workspace string, store *taskstate.Store, task *taskstate.Task) error {
+	if task == nil {
+		return nil
+	}
+	changed := task.NormalizeLegacyCompletion()
+	revalidated, err := revalidatePersistedTask(workspace, task)
+	if err != nil {
+		return fmt.Errorf("revalidate durable task for undo: %w", err)
+	}
+	if !changed && !revalidated {
+		return nil
+	}
+	if store == nil {
+		return errors.New("persist revalidated durable task for undo: task store is unavailable")
+	}
+	if err := store.Save(task); err != nil {
+		return fmt.Errorf("persist revalidated durable task for undo: %w", err)
+	}
 	return nil
 }
 

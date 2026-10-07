@@ -626,6 +626,85 @@ func TestUndoRefreshValidatesOwnerBeforeNormalizingReplacementTask(t *testing.T)
 	assertUndoFileContent(t, filepath.Join(a.ConfigSnapshot().Workspace, "fixed.txt"), "after\n")
 }
 
+func TestUndoRefreshWithoutJournalNormalizesAndRevalidatesTask(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     taskstate.Status
+		legacyDone bool
+		wantStatus taskstate.Status
+	}{
+		{name: "legacy done marker", status: taskstate.StatusWorking, legacyDone: true, wantStatus: taskstate.StatusWorking},
+		{name: "stale workspace proof", status: taskstate.StatusDone, wantStatus: taskstate.StatusVerifying},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, store, owner := newDurableUndoFixture(t, tc.status)
+			u := a.latestUndo
+			u.turnSequence = owner.LastTurn().Sequence
+			u.durable = true
+			u.journalSlot = undoJournalSealed
+			record, err := u.checkpoint.Export()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := u.saveJournal(record, undoJournalSealed); err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.legacyDone {
+				untrusted := cloneTask(owner)
+				untrusted.Status = taskstate.StatusDone
+				untrusted.Verification = nil
+				untrusted.VerifiedChangeSeq = -1
+				data, err := json.Marshal(untrusted)
+				if err != nil {
+					t.Fatal(err)
+				}
+				path, err := store.Path(owner.SessionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				path := filepath.Join(a.ConfigSnapshot().Workspace, "fixed.txt")
+				if err := os.WriteFile(path, []byte("changed after verification\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			journalPath := filepath.Join(a.ConfigSnapshot().Workspace, ".picogent", "undo", owner.SessionID+".json")
+			if err := os.Remove(journalPath); err != nil {
+				t.Fatal(err)
+			}
+			message, err := a.UndoLastTurn()
+			if err != nil || message != "nothing to undo" {
+				t.Fatalf("undo without journal = (%q, %v)", message, err)
+			}
+			got := a.TaskSnapshot()
+			if got == nil || got.Status != tc.wantStatus {
+				t.Fatalf("refreshed task = %#v, want status %q", got, tc.wantStatus)
+			}
+			if got.Status == taskstate.StatusDone {
+				t.Fatal("untrusted completion became active after missing-journal refresh")
+			}
+			persisted, err := store.OwnershipSnapshot(owner.SessionID)
+			if err != nil || persisted == nil || persisted.Status != tc.wantStatus {
+				t.Fatalf("persisted refreshed task = %#v, err=%v, want status %q", persisted, err, tc.wantStatus)
+			}
+			if !tc.legacyDone {
+				latest := got.Verification[len(got.Verification)-1]
+				if latest.Passed || !strings.HasPrefix(latest.Summary, "verify INCONCLUSIVE") {
+					t.Fatalf("stale proof remained trusted: %#v", latest)
+				}
+			}
+			if a.UndoAvailable() {
+				t.Fatal("missing durable journal remained advertised as undoable")
+			}
+		})
+	}
+}
+
 func newDurableUndoFixture(t *testing.T, status taskstate.Status) (*Agent, *taskstate.Store, *taskstate.Task) {
 	t.Helper()
 	root := t.TempDir()
