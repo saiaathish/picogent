@@ -137,7 +137,10 @@ type server struct {
 	pendingPermGen uint64
 	pendingPermID  uint64
 	pendingPermCh  chan perm.Decision
-	liveTask       agent.TaskMode
+	// A prompt may have one in-flight HTTP choice. IDs are monotonic, so a
+	// replacement prompt is independent of an older response's cleanup.
+	pendingPermResponseID uint64
+	liveTask              agent.TaskMode
 	// turnMode is a temporary scope boundary for the admitted turn. It is
 	// exposed in state while the turn runs but never replaces liveTask.
 	turnMode  *agent.TaskMode
@@ -1868,7 +1871,7 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	}
 	requestedID, err := strconv.ParseUint(strings.TrimSpace(in.PermissionID), 10, 64)
 	if err != nil || requestedID == 0 {
-		w.WriteHeader(http.StatusNoContent)
+		http.Error(w, "permission request ID is required", http.StatusBadRequest)
 		return
 	}
 	s.mu.Lock()
@@ -1877,14 +1880,34 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	pendingGen := s.pendingPermGen
 	pendingID := s.pendingPermID
 	turnGen := s.turnGen
-	s.mu.Unlock()
-	if permCh == nil || tool == "" || requestedID != pendingID {
-		w.WriteHeader(204)
+	if permCh == nil || tool == "" || requestedID != pendingID || pendingGen != turnGen || s.pendingPermResponseID == requestedID {
+		s.mu.Unlock()
+		http.Error(w, "permission request is no longer available", http.StatusConflict)
 		return
 	}
+	s.pendingPermResponseID = requestedID
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		if s.pendingPermResponseID == requestedID {
+			s.pendingPermResponseID = 0
+		}
+		s.mu.Unlock()
+	}()
+	if r.Context().Err() != nil {
+		http.Error(w, "permission response was canceled", http.StatusRequestTimeout)
+		return
+	}
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
 	select {
 	case permCh <- d:
-	case <-time.After(2 * time.Second):
+	case <-r.Context().Done():
+		http.Error(w, "permission response was canceled", http.StatusRequestTimeout)
+		return
+	case <-timer.C:
+		http.Error(w, "permission response was not delivered; try again", http.StatusServiceUnavailable)
+		return
 	}
 	if hook := s.beforePermissionResponseCleanup; hook != nil {
 		hook()
@@ -1895,19 +1918,30 @@ func (s *server) permission(w http.ResponseWriter, r *http.Request) {
 	// pendingPerm while the HTTP request is waiting on the old turn's channel.
 	if s.pendingPermGen != pendingGen || s.pendingPermID != pendingID || s.turnGen != turnGen {
 		s.mu.Unlock()
-		w.WriteHeader(204)
+		http.Error(w, "permission request was replaced", http.StatusConflict)
 		return
 	}
 	s.pendingPerm = perm.Request{}
 	s.pendingPermGen = 0
 	s.pendingPermCh = nil
+	preferenceUnconfirmed := false
 	if d == perm.AllowAlways && s.ag != nil && s.ag.Gate != nil && tool != "" {
-		s.cfg.Extensions.AlwaysAllowTools = appendUnique(s.cfg.Extensions.AlwaysAllowTools, tool)
-		s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
-		_ = config.Save(s.cfg)
+		candidate := s.cfg
+		candidate.Extensions.AlwaysAllowTools = appendUnique(append([]string(nil), s.cfg.Extensions.AlwaysAllowTools...), tool)
+		if err := config.Save(candidate); err != nil {
+			preferenceUnconfirmed = true
+		} else {
+			s.cfg = candidate
+			s.ag.Gate.SetAlwaysAllowed(s.cfg.Extensions.AlwaysAllowTools)
+		}
 	}
 	s.mu.Unlock()
-	w.WriteHeader(204)
+	if preferenceUnconfirmed {
+		// Delivery has already succeeded. Do not ask the user to submit the
+		// same choice again or claim that a future-session policy was saved.
+		s.emit(event{Type: "error", Text: "Your choice applied, but saving it for future sessions could not be confirmed."})
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *server) events(w http.ResponseWriter, r *http.Request) {

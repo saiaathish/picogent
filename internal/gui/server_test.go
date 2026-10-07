@@ -1989,8 +1989,8 @@ func TestGUIPermissionResponseDoesNotClearReplacementRequest(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Origin", "http://"+loopbackTestHost)
 	s.permission(res, req)
-	if res.Code != http.StatusNoContent {
-		t.Fatalf("permission response status = %d, want %d", res.Code, http.StatusNoContent)
+	if res.Code != http.StatusConflict {
+		t.Fatalf("replaced permission response status = %d, want %d", res.Code, http.StatusConflict)
 	}
 
 	s.mu.Lock()
@@ -2021,20 +2021,20 @@ func TestGUIPermissionResponseRejectsStaleRequestID(t *testing.T) {
 		pendingPermID:  9,
 		pendingPermCh:  responseCh,
 	}
-	post := func(body string) {
+	post := func(body string, expectedStatus int) {
 		t.Helper()
 		res := httptest.NewRecorder()
 		req := loopbackAPIRequest(http.MethodPost, "/api/permission", body)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", "http://"+loopbackTestHost)
 		s.permission(res, req)
-		if res.Code != http.StatusNoContent {
-			t.Fatalf("permission response status = %d, want %d", res.Code, http.StatusNoContent)
+		if res.Code != expectedStatus {
+			t.Fatalf("permission response status = %d, want %d", res.Code, expectedStatus)
 		}
 	}
 
-	post(`{"allow":true}`)
-	post(`{"allow":true,"permission_id":"8"}`)
+	post(`{"allow":true}`, http.StatusBadRequest)
+	post(`{"allow":true,"permission_id":"8"}`, http.StatusConflict)
 	s.mu.Lock()
 	got := s.pendingPerm
 	gotID := s.pendingPermID
@@ -2048,7 +2048,7 @@ func TestGUIPermissionResponseRejectsStaleRequestID(t *testing.T) {
 	default:
 	}
 
-	post(`{"allow":true,"permission_id":"9"}`)
+	post(`{"allow":true,"permission_id":"9"}`, http.StatusNoContent)
 	select {
 	case decision := <-responseCh:
 		if decision != perm.Allow {
@@ -2177,7 +2177,7 @@ func TestGUIPermissionResponseCannotCrossPromptRequests(t *testing.T) {
 			}
 		}
 	}
-	respond := func(id string, allow bool) {
+	respond := func(id string, allow bool, expectedStatus int) {
 		t.Helper()
 		body := `{"allow":false,"permission_id":"` + id + `"}`
 		if allow {
@@ -2188,14 +2188,14 @@ func TestGUIPermissionResponseCannotCrossPromptRequests(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Origin", "http://"+loopbackTestHost)
 		s.permission(res, req)
-		if res.Code != http.StatusNoContent {
-			t.Fatalf("permission response status = %d, want %d", res.Code, http.StatusNoContent)
+		if res.Code != expectedStatus {
+			t.Fatalf("permission response status = %d, want %d", res.Code, expectedStatus)
 		}
 	}
 
 	first := permissionResult(perm.Request{Tool: "write_file", Summary: "write first.txt"})
 	firstID := currentID("write_file")
-	respond(firstID, true)
+	respond(firstID, true, http.StatusNoContent)
 	select {
 	case result := <-first:
 		if result.err != nil || result.decision != perm.Allow {
@@ -2210,7 +2210,7 @@ func TestGUIPermissionResponseCannotCrossPromptRequests(t *testing.T) {
 	if secondID == firstID {
 		t.Fatalf("permission IDs were reused: first=%q second=%q", firstID, secondID)
 	}
-	respond(firstID, true)
+	respond(firstID, true, http.StatusConflict)
 	s.mu.Lock()
 	pending := s.pendingPerm
 	gotID := permissionIDString(s.pendingPermID)
@@ -2224,7 +2224,7 @@ func TestGUIPermissionResponseCannotCrossPromptRequests(t *testing.T) {
 	default:
 	}
 
-	respond(secondID, false)
+	respond(secondID, false, http.StatusNoContent)
 	select {
 	case result := <-second:
 		if result.err != nil || result.decision != perm.Deny {
