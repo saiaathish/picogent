@@ -337,6 +337,8 @@ func TestReplaceOutcomeRejectsInvalidInputsWithoutMutation(t *testing.T) {
 		"", " \n\t ", "...", "hello", "instead", "also", "focus", "what is the API", "a better outcome",
 		"how do I fix the cache?", "can you fix the cache", "if needed fix the cache",
 		"do not fix the cache", `"fix the cache"`,
+		"don't, under any circumstances, fix all tests", "don’t, under any circumstances, fix all tests",
+		"never: fix all tests", "not—fix all tests",
 	} {
 		t.Run(prompt, func(t *testing.T) {
 			task := replacementTask(t, "fix the cache")

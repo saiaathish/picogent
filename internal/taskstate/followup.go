@@ -48,7 +48,7 @@ func directReplacementOutcome(outcome string) bool {
 		return false
 	}
 	lower := strings.ToLower(outcome)
-	if hasPrefix(lower, informationalPrefixes) || hasPrefix(lower, []string{
+	if hasReplacementPrefix(lower, informationalPrefixes) || hasReplacementPrefix(lower, []string{
 		"can ", "could ", "would ", "should ", "will ", "may ", "might ",
 		"is ", "are ", "do ", "does ", "did ",
 		"not ", "never ", "no ", "do not ", "please do not ",
@@ -65,6 +65,18 @@ func directReplacementOutcome(outcome string) bool {
 	return !containsDelimitedPhrase(lower, []string{
 		"if", "unless", "suppose", "supposing", "hypothetical", "hypothetically",
 	})
+}
+
+// A prefix ends at a word boundary, not only a space. Punctuation after a
+// negation or question word must not turn it into replacement authority.
+func hasReplacementPrefix(text string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		prefix = strings.TrimSpace(prefix)
+		if strings.HasPrefix(text, prefix) && !wordRuneAt(text, len(prefix)) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasReplacementQuoteDelimiter(outcome string) bool {

@@ -26,6 +26,8 @@ func TestAutoInferenceDoesNotPublishReplacementMentions(t *testing.T) {
 		"replace the current goal with fix all tests if needed",
 		"replace the current goal with don't fix all tests",
 		"replace the current goal with don’t fix all tests",
+		"replace the current goal with don't, under any circumstances, fix all tests",
+		"replace the current goal with don’t, under any circumstances, fix all tests",
 		`"replace the current goal with fix all tests"`,
 		"`replace the current task with fix all tests`",
 		"should we replace the current goal with fix all tests?",
