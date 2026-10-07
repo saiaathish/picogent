@@ -45,10 +45,12 @@
     };
   }
 
-  function createPermissionResponseController({ send, render }) {
+  function createPermissionResponseController({ send, render, onReconcile }) {
     const emptyState = () => ({ permission: null, pending: false, error: "", attempt: null });
     let state = emptyState();
     let revision = 0;
+    let epoch = "";
+    let reconcileAfterSettled = false;
     // Server IDs are increasing decimal uint64s. One high-water mark blocks
     // old events without an ID history; fresh authority can reset it on restart.
     let acknowledgedID = "";
@@ -71,20 +73,34 @@
       revision++;
       paint();
     };
+    const setEpoch = (nextEpoch = "") => {
+      if (nextEpoch === epoch) return;
+      epoch = nextEpoch;
+      acknowledgedID = "";
+      reconcileAfterSettled = false;
+      replace(null); // Invalidate responses from the previous process, even while idle.
+    };
 
     return {
       getState,
+      setEpoch,
       getRevision: () => revision,
-      invalidateSnapshots() { revision++; },
+      invalidateSnapshots() { revision++; reconcileAfterSettled = state.pending; },
       show(permission) {
+        if (permission?.permission_epoch && !epoch) setEpoch(permission.permission_epoch);
+        if ((permission?.permission_epoch || "") !== epoch) return false;
         if (!permission?.permission_id || wasAcknowledged(permission.permission_id)) return false;
         replace(permission);
         return true;
       },
-      reconcile(permission, expectedRevision) {
+      reconcile(permission, expectedRevision, nextEpoch = "") {
         if (expectedRevision !== revision) return false;
+        setEpoch(nextEpoch);
+        reconcileAfterSettled = false;
         const next = permission?.permission_id ? permission : null;
-        if (next && wasAcknowledged(next.permission_id)) acknowledgedID = "";
+        // Legacy fixtures have no process identity. Production epochs must
+        // change before acknowledged IDs can become actionable again.
+        if (!epoch && next && wasAcknowledged(next.permission_id)) acknowledgedID = "";
         replace(next);
         return true;
       },
@@ -103,7 +119,7 @@
             allow: choice.allow === true,
             turn: choice.turn === true,
             always: choice.always === true,
-          });
+          }, epoch);
           if (!ownsAttempt()) return false;
           if (response?.status !== 204) {
             owner.error = "Choice wasn't acknowledged" +
@@ -122,6 +138,10 @@
             owner.attempt = null;
             revision++;
             paint();
+            if (reconcileAfterSettled && owner.error) {
+              reconcileAfterSettled = false;
+              if (typeof onReconcile === "function") onReconcile();
+            }
           }
         }
       },

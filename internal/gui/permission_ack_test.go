@@ -268,3 +268,33 @@ func TestGUIPermissionResponseAcceptedAlwaysPreservesSameTurnNextPrompt(t *testi
 		t.Fatalf("accepted Always not durable: %v", err)
 	}
 }
+
+func TestGUIPermissionResponseRejectsPreviousProcessEpoch(t *testing.T) {
+	s, ch := permissionAckFixture(t, true)
+	s.permissionEpoch = "current-process"
+	for _, body := range []string{
+		`{"allow":true,"permission_id":"7","permission_epoch":"old-process"}`,
+		`{"allow":true,"permission_id":"7"}`,
+	} {
+		res := postPermissionAck(s, context.Background(), body)
+		if res.Code != http.StatusConflict || len(ch) != 0 {
+			t.Fatalf("stale process decision: status=%d delivered=%d", res.Code, len(ch))
+		}
+	}
+	state := s.snapshot()
+	if state["permission_epoch"] != s.permissionEpoch {
+		t.Fatal("state omitted process identity")
+	}
+	pending, ok := state["pending_perm"].(map[string]any)
+	if !ok || pending["permission_epoch"] != s.permissionEpoch {
+		t.Fatal("pending prompt omitted process identity")
+	}
+	res := postPermissionAck(s, context.Background(), `{"allow":true,"permission_id":"7","permission_epoch":"current-process"}`)
+	if res.Code != http.StatusNoContent || len(ch) != 1 || <-ch != perm.Allow {
+		t.Fatalf("current epoch was not acknowledged: %d", res.Code)
+	}
+	state = s.snapshot()
+	if state["permission_epoch"] != s.permissionEpoch {
+		t.Fatal("idle state omitted process identity")
+	}
+}

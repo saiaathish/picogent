@@ -402,6 +402,56 @@ test("done invalidates old snapshots, preserves a newer prompt, and lets finishT
   assert.equal(app.view().visible, false);
 });
 
+test("idle restart resets acknowledged IDs and rejects the old process", async () => {
+  const app = permissionAppHarness();
+  app.showPermission(permissionPrompt("17", { permission_epoch: "old" }));
+  await app.click(3);
+  assert.equal(app.calls[0].payload.permission_epoch, "old");
+  const idle = app.refresh();
+  app.snapshots[0].resolve({ busy: false, permission_epoch: "new" });
+  await idle;
+  app.showPermission(permissionPrompt("1", { permission_epoch: "new" }));
+  assert.equal(app.view().id, "1");
+  app.showPermission(permissionPrompt("18", { permission_epoch: "old" }));
+  assert.equal(app.view().id, "1");
+  await app.click(3);
+  assert.equal(app.calls[1].payload.permission_epoch, "new");
+});
+
+test("a restarted process invalidates an old pending response even with the same ID", async () => {
+  const old = deferred();
+  const app = permissionAppHarness(() => old.promise);
+  app.showPermission(permissionPrompt("1", { permission_epoch: "old" }));
+  const click = app.click(3);
+  app.controller.setEpoch("new");
+  app.showPermission(permissionPrompt("1", { permission_epoch: "new" }));
+  old.resolve({ status: 204 });
+  await click;
+  assert.equal(app.view().visible, true);
+  assert.equal(app.view().id, "1");
+  assert.deepEqual(app.view().disabled, [false, false, false, false]);
+});
+
+for (const failure of ["http", "network"]) {
+  test("late " + failure + " failure after done requests fresh reconciliation", async () => {
+    const response = deferred();
+    const app = permissionAppHarness(() => response.promise);
+    app.showPermission(permissionPrompt("17"));
+    const click = app.click(3);
+    app.dispatch({ type: "done" });
+    assert.equal(app.snapshots.length, 1);
+    if (failure === "http") response.resolve({ status: 409 });
+    else response.reject(new Error("response lost after cancel"));
+    await click;
+    assert.equal(app.snapshots.length, 2, "a fresh post-failure snapshot must be fetched");
+    app.snapshots[0].resolve({ busy: false });
+    await app.refreshes[0];
+    app.snapshots[1].resolve({ busy: false });
+    await app.refreshes[1];
+    assert.equal(app.view().visible, false);
+  });
+}
+
 function setupHarness(installResponse) {
   const elements = new Map();
   const makeElement = (id) => ({

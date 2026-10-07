@@ -1181,7 +1181,7 @@ async function refresh(reconcileHistory = false) {
   });
   renderContext(s.context);
   renderTaskProgress(s.task, s.session_id, s.completion, s.outcome);
-  permissionResponses.reconcile(s.pending_perm || null, permissionRevision);
+  permissionResponses.reconcile(s.pending_perm || null, permissionRevision, s.permission_epoch || "");
   const preserveLocalTurn = clientBusy && !sessionChanged &&
     (serverBusy || chatRequestsPending > 0);
   if (reconcileHistory || sessionChanged || historyReplayPending) {
@@ -1351,7 +1351,7 @@ $("open-chats")?.addEventListener("click", () => {
 undoTurnBtn?.addEventListener("click", undoLastChange);
 
 const permissionResponses = window.PicogentWebContracts.createPermissionResponseController({
-  send: (permissionID, choice) => {
+  send: (permissionID, choice, permissionEpoch) => {
     if (permEl.dataset.permissionId === permissionID) {
       return fetch("/api/permission", {
         method: "POST",
@@ -1361,12 +1361,14 @@ const permissionResponses = window.PicogentWebContracts.createPermissionResponse
           turn: choice.turn,
           always: choice.always,
           permission_id: permissionID,
+          ...(permissionEpoch ? { permission_epoch: permissionEpoch } : {}),
         }),
       });
     }
     throw new Error("Permission prompt changed before sending");
   },
   render: renderPermission,
+  onReconcile: () => { refresh().catch(() => {}); },
 });
 permEl.addEventListener("click", async (e) => {
   const t = e.target.closest("[data-allow], [data-turn], [data-always]");
@@ -2155,6 +2157,7 @@ function connectEvents() {
   ev.onmessage = (m) => {
     const e = JSON.parse(m.data);
     if (e.type === "hello") {
+      permissionResponses.setEpoch(e.permission_epoch || "");
       ready = true;
       sendBtn.disabled = !ready;
       return;
