@@ -226,6 +226,14 @@ type Criterion struct {
 	Required    bool   `json:"required,omitempty"`
 }
 
+// GoalRetirement binds an explicitly replaced workspace goal to its original
+// identity. The replacement itself lives in Task.Goal; this record lets a
+// restart finish retiring the old goal without clearing a newer instance.
+type GoalRetirement struct {
+	Text     string `json:"text"`
+	Revision uint64 `json:"revision"`
+}
+
 // RequirementEvidenceState is the compact durable status of one inferred
 // quality requirement. Current is true only when a recognized origin supplied
 // a current passing record for the matching kind.
@@ -285,6 +293,8 @@ type Task struct {
 	StopReason        StopReason     `json:"stop_reason,omitempty"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
+
+	ReplacedWorkspaceGoal *GoalRetirement `json:"replaced_workspace_goal,omitempty"`
 
 	// normalizedFromDone records that Store.Load reopened an unproven terminal
 	// marker. It is runtime-only so direct store consumers remain fail-closed;
@@ -346,6 +356,9 @@ func (t *Task) Validate() error {
 	}
 	if len(t.Goal) > maxTaskGoal {
 		return errors.New("task goal is too long")
+	}
+	if t.ReplacedWorkspaceGoal != nil && strings.TrimSpace(t.ReplacedWorkspaceGoal.Text) == "" {
+		return errors.New("replaced workspace goal is invalid")
 	}
 	if len(t.ID) > maxTaskIdentity || len(t.SessionID) > maxTaskIdentity {
 		return errors.New("task identity is too long")
