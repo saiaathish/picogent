@@ -32,6 +32,9 @@ type Context struct {
 	// tool call. It is validated again immediately before workspace I/O.
 	WorkspaceIdentity *perm.WorkspaceIdentity
 	BashTimeout       time.Duration
+	// BeforeWorkspaceMutation is a repeatable native-write authority guard.
+	// It runs before parent creation/staging and immediately before publication.
+	BeforeWorkspaceMutation func(path string) error
 	// BeforeWorkspacePublish runs after a native-file write has been staged
 	// and validated but before its final atomic publication. It is optional and
 	// is used by the agent to persist crash-recovery metadata.
