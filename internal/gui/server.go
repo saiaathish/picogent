@@ -118,9 +118,11 @@ type turnAdmission struct {
 }
 
 type server struct {
-	cfg             config.Config
-	ag              *agent.Agent
-	saveConfig      func(config.Config) error
+	cfg        config.Config
+	ag         *agent.Agent
+	saveConfig func(config.Config) error
+	// undoExtension is a test seam; production uses extensions.Undo.
+	undoExtension   func(extensions.UndoEntry) error
 	configTxMu      sync.Mutex
 	sessionTxMu     sync.Mutex
 	mu              sync.Mutex
@@ -135,7 +137,7 @@ type server struct {
 	cancel          context.CancelFunc
 	steerMu         sync.Mutex
 	steerQueue      []queuedTurn
-	undoStack       []extensions.UndoEntry
+	undoStack       []extensionUndoRecord
 	pendingPerm     perm.Request
 	pendingPermGen  uint64
 	pendingPermID   uint64

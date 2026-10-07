@@ -13,6 +13,14 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
+// Keep successful external undo separate from preference persistence. A save
+// retry must not restore external state again over intervening user changes.
+// configTxMu serializes record transitions; mu protects stack access.
+type extensionUndoRecord struct {
+	extensions.UndoEntry
+	externalApplied bool
+}
+
 func (s *server) extensionsAPI(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -194,7 +202,7 @@ func (s *server) extensionsInstall(w http.ResponseWriter, id string, approved bo
 	}
 
 	s.mu.Lock()
-	s.undoStack = append(s.undoStack, entry)
+	s.undoStack = append(s.undoStack, extensionUndoRecord{UndoEntry: entry})
 	s.mu.Unlock()
 	if err := s.persistExtensionUpdate(func(ext *config.ExtensionsConfig) {
 		switch it.Kind {
@@ -245,26 +253,32 @@ func (s *server) extensionsUndo(w http.ResponseWriter, undoID string) {
 	s.configTxMu.Lock()
 	defer s.configTxMu.Unlock()
 	s.mu.Lock()
-	var entry *extensions.UndoEntry
-	rest := s.undoStack[:0]
-	for _, e := range s.undoStack {
+	var entry extensionUndoRecord
+	index := -1
+	for i, e := range s.undoStack {
 		if e.ID == undoID {
-			copy := e
-			entry = &copy
-			continue
+			entry, index = e, i
+			break
 		}
-		rest = append(rest, e)
 	}
-	s.undoStack = rest
 	s.mu.Unlock()
 
-	if entry == nil {
+	if index < 0 {
 		writeGUIError(w, "undo entry not found", 404)
 		return
 	}
-	if err := extensions.Undo(*entry); err != nil {
-		writeGUIError(w, err.Error(), 500)
-		return
+	if !entry.externalApplied {
+		undo := extensions.Undo
+		if s.undoExtension != nil {
+			undo = s.undoExtension
+		}
+		if err := undo(entry.UndoEntry.Clone()); err != nil {
+			writeGUIError(w, err.Error(), 500)
+			return
+		}
+		s.mu.Lock()
+		s.undoStack[index].externalApplied = true
+		s.mu.Unlock()
 	}
 
 	if err := s.persistExtensionUpdate(func(ext *config.ExtensionsConfig) {
@@ -278,6 +292,11 @@ func (s *server) extensionsUndo(w http.ResponseWriter, undoID string) {
 		writeGUIError(w, "extension removed, but couldn't save settings: "+err.Error(), 500)
 		return
 	}
+	s.mu.Lock()
+	copy(s.undoStack[index:], s.undoStack[index+1:])
+	s.undoStack[len(s.undoStack)-1] = extensionUndoRecord{}
+	s.undoStack = s.undoStack[:len(s.undoStack)-1]
+	s.mu.Unlock()
 
 	_ = s.rebuildAgent()
 	s.emit(event{Type: "extension_undo", Text: "Removed " + entry.ExtID, Summary: undoID})
