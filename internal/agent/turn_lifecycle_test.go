@@ -192,8 +192,8 @@ func TestRunWithOptionsDoesNotFinalizeReplacementTurn(t *testing.T) {
 	}
 	h := &replacementTurnHandler{store: store}
 	history, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish the requested change"}, h)
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(err.Error(), "ownership changed") {
+		t.Fatalf("replacement turn must revoke the run: %v", err)
 	}
 	if h.err != nil {
 		t.Fatal(h.err)
@@ -266,7 +266,7 @@ func (h *replacementTurnHandler) OnTaskState(task *taskstate.Task) {
 	h.switched = true
 }
 
-func TestRunWithOptionsReturnsTurnClosePersistenceFailure(t *testing.T) {
+func TestRunWithOptionsReturnsTerminalStoreRevocation(t *testing.T) {
 	store := taskstate.NewStore(t.TempDir())
 	const sessionID = "turn-close-persist-failure"
 	workspace := t.TempDir()
@@ -304,8 +304,8 @@ func TestRunWithOptionsReturnsTurnClosePersistenceFailure(t *testing.T) {
 	h := &turnCloseFailureHandler{ag: a, badStore: taskstate.NewStore(badRoot)}
 
 	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "finish the requested change"}, h)
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "durable task state") {
-		t.Fatalf("turn close persistence failure = %v, want explicit persistence error", err)
+	if err == nil || !strings.Contains(err.Error(), "ownership changed") {
+		t.Fatalf("terminal store revocation = %v, want explicit ownership refusal", err)
 	}
 	if !h.switched {
 		t.Fatal("test did not switch stores after terminal task persistence")
@@ -323,12 +323,12 @@ func TestRunWithOptionsReturnsTurnClosePersistenceFailure(t *testing.T) {
 	if persisted.Status == taskstate.StatusDone || !persisted.NeedsVerification() {
 		t.Fatalf("persisted terminal task = %#v, want resumable verification state", persisted)
 	}
-	if last := persisted.LastTurn(); last == nil || last.State != taskstate.TurnActive {
-		t.Fatalf("persisted turn = %#v, want active turn for recovery", last)
+	if last := persisted.LastTurn(); last == nil || last.State != taskstate.TurnInterrupted {
+		t.Fatalf("persisted turn = %#v, want interrupted original turn for recovery", last)
 	}
 }
 
-func TestRunWithOptionsReturnsTurnCloseFailureWithProviderError(t *testing.T) {
+func TestRunWithOptionsReturnsStoreRevocationWithProviderError(t *testing.T) {
 	goodStore := taskstate.NewStore(t.TempDir())
 	badRoot := filepath.Join(t.TempDir(), "not-a-directory")
 	if err := os.WriteFile(badRoot, []byte("occupied"), 0o600); err != nil {
@@ -352,16 +352,15 @@ func TestRunWithOptionsReturnsTurnCloseFailureWithProviderError(t *testing.T) {
 	}
 	switched := false
 	client.onChat = func() {
-		// Admission now rejects a callback's store replacement before the
-		// provider runs. Inject the close failure inside the provider instead
-		// so this test still exercises both genuine error causes.
+		// Revocation inside the provider must retain its independent failure,
+		// stop the run, and recover only the originally admitted store.
 		a.SetTaskStore(taskstate.NewStore(badRoot))
 		switched = true
 	}
 
 	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "investigate the provider failure"}, allowAll{})
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "provider unavailable") || !strings.Contains(strings.ToLower(err.Error()), "durable task state was not saved") {
-		t.Fatalf("provider and turn-close failures = %v, want both causes", err)
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "provider unavailable") || !strings.Contains(err.Error(), "ownership changed") {
+		t.Fatalf("provider failure and store revocation = %v, want both causes", err)
 	}
 	if !switched {
 		t.Fatal("test did not switch stores inside the provider")
@@ -376,8 +375,8 @@ func TestRunWithOptionsReturnsTurnCloseFailureWithProviderError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if last := persisted.LastTurn(); last == nil || last.State != taskstate.TurnActive {
-		t.Fatalf("persisted provider failure turn = %#v, want active turn for recovery", last)
+	if last := persisted.LastTurn(); last == nil || last.State != taskstate.TurnInterrupted {
+		t.Fatalf("persisted provider failure turn = %#v, want interrupted original turn for recovery", last)
 	}
 }
 

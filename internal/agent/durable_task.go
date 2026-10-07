@@ -280,6 +280,13 @@ func (a *Agent) beginDurableTaskInState(prompt string, ev EventHandler, fallback
 		admissionPrompt = replacement
 	}
 	a.taskMu.Lock()
+	if a.taskRunBinding != nil {
+		binding := *a.taskRunBinding
+		if a.TaskStore != binding.store || a.TaskSession != binding.sessionID || a.taskSessionGeneration != binding.generation || a.taskStoreGeneration != binding.storeGeneration || !binding.owns(a.task) {
+			a.taskMu.Unlock()
+			return true, errTaskOwnershipChanged
+		}
+	}
 	if a.TaskStore == nil || a.TaskSession == "" {
 		a.taskMu.Unlock()
 		if replacing {
@@ -784,11 +791,19 @@ func (a *Agent) mutateTaskResultBound(mutate func(*taskstate.Task) error, bindOw
 	}
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
+	if a.taskRunBinding != nil {
+		if err := a.checkTaskBindingLocked(*a.taskRunBinding); err != nil {
+			return nil, &taskPersistenceError{err: err}
+		}
+	}
 	if a.task == nil || a.TaskStore == nil {
 		return nil, nil
 	}
 	var owns func(*taskstate.Task) bool
-	if bindOwnership {
+	if a.taskRunBinding != nil {
+		binding := *a.taskRunBinding
+		owns = binding.owns
+	} else if bindOwnership {
 		captured := taskOwner(a.task)
 		owns = func(current *taskstate.Task) bool { return taskOwner(current) == captured }
 	}
@@ -874,6 +889,10 @@ func (a *Agent) persistTaskCandidateLocked(candidate *taskstate.Task) (*taskstat
 		return nil, err
 	}
 	a.task = candidate
+	if a.taskRunBinding != nil {
+		binding := a.taskRunBinding.withAdmittedTask(candidate)
+		a.taskRunBinding = &binding
+	}
 	return cloneTask(candidate), nil
 }
 

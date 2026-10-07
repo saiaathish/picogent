@@ -192,6 +192,17 @@ func saveTaskFile(path string, task *Task) error {
 
 // Load restores task state associated with sessionID.
 func (s *Store) Load(sessionID string) (*Task, error) {
+	return s.load(sessionID, true)
+}
+
+// OwnershipSnapshot reads and validates a record without normalizing terminal
+// status or writing a recovery revision. It is only for ownership comparisons:
+// serialized evidence has no runtime trust and cannot prove completion.
+func (s *Store) OwnershipSnapshot(sessionID string) (*Task, error) {
+	return s.load(sessionID, false)
+}
+
+func (s *Store) load(sessionID string, normalize bool) (*Task, error) {
 	path, err := s.Path(sessionID)
 	if err != nil {
 		return nil, err
@@ -210,7 +221,7 @@ func (s *Store) Load(sessionID string) (*Task, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !task.NormalizeLegacyCompletion() {
+	if !normalize || !task.NormalizeLegacyCompletion() {
 		return task, nil
 	}
 	if task.Revision == ^uint64(0) {

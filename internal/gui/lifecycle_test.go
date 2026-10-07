@@ -558,7 +558,10 @@ func TestGUIReconnectKeepsCurrentTaskProjection(t *testing.T) {
 	}
 }
 
-func TestGUITaskSaveFailureMatchesLifecycleScenario(t *testing.T) {
+// Store rebinding revokes the run; it does not inject an I/O save failure.
+// Original-owner interruption is a distinct proof from the lifecycle matrix's
+// save-failure recovery case.
+func TestGUIStoreRevocationStopsAndRecoversOriginal(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	workspace := t.TempDir()
 	goodStore := taskstate.NewStore(t.TempDir())
@@ -603,8 +606,8 @@ func TestGUITaskSaveFailureMatchesLifecycleScenario(t *testing.T) {
 		badStore:   taskstate.NewStore(badRoot),
 	}
 	_, result, runErr := ag.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "finish the requested change"}, h, agent.RunOptions{})
-	if runErr == nil || !strings.Contains(strings.ToLower(runErr.Error()), "durable task state") {
-		t.Fatalf("GUI task save failure = %v, want durable-state error", runErr)
+	if runErr == nil || !strings.Contains(runErr.Error(), "ownership changed") {
+		t.Fatalf("GUI store revocation = %v, want authority refusal", runErr)
 	}
 	if !h.switched || result.GoalDone || result.Completion.Ready {
 		t.Fatalf("GUI save failure switched=%v goalDone=%v completion=%#v", h.switched, result.GoalDone, result.Completion)
@@ -615,20 +618,15 @@ func TestGUITaskSaveFailureMatchesLifecycleScenario(t *testing.T) {
 	}
 	sawError := false
 	for len(events) > 0 {
-		if e := <-events; e.Type == "error" && strings.Contains(e.Text, "durable task state") {
+		if e := <-events; e.Type == "error" && strings.Contains(e.Text, "ownership changed") {
 			sawError = true
 		}
 	}
 	if !sawError {
-		t.Fatal("GUI task save failure did not emit a persistence error")
+		t.Fatal("GUI store revocation did not emit an authority error")
 	}
-	scenario := guiLifecycleScenario(t, "gui-task-save-failure")
-	observation := lifecycle.Observe(
-		scenario.ID, scenario.Surface, scenario.Trigger, task,
-		lifecycle.CompletionProjection{Required: true}, runErr,
-	)
-	if violations := scenario.Check(observation); len(violations) != 0 {
-		t.Fatalf("GUI task-save observation violations = %v", violations)
+	if task.Status != taskstate.StatusWorking || task.LastTurn() == nil || task.LastTurn().State != taskstate.TurnInterrupted || len(client.Calls) != 1 {
+		t.Fatalf("GUI revoked run continued or failed to recover its original: task=%+v calls=%d", task, len(client.Calls))
 	}
 }
 

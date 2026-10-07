@@ -89,7 +89,8 @@ func TestNativeWritesRefuseChangedTaskBeforeSideEffects(t *testing.T) {
 					}
 					second := call
 					second.ID = "second"
-					a.SetClient(&llm.Scripted{Responses: fallbackResponses(call, second)})
+					client := &llm.Scripted{Responses: fallbackResponses(call, second)}
+					a.SetClient(client)
 					changed := false
 					mutate := func() {
 						if changed {
@@ -121,10 +122,14 @@ func TestNativeWritesRefuseChangedTaskBeforeSideEffects(t *testing.T) {
 							return tool.Run(ctx, call.Arguments, c)
 						}
 					}
-					_, _, _ = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, h)
+					_, result, runErr := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, h)
 					assertUndoFileContent(t, path, "before")
-					if !changed || len(h.ends) < 2 || !strings.Contains(strings.Join(h.ends, "\n"), "ownership changed") {
-						t.Fatalf("stale repeated writes were not refused: changed=%v errors=%v", changed, h.ends)
+					wantEnds := 0
+					if boundary == "after recovery preparation" {
+						wantEnds = 1
+					}
+					if !changed || runErr == nil || !strings.Contains(runErr.Error(), "ownership changed") || len(h.ends) != wantEnds || len(client.Calls) != 1 || result.GoalDone {
+						t.Fatalf("revoked run continued: changed=%v errors=%v runErr=%v calls=%d", changed, h.ends, runErr, len(client.Calls))
 					}
 					entries, err := os.ReadDir(root)
 					if err != nil {
@@ -151,7 +156,8 @@ func TestNativeWriteUnavailableTaskStateCreatesNoParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := fallbackCall(t, "create", "write_file", map[string]string{"path": "new/nested/note.txt", "content": "after"})
-	a.SetClient(&llm.Scripted{Responses: fallbackResponses(call)})
+	client := &llm.Scripted{Responses: fallbackResponses(call)}
+	a.SetClient(client)
 	h := &nativeOwnershipEvents{start: func(llm.ToolCall) {
 		path, err := store.Path("unavailable-native")
 		if err != nil {
@@ -161,9 +167,9 @@ func TestNativeWriteUnavailableTaskStateCreatesNoParent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}}
-	_, _, _ = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: fallbackWritePrompt}, h)
-	if len(h.ends) != 1 || !strings.Contains(h.ends[0], "task ownership") {
-		t.Fatalf("unavailable task authority not explained: %v", h.ends)
+	_, result, runErr := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: fallbackWritePrompt}, h)
+	if runErr == nil || !strings.Contains(runErr.Error(), "task ownership") || len(h.ends) != 0 || len(client.Calls) != 1 || result.GoalDone {
+		t.Fatalf("unavailable task authority not explained or stopped: %v errors=%v calls=%d", runErr, h.ends, len(client.Calls))
 	}
 	if _, err := os.Stat(filepath.Join(root, "new")); !os.IsNotExist(err) {
 		t.Fatalf("failed authority check created a parent: %v", err)

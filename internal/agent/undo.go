@@ -456,6 +456,16 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 	if !nativeWriteRan {
 		return
 	}
+	a.taskMu.RLock()
+	bound := a.taskRunBinding != nil
+	a.taskMu.RUnlock()
+	if bound {
+		if err := a.checkTaskRun(nil); err != nil {
+			// A revoked turn must leave its pending recovery journal intact.
+			res.UndoError = err.Error()
+			return
+		}
+	}
 	if u.publishRejected && u.durable {
 		// The checkpoint may contain a valid earlier publication, but it is
 		// no longer safe to seal it from the live workspace after a later
