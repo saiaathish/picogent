@@ -77,6 +77,9 @@ type Step struct {
 type Verification struct {
 	Command string `json:"command,omitempty"`
 	Passed  bool   `json:"passed"`
+	// Retired preserves historical results without making them part of the
+	// current outcome's proof, revalidation, or repair-failure budget.
+	Retired bool   `json:"retired,omitempty"`
 	Summary string `json:"summary,omitempty"`
 	// Coverage is empty in pre-v4 state. When an observation exists, that
 	// legacy value is interpreted as complete; new partial records are
@@ -226,6 +229,14 @@ type Criterion struct {
 	Required    bool   `json:"required,omitempty"`
 }
 
+// GoalRetirement binds an explicitly replaced workspace goal to its original
+// identity. The replacement itself lives in Task.Goal; this record lets a
+// restart finish retiring the old goal without clearing a newer instance.
+type GoalRetirement struct {
+	Text     string `json:"text"`
+	Revision uint64 `json:"revision"`
+}
+
 // RequirementEvidenceState is the compact durable status of one inferred
 // quality requirement. Current is true only when a recognized origin supplied
 // a current passing record for the matching kind.
@@ -285,6 +296,8 @@ type Task struct {
 	StopReason        StopReason     `json:"stop_reason,omitempty"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
+
+	ReplacedWorkspaceGoal *GoalRetirement `json:"replaced_workspace_goal,omitempty"`
 
 	// normalizedFromDone records that Store.Load reopened an unproven terminal
 	// marker. It is runtime-only so direct store consumers remain fail-closed;
@@ -346,6 +359,9 @@ func (t *Task) Validate() error {
 	}
 	if len(t.Goal) > maxTaskGoal {
 		return errors.New("task goal is too long")
+	}
+	if t.ReplacedWorkspaceGoal != nil && strings.TrimSpace(t.ReplacedWorkspaceGoal.Text) == "" {
+		return errors.New("replaced workspace goal is invalid")
 	}
 	if len(t.ID) > maxTaskIdentity || len(t.SessionID) > maxTaskIdentity {
 		return errors.New("task identity is too long")
@@ -802,7 +818,7 @@ func (t *Task) InvalidateLatestVerification(reason string) bool {
 		return false
 	}
 	latest := &t.Verification[len(t.Verification)-1]
-	if !latest.Passed {
+	if latest.Retired || !latest.Passed {
 		return false
 	}
 	reason = compactText(reason, maxVerificationSummary-22)
@@ -898,7 +914,7 @@ func (t *Task) invalidateCompletionEvidence(reason string, provenance completion
 	}
 	if len(t.Verification) > 0 {
 		latest := &t.Verification[len(t.Verification)-1]
-		if latest.Passed {
+		if !latest.Retired && latest.Passed {
 			proofInvalidated = true
 			latest.Passed = false
 			latest.Summary = compactText(summary, maxVerificationSummary)
@@ -1416,7 +1432,7 @@ func (t *Task) ReestablishWorkspaceVerification(observation *workspace.Observati
 		return false
 	}
 	latest := &t.Verification[len(t.Verification)-1]
-	if !latest.Passed || latest.Observation == nil || latest.Observation.FilesTruncated || t.VerifiedChangeSeq != t.ChangeSeq {
+	if latest.Retired || !latest.Passed || latest.Observation == nil || latest.Observation.FilesTruncated || t.VerifiedChangeSeq != t.ChangeSeq {
 		return false
 	}
 	if normalizeVerificationCoverage(latest.Coverage, latest.Observation) != VerificationCoverageComplete {
@@ -1477,7 +1493,7 @@ func (t *Task) workspaceBoundVerificationReady() bool {
 	if normalizeVerificationCoverage(latest.Coverage, latest.Observation) != VerificationCoverageComplete {
 		return false
 	}
-	return latest.trusted && latest.Passed && latest.Observation != nil && !latest.Observation.FilesTruncated && t.VerifiedChangeSeq == t.ChangeSeq
+	return !latest.Retired && latest.trusted && latest.Passed && latest.Observation != nil && !latest.Observation.FilesTruncated && t.VerifiedChangeSeq == t.ChangeSeq
 }
 
 func (t *Task) latestVerificationHasPartialCoverage() bool {
@@ -1485,7 +1501,7 @@ func (t *Task) latestVerificationHasPartialCoverage() bool {
 		return false
 	}
 	latest := t.Verification[len(t.Verification)-1]
-	return normalizeVerificationCoverage(latest.Coverage, latest.Observation) == VerificationCoveragePartial
+	return !latest.Retired && normalizeVerificationCoverage(latest.Coverage, latest.Observation) == VerificationCoveragePartial
 }
 
 func verificationCoverageForObservation(observation *workspace.Observation) string {
@@ -1610,7 +1626,7 @@ func (t *Task) NeedsVerification() bool {
 	if len(t.ChangedFiles) > 0 && t.ChangeSeq == 0 {
 		return true
 	}
-	if len(t.Verification) > 0 && (!t.Verification[len(t.Verification)-1].Passed || !t.Verification[len(t.Verification)-1].trusted) {
+	if len(t.Verification) > 0 && (t.Verification[len(t.Verification)-1].Retired || !t.Verification[len(t.Verification)-1].Passed || !t.Verification[len(t.Verification)-1].trusted) {
 		return true
 	}
 	return t.VerifiedChangeSeq != t.ChangeSeq
@@ -1623,7 +1639,7 @@ func (t *Task) ConsecutiveVerificationFailures() int {
 	}
 	n := 0
 	for i := len(t.Verification) - 1; i >= 0; i-- {
-		if t.Verification[i].Passed {
+		if t.Verification[i].Retired || t.Verification[i].Passed {
 			break
 		}
 		n++

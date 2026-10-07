@@ -82,7 +82,7 @@ func (a *Agent) finishAndCloseDurableTurn(ctx context.Context, root string, sequ
 		// Use the candidate's latest proof, including retained proof or a
 		// changed record loaded on CAS retry, not this turn's narration.
 		currentEvidence := evidence
-		if len(task.Verification) > 0 {
+		if len(task.Verification) > 0 && !task.Verification[len(task.Verification)-1].Retired {
 			currentEvidence = task.Verification[len(task.Verification)-1].Summary
 		}
 		before := cloneTask(task)

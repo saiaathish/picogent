@@ -722,7 +722,7 @@ func evidenceSummary(task *taskstate.Task, completion CompletionCheck) EvidenceS
 			summary.LatestChangeSeq = maxInt(evidence.ChangeSeq, 0)
 		}
 	}
-	if len(task.Verification) > 0 {
+	if len(task.Verification) > 0 && !task.Verification[len(task.Verification)-1].Retired {
 		latest := task.Verification[len(task.Verification)-1]
 		if latest.Passed {
 			summary.LatestStatus = "PASS"

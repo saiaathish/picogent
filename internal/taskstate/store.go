@@ -19,6 +19,8 @@ var (
 	ErrRevisionConflict = errors.New("task state revision conflict")
 )
 
+const maxTaskFileBytes = 1 << 20
+
 // Store persists one task per chat session. Files stay separate from chat history.
 type Store struct {
 	dir string
@@ -177,6 +179,11 @@ func saveTaskFile(path string, task *Task) error {
 		return fmt.Errorf("encode task state: %w", err)
 	}
 	data = append(data, '\n')
+	// Never publish state that the bounded reader cannot restore. In
+	// particular, an exact workspace-goal retirement must not be truncated.
+	if len(data) > maxTaskFileBytes {
+		return errors.New("encoded task state exceeds the restore size limit")
+	}
 	if err := securefile.WriteAtomic(path, data, 0o600); err != nil {
 		return fmt.Errorf("write task state: %w", err)
 	}
@@ -220,7 +227,7 @@ func (s *Store) Load(sessionID string) (*Task, error) {
 }
 
 func loadTaskFile(path, sessionID string) (*Task, error) {
-	data, err := securefile.ReadFileLimited(path, 1<<20)
+	data, err := securefile.ReadFileLimited(path, maxTaskFileBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotFound
 	}
