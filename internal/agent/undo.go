@@ -19,6 +19,9 @@ type turnUndo struct {
 	checkpoint        *checkpoint.Checkpoint
 	sessionID         string
 	sessionGeneration uint64
+	taskStore         *taskstate.Store
+	taskStoreEpoch    uint64
+	taskStoreBound    bool
 	turnSequence      uint64
 	durable           bool
 	journalSlot       string
@@ -28,10 +31,24 @@ type turnUndo struct {
 	restoreErr        error
 }
 
+type undoTaskStoreAuthority struct {
+	store *taskstate.Store
+	epoch uint64
+}
+
 const maxUndoTaskPersistenceAttempts = 3
 
 func newTurnUndo(workspace, sessionID string, sessionGeneration uint64) *turnUndo {
 	return &turnUndo{workspace: workspace, sessionID: sessionID, sessionGeneration: sessionGeneration}
+}
+
+func (u *turnUndo) bindTaskStore(store *taskstate.Store, epoch uint64) {
+	if u == nil {
+		return
+	}
+	u.taskStore = store
+	u.taskStoreEpoch = epoch
+	u.taskStoreBound = true
 }
 
 // preparePublish records the exact native publication expectation immediately
@@ -280,11 +297,17 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	}
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
+	if err := a.checkTaskLockBinding(binding); err != nil {
+		return "", fmt.Errorf("undo authority changed while acquiring its lock: %w", err)
+	}
+	if a.latestUndo != nil && !a.undoBelongsToCurrentSession(a.latestUndo) {
+		return "", errors.New("cached undo belongs to a previous task store authority; reattach the session to recover it")
+	}
 	if a.latestUndo == nil {
 		workspace := a.ConfigSnapshot().Workspace
 		sessionID, generation := a.taskSessionSnapshot()
 		if sessionID != "" {
-			loaded, loadErr := loadLatestDurableUndo(workspace, sessionID, generation)
+			loaded, loadErr := loadLatestDurableUndo(workspace, sessionID, generation, undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
 			if loadErr != nil {
 				a.undoLoadErr = loadErr
 				return "", fmt.Errorf("undo is unavailable: %w", loadErr)
@@ -312,8 +335,7 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		return "nothing to undo", nil
 	}
 	if !a.undoBelongsToCurrentSession(a.latestUndo) {
-		a.latestUndo = nil
-		return "nothing to undo", nil
+		return "", errors.New("undo authority changed; recovery journal was preserved")
 	}
 	msg, complete, restoreErr := a.latestUndo.restore()
 	if !complete {
@@ -321,6 +343,9 @@ func (a *Agent) UndoLastTurn() (string, error) {
 			restoreErr = errors.New("undo failed: workspace restoration was incomplete")
 		}
 		return "", restoreErr
+	}
+	if !a.undoBelongsToCurrentSession(a.latestUndo) {
+		return "", errors.New("files were restored, but undo authority changed; recovery journal was preserved")
 	}
 	if err := a.latestUndo.persistRestored(); err != nil {
 		stateErr := fmt.Errorf("files restored but durable undo recovery was not recorded; retry /undo: %w", err)
@@ -331,6 +356,9 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	}
 	if a.latestUndo.durable && a.TaskStoreSnapshot() != nil && a.TaskSnapshot() == nil {
 		return "", errors.New("files restored but durable task state is unavailable; restore task state and retry /undo")
+	}
+	if !a.undoBelongsToCurrentSession(a.latestUndo) {
+		return "", errors.New("files were restored, but undo authority changed; recovery journal was preserved")
 	}
 	undoMutation := func(task *taskstate.Task) error {
 		wasDone := task.Status == taskstate.StatusDone
@@ -353,6 +381,9 @@ func (a *Agent) UndoLastTurn() (string, error) {
 			return "", errors.Join(stateErr, restoreErr)
 		}
 		return "", stateErr
+	}
+	if !a.undoBelongsToCurrentSession(a.latestUndo) {
+		return "", errors.New("workspace and task state were recovered, but undo authority changed; recovery journal was preserved")
 	}
 	if err := a.latestUndo.finalizeJournal(); err != nil {
 		stateErr := fmt.Errorf("workspace and durable task state were recovered but undo cleanup was not saved; retry /undo: %w", err)
@@ -395,7 +426,7 @@ func (a *Agent) persistUndoTaskMutation(mutate func(*taskstate.Task) error) erro
 func (a *Agent) UndoAvailable() bool {
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
-	return a.latestUndo != nil && a.undoLoadErr == nil
+	return a.latestUndo != nil && a.undoLoadErr == nil && a.undoBelongsToCurrentSession(a.latestUndo)
 }
 
 // refreshDurableUndoLocked re-reads the journal while the project run lock is
@@ -407,11 +438,15 @@ func (a *Agent) refreshDurableUndoLocked() error {
 		return nil
 	}
 	workspace := a.ConfigSnapshot().Workspace
-	sessionID, generation := a.taskSessionSnapshot()
+	binding := a.nativeTaskBinding()
+	sessionID, generation := binding.sessionID, binding.generation
 	if sessionID == "" {
 		return errors.New("durable undo session is unavailable")
 	}
-	if store := a.TaskStoreSnapshot(); store != nil {
+	if a.latestUndo.taskStoreBound && (a.latestUndo.taskStore != binding.store || a.latestUndo.taskStoreEpoch != binding.storeGeneration) {
+		return errors.New("cached undo belongs to a previous task store authority")
+	}
+	if store := binding.store; store != nil {
 		task, err := store.Load(sessionID)
 		switch {
 		case err == nil:
@@ -437,7 +472,7 @@ func (a *Agent) refreshDurableUndoLocked() error {
 			return fmt.Errorf("load durable task for undo: %w", err)
 		}
 	}
-	loaded, err := loadLatestDurableUndo(workspace, sessionID, generation)
+	loaded, err := loadLatestDurableUndo(workspace, sessionID, generation, undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
 	if err != nil {
 		return err
 	}
@@ -481,13 +516,16 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 		a.undoMu.Lock()
 		defer a.undoMu.Unlock()
 		if !a.undoBelongsToCurrentSession(u) {
-			if err := u.discardPending(); err != nil {
-				res.UndoError = err.Error()
-			}
+			// The current session/store no longer owns this turn. Preserve its
+			// journal for explicit recovery admission instead of deleting it.
+			a.latestUndo = nil
+			a.undoLoadErr = errTaskOwnershipChanged
+			res.UndoError = errTaskOwnershipChanged.Error()
 			return
 		}
 		sessionID, generation := a.taskSessionSnapshot()
-		loaded, err := loadLatestDurableUndo(u.workspace, sessionID, generation)
+		binding := a.nativeTaskBinding()
+		loaded, err := loadLatestDurableUndo(u.workspace, sessionID, generation, undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
 		if err != nil {
 			res.UndoError = fmt.Errorf("durable undo journal remains retryable after rejected publication: %w", err).Error()
 			a.undoLoadErr = err
@@ -528,6 +566,14 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 	}
 	res.FilesChanged = paths
 	if len(paths) == 0 {
+		a.undoMu.Lock()
+		defer a.undoMu.Unlock()
+		if !a.undoBelongsToCurrentSession(u) {
+			a.latestUndo = nil
+			a.undoLoadErr = errTaskOwnershipChanged
+			res.UndoError = errTaskOwnershipChanged.Error()
+			return
+		}
 		if err := u.discardPending(); err != nil {
 			res.UndoError = err.Error()
 		}
@@ -535,10 +581,12 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 	}
 	a.undoMu.Lock()
 	if !a.undoBelongsToCurrentSession(u) {
+		a.latestUndo = nil
+		a.undoLoadErr = errTaskOwnershipChanged
 		a.undoMu.Unlock()
-		if err := u.discardPending(); err != nil {
-			res.UndoError = err.Error()
-		}
+		// Keep the original journal. Only a later explicit session attachment
+		// may validate it and bind it to a new task store authority.
+		res.UndoError = errTaskOwnershipChanged.Error()
 		res.UndoAvailable = false
 		return
 	}
@@ -575,7 +623,10 @@ func (a *Agent) undoBelongsToCurrentSession(u *turnUndo) bool {
 	}
 	a.taskMu.RLock()
 	defer a.taskMu.RUnlock()
-	return u.sessionID == a.TaskSession && u.sessionGeneration == a.taskSessionGeneration
+	if u.sessionID != a.TaskSession || u.sessionGeneration != a.taskSessionGeneration {
+		return false
+	}
+	return !u.taskStoreBound || (u.taskStore == a.TaskStore && u.taskStoreEpoch == a.taskStoreGeneration)
 }
 
 // validateDurableUndoTask binds a journal to the durable turn history that

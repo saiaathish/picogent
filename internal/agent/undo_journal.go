@@ -201,7 +201,7 @@ func removeAllUndoJournals(workspace, sessionID string) error {
 	return errors.Join(removeUndoJournal(workspace, sessionID, false), removeUndoJournal(workspace, sessionID, true))
 }
 
-func loadLatestDurableUndo(workspace, sessionID string, generation uint64) (*turnUndo, error) {
+func loadLatestDurableUndo(workspace, sessionID string, generation uint64, authorities ...undoTaskStoreAuthority) (*turnUndo, error) {
 	pending, pendingErr := loadUndoJournal(workspace, sessionID, true)
 	if pendingErr == nil {
 		if pending.State != undoJournalPending && pending.State != undoJournalRestored {
@@ -219,6 +219,9 @@ func loadLatestDurableUndo(workspace, sessionID string, generation uint64) (*tur
 			turnSequence:      pending.TurnSequence,
 			durable:           true,
 			journalSlot:       undoJournalPending,
+		}
+		if len(authorities) > 0 {
+			u.bindTaskStore(authorities[0].store, authorities[0].epoch)
 		}
 		if pending.State == undoJournalRestored {
 			u.restored = true
@@ -266,6 +269,9 @@ func loadLatestDurableUndo(workspace, sessionID string, generation uint64) (*tur
 		turnSequence:      sealed.TurnSequence,
 		durable:           true,
 		journalSlot:       undoJournalSealed,
+	}
+	if len(authorities) > 0 {
+		u.bindTaskStore(authorities[0].store, authorities[0].epoch)
 	}
 	if sealed.State == undoJournalRestored {
 		u.restored = true

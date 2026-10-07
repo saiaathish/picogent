@@ -200,7 +200,7 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 		return nil
 	}
 	loadUndo := func(task *taskstate.Task) {
-		undo, loadErr := loadLatestDurableUndo(workspaceRoot, a.TaskSession, a.taskSessionGeneration)
+		undo, loadErr := loadLatestDurableUndo(workspaceRoot, a.TaskSession, a.taskSessionGeneration, undoTaskStoreAuthority{store: a.TaskStore, epoch: a.taskStoreGeneration})
 		if loadErr != nil {
 			a.undoLoadErr = loadErr
 			return

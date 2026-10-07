@@ -234,6 +234,11 @@ func (a *Agent) SetSkillRules(rules string) {
 }
 
 func (a *Agent) SetTaskStore(store *taskstate.Store) {
+	// Undo holds this lock across workspace restore and durable task/journal
+	// finalization. Keep a store replacement from interleaving with that
+	// authority-sensitive sequence. Lock order matches SetTaskSession.
+	a.undoMu.Lock()
+	defer a.undoMu.Unlock()
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
 	if a.taskStoreGeneration == ^uint64(0) {
@@ -595,6 +600,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	changed := map[string]struct{}{}
 	sessionID, sessionGeneration := a.taskSessionSnapshot()
 	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
+	turnUndo.bindTaskStore(nativeOwner.store, nativeOwner.storeGeneration)
 	turnUndo.turnSequence = turnSequence
 	turnClosed := turnSequence == 0
 	regCtx.BeforeWorkspaceMutation = func(string) error {

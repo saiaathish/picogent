@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -65,6 +66,109 @@ func TestUndoPersistsAcrossFreshAgent(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(workspace, ".picogent", "undo", "fresh-undo.json")); !os.IsNotExist(err) {
 		t.Fatalf("sealed undo journal remains after recovery: %v", err)
+	}
+}
+
+func TestCachedUndoRequiresOriginalTaskStoreAuthority(t *testing.T) {
+	for _, scenario := range []string{"copied store", "same store setter", "store ABA"} {
+		t.Run(scenario, func(t *testing.T) {
+			workspace := t.TempDir()
+			path := filepath.Join(workspace, "note.txt")
+			if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			storeA := taskstate.NewStore(t.TempDir())
+			storeB := taskstate.NewStore(t.TempDir())
+			const sessionID = "store-bound-undo"
+			cfg := config.Default()
+			cfg.Workspace = workspace
+			cfg.Mode = config.ModeFast
+			cfg.Provider = config.ProviderOllama
+			args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "agent edit\n"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			a := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+				toolResponse("write", "write_file", json.RawMessage(args)),
+				{Message: llm.Message{Role: "assistant", Content: "done"}},
+			}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+			a.SetTaskStore(storeA)
+			if err := a.SetTaskSession(sessionID); err != nil {
+				t.Fatal(err)
+			}
+			_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.UndoAvailable {
+				t.Fatalf("native write did not publish undo: %+v", result)
+			}
+			committedTask := a.TaskSnapshot()
+			if committedTask == nil {
+				t.Fatal("native write did not persist its task")
+			}
+			if scenario == "copied store" {
+				storeAPath, err := storeA.Path(sessionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				storeBPath, err := storeB.Path(sessionID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Dir(storeBPath), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(storeAPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(storeBPath, data, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				a.SetTaskStore(storeB)
+			} else if scenario == "same store setter" {
+				a.SetTaskStore(storeA)
+			} else {
+				a.SetTaskStore(storeB)
+				a.SetTaskStore(storeA)
+			}
+
+			if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "authority") {
+				t.Fatalf("undo after %s = %v, want an authority refusal", scenario, err)
+			}
+			assertFreshUndoFileContent(t, path, "agent edit\n")
+			if a.UndoAvailable() {
+				t.Fatal("stale cached undo is still advertised")
+			}
+			if _, err := os.Stat(filepath.Join(workspace, ".picogent", "undo", sessionID+".json")); err != nil {
+				t.Fatalf("stale cached undo removed its recovery journal: %v", err)
+			}
+			activeStore := storeA
+			if scenario == "copied store" {
+				activeStore = storeB
+			}
+			activeTask, err := activeStore.Load(sessionID)
+			if err != nil {
+				t.Fatalf("load active task after refused undo: %v", err)
+			}
+			if !reflect.DeepEqual(activeTask, committedTask) {
+				t.Fatal("refused cached undo changed the active task store")
+			}
+
+			// Reattaching the session is the explicit recovery boundary that may
+			// bind the journal to a new in-process store epoch after validation.
+			if err := a.SetTaskSession(sessionID); err != nil {
+				t.Fatalf("explicit session recovery admission: %v", err)
+			}
+			if !a.UndoAvailable() {
+				t.Fatal("validated session reattachment did not recover undo")
+			}
+			if _, err := a.UndoLastTurn(); err != nil {
+				t.Fatalf("undo after validated session reattachment: %v", err)
+			}
+			assertFreshUndoFileContent(t, path, "before\n")
+		})
 	}
 }
 
