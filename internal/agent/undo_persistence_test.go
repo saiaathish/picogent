@@ -420,6 +420,212 @@ func TestDurableUndoRequiresMatchingTurnIntent(t *testing.T) {
 	}
 }
 
+func TestVersionTwoUndoJournalRequiresIntentRevisionField(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cp.PrepareExpected(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "missing-intent-revision"
+	identity, err := undoWorkspaceIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := undoJournal{
+		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity,
+		SessionID: sessionID, TurnSequence: 1, TaskID: "intent-owner",
+		IntentRevision: 0, Checkpoint: record,
+	}
+	if err := saveUndoJournal(root, sessionID, journal, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadUndoJournal(root, sessionID, false); err != nil {
+		t.Fatalf("valid zero intent revision was rejected: %v", err)
+	}
+	sealedPath, _, err := undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(sealedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "turn_intent_revision")
+	data, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealedPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadUndoJournal(root, sessionID, false); err == nil || !strings.Contains(err.Error(), "missing turn intent revision") {
+		t.Fatalf("v2 journal without intent revision = %v", err)
+	}
+}
+
+func TestUnpublishedPendingUndoPreservesJournalBeforeOwnerValidation(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "pending-owner-validation"
+	storeA := taskstate.NewStore(t.TempDir())
+	storeB := taskstate.NewStore(t.TempDir())
+	owner, err := taskstate.New(sessionID, "original outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := owner.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok || !owner.FinishTurn(sequence, taskstate.TurnRouteImplement, "write note", "UNVERIFIED", taskstate.StopNone, 1, 1) {
+		t.Fatal("owner turn did not finish")
+	}
+	if err := storeA.Save(owner); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = root
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	a := New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: root}), perm.New(config.ModeFast, root, nil))
+	a.SetTaskStore(storeA)
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cp.PrepareExpected(path, []byte("agent edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	undo := &turnUndo{
+		workspace: root, checkpoint: cp, sessionID: sessionID,
+		sessionGeneration: a.taskSessionGeneration, turnSequence: sequence,
+		taskID: owner.ID, turnIntentRevision: owner.LastTurn().IntentRevision,
+	}
+	undo.bindTaskStore(storeA, a.taskStoreGeneration)
+	if err := undo.saveJournal(record, undoJournalPending); err != nil {
+		t.Fatal(err)
+	}
+	_, pendingPath, err := undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingBefore, err := os.ReadFile(pendingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	replacement, err := taskstate.New(sessionID, "replacement outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replacement.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if replacementSequence, ok := replacement.BeginTurn(taskstate.TurnRouteImplement); !ok || replacementSequence != sequence {
+		t.Fatalf("replacement turn sequence = %d, want %d", replacementSequence, sequence)
+	}
+	if err := storeB.Save(replacement); err != nil {
+		t.Fatal(err)
+	}
+	replacementPath, err := storeB.Path(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementBefore, err := os.ReadFile(replacementPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a.SetTaskStore(storeB)
+	if err := a.SetTaskSession(sessionID); err == nil || !strings.Contains(err.Error(), "task identity mismatch") {
+		t.Fatalf("reattachment to replacement task = %v", err)
+	}
+	assertUndoFileContent(t, path, "before\n")
+	pendingAfter, err := os.ReadFile(pendingPath)
+	if err != nil || !reflect.DeepEqual(pendingBefore, pendingAfter) {
+		t.Fatalf("rejected reattachment changed pending journal: err=%v unchanged=%v", err, reflect.DeepEqual(pendingBefore, pendingAfter))
+	}
+	replacementAfter, err := os.ReadFile(replacementPath)
+	if err != nil || !reflect.DeepEqual(replacementBefore, replacementAfter) {
+		t.Fatalf("rejected reattachment changed replacement task: err=%v unchanged=%v", err, reflect.DeepEqual(replacementBefore, replacementAfter))
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "reattach") {
+		t.Fatalf("undo after rejected reattachment = %v", err)
+	}
+}
+
+func TestUndoRefreshValidatesOwnerBeforeNormalizingReplacementTask(t *testing.T) {
+	a, store, owner := newDurableUndoFixture(t, taskstate.StatusWorking)
+	u := a.latestUndo
+	u.turnSequence = owner.LastTurn().Sequence
+	u.durable = true
+	u.journalSlot = undoJournalSealed
+	record, err := u.checkpoint.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := u.saveJournal(record, undoJournalSealed); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement, err := taskstate.New(owner.SessionID, "replacement task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.Status = taskstate.StatusDone // a legacy terminal marker without current proof
+	if err := replacement.Validate(); err != nil {
+		t.Fatalf("replacement fixture is invalid: %v", err)
+	}
+	data, err := json.Marshal(replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementPath, err := store.Path(owner.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(replacementPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	replacementBefore, err := os.ReadFile(replacementPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "task identity mismatch") {
+		t.Fatalf("undo with replacement durable task = %v", err)
+	}
+	replacementAfter, err := os.ReadFile(replacementPath)
+	if err != nil || !reflect.DeepEqual(replacementBefore, replacementAfter) {
+		t.Fatalf("rejected undo normalized replacement task: err=%v unchanged=%v", err, reflect.DeepEqual(replacementBefore, replacementAfter))
+	}
+	assertUndoFileContent(t, filepath.Join(a.ConfigSnapshot().Workspace, "fixed.txt"), "after\n")
+}
+
 func newDurableUndoFixture(t *testing.T, status taskstate.Status) (*Agent, *taskstate.Store, *taskstate.Task) {
 	t.Helper()
 	root := t.TempDir()

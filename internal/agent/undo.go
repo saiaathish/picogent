@@ -25,6 +25,7 @@ type turnUndo struct {
 	taskStoreEpoch     uint64
 	taskStoreBound     bool
 	turnSequence       uint64
+	pendingUnpublished bool
 	durable            bool
 	journalSlot        string
 	publishRejected    bool
@@ -334,14 +335,10 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		workspace := a.ConfigSnapshot().Workspace
 		sessionID, generation := a.taskSessionSnapshot()
 		if sessionID != "" {
-			loaded, loadErr := loadLatestDurableUndo(workspace, sessionID, generation, undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
+			loaded, loadErr := loadValidatedDurableUndo(workspace, sessionID, generation, a.TaskSnapshot(), undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
 			if loadErr != nil {
 				a.undoLoadErr = loadErr
 				return "", fmt.Errorf("undo is unavailable: %w", loadErr)
-			}
-			if validationErr := validateDurableUndoTask(loaded, a.TaskSnapshot()); validationErr != nil {
-				a.undoLoadErr = validationErr
-				return "", fmt.Errorf("undo is unavailable: %w", validationErr)
 			}
 			a.undoLoadErr = nil
 			a.latestUndo = loaded
@@ -471,43 +468,54 @@ func (a *Agent) refreshDurableUndoLocked() error {
 	if a.latestUndo.taskStoreBound && (a.latestUndo.taskStore != binding.store || a.latestUndo.taskStoreEpoch != binding.storeGeneration) {
 		return errors.New("cached undo belongs to a previous task store authority")
 	}
+	var task *taskstate.Task
 	if store := binding.store; store != nil {
-		task, err := store.Load(sessionID)
-		switch {
-		case err == nil:
-			changed, revalidateErr := revalidatePersistedTask(workspace, task)
-			if revalidateErr != nil {
-				return fmt.Errorf("revalidate durable task for undo: %w", revalidateErr)
-			}
-			if changed {
-				if err := store.Save(task); err != nil {
-					return fmt.Errorf("persist revalidated durable task for undo: %w", err)
-				}
-			}
-			a.taskMu.Lock()
-			a.task = task
-			a.taskLoadErr = nil
-			a.taskMu.Unlock()
-		case errors.Is(err, taskstate.ErrNotFound):
-			a.taskMu.Lock()
-			a.task = nil
-			a.taskLoadErr = nil
-			a.taskMu.Unlock()
-		default:
-			return fmt.Errorf("load durable task for undo: %w", err)
+		var err error
+		task, err = store.OwnershipSnapshot(sessionID)
+		if errors.Is(err, taskstate.ErrNotFound) {
+			task, err = nil, nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect durable task for undo: %w", err)
 		}
 	}
-	loaded, err := loadLatestDurableUndo(workspace, sessionID, generation, undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
+	loaded, err := loadValidatedDurableUndo(workspace, sessionID, generation, task, undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
 	if err != nil {
 		return err
 	}
 	if loaded == nil {
+		a.taskMu.Lock()
+		a.task = task
+		a.taskLoadErr = nil
+		a.taskMu.Unlock()
 		a.latestUndo = nil
 		a.undoLoadErr = nil
 		return nil
 	}
-	if err := validateDurableUndoTask(loaded, a.TaskSnapshot()); err != nil {
-		return err
+	if task != nil {
+		changed := task.NormalizeLegacyCompletion()
+		revalidated, revalidateErr := revalidatePersistedTask(workspace, task)
+		if revalidateErr != nil {
+			return fmt.Errorf("revalidate durable task for undo: %w", revalidateErr)
+		}
+		changed = changed || revalidated
+		if changed {
+			if err := binding.store.Save(task); err != nil {
+				return fmt.Errorf("persist revalidated durable task for undo: %w", err)
+			}
+		}
+		if err := validateDurableUndoTask(loaded, task); err != nil {
+			return err
+		}
+	}
+	a.taskMu.Lock()
+	a.task = task
+	a.taskLoadErr = nil
+	a.taskMu.Unlock()
+	if task == nil {
+		if err := validateDurableUndoTask(loaded, nil); err != nil {
+			return err
+		}
 	}
 	a.latestUndo = loaded
 	a.undoLoadErr = nil
@@ -548,7 +556,7 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 		}
 		sessionID, generation := a.taskSessionSnapshot()
 		binding := a.nativeTaskBinding()
-		loaded, err := loadLatestDurableUndo(u.workspace, sessionID, generation, undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
+		loaded, err := loadValidatedDurableUndo(u.workspace, sessionID, generation, a.TaskSnapshot(), undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
 		if err != nil {
 			res.UndoError = fmt.Errorf("durable undo journal remains retryable after rejected publication: %w", err).Error()
 			a.undoLoadErr = err
@@ -558,12 +566,6 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 		if loaded == nil {
 			res.UndoError = "durable undo journal disappeared after rejected publication"
 			a.undoLoadErr = errors.New(res.UndoError)
-			a.latestUndo = nil
-			return
-		}
-		if err := validateDurableUndoTask(loaded, a.TaskSnapshot()); err != nil {
-			res.UndoError = fmt.Errorf("durable undo journal is unavailable after rejected publication: %w", err).Error()
-			a.undoLoadErr = err
 			a.latestUndo = nil
 			return
 		}
@@ -688,4 +690,32 @@ func validateDurableUndoTask(u *turnUndo, task *taskstate.Task) error {
 		return fmt.Errorf("durable undo journal turn sequence %d is stale", u.turnSequence)
 	}
 	return nil
+}
+
+// loadValidatedDurableUndo validates the persisted turn owner before it may
+// clean up a pending record that never reached a workspace rename. Keeping the
+// raw loader read-only ensures a replacement task cannot consume another
+// task's recovery journal merely by attaching to the same session ID.
+func loadValidatedDurableUndo(workspace, sessionID string, generation uint64, task *taskstate.Task, authorities ...undoTaskStoreAuthority) (*turnUndo, error) {
+	u, err := loadLatestDurableUndo(workspace, sessionID, generation, authorities...)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateDurableUndoTask(u, task); err != nil {
+		return nil, err
+	}
+	if u == nil || !u.pendingUnpublished {
+		return u, nil
+	}
+	if err := removeUndoJournal(workspace, sessionID, true); err != nil {
+		return nil, err
+	}
+	u, err = loadLatestDurableUndo(workspace, sessionID, generation, authorities...)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateDurableUndoTask(u, task); err != nil {
+		return nil, err
+	}
+	return u, nil
 }

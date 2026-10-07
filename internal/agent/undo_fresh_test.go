@@ -219,10 +219,15 @@ func TestFreshUndoRejectsDifferentTaskWithSameSessionAndTurn(t *testing.T) {
 	if !ok || sequence != owner.LastTurn().Sequence {
 		t.Fatalf("collision fixture sequence = %d, want %d", sequence, owner.LastTurn().Sequence)
 	}
-	if !unrelated.FinishTurn(sequence, taskstate.TurnRouteImplement, "unrelated work", "UNVERIFIED", taskstate.StopNone, 1, 0) {
-		t.Fatal("unrelated task turn did not finish")
-	}
 	if err := storeB.Save(unrelated); err != nil {
+		t.Fatal(err)
+	}
+	unrelatedPath, err := storeB.Path(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelatedBytesBefore, err := os.ReadFile(unrelatedPath)
+	if err != nil {
 		t.Fatal(err)
 	}
 	unrelatedBefore, err := storeB.Load(sessionID)
@@ -244,6 +249,10 @@ func TestFreshUndoRejectsDifferentTaskWithSameSessionAndTurn(t *testing.T) {
 	unrelatedAfter, err := storeB.Load(sessionID)
 	if err != nil || !reflect.DeepEqual(unrelatedBefore, unrelatedAfter) {
 		t.Fatalf("rejected recovery changed unrelated task: err=%v unchanged=%v", err, reflect.DeepEqual(unrelatedBefore, unrelatedAfter))
+	}
+	unrelatedBytesAfter, err := os.ReadFile(unrelatedPath)
+	if err != nil || !reflect.DeepEqual(unrelatedBytesBefore, unrelatedBytesAfter) {
+		t.Fatalf("rejected recovery changed replacement task bytes: err=%v unchanged=%v", err, reflect.DeepEqual(unrelatedBytesBefore, unrelatedBytesAfter))
 	}
 	ownerAfter, err := storeA.Load(sessionID)
 	if err != nil || !reflect.DeepEqual(owner, ownerAfter) {
@@ -333,13 +342,13 @@ func TestSupersededFreshUndoFailsClosed(t *testing.T) {
 
 	second := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
 	second.SetTaskStore(store)
-	if err := second.SetTaskSession("superseded"); err != nil {
-		t.Fatal(err)
+	if err := second.SetTaskSession("superseded"); err == nil || !strings.Contains(err.Error(), "superseded") {
+		t.Fatalf("session attachment with superseded undo = %v", err)
 	}
 	if second.UndoAvailable() {
 		t.Fatal("superseded durable undo was advertised as available")
 	}
-	if _, err := second.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "superseded") {
+	if _, err := second.UndoLastTurn(); err == nil {
 		t.Fatalf("superseded durable undo error = %v", err)
 	}
 	assertFreshUndoFileContent(t, path, "agent edit\n")
@@ -361,8 +370,8 @@ func TestMalformedFreshUndoFailsClosed(t *testing.T) {
 	cfg.Provider = config.ProviderOllama
 	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
 	a.SetTaskStore(store)
-	if err := a.SetTaskSession("malformed"); err != nil {
-		t.Fatal(err)
+	if err := a.SetTaskSession("malformed"); err == nil || !strings.Contains(err.Error(), "decode undo journal") {
+		t.Fatalf("session attachment with malformed journal = %v", err)
 	}
 	if a.UndoAvailable() {
 		t.Fatal("malformed journal was advertised as available")
@@ -409,8 +418,8 @@ func TestFreshUndoFailsClosedWhenTaskOwnerIsMissing(t *testing.T) {
 	}
 	second := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
 	second.SetTaskStore(store)
-	if err := second.SetTaskSession("missing-task"); err != nil {
-		t.Fatal(err)
+	if err := second.SetTaskSession("missing-task"); err == nil || !strings.Contains(err.Error(), "owner validation") {
+		t.Fatalf("session attachment with missing task owner = %v", err)
 	}
 	if _, err := second.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "owner validation") {
 		t.Fatalf("missing task state error = %v", err)

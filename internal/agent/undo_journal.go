@@ -185,6 +185,20 @@ func loadUndoJournal(workspace, sessionID string, pending bool) (*undoJournal, e
 		}
 		return nil, fmt.Errorf("decode undo journal: %w", err)
 	}
+	if journal.Version == undoJournalVersion {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			return nil, fmt.Errorf("decode undo journal fields: %w", err)
+		}
+		revision, present := fields["turn_intent_revision"]
+		if !present || bytes.Equal(bytes.TrimSpace(revision), []byte("null")) {
+			return nil, errors.New("version-2 undo journal is missing turn intent revision")
+		}
+		var parsed uint64
+		if err := json.Unmarshal(revision, &parsed); err != nil {
+			return nil, fmt.Errorf("decode undo journal turn intent revision: %w", err)
+		}
+	}
 	if err := validateUndoJournal(journal, workspace, sessionID); err != nil {
 		return nil, err
 	}
@@ -247,16 +261,11 @@ func loadLatestDurableUndo(workspace, sessionID string, generation uint64, autho
 			return nil, fmt.Errorf("inspect pending undo journal: %w", subsetErr)
 		}
 		if subsetErr == nil && !found {
-			if err := removeUndoJournal(workspace, sessionID, true); err != nil {
-				return nil, err
-			}
-			pending = nil
+			u.pendingUnpublished = true
 		} else if subsetErr == nil && published != nil {
 			u.checkpoint = published
 		}
-		if pending != nil {
-			return u, nil
-		}
+		return u, nil
 	} else if !errors.Is(pendingErr, os.ErrNotExist) {
 		return nil, pendingErr
 	}

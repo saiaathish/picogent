@@ -200,9 +200,30 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	if a.TaskSession == "" {
 		return nil
 	}
-	finishAttachment := func() error {
-		if requireReattachment && a.undoLoadErr != nil {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		a.undoLoadErr = errors.New("undo recovery is unavailable without a configured workspace")
+		if requireReattachment {
 			return fmt.Errorf("validate undo recovery during session reattachment: %w", a.undoLoadErr)
+		}
+		if a.TaskStore != nil {
+			task, err := a.TaskStore.OwnershipSnapshot(a.TaskSession)
+			if errors.Is(err, taskstate.ErrNotFound) {
+				return nil
+			}
+			if err != nil {
+				a.taskLoadErr = err
+				return fmt.Errorf("inspect durable task for session attachment: %w", err)
+			}
+			a.task = task
+		}
+		return nil
+	}
+	finishAttachment := func() error {
+		if a.undoLoadErr != nil {
+			if requireReattachment {
+				return fmt.Errorf("validate undo recovery during session reattachment: %w", a.undoLoadErr)
+			}
+			return fmt.Errorf("validate undo recovery: %w", a.undoLoadErr)
 		}
 		if requireReattachment {
 			a.undoReattachRequired = false
@@ -210,13 +231,9 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 		return nil
 	}
 	loadUndo := func(task *taskstate.Task) {
-		undo, loadErr := loadLatestDurableUndo(workspaceRoot, a.TaskSession, a.taskSessionGeneration, undoTaskStoreAuthority{store: a.TaskStore, epoch: a.taskStoreGeneration})
+		undo, loadErr := loadValidatedDurableUndo(workspaceRoot, a.TaskSession, a.taskSessionGeneration, task, undoTaskStoreAuthority{store: a.TaskStore, epoch: a.taskStoreGeneration})
 		if loadErr != nil {
 			a.undoLoadErr = loadErr
-			return
-		}
-		if validationErr := validateDurableUndoTask(undo, task); validationErr != nil {
-			a.undoLoadErr = validationErr
 			return
 		}
 		a.latestUndo = undo
@@ -225,45 +242,48 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 		loadUndo(nil)
 		return finishAttachment()
 	}
-	task, err := a.TaskStore.Load(a.TaskSession)
-	if err == nil {
-		if requireReattachment {
-			loadUndo(task)
-			if a.undoLoadErr != nil {
-				return finishAttachment()
-			}
-		}
-		changed, revalidateErr := revalidatePersistedTask(workspaceRoot, task)
-		if revalidateErr != nil {
-			a.taskLoadErr = revalidateErr
-			return revalidateErr
-		}
-		// A task loaded with an active turn was left behind by a process that
-		// did not reach its close point. The project run lock makes this
-		// attachment boundary exclusive, so record the stale attempt before
-		// publishing the resumed task.
-		if task.RecoverActiveTurn() {
-			changed = true
-		}
-		if changed {
-			if err := a.TaskStore.Save(task); err != nil {
-				revalidateErr := fmt.Errorf("persist recovered durable task: %w", err)
-				a.taskLoadErr = revalidateErr
-				return revalidateErr
-			}
-		}
-		a.task = task
-		if !requireReattachment {
-			loadUndo(task)
-		}
-		return finishAttachment()
-	}
+	task, err := a.TaskStore.OwnershipSnapshot(a.TaskSession)
 	if errors.Is(err, taskstate.ErrNotFound) {
 		loadUndo(nil)
+		if a.undoLoadErr != nil {
+			a.taskLoadErr = a.undoLoadErr
+		}
 		return finishAttachment()
 	}
-	a.taskLoadErr = err
-	return err
+	if err != nil {
+		a.taskLoadErr = err
+		return fmt.Errorf("inspect durable task for session attachment: %w", err)
+	}
+	// Validate durable undo against the read-only owner snapshot before Load,
+	// legacy normalization, proof revalidation, or interrupted-turn recovery
+	// can write a replacement task record.
+	loadUndo(task)
+	if a.undoLoadErr != nil {
+		a.taskLoadErr = a.undoLoadErr
+		return finishAttachment()
+	}
+	changed := task.NormalizeLegacyCompletion()
+	revalidated, revalidateErr := revalidatePersistedTask(workspaceRoot, task)
+	if revalidateErr != nil {
+		a.taskLoadErr = revalidateErr
+		return revalidateErr
+	}
+	changed = changed || revalidated
+	// A task with an active turn was left behind by a process that did not
+	// reach its close point. The project run lock makes this attachment
+	// boundary exclusive, so record the stale attempt before publishing it.
+	if task.RecoverActiveTurn() {
+		changed = true
+	}
+	if changed {
+		if err := a.TaskStore.Save(task); err != nil {
+			recoverErr := fmt.Errorf("persist recovered durable task: %w", err)
+			a.taskLoadErr = recoverErr
+			return recoverErr
+		}
+	}
+	a.task = task
+	return finishAttachment()
 }
 
 func (a *Agent) taskSessionSnapshot() (string, uint64) {
