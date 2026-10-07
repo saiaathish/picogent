@@ -16,6 +16,7 @@ import (
 	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/procenv"
 	"github.com/saiaathish/picogent/internal/redact"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 type globTool struct{}
@@ -169,12 +170,7 @@ func (grepTool) Run(ctx context.Context, args string, c Context) (string, error)
 }
 
 func runRipgrep(ctx context.Context, ws, pattern, glob string) (string, error) {
-	args := []string{"--line-number", "--no-heading", "--color", "never", "-m", "50", "--max-filesize", "1M"}
-	if glob != "" {
-		args = append(args, "--glob", glob)
-	}
-	args = append(args, pattern, ".")
-	cmd := exec.CommandContext(ctx, "rg", args...)
+	cmd := exec.CommandContext(ctx, "rg", ripgrepArguments(pattern, glob)...)
 	cmd.Dir = ws
 	cmd.Env = procenv.Sanitized()
 	var stdout, stderr bytes.Buffer
@@ -192,6 +188,16 @@ func runRipgrep(ctx context.Context, ws, pattern, glob string) (string, error) {
 		return "no matches", nil
 	}
 	return clip(out), nil
+}
+
+func ripgrepArguments(pattern, glob string) []string {
+	args := []string{"--no-config", "--line-number", "--no-heading", "--color", "never", "-m", "50", "--max-filesize", "1M"}
+	if glob != "" {
+		args = append(args, "--glob="+glob)
+	}
+	// Attached values cannot become flags, including preprocessors. The
+	// positional search root remains fixed after the option terminator.
+	return append(args, "--regexp="+pattern, "--", ".")
 }
 
 func walkGrep(ws, pattern, glob string) (string, error) {
@@ -212,8 +218,13 @@ func walkGrep(ws, pattern, glob string) (string, error) {
 		if glob != "" && !globMatch(glob, rel) && !globMatch(glob, filepath.Base(rel)) {
 			return nil
 		}
-		data, err := os.ReadFile(path)
-		if err != nil || !utf8ish(data) {
+		file, err := workspace.OpenRead(ws, path)
+		if err != nil {
+			return nil
+		}
+		data, truncated, readErr := readBoundedReader(file, 1<<20)
+		closeErr := file.Close()
+		if readErr != nil || closeErr != nil || truncated || !utf8ish(data) {
 			return nil
 		}
 		for i, line := range strings.Split(string(data), "\n") {
