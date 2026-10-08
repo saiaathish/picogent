@@ -332,6 +332,25 @@ func TestSetTaskSessionWithoutWorkspaceRequiresWorkspaceForStoreReattachment(t *
 	}
 }
 
+func TestSetTaskSessionWithoutWorkspaceAllowsDetachAfterStoreRebind(t *testing.T) {
+	const sessionID = "no-workspace-detach-after-rebind"
+	a := newAgentWithoutWorkspace(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+
+	if err := a.SetTaskSession(""); err != nil {
+		t.Fatalf("detach after store rebind without workspace: %v", err)
+	}
+	if a.TaskSession != "" {
+		t.Fatalf("task session after detach = %q, want empty", a.TaskSession)
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") || strings.Contains(strings.ToLower(err.Error()), "reattach") {
+		t.Fatalf("undo after detach = %v, want workspace-unavailable error without a reattachment fence", err)
+	}
+}
+
 func TestDetachedTaskSessionAllowsFreshProcessLocalUndo(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "note.txt")
