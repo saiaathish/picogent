@@ -436,6 +436,7 @@ func TestProjectHealthAdmissionInvalidatesHealthAfterSteeringOrWorkspaceChange(t
 		mutate func(*Agent, string)
 	}{
 		{name: "steering", mutate: func(a *Agent, _ string) { a.SetGoal("a different outcome") }},
+		{name: "task-store replacement", mutate: func(a *Agent, _ string) { a.SetTaskStore(taskstate.NewStore(t.TempDir())) }},
 		{name: "workspace change", mutate: func(a *Agent, _ string) {
 			a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = filepath.Join(cfg.Workspace, "replacement") })
 		}},
@@ -572,6 +573,34 @@ func TestProjectHealthAdmissionRejectsFreshnessChangeBeforeNativeRun(t *testing.
 	}
 	if runCalls != 0 {
 		t.Fatalf("stale pre-run health was executed: %d calls", runCalls)
+	}
+}
+
+func TestProjectHealthAdmissionRejectsTaskStoreReplacementBeforeNativeRun(t *testing.T) {
+	a, reg, workspace := newAdmissionAgent(t, &admissionModel{}, config.ModeFast)
+	task := setAdmissionTask(t, a, "make this ready to launch")
+	reg.UpdateContext(func(c *tools.Context) {
+		c.ClassifyPath = func(tool, path, _, _ string) perm.Request {
+			return perm.Request{Tool: tool, Path: path, OutsideWorkspace: true}
+		}
+	})
+	state := a.RuntimeSnapshot()
+	regCtx := reg.ContextSnapshot()
+	runCalls := 0
+	a.runTool = func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error) {
+		runCalls++
+		return admissionHealthOutput(t), nil
+	}
+	gate := perm.New(config.ModeSafe, workspace, func(context.Context, perm.Request) (perm.Decision, error) {
+		a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+		return perm.Allow, nil
+	})
+	got := a.admitProjectHealth(context.Background(), "make this ready to launch", TaskAgent, "", state, regCtx, gate)
+	if !got.attempted || got.focus != outcomeFocusForTask(task) {
+		t.Fatalf("stale store replacement admission = %+v, want bounded task-only fallback", got)
+	}
+	if runCalls != 0 {
+		t.Fatalf("project_health ran after task-store replacement: %d calls", runCalls)
 	}
 }
 
