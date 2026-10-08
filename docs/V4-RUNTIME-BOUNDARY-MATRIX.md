@@ -5,22 +5,30 @@ explicit `PASS` / `FAIL` / `INCONCLUSIVE` / `UNVERIFIED` verdicts. It does not
 authorize a release and never treats mocks or local builds as live-provider
 proof.
 
-**Current exact-head checkpoint for this refresh:** `main` was clean at
-`4086b1f3416cde476025718139aa2c8260cc9d8e`, the PR #723 evolution-store
-load-lock hardening merge. The fresh matrix recorded `HEAD=PASS`, `tree=CLEAN`, and
-`behavior_provenance=EXACT_HEAD`. Its artifact SHA-256 is
-`9ee2d1a56bf6fcb92cbc1e92d4944019c480c2cc4348ac7a44aa6d1a6e77441a`.
-The summary is `UNVERIFIED=12`: no live-provider, rendered-platform, or
-retained hostile-runtime artifacts were supplied to this exact-head refresh.
-The focused `internal/evolve` regression suite passed with low-resource
-settings. This checkpoint is recorded in
+**Prior exact-head checkpoint:** the `4086b1f3416cde476025718139aa2c8260cc9d8e`
+refresh recorded `tree=CLEAN`, `behavior_provenance=EXACT_HEAD`, and
+`UNVERIFIED=12`. It remains documented in
 [V4-CURRENT-RESIDUAL-PACKET-4086B1F.md](V4-CURRENT-RESIDUAL-PACKET-4086B1F.md).
 
-This exact-candidate matrix is evidence-only. The broad hostile-filesystem
-TOCTOU row remains `UNVERIFIED`; the separate release-authorization
-predicate remains `INCONCLUSIVE` with `authorized=false`; and parent #453
-remains open. Later documentation-only descendants may retain this packet,
-but any later non-documentation behavior change requires a fresh matrix.
+**Fresh exact-main quality checkpoint for #754:** the source was clean at
+`d511b13483ceb8d81ba439de772db3a19fa4ad0d`, matching `origin/main` before and
+after the live campaign. The exact-head matrix recorded `tree=CLEAN`,
+`behavior_provenance=EXACT_HEAD`, `PASS=1`, and `UNVERIFIED=11`; its SHA-256 is
+`9077de1d036673e40ba548734d5bad5ca471114ba005986e822db2b92504012a`. Only
+`live-provider-quality` changed from the no-quality baseline; the other 11
+claim verdicts were preserved. See
+[V4-LIVE-PROVIDER-QUALITY-EVIDENCE-D511B13.md](V4-LIVE-PROVIDER-QUALITY-EVIDENCE-D511B13.md)
+for the bounded observations and explicit limits. The quality observation
+does not upgrade connectivity, rendered, hostile-runtime, or
+release-authorization claims and does not authorize release.
+
+The prior `4086b1f` exact-candidate matrix was evidence-only; its separate
+release-authorization predicate was `INCONCLUSIVE` with `authorized=false`.
+The newer `d511b13` quality matrix is also evidence-only: broad hostile
+filesystem TOCTOU and release authorization remain `UNVERIFIED`, and this
+observation does not authorize a release. Later documentation-only descendants
+may retain the `d511b13` packet, but any later non-documentation behavior
+change requires a fresh matrix.
 
 **Prior behavior-bound checkpoint (behavior tip `9c1ca2e`; parent issue `#453`):**
 The fresh live-provider observation is bound to behavior tip
