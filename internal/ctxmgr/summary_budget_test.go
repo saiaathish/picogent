@@ -18,6 +18,21 @@ func (c *summaryCaptureClient) Chat(_ context.Context, request llm.ChatRequest) 
 	return llm.ChatResponse{Message: llm.Message{Role: "assistant", Content: "bounded summary"}}, nil
 }
 
+type cancelAfterFirstErrContext struct {
+	context.Context
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (c *cancelAfterFirstErrContext) Err() error {
+	c.calls++
+	if c.calls == 1 {
+		c.cancel()
+		return nil
+	}
+	return c.Context.Err()
+}
+
 func TestSummarizeBoundsAggregateInput(t *testing.T) {
 	const messages = 40
 	conversation := make([]llm.Message, 0, messages)
@@ -44,5 +59,47 @@ func TestSummarizeBoundsAggregateInput(t *testing.T) {
 	}
 	if !strings.Contains(body, summaryInputOmission) {
 		t.Fatalf("bounded summary body missing omission marker: %q", body)
+	}
+}
+
+func TestManageCanceledContextDoesNotStartCompactionRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	client := &summaryCaptureClient{}
+	msgs := []llm.Message{{Role: "system", Content: "system"}, {Role: "user", Content: strings.Repeat("context ", 100)}}
+	if _, _, err := Manage(ctx, client, "gpt-5.6-terra", msgs, DefaultBudget); err != context.Canceled {
+		t.Fatalf("Manage error = %v, want context canceled", err)
+	}
+	if client.request.Model != "" {
+		t.Fatal("Manage started a model-backed compaction request after cancellation")
+	}
+}
+
+func TestManageCancellationDuringCompactionDoesNotStartSummaryRequest(t *testing.T) {
+	base, cancel := context.WithCancel(context.Background())
+	ctx := &cancelAfterFirstErrContext{Context: base, cancel: cancel}
+	client := &summaryCaptureClient{}
+	msgs := make([]llm.Message, 20)
+	for i := range msgs {
+		msgs[i] = llm.Message{Role: "user", Content: strings.Repeat("x", 2800)}
+	}
+	if _, _, err := Manage(ctx, client, "gpt-5.6-terra", msgs, 10_000); err != context.Canceled {
+		t.Fatalf("Manage error = %v, want context canceled", err)
+	}
+	if client.request.Model != "" {
+		t.Fatal("Manage started a summary request after cancellation during compaction")
+	}
+}
+
+func TestSummarizeCancellationBeforeProviderCall(t *testing.T) {
+	base, cancel := context.WithCancel(context.Background())
+	ctx := &cancelAfterFirstErrContext{Context: base, cancel: cancel}
+	client := &summaryCaptureClient{}
+	msgs := []llm.Message{{Role: "user", Content: strings.Repeat("context ", 100)}}
+	if _, err := Summarize(ctx, client, "gpt-5.6-terra", msgs); err != context.Canceled {
+		t.Fatalf("Summarize error = %v, want context canceled", err)
+	}
+	if client.request.Model != "" {
+		t.Fatal("Summarize started a provider request after cancellation")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -110,6 +111,128 @@ func TestReplacementRetiresOldWorkspaceGoalAfterRestart(t *testing.T) {
 	persisted, err := store.Load("replacement-session")
 	if err != nil || persisted.ReplacedWorkspaceGoal != nil {
 		t.Fatalf("retirement was not acknowledged: %#v %v", persisted, err)
+	}
+}
+
+func TestReplacementRetirementRejectsTaskStoreRebind(t *testing.T) {
+	for _, boundary := range []string{"before claim", "after claim"} {
+		t.Run(boundary, func(t *testing.T) {
+			a, store, cfg := replacementFixture(t)
+			const old = "finish the original backend outcome"
+			revision, err := goal.SetState(cfg.Workspace, old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.SetGoalState(old, revision)
+			if failed, err := a.beginDurableTask("replace the current goal with document the API", NopHandler{}); failed || err != nil {
+				t.Fatal(err)
+			}
+			pending := a.TaskSnapshot().ReplacedWorkspaceGoal
+			if pending == nil {
+				t.Fatal("replacement did not persist the retirement marker")
+			}
+			wantPending := *pending
+			replacement := taskstate.NewStore(t.TempDir())
+			client := &llm.Scripted{}
+			a.SetClient(client)
+			rebind := func() { a.SetTaskStore(replacement) }
+			opts := RunOptions{}
+			if boundary == "before claim" {
+				opts.beforeTaskRunClaim = rebind
+			} else {
+				opts.afterTaskRunClaim = rebind
+			}
+			_, _, runErr := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "continue"}, NopHandler{}, opts)
+			if runErr == nil || !strings.Contains(runErr.Error(), "ownership changed") || len(client.Calls) != 0 {
+				t.Fatalf("rebound run was not rejected before provider dispatch: calls=%d err=%v", len(client.Calls), runErr)
+			}
+			state, err := goal.LoadState(cfg.Workspace)
+			if err != nil || state.Text != old || state.Revision != revision {
+				t.Fatalf("rebound run retired the workspace goal: %+v %v", state, err)
+			}
+			persisted, err := store.Load("replacement-session")
+			if err != nil || persisted.ReplacedWorkspaceGoal == nil || *persisted.ReplacedWorkspaceGoal != wantPending {
+				t.Fatalf("rebound run lost the retryable retirement marker: %+v %v", persisted, err)
+			}
+		})
+	}
+}
+
+func TestReplacementRetirementSerializesTaskStoreRebindDuringGoalClear(t *testing.T) {
+	a, store, cfg := replacementFixture(t)
+	const old = "finish the original backend outcome"
+	revision, err := goal.SetState(cfg.Workspace, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.SetGoalState(old, revision)
+	if failed, err := a.beginDurableTask("replace the current goal with document the API", NopHandler{}); failed || err != nil {
+		t.Fatal(err)
+	}
+	pending := a.TaskSnapshot().ReplacedWorkspaceGoal
+	if pending == nil {
+		t.Fatal("replacement did not persist the retirement marker")
+	}
+
+	runCtx, err := a.claimTaskRun(context.Background(), a.nativeTaskBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = a.releaseTaskRun() }()
+	guardEntered := make(chan struct{})
+	allowClear := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseClear := func() { releaseOnce.Do(func() { close(allowClear) }) }
+	defer releaseClear()
+	retireResult := make(chan error, 1)
+	go func() {
+		retireResult <- a.retireWorkspaceGoalForRunWithHook(runCtx, cfg.Workspace, *pending, func() {
+			close(guardEntered)
+			<-allowClear
+		})
+	}()
+	select {
+	case <-guardEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("retirement did not reach its authority-guarded clear")
+	}
+
+	replacement := taskstate.NewStore(t.TempDir())
+	rebindStarted := make(chan struct{})
+	rebindDone := make(chan struct{})
+	go func() {
+		close(rebindStarted)
+		a.SetTaskStore(replacement)
+		close(rebindDone)
+	}()
+	<-rebindStarted
+	select {
+	case <-rebindDone:
+		t.Fatal("task-store rebind interleaved with the guarded goal clear")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	releaseClear()
+	select {
+	case err := <-retireResult:
+		if err != nil {
+			t.Fatalf("guarded goal retirement failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("guarded goal retirement did not finish")
+	}
+	select {
+	case <-rebindDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("task-store rebind did not resume after goal retirement")
+	}
+	state, err := goal.LoadState(cfg.Workspace)
+	if err != nil || state.Text != "" {
+		t.Fatalf("goal clear did not finish before rebind: %+v %v", state, err)
+	}
+	persisted, err := store.Load("replacement-session")
+	if err != nil || persisted.ReplacedWorkspaceGoal == nil || *persisted.ReplacedWorkspaceGoal != *pending {
+		t.Fatalf("in-flight rebind lost the retryable retirement marker: %+v %v", persisted, err)
 	}
 }
 

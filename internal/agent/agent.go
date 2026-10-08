@@ -121,6 +121,8 @@ type Agent struct {
 	taskSessionGeneration uint64
 	taskStoreGeneration   uint64
 	taskRunBinding        *nativeTaskBinding
+	taskRunCancel         context.CancelFunc
+	taskSessionSwitching  bool
 	stateMu               sync.RWMutex
 	taskMu                sync.RWMutex
 	task                  *taskstate.Task
@@ -241,9 +243,9 @@ func (a *Agent) SetTaskStore(store *taskstate.Store) {
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
 	a.taskMu.Lock()
-	defer a.taskMu.Unlock()
 	if a.taskStoreGeneration == ^uint64(0) {
 		a.taskLoadErr = errors.New("task store authority generation exhausted")
+		a.taskMu.Unlock()
 		return
 	}
 	a.taskStoreGeneration++
@@ -251,6 +253,11 @@ func (a *Agent) SetTaskStore(store *taskstate.Store) {
 	a.taskLoadErr = nil
 	if strings.TrimSpace(a.TaskSession) != "" {
 		a.undoReattachRequired = true
+	}
+	cancelRun := a.taskRunCancel
+	a.taskMu.Unlock()
+	if cancelRun != nil {
+		cancelRun()
 	}
 }
 
@@ -398,6 +405,8 @@ func systemPromptFor(state RuntimeState, userHint, taskSuffix, scopeBoundary str
 type RunOptions struct {
 	beforeProjectRunLock func() // deterministic stale-admission regression seam
 	afterProjectRunLock  func() // deterministic lock/authority regression seam
+	beforeTaskRunClaim   func() // deterministic authority-rebind regression seam
+	afterTaskRunClaim    func() // deterministic claimed-run regression seam
 	TaskMode             *TaskMode
 	TracePrompt          string
 	DurablePrompt        string
@@ -518,35 +527,22 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	if durablePrompt == "" {
 		durablePrompt = userText
 	}
-	// Finish a previous save-before-retire crash window before task admission
-	// can recreate a terminal task or otherwise lose its pending retirement.
-	admittedGoal, admittedRevision, err := a.reconcileReplacedWorkspaceGoal(cfg.Workspace, state.Goal, state.GoalRevision)
-	if errors.Is(err, errReplacedGoalConflict) {
-		// Only a validated explicit replacement may rebind the contract that
-		// conflicts with this goal. Ordinary retries retain the conflict marker
-		// and cannot use unrelated task proof to retire the newer goal.
-		_, replacing := taskstate.ExplicitReplacement(durablePrompt)
-		currentGoal, currentRevision := a.GoalStateSnapshot()
-		if replacing && currentGoal == state.Goal && currentRevision == state.GoalRevision {
-			admittedGoal, admittedRevision, err = state.Goal, state.GoalRevision, nil
-		}
-	}
-	if err != nil {
-		ev.OnError(err)
-		return history, Result{Task: a.TaskSnapshot()}, err
-	}
-	state.Goal, state.GoalRevision = admittedGoal, admittedRevision
 	nativeOwner := lockOwner
 	// Freeze the locked substrate, but admit task progress only after waiting:
 	// an earlier cooperative turn may have closed while this request queued.
 	nativeOwner.owner = nil
 	nativeOwner = nativeOwner.withAdmittedTask(a.TaskSnapshot())
-	if err := a.claimTaskRun(nativeOwner); err != nil {
+	if opts.beforeTaskRunClaim != nil {
+		opts.beforeTaskRunClaim()
+	}
+	runCtx, err := a.claimTaskRun(ctx, nativeOwner)
+	if err != nil {
 		return history, Result{Task: a.TaskSnapshot()}, err
 	}
+	ctx = runCtx
 	var textDelivered atomic.Bool
 	defer func() {
-		if err := a.checkTaskRun(nil); err != nil {
+		if err := a.checkTaskRun(ctx); err != nil {
 			returnedErr = errors.Join(returnedErr, err)
 			ev.OnError(err)
 			returnedResult.GoalDone = false
@@ -571,6 +567,27 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			ev.OnError(err)
 		}
 	}()
+	if opts.afterTaskRunClaim != nil {
+		opts.afterTaskRunClaim()
+	}
+	// Finish a previous save-before-retire crash window only after this run has
+	// claimed task authority. The goal clear is fenced against task-store rebinding.
+	admittedGoal, admittedRevision, err := a.reconcileReplacedWorkspaceGoalForRun(ctx, cfg.Workspace, state.Goal, state.GoalRevision)
+	if errors.Is(err, errReplacedGoalConflict) {
+		// Only a validated explicit replacement may rebind the contract that
+		// conflicts with this goal. Ordinary retries retain the conflict marker
+		// and cannot use unrelated task proof to retire the newer goal.
+		_, replacing := taskstate.ExplicitReplacement(durablePrompt)
+		currentGoal, currentRevision := a.GoalStateSnapshot()
+		if replacing && currentGoal == state.Goal && currentRevision == state.GoalRevision {
+			admittedGoal, admittedRevision, err = state.Goal, state.GoalRevision, nil
+		}
+	}
+	if err != nil {
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
+	}
+	state.Goal, state.GoalRevision = admittedGoal, admittedRevision
 	admission := &nativeAdmissionEvents{EventHandler: ev}
 	if failed, taskErr := a.beginDurableTaskInState(durablePrompt, admission, false, state); failed {
 		if taskErr == nil {
@@ -585,7 +602,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		ev.OnError(err)
 		return history, Result{Task: a.TaskSnapshot()}, err
 	}
-	admittedGoal, admittedRevision, err = a.reconcileReplacedWorkspaceGoal(cfg.Workspace, state.Goal, state.GoalRevision)
+	admittedGoal, admittedRevision, err = a.reconcileReplacedWorkspaceGoalForRun(ctx, cfg.Workspace, state.Goal, state.GoalRevision)
 	if err != nil {
 		ev.OnError(err)
 		return history, Result{Task: a.TaskSnapshot()}, err
@@ -681,6 +698,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	// may replace this with one fresh, bounded health observation; all other
 	// turns keep the explicit unknown-health boundary.
 	nextOutcomeFocus := outcomeFocusForTask(a.TaskSnapshot())
+	if err := a.checkTaskRun(ctx); err != nil {
+		res.Task = a.TaskSnapshot()
+		return history, res, err
+	}
 	healthAdmission := a.admitProjectHealth(ctx, userText, taskMode, opts.ScopeBoundary, state, regCtx, gate)
 	if healthAdmission.attempted {
 		nextOutcomeFocus = healthAdmission.focus
@@ -692,6 +713,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		if turnSequence == 0 || turnClosed || turnCloseErr != nil {
 			return
 		}
+		// Closing an owned turn is cleanup: user cancellation should mark it
+		// interrupted below, while the durable authority check still prevents
+		// closing a replacement owner's turn.
 		if err := a.checkTaskRun(nil); err != nil {
 			turnCloseErr = err
 			return // cleanup may interrupt only the original saved authority
@@ -746,13 +770,17 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	}
 	msgs = append(msgs, user)
 	budget := ctxmgr.BudgetForModel(cfg.Model)
+	if err := a.checkTaskRun(ctx); err != nil {
+		res.Task = a.TaskSnapshot()
+		return msgs, res, err
+	}
 	compactMsgs, ctxStats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 	msgs = compactMsgs
 
 	res.Context = ctxStats
 
 	for round := 0; round < cfg.MaxToolRounds; round++ {
-		if err := a.checkTaskRun(nil); err != nil {
+		if err := a.checkTaskRun(ctx); err != nil {
 			res.Task = a.TaskSnapshot()
 			return msgs, res, err
 		}
@@ -812,6 +840,11 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			res.Task = a.TaskSnapshot()
 			return msgs, res, errors.Join(err, authorityErr)
 		}
+		// Cancellation is not an authority change: route it through the normal
+		// failed-call path so the still-owned durable turn can close as canceled.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = errors.Join(err, ctxErr)
+		}
 		if err != nil {
 			wrapped := userErr("the model call failed", err)
 			ev.OnError(wrapped)
@@ -862,7 +895,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			res.FilesChanged = sortedChanged(changed)
 			autoEvidence := a.maybeVerify(ctx, ev, userText, res.FilesChanged, verificationCurrent, completionEvidenceRequired, state, gate)
-			if err := a.checkTaskRun(nil); err != nil {
+			if err := a.checkTaskRun(ctx); err != nil {
 				res.Task = a.TaskSnapshot()
 				return msgs, res, errors.Join(autoEvidence.err, err)
 			}
@@ -888,7 +921,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 					res.Verified = refreshed
 				}
 			}
-			if err := a.checkTaskRun(nil); err != nil {
+			if err := a.checkTaskRun(ctx); err != nil {
 				res.Task = a.TaskSnapshot()
 				return msgs, res, err
 			}
@@ -948,7 +981,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
 				res.GoalDone = completionMarker && res.Completion.Ready
 			}
-			if err := a.checkTaskRun(nil); err != nil {
+			if err := a.checkTaskRun(ctx); err != nil {
 				res.Task = a.TaskSnapshot()
 				return msgs, res, err
 			}
@@ -994,6 +1027,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			res.Task = a.TaskSnapshot()
 			_ = traceLog.Append("turn_end", "", text, trace.Bool(true), 0)
 			msgs = stripDurableInternal(msgs)
+			if err := a.checkTaskRun(ctx); err != nil {
+				res.Task = a.TaskSnapshot()
+				return msgs, res, err
+			}
 			final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 			res.Context = stats
 			return final, res, nil
@@ -1017,7 +1054,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		var pending []executed
 
 		for _, call := range msg.ToolCalls {
-			if err := a.checkTaskRun(nil); err != nil {
+			if err := a.checkTaskRun(ctx); err != nil {
 				res.Task = a.TaskSnapshot()
 				return msgs, res, err
 			}
@@ -1054,7 +1091,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			req := tool.Permission(call.Arguments, regCtx)
 			req.Hint = perm.EnrichHint(req, call.Arguments)
 			dec, prompted, err := gate.CheckWithProvenance(ctx, req)
-			if authorityErr := a.checkTaskRun(nil); authorityErr != nil {
+			if authorityErr := a.checkTaskRun(ctx); authorityErr != nil {
 				res.Task = a.TaskSnapshot()
 				return msgs, res, errors.Join(err, authorityErr)
 			}
@@ -1103,7 +1140,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		}
 
 		for i := range pending {
-			if err := a.checkTaskRun(nil); err != nil {
+			if err := a.checkTaskRun(ctx); err != nil {
 				res.FilesChanged = sortedChanged(changed)
 				res.Task = a.TaskSnapshot()
 				return msgs, res, err
@@ -1167,7 +1204,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				}
 			}
 			ev.OnToolEnd(call, outText, runErr)
-			if authorityErr := a.checkTaskRun(nil); authorityErr != nil {
+			if authorityErr := a.checkTaskRun(ctx); authorityErr != nil {
 				res.FilesChanged = sortedChanged(changed)
 				res.Task = a.TaskSnapshot()
 				return msgs, res, errors.Join(runErr, authorityErr)
@@ -1255,7 +1292,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
 		}
 		for _, path := range contentConflictPaths {
-			if err := a.checkTaskRun(nil); err != nil {
+			if err := a.checkTaskRun(ctx); err != nil {
 				res.Task = a.TaskSnapshot()
 				return msgs, res, err
 			}
@@ -1283,6 +1320,11 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			lastToolKind = classifyToolKind(pending[len(pending)-1].call.Name)
 		}
 		// TokenTamer every round — don't wait for message count / budget critical.
+		if err := a.checkTaskRun(ctx); err != nil {
+			res.FilesChanged = sortedChanged(changed)
+			res.Task = a.TaskSnapshot()
+			return msgs, res, err
+		}
 		compactMsgs, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 		msgs = compactMsgs
 		res.Context = stats
@@ -1297,6 +1339,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	err = turnCloseFailure(err)
 	ev.OnError(err)
 	msgs = stripDurableInternal(msgs)
+	if authorityErr := a.checkTaskRun(ctx); authorityErr != nil {
+		res.Task = a.TaskSnapshot()
+		return msgs, res, errors.Join(err, authorityErr)
+	}
 	final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 	res.Context = stats
 	return final, res, err
@@ -1337,7 +1383,7 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	if prompted && err == nil {
 		a.noteTaskPermission(req, dec, ev)
 	}
-	if authorityErr := a.checkTaskRun(nil); authorityErr != nil {
+	if authorityErr := a.checkTaskRun(ctx); authorityErr != nil {
 		return verificationEvidence{err: errors.Join(err, authorityErr), observationReason: "turn authority changed before verification"}
 	}
 	if err != nil || dec == perm.Deny {
