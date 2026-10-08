@@ -198,6 +198,7 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	a.task = nil
 	a.taskLoadErr = nil
 	if a.TaskSession == "" {
+		a.undoReattachRequired = false
 		return nil
 	}
 	if strings.TrimSpace(workspaceRoot) == "" {

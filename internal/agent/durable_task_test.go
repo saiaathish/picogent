@@ -297,6 +297,48 @@ func TestSetTaskSessionWithoutWorkspaceAllowsStoreReattachment(t *testing.T) {
 	}
 }
 
+func TestDetachedTaskSessionAllowsFreshProcessLocalUndo(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		toolResponse("write", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("detached-undo-session"); err != nil {
+		t.Fatal(err)
+	}
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession(""); err != nil {
+		t.Fatalf("detach task session after store replacement: %v", err)
+	}
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UndoAvailable || !a.UndoAvailable() {
+		t.Fatalf("fresh process-local undo was unavailable after detaching: %+v", result)
+	}
+	message, err := a.UndoLastTurn()
+	if err != nil || !strings.Contains(message, "restored note.txt") {
+		t.Fatalf("process-local undo after detach = (%q, %v)", message, err)
+	}
+	assertFreshUndoFileContent(t, path, "before\n")
+}
+
 func TestEmptyNoWorkspaceReattachmentAllowsUndoAfterWorkspaceReturns(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "note.txt")
