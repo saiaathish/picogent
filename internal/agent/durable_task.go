@@ -839,7 +839,10 @@ func (a *Agent) persistTaskCandidateWithRetryLocked(candidate *taskstate.Task, m
 		if !errors.Is(err, taskstate.ErrRevisionConflict) || attempt == maxTaskMutationAttempts-1 {
 			return nil, err
 		}
-		current, loadErr := a.TaskStore.Load(candidate.SessionID)
+		// Load normalizes legacy completion and persists that recovery. Read an
+		// ownership-only snapshot first so a concurrent replacement is rejected
+		// before any normalization write can touch its record.
+		current, loadErr := a.TaskStore.OwnershipSnapshot(candidate.SessionID)
 		if loadErr != nil {
 			return nil, errors.Join(err, fmt.Errorf("reload durable task after revision conflict: %w", loadErr))
 		}
@@ -848,6 +851,10 @@ func (a *Agent) persistTaskCandidateWithRetryLocked(candidate *taskstate.Task, m
 			// this old turn must continue to fail rather than acquire its owner.
 			return nil, errors.Join(err, errTaskOwnershipChanged)
 		}
+		// Normalize in memory only after ownership is confirmed. The retry's
+		// compare-and-save below persists this along with the mutation, so a
+		// replacement arriving after the snapshot still cannot be rewritten.
+		current.NormalizeLegacyCompletion()
 		a.task = current
 		candidate = cloneTask(current)
 		if err := mutate(candidate); err != nil {

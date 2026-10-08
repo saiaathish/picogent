@@ -1,6 +1,9 @@
 package agent
 
 import (
+	"encoding/json"
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -41,6 +44,62 @@ func TestRepeatedVerificationFailureRequiresDifferentRepairRoute(t *testing.T) {
 	a.task.Verification[1].Summary = "verify FAIL command not found: gofmt"
 	if a.repeatedVerificationFailure() {
 		t.Fatal("different failure fingerprints were treated as repeated")
+	}
+}
+
+func TestTaskMutationRetryPreservesReplacementLegacyCompletion(t *testing.T) {
+	const sessionID = "mutation-retry-replacement-owner"
+	store := taskstate.NewStore(t.TempDir())
+	original, err := taskstate.New(sessionID, "original task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(original); err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{TaskStore: store, TaskSession: sessionID, task: cloneTask(original)}
+	owner := taskOwner(original)
+	candidate := cloneTask(original)
+	mutate := func(task *taskstate.Task) error {
+		task.NoteAttempt()
+		return nil
+	}
+	if err := mutate(candidate); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement, err := taskstate.New(sessionID, "replacement task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.Status = taskstate.StatusDone // an untrusted legacy terminal marker
+	replacement.Revision = original.Revision + 1
+	replacementBytes, err := json.Marshal(replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordPath, err := store.Path(sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(recordPath, replacementBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	a.taskMu.Lock()
+	_, err = a.persistTaskCandidateWithRetryLocked(candidate, mutate, func(current *taskstate.Task) bool {
+		return taskOwner(current) == owner
+	})
+	a.taskMu.Unlock()
+	if !errors.Is(err, errTaskOwnershipChanged) {
+		t.Fatalf("replacement task mutation = %v, want ownership refusal", err)
+	}
+	gotBytes, err := os.ReadFile(recordPath)
+	if err != nil || string(gotBytes) != string(replacementBytes) {
+		t.Fatalf("rejected replacement was normalized or rewritten: err=%v", err)
+	}
+	if got := a.task; got == nil || got.ID != original.ID || got.Revision != original.Revision {
+		t.Fatalf("rejected mutation adopted replacement in memory: %#v", got)
 	}
 }
 
