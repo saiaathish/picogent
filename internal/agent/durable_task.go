@@ -205,17 +205,18 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 		if a.TaskStore != nil {
 			task, err := a.TaskStore.OwnershipSnapshot(a.TaskSession)
 			if errors.Is(err, taskstate.ErrNotFound) {
-				return nil
-			}
-			if err != nil {
+				task = nil
+			} else if err != nil {
 				a.taskLoadErr = err
 				return fmt.Errorf("inspect durable task for session attachment: %w", err)
 			}
-			if err := prepareTaskForAttachment(workspaceRoot, a.TaskStore, task); err != nil {
-				a.taskLoadErr = err
-				return err
+			if task != nil {
+				if err := prepareTaskForAttachment(workspaceRoot, a.TaskStore, task); err != nil {
+					a.taskLoadErr = err
+					return err
+				}
+				a.task = task
 			}
-			a.task = task
 		}
 		if requireReattachment {
 			a.undoReattachRequired = false
@@ -223,7 +224,7 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 		return nil
 	}
 	finishAttachment := func() error {
-		if a.undoLoadErr != nil {
+		if a.undoLoadErr != nil && !errors.Is(a.undoLoadErr, errLegacyUndoJournal) {
 			if requireReattachment {
 				return fmt.Errorf("validate undo recovery during session reattachment: %w", a.undoLoadErr)
 			}
@@ -249,7 +250,7 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	task, err := a.TaskStore.OwnershipSnapshot(a.TaskSession)
 	if errors.Is(err, taskstate.ErrNotFound) {
 		loadUndo(nil)
-		if a.undoLoadErr != nil {
+		if a.undoLoadErr != nil && !errors.Is(a.undoLoadErr, errLegacyUndoJournal) {
 			a.taskLoadErr = a.undoLoadErr
 		}
 		return finishAttachment()
@@ -262,7 +263,7 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	// legacy normalization, proof revalidation, or interrupted-turn recovery
 	// can write a replacement task record.
 	loadUndo(task)
-	if a.undoLoadErr != nil {
+	if a.undoLoadErr != nil && !errors.Is(a.undoLoadErr, errLegacyUndoJournal) {
 		a.taskLoadErr = a.undoLoadErr
 		return finishAttachment()
 	}

@@ -403,6 +403,35 @@ func TestLegacyUndoJournalParsesButCannotRecoverWithoutOwner(t *testing.T) {
 	if loaded, err := loadLatestDurableUndo(root, sessionID, 1); err == nil || loaded != nil || !strings.Contains(err.Error(), "owner identity") {
 		t.Fatalf("legacy journal recovery = (%#v, %v)", loaded, err)
 	}
+	store := taskstate.NewStore(t.TempDir())
+	task, err := taskstate.New(sessionID, "continue the existing task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(task); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = root
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	a := New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: root}), perm.New(config.ModeFast, root, nil))
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatalf("legacy undo journal blocked task attachment: %v", err)
+	}
+	if attached := a.TaskSnapshot(); attached == nil || attached.ID != task.ID {
+		t.Fatalf("attached task = %#v, want %#v", attached, task)
+	}
+	if a.UndoAvailable() {
+		t.Fatal("legacy journal was advertised as recoverable")
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "owner identity") {
+		t.Fatalf("legacy undo attempt = %v, want an owner-identity refusal", err)
+	}
 	assertUndoFileContent(t, path, "after\n")
 	journalAfter, err := os.ReadFile(journalPath)
 	if err != nil || !reflect.DeepEqual(data, journalAfter) {

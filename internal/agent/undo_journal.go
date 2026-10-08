@@ -23,6 +23,8 @@ const (
 	undoJournalMaxBytes      = 12 << 20
 )
 
+var errLegacyUndoJournal = errors.New("legacy undo journal lacks task owner identity")
+
 // undoJournal is deliberately separate from task state. Task revisions
 // describe outcome progress; this record owns the native-file bytes needed for
 // one latest-turn undo and survives a process restart.
@@ -228,7 +230,7 @@ func loadLatestDurableUndo(workspace, sessionID string, generation uint64, autho
 	pending, pendingErr := loadUndoJournal(workspace, sessionID, true)
 	if pendingErr == nil {
 		if pending.Version == undoJournalLegacyVersion || strings.TrimSpace(pending.TaskID) == "" {
-			return nil, errors.New("legacy undo journal lacks task owner identity")
+			return nil, errLegacyUndoJournal
 		}
 		if pending.State != undoJournalPending && pending.State != undoJournalRestored {
 			return nil, fmt.Errorf("pending undo journal has invalid state %q", pending.State)
@@ -278,7 +280,7 @@ func loadLatestDurableUndo(workspace, sessionID string, generation uint64, autho
 		return nil, sealedErr
 	}
 	if sealed.Version == undoJournalLegacyVersion || strings.TrimSpace(sealed.TaskID) == "" {
-		return nil, errors.New("legacy undo journal lacks task owner identity")
+		return nil, errLegacyUndoJournal
 	}
 	if sealed.State != undoJournalSealed && sealed.State != undoJournalRestored {
 		return nil, fmt.Errorf("sealed undo journal has invalid state %q", sealed.State)

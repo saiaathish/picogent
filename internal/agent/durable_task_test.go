@@ -297,6 +297,67 @@ func TestSetTaskSessionWithoutWorkspaceAllowsStoreReattachment(t *testing.T) {
 	}
 }
 
+func TestEmptyNoWorkspaceReattachmentAllowsUndoAfterWorkspaceReturns(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "empty-no-workspace-reattach"
+	storeA := taskstate.NewStore(t.TempDir())
+	oldTask, err := taskstate.New(sessionID, "old task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := oldTask.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeA.Save(oldTask); err != nil {
+		t.Fatal(err)
+	}
+	storeB := taskstate.NewStore(t.TempDir())
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = ""
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		toolResponse("write", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{}), perm.New(config.ModeFast, "", nil))
+	a.SetTaskStore(storeA)
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	a.SetTaskStore(storeB)
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatalf("reattach empty replacement store without workspace: %v", err)
+	}
+	if got := a.TaskSnapshot(); got != nil {
+		t.Fatalf("empty replacement store attached stale task %#v", got)
+	}
+	a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = workspace })
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UndoAvailable || !a.UndoAvailable() {
+		t.Fatalf("new workspace write did not publish usable undo: %+v", result)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "after\n" {
+		t.Fatalf("write result = %q, err=%v", got, err)
+	}
+	message, err := a.UndoLastTurn()
+	if err != nil || !strings.Contains(message, "restored note.txt") {
+		t.Fatalf("undo after empty-store reattachment = (%q, %v)", message, err)
+	}
+	assertFreshUndoFileContent(t, path, "before\n")
+}
+
 func newAgentWithoutWorkspace(store *taskstate.Store) *agent.Agent {
 	cfg := config.Default()
 	cfg.Workspace = ""
