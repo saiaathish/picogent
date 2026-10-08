@@ -214,6 +214,10 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 				a.taskLoadErr = err
 				return fmt.Errorf("inspect durable task for session attachment: %w", err)
 			}
+			if err := prepareTaskForAttachment(workspaceRoot, a.TaskStore, task); err != nil {
+				a.taskLoadErr = err
+				return err
+			}
 			a.task = task
 		}
 		return nil
@@ -262,28 +266,41 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 		a.taskLoadErr = a.undoLoadErr
 		return finishAttachment()
 	}
-	changed := task.NormalizeLegacyCompletion()
-	revalidated, revalidateErr := revalidatePersistedTask(workspaceRoot, task)
-	if revalidateErr != nil {
-		a.taskLoadErr = revalidateErr
-		return revalidateErr
-	}
-	changed = changed || revalidated
-	// A task with an active turn was left behind by a process that did not
-	// reach its close point. The project run lock makes this attachment
-	// boundary exclusive, so record the stale attempt before publishing it.
-	if task.RecoverActiveTurn() {
-		changed = true
-	}
-	if changed {
-		if err := a.TaskStore.Save(task); err != nil {
-			recoverErr := fmt.Errorf("persist recovered durable task: %w", err)
-			a.taskLoadErr = recoverErr
-			return recoverErr
-		}
+	if err := prepareTaskForAttachment(workspaceRoot, a.TaskStore, task); err != nil {
+		a.taskLoadErr = err
+		return err
 	}
 	a.task = task
 	return finishAttachment()
+}
+
+// prepareTaskForAttachment restores persisted task trust before the snapshot
+// becomes agent state. An empty workspace fails proof revalidation closed.
+func prepareTaskForAttachment(workspaceRoot string, store *taskstate.Store, task *taskstate.Task) error {
+	if task == nil {
+		return nil
+	}
+	changed := task.NormalizeLegacyCompletion()
+	revalidated, err := revalidatePersistedTask(workspaceRoot, task)
+	if err != nil {
+		return err
+	}
+	changed = changed || revalidated
+	// A task with an active turn was left behind by a process that did not
+	// reach its close point. Record the stale attempt before publishing it.
+	if task.RecoverActiveTurn() {
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if store == nil {
+		return errors.New("persist recovered durable task: task store is unavailable")
+	}
+	if err := store.Save(task); err != nil {
+		return fmt.Errorf("persist recovered durable task: %w", err)
+	}
+	return nil
 }
 
 func (a *Agent) taskSessionSnapshot() (string, uint64) {
@@ -655,7 +672,9 @@ func revalidateTaskProof(ctx context.Context, root string, task *taskstate.Task)
 		return false, nil
 	}
 	reason := "persisted verification has no complete PASS status"
-	if verificationStatus(latest.Summary) == "PASS" {
+	if strings.TrimSpace(root) == "" {
+		reason = "configured workspace is unavailable for persisted proof revalidation"
+	} else if verificationStatus(latest.Summary) == "PASS" {
 		evidence := verificationEvidence{
 			output:            latest.Summary,
 			targets:           observationPaths(latest.Observation),

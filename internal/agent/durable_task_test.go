@@ -160,6 +160,129 @@ func TestDurableTaskLoadFailureIsSurfaced(t *testing.T) {
 	}
 }
 
+func TestSetTaskSessionWithoutWorkspaceNormalizesLegacyCompletion(t *testing.T) {
+	store := taskstate.NewStore(t.TempDir())
+	task, err := taskstate.New("no-workspace-legacy-done", "finish the task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Status = taskstate.StatusDone
+	writeRawDurableTask(t, store, task)
+
+	a := newAgentWithoutWorkspace(store)
+	if err := a.SetTaskSession(task.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	assertNoWorkspaceTaskStatus(t, a, store, task.SessionID, taskstate.StatusWorking)
+}
+
+func TestSetTaskSessionWithoutWorkspaceInvalidatesPersistedProof(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "fixed.txt"), []byte("verified\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	observation, err := workspacepkg.Capture(t.Context(), workspace, []string{"fixed.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := taskstate.New("no-workspace-stale-proof", "finish the task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := task.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok {
+		t.Fatal("task turn did not start")
+	}
+	task.RecordChanged("fixed.txt")
+	if !task.FinishTurn(sequence, taskstate.TurnRouteImplement, "verify the file", "PASS", taskstate.StopNone, 1, 1) {
+		t.Fatal("task turn did not finish")
+	}
+	task.AddVerificationWithObservation("verify fixed.txt", true, "verify PASS\n1 passed", &observation)
+	if err := task.SetStatus(taskstate.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(t.TempDir())
+	writeRawDurableTask(t, store, task)
+
+	a := newAgentWithoutWorkspace(store)
+	if err := a.SetTaskSession(task.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	got := assertNoWorkspaceTaskStatus(t, a, store, task.SessionID, taskstate.StatusVerifying)
+	latest := got.Verification[len(got.Verification)-1]
+	if latest.Passed || !strings.HasPrefix(latest.Summary, "verify INCONCLUSIVE") || !strings.Contains(latest.Summary, "configured workspace is unavailable") {
+		t.Fatalf("workspace proof stayed active without a configured workspace: %#v", latest)
+	}
+}
+
+func TestSetTaskSessionWithoutWorkspaceRecoversInterruptedTurn(t *testing.T) {
+	task, err := taskstate.New("no-workspace-interrupted-turn", "finish the task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := task.BeginTurn(taskstate.TurnRouteImplement); !ok {
+		t.Fatal("task turn did not start")
+	}
+	store := taskstate.NewStore(t.TempDir())
+	writeRawDurableTask(t, store, task)
+
+	a := newAgentWithoutWorkspace(store)
+	if err := a.SetTaskSession(task.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	got := assertNoWorkspaceTaskStatus(t, a, store, task.SessionID, taskstate.StatusWorking)
+	if last := got.LastTurn(); last == nil || last.State != taskstate.TurnInterrupted || last.StopReason != taskstate.StopProcessRestart {
+		t.Fatalf("interrupted task turn = %#v", last)
+	}
+}
+
+func newAgentWithoutWorkspace(store *taskstate.Store) *agent.Agent {
+	cfg := config.Default()
+	cfg.Workspace = ""
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{}), perm.New(config.ModeFast, "", nil))
+	a.SetTaskStore(store)
+	return a
+}
+
+func writeRawDurableTask(t *testing.T, store *taskstate.Store, task *taskstate.Task) {
+	t.Helper()
+	data, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.Path(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertNoWorkspaceTaskStatus(t *testing.T, a *agent.Agent, store *taskstate.Store, sessionID string, want taskstate.Status) *taskstate.Task {
+	t.Helper()
+	got := a.TaskSnapshot()
+	if got == nil || got.Status != want {
+		t.Fatalf("attached task = %#v, want status %q", got, want)
+	}
+	persisted, err := store.OwnershipSnapshot(sessionID)
+	if err != nil || persisted == nil || persisted.Status != want {
+		t.Fatalf("persisted task = %#v, err=%v, want status %q", persisted, err, want)
+	}
+	return got
+}
+
 func TestDurableTaskLoadFailureStopsBeforeProvider(t *testing.T) {
 	workspace := t.TempDir()
 	store := taskstate.NewStore(t.TempDir())
