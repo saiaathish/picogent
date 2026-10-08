@@ -297,7 +297,8 @@ func (a *Agent) beginDurableTaskInState(prompt string, ev EventHandler, fallback
 		return true, err
 	}
 	var candidate *taskstate.Task
-	if a.task == nil || (!replacing && a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification()) {
+	newTask := a.task == nil || (!replacing && a.task.Status == taskstate.StatusDone && !a.task.NeedsVerification())
+	if newTask {
 		task, ok, err := taskstate.NewFromPrompt(a.TaskSession, admissionPrompt)
 		if err != nil {
 			a.taskMu.Unlock()
@@ -327,9 +328,26 @@ func (a *Agent) beginDurableTaskInState(prompt string, ev EventHandler, fallback
 			}
 		}
 		candidate = task
+		if a.task != nil {
+			if a.task.IntentRevision == ^uint64(0) || a.task.TurnRevision == ^uint64(0) {
+				a.taskMu.Unlock()
+				err := errors.New("successor task ownership revision exhausted")
+				a.reportTaskUpdateError(ev, err)
+				return true, err
+			}
+			// A successor replaces the session's previous task, not an absent
+			// revision-zero record. Keep its new identity and empty proof while
+			// comparing against the completed owner's persisted generation.
+			candidate.Revision = a.task.Revision
+			// Older completion/undo consumers also bind to turn sequences.
+			// Do not reuse those counters when the task identity changes.
+			candidate.IntentRevision = a.task.IntentRevision + 1
+			candidate.TurnRevision = a.task.TurnRevision
+		}
 	} else {
 		candidate = cloneTask(a.task)
 	}
+	owner := taskOwner(candidate)
 	expectedID, expectedIntent, expectedTurn := candidate.ID, candidate.IntentRevision, candidate.TurnRevision
 	prepare := func(candidate *taskstate.Task) error {
 		// Keep the original durable outcome and definition of done stable while
@@ -375,7 +393,31 @@ func (a *Agent) beginDurableTaskInState(prompt string, ev EventHandler, fallback
 		a.reportTaskUpdateError(ev, err)
 		return true, err
 	}
-	snapshot, err := a.persistTaskCandidateWithRetryLocked(candidate, prepare, nil)
+	var snapshot *taskstate.Task
+	var err error
+	if newTask {
+		// Never rebase a fresh/successor task into whatever contract now
+		// occupies the session. A conflict requires a fresh admission.
+		snapshot, err = a.persistTaskCandidateLocked(candidate)
+	} else {
+		snapshot, err = a.persistTaskCandidateWithRetryLocked(candidate, prepare, func(current *taskstate.Task) bool {
+			if replacing {
+				return taskOwner(current) == owner
+			}
+			// Admission precedes this run's own turn. Cooperative processes can
+			// finish earlier turns while this request waits for the run lock.
+			// Merge that closed-turn progress, never a changed outcome or a
+			// different active turn. In-flight callbacks use the stricter tuple.
+			if current.ID != owner.taskID || current.SessionID != owner.sessionID || current.IntentRevision != owner.intent {
+				return false
+			}
+			if current.TurnRevision != owner.turn {
+				last := current.LastTurn()
+				return last != nil && last.State != taskstate.TurnActive
+			}
+			return true
+		})
+	}
 	if err != nil {
 		a.taskMu.Unlock()
 		a.reportTaskPersistenceError(ev, err)
@@ -745,16 +787,16 @@ func (a *Agent) mutateTaskResultBound(mutate func(*taskstate.Task) error, bindOw
 	if a.task == nil || a.TaskStore == nil {
 		return nil, nil
 	}
-	var owner *taskMutationOwner
+	var owns func(*taskstate.Task) bool
 	if bindOwnership {
 		captured := taskOwner(a.task)
-		owner = &captured
+		owns = func(current *taskstate.Task) bool { return taskOwner(current) == captured }
 	}
 	candidate := cloneTask(a.task)
 	if err := mutate(candidate); err != nil {
 		return nil, err
 	}
-	snapshot, err := a.persistTaskCandidateWithRetryLocked(candidate, mutate, owner)
+	snapshot, err := a.persistTaskCandidateWithRetryLocked(candidate, mutate, owns)
 	if err != nil {
 		return nil, &taskPersistenceError{err: err}
 	}
@@ -766,7 +808,7 @@ func (a *Agent) mutateTaskResultBound(mutate func(*taskstate.Task) error, bindOw
 // the current durable task and replays the candidate mutation before trying
 // again, provided the captured intermediate owner still matches. The caller
 // must hold taskMu; mutate must only change its argument.
-func (a *Agent) persistTaskCandidateWithRetryLocked(candidate *taskstate.Task, mutate func(*taskstate.Task) error, owner *taskMutationOwner) (*taskstate.Task, error) {
+func (a *Agent) persistTaskCandidateWithRetryLocked(candidate *taskstate.Task, mutate func(*taskstate.Task) error, owns func(*taskstate.Task) bool) (*taskstate.Task, error) {
 	if candidate == nil || mutate == nil {
 		return nil, errors.New("durable task mutation is not configured")
 	}
@@ -782,7 +824,7 @@ func (a *Agent) persistTaskCandidateWithRetryLocked(candidate *taskstate.Task, m
 		if loadErr != nil {
 			return nil, errors.Join(err, fmt.Errorf("reload durable task after revision conflict: %w", loadErr))
 		}
-		if owner != nil && taskOwner(current) != *owner {
+		if owns != nil && !owns(current) {
 			// Do not adopt the replacement into memory. Later callbacks from
 			// this old turn must continue to fail rather than acquire its owner.
 			return nil, errors.Join(err, errTaskOwnershipChanged)
