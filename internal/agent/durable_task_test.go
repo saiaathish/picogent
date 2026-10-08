@@ -314,6 +314,8 @@ func TestDetachedTaskSessionAllowsFreshProcessLocalUndo(t *testing.T) {
 	fake := &llm.Scripted{Responses: []llm.ChatResponse{
 		toolResponse("write", "write_file", json.RawMessage(args)),
 		{Message: llm.Message{Role: "assistant", Content: "done"}},
+		toolResponse("write-again", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
 	}}
 	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
 	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
@@ -337,6 +339,22 @@ func TestDetachedTaskSessionAllowsFreshProcessLocalUndo(t *testing.T) {
 		t.Fatalf("process-local undo after detach = (%q, %v)", message, err)
 	}
 	assertFreshUndoFileContent(t, path, "before\n")
+
+	_, result, err = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt again"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UndoAvailable || !a.UndoAvailable() {
+		t.Fatalf("second process-local undo was unavailable: %+v", result)
+	}
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if a.UndoAvailable() {
+		t.Fatal("store replacement retained process-local undo from the prior authority")
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "process-local") || strings.Contains(err.Error(), "reattach") {
+		t.Fatalf("undo after detached store replacement = %v, want an explicit process-local authority refusal", err)
+	}
+	assertFreshUndoFileContent(t, path, "after\n")
 }
 
 func TestEmptyNoWorkspaceReattachmentAllowsUndoAfterWorkspaceReturns(t *testing.T) {

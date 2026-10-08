@@ -334,6 +334,9 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		return "", fmt.Errorf("undo authority changed while acquiring its lock: %w", err)
 	}
 	if a.latestUndo != nil && !a.undoBelongsToCurrentSession(a.latestUndo) {
+		if a.latestUndo.sessionID == "" {
+			return "", errors.New("cached process-local undo no longer matches the current session, workspace, or task-store authority")
+		}
 		return "", errors.New("cached undo belongs to a previous task store authority; reattach the session to recover it")
 	}
 	if a.latestUndo == nil {
