@@ -98,6 +98,29 @@ func TestTaskMutationRetryPreservesReplacementLegacyCompletion(t *testing.T) {
 	if err != nil || string(gotBytes) != string(replacementBytes) {
 		t.Fatalf("rejected replacement was normalized or rewritten: err=%v", err)
 	}
+	// The generic mutator supplies a record-owner fence by default, while its
+	// mutation retains any intent/turn checks needed for supersession.
+	_, err = a.mutateTaskResult(mutate)
+	if !errors.Is(err, errTaskOwnershipChanged) {
+		t.Fatalf("replacement task mutation without a turn binding = %v, want ownership refusal", err)
+	}
+	gotBytes, err = os.ReadFile(recordPath)
+	if err != nil || string(gotBytes) != string(replacementBytes) {
+		t.Fatalf("generic replacement was normalized or rewritten: err=%v", err)
+	}
+
+	// The low-level helper also refuses to retry when a caller supplies no
+	// ownership predicate at all.
+	a.taskMu.Lock()
+	_, err = a.persistTaskCandidateWithRetryLocked(candidate, mutate, nil)
+	a.taskMu.Unlock()
+	if !errors.Is(err, errTaskOwnershipChanged) {
+		t.Fatalf("replacement task mutation without an explicit owner = %v, want ownership refusal", err)
+	}
+	gotBytes, err = os.ReadFile(recordPath)
+	if err != nil || string(gotBytes) != string(replacementBytes) {
+		t.Fatalf("replacement without explicit owner was normalized or rewritten: err=%v", err)
+	}
 	if got := a.task; got == nil || got.ID != original.ID || got.Revision != original.Revision {
 		t.Fatalf("rejected mutation adopted replacement in memory: %#v", got)
 	}
