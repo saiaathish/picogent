@@ -113,6 +113,50 @@ func TestReplacementRetiresOldWorkspaceGoalAfterRestart(t *testing.T) {
 	}
 }
 
+func TestReplacementRetirementRejectsTaskStoreRebind(t *testing.T) {
+	for _, boundary := range []string{"before claim", "after claim"} {
+		t.Run(boundary, func(t *testing.T) {
+			a, store, cfg := replacementFixture(t)
+			const old = "finish the original backend outcome"
+			revision, err := goal.SetState(cfg.Workspace, old)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a.SetGoalState(old, revision)
+			if failed, err := a.beginDurableTask("replace the current goal with document the API", NopHandler{}); failed || err != nil {
+				t.Fatal(err)
+			}
+			pending := a.TaskSnapshot().ReplacedWorkspaceGoal
+			if pending == nil {
+				t.Fatal("replacement did not persist the retirement marker")
+			}
+			wantPending := *pending
+			replacement := taskstate.NewStore(t.TempDir())
+			client := &llm.Scripted{}
+			a.SetClient(client)
+			rebind := func() { a.SetTaskStore(replacement) }
+			opts := RunOptions{}
+			if boundary == "before claim" {
+				opts.beforeTaskRunClaim = rebind
+			} else {
+				opts.afterTaskRunClaim = rebind
+			}
+			_, _, runErr := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "continue"}, NopHandler{}, opts)
+			if runErr == nil || !strings.Contains(runErr.Error(), "ownership changed") || len(client.Calls) != 0 {
+				t.Fatalf("rebound run was not rejected before provider dispatch: calls=%d err=%v", len(client.Calls), runErr)
+			}
+			state, err := goal.LoadState(cfg.Workspace)
+			if err != nil || state.Text != old || state.Revision != revision {
+				t.Fatalf("rebound run retired the workspace goal: %+v %v", state, err)
+			}
+			persisted, err := store.Load("replacement-session")
+			if err != nil || persisted.ReplacedWorkspaceGoal == nil || *persisted.ReplacedWorkspaceGoal != wantPending {
+				t.Fatalf("rebound run lost the retryable retirement marker: %+v %v", persisted, err)
+			}
+		})
+	}
+}
+
 func TestReplacementCannotRetireSameTextNewerGoal(t *testing.T) {
 	for _, memoryNewer := range []bool{false, true} {
 		t.Run(map[bool]string{false: "persisted", true: "runtime"}[memoryNewer], func(t *testing.T) {

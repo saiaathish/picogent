@@ -391,6 +391,8 @@ func systemPromptFor(state RuntimeState, userHint, taskSuffix, scopeBoundary str
 type RunOptions struct {
 	beforeProjectRunLock func() // deterministic stale-admission regression seam
 	afterProjectRunLock  func() // deterministic lock/authority regression seam
+	beforeTaskRunClaim   func() // deterministic authority-rebind regression seam
+	afterTaskRunClaim    func() // deterministic claimed-run regression seam
 	TaskMode             *TaskMode
 	TracePrompt          string
 	DurablePrompt        string
@@ -511,29 +513,14 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	if durablePrompt == "" {
 		durablePrompt = userText
 	}
-	// Finish a previous save-before-retire crash window before task admission
-	// can recreate a terminal task or otherwise lose its pending retirement.
-	admittedGoal, admittedRevision, err := a.reconcileReplacedWorkspaceGoal(cfg.Workspace, state.Goal, state.GoalRevision)
-	if errors.Is(err, errReplacedGoalConflict) {
-		// Only a validated explicit replacement may rebind the contract that
-		// conflicts with this goal. Ordinary retries retain the conflict marker
-		// and cannot use unrelated task proof to retire the newer goal.
-		_, replacing := taskstate.ExplicitReplacement(durablePrompt)
-		currentGoal, currentRevision := a.GoalStateSnapshot()
-		if replacing && currentGoal == state.Goal && currentRevision == state.GoalRevision {
-			admittedGoal, admittedRevision, err = state.Goal, state.GoalRevision, nil
-		}
-	}
-	if err != nil {
-		ev.OnError(err)
-		return history, Result{Task: a.TaskSnapshot()}, err
-	}
-	state.Goal, state.GoalRevision = admittedGoal, admittedRevision
 	nativeOwner := lockOwner
 	// Freeze the locked substrate, but admit task progress only after waiting:
 	// an earlier cooperative turn may have closed while this request queued.
 	nativeOwner.owner = nil
 	nativeOwner = nativeOwner.withAdmittedTask(a.TaskSnapshot())
+	if opts.beforeTaskRunClaim != nil {
+		opts.beforeTaskRunClaim()
+	}
 	runCtx, err := a.claimTaskRun(ctx, nativeOwner)
 	if err != nil {
 		return history, Result{Task: a.TaskSnapshot()}, err
@@ -566,6 +553,27 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			ev.OnError(err)
 		}
 	}()
+	if opts.afterTaskRunClaim != nil {
+		opts.afterTaskRunClaim()
+	}
+	// Finish a previous save-before-retire crash window only after this run has
+	// claimed task authority. The goal clear is fenced against task-store rebinding.
+	admittedGoal, admittedRevision, err := a.reconcileReplacedWorkspaceGoalForRun(ctx, cfg.Workspace, state.Goal, state.GoalRevision)
+	if errors.Is(err, errReplacedGoalConflict) {
+		// Only a validated explicit replacement may rebind the contract that
+		// conflicts with this goal. Ordinary retries retain the conflict marker
+		// and cannot use unrelated task proof to retire the newer goal.
+		_, replacing := taskstate.ExplicitReplacement(durablePrompt)
+		currentGoal, currentRevision := a.GoalStateSnapshot()
+		if replacing && currentGoal == state.Goal && currentRevision == state.GoalRevision {
+			admittedGoal, admittedRevision, err = state.Goal, state.GoalRevision, nil
+		}
+	}
+	if err != nil {
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
+	}
+	state.Goal, state.GoalRevision = admittedGoal, admittedRevision
 	admission := &nativeAdmissionEvents{EventHandler: ev}
 	if failed, taskErr := a.beginDurableTaskInState(durablePrompt, admission, false, state); failed {
 		if taskErr == nil {
@@ -580,7 +588,7 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		ev.OnError(err)
 		return history, Result{Task: a.TaskSnapshot()}, err
 	}
-	admittedGoal, admittedRevision, err = a.reconcileReplacedWorkspaceGoal(cfg.Workspace, state.Goal, state.GoalRevision)
+	admittedGoal, admittedRevision, err = a.reconcileReplacedWorkspaceGoalForRun(ctx, cfg.Workspace, state.Goal, state.GoalRevision)
 	if err != nil {
 		ev.OnError(err)
 		return history, Result{Task: a.TaskSnapshot()}, err
