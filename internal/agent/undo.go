@@ -311,8 +311,9 @@ func formatUndoRestore(result checkpoint.RestoreResult, err error) (string, bool
 // UndoLastTurn restores the latest completed turn that changed native workspace
 // files. Read-only turns do not discard the most recent undo checkpoint.
 func (a *Agent) UndoLastTurn() (string, error) {
+	workspace := a.ConfigSnapshot().Workspace
 	binding := a.nativeTaskBinding()
-	releaseRun, err := a.acquireProjectRunLockForWorkspace(a.ConfigSnapshot().Workspace, binding)
+	releaseRun, err := a.acquireProjectRunLockForWorkspace(workspace, binding)
 	if err != nil {
 		return "", fmt.Errorf("project run is unavailable: %w", err)
 	}
@@ -325,6 +326,10 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	if a.undoReattachRequired {
 		return "", errors.New("task store authority changed; explicitly reattach the session before undo recovery")
 	}
+	if strings.TrimSpace(workspace) == "" {
+		a.undoLoadErr = errors.New("undo recovery is unavailable without a configured workspace")
+		return "", fmt.Errorf("undo is unavailable: %w", a.undoLoadErr)
+	}
 	if err := a.checkTaskLockBinding(binding); err != nil {
 		return "", fmt.Errorf("undo authority changed while acquiring its lock: %w", err)
 	}
@@ -332,7 +337,6 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		return "", errors.New("cached undo belongs to a previous task store authority; reattach the session to recover it")
 	}
 	if a.latestUndo == nil {
-		workspace := a.ConfigSnapshot().Workspace
 		sessionID, generation := a.taskSessionSnapshot()
 		if sessionID != "" {
 			loaded, loadErr := loadValidatedDurableUndo(workspace, sessionID, generation, a.TaskSnapshot(), undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
@@ -345,7 +349,7 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		}
 	}
 	if a.latestUndo != nil && a.latestUndo.durable {
-		if refreshErr := a.refreshDurableUndoLocked(); refreshErr != nil {
+		if refreshErr := a.refreshDurableUndoLocked(workspace); refreshErr != nil {
 			a.undoLoadErr = refreshErr
 			return "", fmt.Errorf("undo is unavailable: %w", refreshErr)
 		}
@@ -455,11 +459,10 @@ func (a *Agent) UndoAvailable() bool {
 // held so a cached in-process checkpoint cannot restore an older turn after a
 // different process has published a newer one. The task is refreshed from the
 // store first because the cached task snapshot may be older than that journal.
-func (a *Agent) refreshDurableUndoLocked() error {
+func (a *Agent) refreshDurableUndoLocked(workspace string) error {
 	if a == nil || a.latestUndo == nil || !a.latestUndo.durable {
 		return nil
 	}
-	workspace := a.ConfigSnapshot().Workspace
 	binding := a.nativeTaskBinding()
 	sessionID, generation := binding.sessionID, binding.generation
 	if sessionID == "" {

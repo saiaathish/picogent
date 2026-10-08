@@ -202,9 +202,6 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	}
 	if strings.TrimSpace(workspaceRoot) == "" {
 		a.undoLoadErr = errors.New("undo recovery is unavailable without a configured workspace")
-		if requireReattachment {
-			return fmt.Errorf("validate undo recovery during session reattachment: %w", a.undoLoadErr)
-		}
 		if a.TaskStore != nil {
 			task, err := a.TaskStore.OwnershipSnapshot(a.TaskSession)
 			if errors.Is(err, taskstate.ErrNotFound) {
@@ -219,6 +216,9 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 				return err
 			}
 			a.task = task
+		}
+		if requireReattachment {
+			a.undoReattachRequired = false
 		}
 		return nil
 	}

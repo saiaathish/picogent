@@ -242,6 +242,61 @@ func TestSetTaskSessionWithoutWorkspaceRecoversInterruptedTurn(t *testing.T) {
 	}
 }
 
+func TestSetTaskSessionWithoutWorkspaceAllowsStoreReattachment(t *testing.T) {
+	for _, scenario := range []string{"same store", "replacement store"} {
+		t.Run(scenario, func(t *testing.T) {
+			const sessionID = "no-workspace-reattach"
+			storeA := taskstate.NewStore(t.TempDir())
+			taskA, err := taskstate.New(sessionID, "original task", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := taskA.SetStatus(taskstate.StatusWorking); err != nil {
+				t.Fatal(err)
+			}
+			if err := storeA.Save(taskA); err != nil {
+				t.Fatal(err)
+			}
+
+			storeB := storeA
+			wantID := taskA.ID
+			if scenario == "replacement store" {
+				storeB = taskstate.NewStore(t.TempDir())
+				taskB, err := taskstate.New(sessionID, "replacement task", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := taskB.SetStatus(taskstate.StatusWorking); err != nil {
+					t.Fatal(err)
+				}
+				if err := storeB.Save(taskB); err != nil {
+					t.Fatal(err)
+				}
+				wantID = taskB.ID
+			}
+
+			a := newAgentWithoutWorkspace(storeA)
+			if err := a.SetTaskSession(sessionID); err != nil {
+				t.Fatal(err)
+			}
+			a.SetTaskStore(storeB)
+			if err := a.SetTaskSession(sessionID); err != nil {
+				t.Fatalf("explicit task-store reattachment: %v", err)
+			}
+			got := assertNoWorkspaceTaskStatus(t, a, storeB, sessionID, taskstate.StatusWorking)
+			if got.ID != wantID {
+				t.Fatalf("attached task ID = %q, want replacement store owner %q", got.ID, wantID)
+			}
+			if a.UndoAvailable() {
+				t.Fatal("undo was advertised without a configured workspace")
+			}
+			if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") {
+				t.Fatalf("undo without workspace = %v, want explicit workspace error", err)
+			}
+		})
+	}
+}
+
 func newAgentWithoutWorkspace(store *taskstate.Store) *agent.Agent {
 	cfg := config.Default()
 	cfg.Workspace = ""
