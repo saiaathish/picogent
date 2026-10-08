@@ -61,6 +61,10 @@ func (a *Agent) retireWorkspaceGoal(workspace string, expected taskstate.GoalRet
 // until the old run's retirement has completed, so the two operations cannot
 // interleave.
 func (a *Agent) retireWorkspaceGoalForRun(ctx context.Context, workspace string, expected taskstate.GoalRetirement) error {
+	return a.retireWorkspaceGoalForRunWithHook(ctx, workspace, expected, nil)
+}
+
+func (a *Agent) retireWorkspaceGoalForRunWithHook(ctx context.Context, workspace string, expected taskstate.GoalRetirement, beforeClear func()) error {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -81,6 +85,9 @@ func (a *Agent) retireWorkspaceGoalForRun(ctx context.Context, workspace string,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+	}
+	if beforeClear != nil {
+		beforeClear()
 	}
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
