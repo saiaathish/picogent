@@ -26,6 +26,8 @@ type projectHealthAdmissionSnapshot struct {
 	registryWorkspace string
 	goal              string
 	goalRevision      uint64
+	store             *taskstate.Store
+	storeGeneration   uint64
 	sessionID         string
 	sessionGeneration uint64
 	registry          *tools.Registry
@@ -63,7 +65,11 @@ func (a *Agent) admitProjectHealth(ctx context.Context, prompt string, mode Task
 		registry:          state.Tools,
 		task:              a.TaskSnapshot(),
 	}
-	baseline.sessionID, baseline.sessionGeneration = a.taskSessionSnapshot()
+	binding := a.nativeTaskBinding()
+	baseline.store = binding.store
+	baseline.storeGeneration = binding.storeGeneration
+	baseline.sessionID = binding.sessionID
+	baseline.sessionGeneration = binding.generation
 
 	call := llm.ToolCall{
 		ID:        projectHealthAdmissionCallID,
@@ -76,7 +82,7 @@ func (a *Agent) admitProjectHealth(ctx context.Context, prompt string, mode Task
 	if err != nil || decision == perm.Deny {
 		return fallback()
 	}
-	if err := req.ValidateWorkspaceIdentity(); err != nil || !a.projectHealthAdmissionFresh(baseline) {
+	if ctx.Err() != nil || req.ValidateWorkspaceIdentity() != nil || !a.projectHealthAdmissionFresh(baseline) {
 		return fallback()
 	}
 
@@ -89,7 +95,7 @@ func (a *Agent) admitProjectHealth(ctx context.Context, prompt string, mode Task
 	} else {
 		output, runErr, _ = tools.RunWithEvidence(ctx, tool, call.Arguments, toolCtx)
 	}
-	if runErr != nil || req.ValidateWorkspaceIdentity() != nil || !a.projectHealthAdmissionFresh(baseline) {
+	if runErr != nil || ctx.Err() != nil || req.ValidateWorkspaceIdentity() != nil || !a.projectHealthAdmissionFresh(baseline) {
 		return fallback()
 	}
 	if focus := outcomeFocusForTool(a.TaskSnapshot(), call.Name, output); focus != "" {
@@ -112,17 +118,18 @@ func eligibleForProjectHealthAdmission(prompt string, mode TaskMode, scopeBounda
 
 func (a *Agent) projectHealthAdmissionFresh(snapshot projectHealthAdmissionSnapshot) bool {
 	current := a.RuntimeSnapshot()
+	binding := a.nativeTaskBinding()
 	if strings.TrimSpace(current.CFG.Workspace) != strings.TrimSpace(snapshot.workspace) ||
 		current.Goal != snapshot.goal ||
 		current.GoalRevision != snapshot.goalRevision ||
-		current.Tools != snapshot.registry {
+		current.Tools != snapshot.registry ||
+		binding.store != snapshot.store ||
+		binding.storeGeneration != snapshot.storeGeneration ||
+		binding.sessionID != snapshot.sessionID ||
+		binding.generation != snapshot.sessionGeneration {
 		return false
 	}
 	if current.Tools != nil && current.Tools.ContextSnapshot().Workspace != snapshot.registryWorkspace {
-		return false
-	}
-	sessionID, sessionGeneration := a.taskSessionSnapshot()
-	if sessionID != snapshot.sessionID || sessionGeneration != snapshot.sessionGeneration {
 		return false
 	}
 	return reflect.DeepEqual(snapshot.task, a.TaskSnapshot())

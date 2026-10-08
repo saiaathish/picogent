@@ -46,3 +46,16 @@ func TestSummarizeBoundsAggregateInput(t *testing.T) {
 		t.Fatalf("bounded summary body missing omission marker: %q", body)
 	}
 }
+
+func TestManageCanceledContextDoesNotStartCompactionRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	client := &summaryCaptureClient{}
+	msgs := []llm.Message{{Role: "system", Content: "system"}, {Role: "user", Content: strings.Repeat("context ", 100)}}
+	if _, _, err := Manage(ctx, client, "gpt-5.6-terra", msgs, DefaultBudget); err != context.Canceled {
+		t.Fatalf("Manage error = %v, want context canceled", err)
+	}
+	if client.request.Model != "" {
+		t.Fatal("Manage started a model-backed compaction request after cancellation")
+	}
+}

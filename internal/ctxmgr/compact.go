@@ -211,6 +211,11 @@ func Manage(ctx context.Context, client llm.Client, model string, msgs []llm.Mes
 	if budget <= 0 {
 		budget = DefaultBudget
 	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return msgs, StatsFor(msgs, budget), err
+		}
+	}
 	before := EstimateTokens(msgs)
 
 	// Tier 0 — always: TokenTamer + micro-mask + digest (cheap, every round).

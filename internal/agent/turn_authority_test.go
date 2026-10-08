@@ -2,15 +2,64 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
+	"github.com/saiaathish/picogent/internal/perm"
 	"github.com/saiaathish/picogent/internal/taskstate"
+	"github.com/saiaathish/picogent/internal/tools"
 )
+
+type blockingAuthorityClient struct {
+	calls chan llm.ChatRequest
+}
+
+func (c *blockingAuthorityClient) Chat(ctx context.Context, req llm.ChatRequest) (llm.ChatResponse, error) {
+	c.calls <- req
+	<-ctx.Done()
+	return llm.ChatResponse{}, ctx.Err()
+}
+
+type authorityRunOutcome struct {
+	result Result
+	err    error
+}
+
+type taskStoreRebindPermissionEvents struct {
+	NopHandler
+	agent       *Agent
+	replacement *taskstate.Store
+	prompts     int
+}
+
+func (e *taskStoreRebindPermissionEvents) OnNeedPermission(context.Context, perm.Request) (perm.Decision, error) {
+	e.prompts++
+	e.agent.SetTaskStore(e.replacement)
+	return perm.Allow, nil
+}
+
+func newAuthorityRunAgent(t *testing.T, root string, client llm.Client, mode config.Mode) *Agent {
+	t.Helper()
+	cfg := config.Default()
+	cfg.Workspace = root
+	cfg.Mode = mode
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{Workspace: root})
+	a := New(cfg, client, reg, perm.New(mode, root, nil))
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("run-authority"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.Close)
+	return a
+}
 
 func copyAuthorityStore(t *testing.T, task *taskstate.Task) *taskstate.Store {
 	t.Helper()
@@ -375,5 +424,272 @@ func TestTurnAuthorityRefusesTextAfterTerminalCallbackRevocation(t *testing.T) {
 		if message.Role == "assistant" && strings.Contains(message.Content, "stale terminal answer") {
 			t.Fatal("revoked terminal response was retained in history")
 		}
+	}
+}
+
+func TestTaskStoreReplacementCancelsBlockedProvider(t *testing.T) {
+	root := t.TempDir()
+	client := &blockingAuthorityClient{calls: make(chan llm.ChatRequest, 2)}
+	a := newAuthorityRunAgent(t, root, client, config.ModeFast)
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan authorityRunOutcome, 1)
+	go func() {
+		_, result, err := a.Run(runCtx, nil, llm.Message{Role: "user", Content: "inspect the project"}, allowUndoTest{})
+		done <- authorityRunOutcome{result: result, err: err}
+	}()
+	select {
+	case <-client.calls:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider call did not start")
+	}
+
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	select {
+	case outcome := <-done:
+		if outcome.err == nil || !errors.Is(outcome.err, context.Canceled) || !strings.Contains(outcome.err.Error(), "ownership changed") {
+			t.Fatalf("revoked provider run = %+v, want canceled ownership refusal", outcome)
+		}
+		if outcome.result.GoalDone || outcome.result.Text != "" {
+			t.Fatalf("revoked provider response was finalized: %+v", outcome.result)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("store replacement did not cancel the blocked provider")
+	}
+	if len(client.calls) != 0 {
+		t.Fatalf("provider started %d additional calls after revocation", len(client.calls))
+	}
+}
+
+func TestTaskSessionSwitchCancelsBlockedProvider(t *testing.T) {
+	root := t.TempDir()
+	client := &blockingAuthorityClient{calls: make(chan llm.ChatRequest, 2)}
+	a := newAuthorityRunAgent(t, root, client, config.ModeFast)
+	if failed, err := a.beginDurableTask("fix the broken note workflow", NopHandler{}); failed || err != nil {
+		t.Fatalf("seed durable task: failed=%v err=%v", failed, err)
+	}
+	original := a.nativeTaskBinding()
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan authorityRunOutcome, 1)
+	go func() {
+		_, result, err := a.Run(runCtx, nil, llm.Message{Role: "user", Content: "inspect the project"}, allowUndoTest{})
+		done <- authorityRunOutcome{result: result, err: err}
+	}()
+	select {
+	case <-client.calls:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider call did not start")
+	}
+
+	sessionChanged := make(chan error, 1)
+	go func() { sessionChanged <- a.SetTaskSession("replacement-session") }()
+	select {
+	case outcome := <-done:
+		if outcome.err == nil || !errors.Is(outcome.err, context.Canceled) {
+			t.Fatalf("session-switch provider run = %+v, want canceled run", outcome)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session switch did not cancel the blocked provider before waiting on the run lock")
+	}
+	select {
+	case err := <-sessionChanged:
+		if err != nil {
+			t.Fatalf("switch durable task session: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session switch did not finish after the canceled run released its lock")
+	}
+	if got, _ := a.taskSessionSnapshot(); got != "replacement-session" {
+		t.Fatalf("active session = %q, want replacement-session", got)
+	}
+	oldTask, err := original.store.Load(original.sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := oldTask.LastTurn()
+	if last == nil || last.State != taskstate.TurnInterrupted || last.StopReason != taskstate.StopCanceled {
+		t.Fatalf("old session turn after switch = %#v, want interrupted/canceled", last)
+	}
+}
+
+func TestTaskSessionSwitchCancelsBlockedTool(t *testing.T) {
+	root := t.TempDir()
+	call := fallbackCall(t, "blocked-read", "read_file", map[string]string{"path": "note.txt"})
+	client := &llm.Scripted{Responses: fallbackResponses(call)}
+	a := newAuthorityRunAgent(t, root, client, config.ModeFast)
+	if failed, err := a.beginDurableTask("fix the broken note workflow", NopHandler{}); failed || err != nil {
+		t.Fatalf("seed durable task: failed=%v err=%v", failed, err)
+	}
+	toolStarted := make(chan struct{}, 1)
+	a.runTool = func(ctx context.Context, _ llm.ToolCall, _ tools.Tool, _ tools.Context) (string, error) {
+		toolStarted <- struct{}{}
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	done := make(chan authorityRunOutcome, 1)
+	go func() {
+		_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken note workflow"}, NopHandler{})
+		done <- authorityRunOutcome{result: result, err: err}
+	}()
+	select {
+	case <-toolStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tool did not start")
+	}
+
+	sessionChanged := make(chan error, 1)
+	go func() { sessionChanged <- a.SetTaskSession("replacement-session") }()
+	select {
+	case outcome := <-done:
+		if outcome.err == nil || !errors.Is(outcome.err, context.Canceled) {
+			t.Fatalf("session-switch tool run = %+v, want canceled run", outcome)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session switch did not cancel the blocked tool")
+	}
+	select {
+	case err := <-sessionChanged:
+		if err != nil {
+			t.Fatalf("switch durable task session: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session switch did not finish after the canceled tool released its lock")
+	}
+	if len(client.Calls) != 1 {
+		t.Fatalf("model calls after tool cancellation = %d, want only the pre-tool call", len(client.Calls))
+	}
+}
+
+func TestTaskSessionSwitchPreventsNewRunClaim(t *testing.T) {
+	a := newAuthorityRunAgent(t, t.TempDir(), &llm.Scripted{}, config.ModeFast)
+	binding := a.nativeTaskBinding()
+	releaseSwitch, err := a.reserveTaskSessionSwitch(binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer releaseSwitch()
+	if _, err := a.claimTaskRun(context.Background(), binding); !errors.Is(err, errTaskSessionSwitchInProgress) {
+		t.Fatalf("run claim during session switch = %v, want switch-in-progress refusal", err)
+	}
+}
+
+func TestTaskStoreReplacementCancelsBlockedTool(t *testing.T) {
+	root := t.TempDir()
+	call := fallbackCall(t, "blocked-read", "read_file", map[string]string{"path": "note.txt"})
+	client := &llm.Scripted{Responses: fallbackResponses(call)}
+	a := newAuthorityRunAgent(t, root, client, config.ModeFast)
+	toolStarted := make(chan struct{}, 1)
+	a.runTool = func(ctx context.Context, _ llm.ToolCall, _ tools.Tool, _ tools.Context) (string, error) {
+		toolStarted <- struct{}{}
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	events := &nativeOwnershipEvents{}
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan authorityRunOutcome, 1)
+	go func() {
+		_, result, err := a.Run(runCtx, nil, llm.Message{Role: "user", Content: "inspect note.txt"}, events)
+		done <- authorityRunOutcome{result: result, err: err}
+	}()
+	select {
+	case <-toolStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tool did not start")
+	}
+
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	select {
+	case outcome := <-done:
+		if outcome.err == nil || !errors.Is(outcome.err, context.Canceled) || !strings.Contains(outcome.err.Error(), "ownership changed") {
+			t.Fatalf("revoked tool run = %+v, want canceled ownership refusal", outcome)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("store replacement did not cancel the blocked tool")
+	}
+	if len(client.Calls) != 1 {
+		t.Fatalf("model calls = %d, want only the pre-tool call", len(client.Calls))
+	}
+	if len(events.ends) != 1 || !strings.Contains(events.ends[0], context.Canceled.Error()) {
+		t.Fatalf("started tool completion was not reported accurately: %v", events.ends)
+	}
+}
+
+func TestPermissionCallbackTaskStoreReplacementStopsTool(t *testing.T) {
+	root := t.TempDir()
+	call := fallbackCall(t, "prompted-write", "write_file", map[string]string{"path": "note.txt", "content": "must not write"})
+	client := &llm.Scripted{Responses: fallbackResponses(call)}
+	a := newAuthorityRunAgent(t, root, client, config.ModeSafe)
+	a.Tools.UpdateContext(func(c *tools.Context) {
+		c.ClassifyPath = func(tool, path, _, _ string) perm.Request {
+			return perm.Request{Tool: tool, Path: path, OutsideWorkspace: true}
+		}
+	})
+	replacement := taskstate.NewStore(t.TempDir())
+	events := &taskStoreRebindPermissionEvents{agent: a, replacement: replacement}
+	runToolCalls := 0
+	a.runTool = func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error) {
+		runToolCalls++
+		return "wrote note.txt", nil
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, result, err := a.Run(runCtx, nil, llm.Message{Role: "user", Content: "update note.txt"}, events)
+	if err == nil || !strings.Contains(err.Error(), "ownership changed") {
+		t.Fatalf("permission callback rebinding = result=%+v err=%v, want ownership refusal", result, err)
+	}
+	if events.prompts != 1 || runToolCalls != 0 || len(client.Calls) != 1 {
+		t.Fatalf("stale tool ran after permission callback: prompts=%d tools=%d modelCalls=%d", events.prompts, runToolCalls, len(client.Calls))
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "note.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("revoked permission callback allowed a write: %v", statErr)
+	}
+}
+
+func TestTaskStoreReplacementDuringHealthAdmissionStopsBeforeCompaction(t *testing.T) {
+	root := t.TempDir()
+	client := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "unexpected model response"}}}}
+	a := newAuthorityRunAgent(t, root, client, config.ModeFast)
+	healthStarted := make(chan struct{}, 1)
+	a.runTool = func(ctx context.Context, call llm.ToolCall, _ tools.Tool, _ tools.Context) (string, error) {
+		if call.Name != "project_health" {
+			t.Fatalf("unexpected admission tool = %q", call.Name)
+		}
+		healthStarted <- struct{}{}
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+	history := make([]llm.Message, 20)
+	for i := range history {
+		history[i] = llm.Message{Role: "user", Content: strings.Repeat("context ", 5000)}
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan authorityRunOutcome, 1)
+	go func() {
+		_, result, err := a.Run(runCtx, history, llm.Message{Role: "user", Content: "make this ready to launch"}, allowUndoTest{})
+		done <- authorityRunOutcome{result: result, err: err}
+	}()
+	select {
+	case <-healthStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("project-health admission did not start")
+	}
+
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	select {
+	case outcome := <-done:
+		if outcome.err == nil || !strings.Contains(outcome.err.Error(), "ownership changed") {
+			t.Fatalf("revoked health admission = %+v, want ownership refusal", outcome)
+		}
+		if outcome.result.Context.Budget != 0 {
+			t.Fatalf("context compaction started after revocation: %+v", outcome.result.Context)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("store replacement did not cancel health admission")
+	}
+	if len(client.Calls) != 0 {
+		t.Fatalf("model calls after health-admission revocation = %d, want 0", len(client.Calls))
 	}
 }

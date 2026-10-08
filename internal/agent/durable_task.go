@@ -178,6 +178,11 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, evidenc
 func (a *Agent) SetTaskSession(sessionID string) error {
 	workspaceRoot := a.ConfigSnapshot().Workspace
 	binding := a.nativeTaskBinding()
+	releaseSwitch, err := a.reserveTaskSessionSwitch(binding)
+	if err != nil {
+		return err
+	}
+	defer releaseSwitch()
 	releaseRun, err := a.acquireProjectRunLockForWorkspace(workspaceRoot, binding)
 	if err != nil {
 		return fmt.Errorf("project run is unavailable: %w", err)
@@ -187,7 +192,7 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	defer a.undoMu.Unlock()
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
-	if a.TaskStore != binding.store || a.taskStoreGeneration != binding.storeGeneration {
+	if a.TaskStore != binding.store || a.taskStoreGeneration != binding.storeGeneration || a.TaskSession != binding.sessionID || a.taskSessionGeneration != binding.generation {
 		return errTaskOwnershipChanged
 	}
 	a.TaskSession = strings.TrimSpace(sessionID)
