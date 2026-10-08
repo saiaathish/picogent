@@ -324,6 +324,9 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
 	if a.undoReattachRequired {
+		if a.latestUndo != nil && !a.latestUndo.durable {
+			return "", errors.New("cached process-local undo no longer matches the current task-store authority")
+		}
 		return "", errors.New("task store authority changed; explicitly reattach the session before undo recovery")
 	}
 	if strings.TrimSpace(workspace) == "" {
@@ -334,7 +337,7 @@ func (a *Agent) UndoLastTurn() (string, error) {
 		return "", fmt.Errorf("undo authority changed while acquiring its lock: %w", err)
 	}
 	if a.latestUndo != nil && !a.undoBelongsToCurrentSession(a.latestUndo) {
-		if a.latestUndo.sessionID == "" {
+		if !a.latestUndo.durable {
 			return "", errors.New("cached process-local undo no longer matches the current session, workspace, or task-store authority")
 		}
 		return "", errors.New("cached undo belongs to a previous task store authority; reattach the session to recover it")

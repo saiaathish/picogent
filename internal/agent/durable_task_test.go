@@ -357,6 +357,46 @@ func TestDetachedTaskSessionAllowsFreshProcessLocalUndo(t *testing.T) {
 	assertFreshUndoFileContent(t, path, "after\n")
 }
 
+func TestTaskStoreAttachmentExplainsLostProcessLocalUndo(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		toolResponse("write", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	if err := a.SetTaskSession("session-without-task-store"); err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UndoAvailable || !a.UndoAvailable() {
+		t.Fatalf("process-local undo was unavailable before store attachment: %+v", result)
+	}
+
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if a.UndoAvailable() {
+		t.Fatal("task-store attachment retained process-local undo from the prior authority")
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "process-local") || strings.Contains(err.Error(), "reattach") {
+		t.Fatalf("undo after task-store attachment = %v, want an explicit process-local authority refusal", err)
+	}
+	assertFreshUndoFileContent(t, path, "after\n")
+}
+
 func TestEmptyNoWorkspaceReattachmentAllowsUndoAfterWorkspaceReturns(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "note.txt")
