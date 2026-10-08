@@ -616,6 +616,12 @@ func revalidatePersistedTask(root string, task *taskstate.Task) (bool, error) {
 // must commit invalidation and the terminal state together; a failed save
 // cannot leave a later finish able to reuse stale in-memory trust.
 func revalidateTaskProof(ctx context.Context, root string, task *taskstate.Task) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if task == nil || len(task.Verification) == 0 {
 		return false, nil
 	}
@@ -632,6 +638,9 @@ func revalidateTaskProof(ctx context.Context, root string, task *taskstate.Task)
 			observationUsable: latest.Observation != nil,
 		}
 		observation, fresh, checkReason := recheckVerificationEvidenceObservation(ctx, root, evidence)
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
 		if fresh {
 			// Persisted verification records intentionally lose their runtime trust
 			// bit when serialized. A fresh comparison against the live workspace is

@@ -150,6 +150,11 @@ Keep facts, decisions, and errors. No filler.`
 const summaryInputOmission = "\n[… middle summary input omitted …]\n"
 
 func Summarize(ctx context.Context, client llm.Client, model string, msgs []llm.Message) (string, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+	}
 	if client == nil {
 		return "", fmt.Errorf("no LLM client for summarization")
 	}
@@ -173,6 +178,11 @@ func Summarize(ctx context.Context, client llm.Client, model string, msgs []llm.
 	body := boundSummaryInput(strings.TrimSpace(b.String()))
 	if body == "" {
 		return "", fmt.Errorf("nothing to summarize")
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 	}
 	out, err := client.Chat(ctx, llm.ChatRequest{
 		Model: model,
@@ -280,6 +290,11 @@ func Manage(ctx context.Context, client llm.Client, model string, msgs []llm.Mes
 	if len(out) <= KeepRecent+2 {
 		return out, st, nil
 	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return out, st, err
+		}
+	}
 	head := out[0]
 	start := 1
 	if head.Role != "system" {
@@ -291,6 +306,11 @@ func Manage(ctx context.Context, client llm.Client, model string, msgs []llm.Mes
 
 	summary, err := Summarize(ctx, client, model, old)
 	if err != nil {
+		if ctx != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return out, st, ctxErr
+			}
+		}
 		out = TruncateTail(out, KeepRecent+1)
 		st = StatsFor(out, budget)
 		st.Compacted = true
