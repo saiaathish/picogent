@@ -264,6 +264,11 @@ func (a *Agent) UpdateConfig(update func(*config.Config)) {
 	if update == nil {
 		return
 	}
+	// Config updates can rebind the workspace. Undo holds undoMu across restore
+	// and journal finalization, so serialize config changes with that authority
+	// window using the same undoMu -> stateMu lock order.
+	a.undoMu.Lock()
+	defer a.undoMu.Unlock()
 	a.stateMu.Lock()
 	update(&a.CFG)
 	cfg := a.CFG

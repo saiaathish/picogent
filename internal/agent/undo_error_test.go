@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
@@ -311,6 +312,44 @@ func TestFailedJournalPublicationDoesNotAdvertiseProcessLocalUndo(t *testing.T) 
 	}
 	if res.UndoError == "" || !strings.Contains(res.UndoError, "durable undo journal") {
 		t.Fatalf("missing durable publication error: %+v", res)
+	}
+}
+
+func TestUpdateConfigWaitsForUndoAuthorityWindow(t *testing.T) {
+	oldWorkspace, newWorkspace := t.TempDir(), t.TempDir()
+	a := newUndoHookAgent(t, oldWorkspace)
+	defer a.Close()
+
+	// Undo holds undoMu from its authority check through journal finalization.
+	// A workspace update must not cross that protected interval.
+	a.undoMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			a.undoMu.Unlock()
+		}
+	}()
+	started, finished := make(chan struct{}), make(chan struct{})
+	go func() {
+		close(started)
+		a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = newWorkspace })
+		close(finished)
+	}()
+	<-started
+	select {
+	case <-finished:
+		t.Fatal("workspace config crossed active undo authority")
+	case <-time.After(25 * time.Millisecond):
+	}
+	a.undoMu.Unlock()
+	locked = false
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("workspace config did not resume after undo authority released")
+	}
+	if got := a.ConfigSnapshot().Workspace; got != newWorkspace {
+		t.Fatalf("workspace = %q, want %q", got, newWorkspace)
 	}
 }
 
