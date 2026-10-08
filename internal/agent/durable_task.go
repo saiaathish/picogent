@@ -191,7 +191,14 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 		return errTaskOwnershipChanged
 	}
 	requireReattachment := a.undoReattachRequired
-	a.TaskSession = strings.TrimSpace(sessionID)
+	targetSessionID := strings.TrimSpace(sessionID)
+	if requireReattachment && targetSessionID != "" && strings.TrimSpace(workspaceRoot) == "" {
+		// A store rebind revokes cached undo authority. Without the workspace,
+		// the durable journal cannot be validated, so refuse before changing
+		// session state or recovering (and possibly rewriting) a task record.
+		return errors.New("cannot reattach task-store authority without a configured workspace")
+	}
+	a.TaskSession = targetSessionID
 	a.taskSessionGeneration++
 	a.latestUndo = nil
 	a.undoLoadErr = nil
