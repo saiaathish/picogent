@@ -315,6 +315,54 @@ func TestFailedJournalPublicationDoesNotAdvertiseProcessLocalUndo(t *testing.T) 
 	}
 }
 
+func TestUndoRejectsWorkspaceRebindBeforeUndoLock(t *testing.T) {
+	oldWorkspace, newWorkspace := t.TempDir(), t.TempDir()
+	a := newUndoHookAgent(t, oldWorkspace)
+	defer a.Close()
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "write note.txt"}, allowUndoTest{})
+	if err != nil || !result.UndoAvailable {
+		t.Fatalf("fixture did not create an undo checkpoint: available=%v err=%v", result.UndoAvailable, err)
+	}
+	path := filepath.Join(oldWorkspace, "note.txt")
+	if got, err := os.ReadFile(path); err != nil || string(got) != "after" {
+		t.Fatalf("fixture file = %q, %v", got, err)
+	}
+	_, err = a.undoLastTurnWithHook(func() {
+		a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = newWorkspace })
+	})
+	if !errors.Is(err, errWorkspaceAuthorityChanged) {
+		t.Fatalf("undo did not reject the stale workspace snapshot: %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "after" {
+		t.Fatalf("stale undo changed the original workspace: %q, %v", got, err)
+	}
+	if a.latestUndo == nil {
+		t.Fatal("stale undo discarded its recovery checkpoint")
+	}
+}
+
+func TestSetTaskSessionRejectsWorkspaceRebindBeforeUndoLock(t *testing.T) {
+	oldWorkspace, newWorkspace := t.TempDir(), t.TempDir()
+	a := newUndoHookAgent(t, oldWorkspace)
+	defer a.Close()
+	store := taskstate.NewStore(t.TempDir())
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession("original-session"); err != nil {
+		t.Fatal(err)
+	}
+	beforeSession, beforeGeneration := a.taskSessionSnapshot()
+	err := a.setTaskSessionWithHook("replacement-session", func() {
+		a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = newWorkspace })
+	})
+	if !errors.Is(err, errWorkspaceAuthorityChanged) {
+		t.Fatalf("session attachment did not reject the stale workspace snapshot: %v", err)
+	}
+	afterSession, afterGeneration := a.taskSessionSnapshot()
+	if afterSession != beforeSession || afterGeneration != beforeGeneration || a.TaskStoreSnapshot() != store || a.TaskSnapshot() != nil {
+		t.Fatalf("refused attachment changed task authority: session=%q generation=%d store_same=%v task=%+v", afterSession, afterGeneration, a.TaskStoreSnapshot() == store, a.TaskSnapshot())
+	}
+}
+
 func TestUpdateConfigWaitsForUndoAuthorityWindow(t *testing.T) {
 	oldWorkspace, newWorkspace := t.TempDir(), t.TempDir()
 	a := newUndoHookAgent(t, oldWorkspace)

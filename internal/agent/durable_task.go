@@ -176,6 +176,10 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, evidenc
 // SetTaskSession switches durable task state with the chat session. Task state
 // stays outside chat history, so compaction cannot erase execution progress.
 func (a *Agent) SetTaskSession(sessionID string) error {
+	return a.setTaskSessionWithHook(sessionID, nil)
+}
+
+func (a *Agent) setTaskSessionWithHook(sessionID string, beforeUndoLock func()) error {
 	workspaceRoot := a.ConfigSnapshot().Workspace
 	binding := a.nativeTaskBinding()
 	releaseSwitch, err := a.reserveTaskSessionSwitch(binding)
@@ -188,8 +192,14 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 		return fmt.Errorf("project run is unavailable: %w", err)
 	}
 	defer releaseRun()
+	if beforeUndoLock != nil {
+		beforeUndoLock()
+	}
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
+	if strings.TrimSpace(a.ConfigSnapshot().Workspace) != strings.TrimSpace(workspaceRoot) {
+		return fmt.Errorf("task session attachment: %w", errWorkspaceAuthorityChanged)
+	}
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
 	if a.TaskStore != binding.store || a.taskStoreGeneration != binding.storeGeneration || a.TaskSession != binding.sessionID || a.taskSessionGeneration != binding.generation {
