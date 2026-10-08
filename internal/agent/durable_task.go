@@ -193,6 +193,7 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 	requireReattachment := a.undoReattachRequired
 	a.TaskSession = strings.TrimSpace(sessionID)
 	a.taskSessionGeneration++
+	a.pendingAdmissionRefresh = nil
 	a.latestUndo = nil
 	a.undoLoadErr = nil
 	a.task = nil
@@ -485,6 +486,17 @@ func (a *Agent) beginDurableTaskInState(prompt string, ev EventHandler, fallback
 		})
 	}
 	if err != nil {
+		if newTask && errors.Is(err, taskstate.ErrRevisionConflict) && a.taskRunBinding != nil {
+			binding := *a.taskRunBinding
+			if binding.store != nil && binding.store == a.TaskStore && binding.sessionID == a.TaskSession && binding.generation == a.taskSessionGeneration && binding.storeGeneration == a.taskStoreGeneration {
+				// The failed invocation stays refused. Only a later Run may refresh,
+				// and only while this exact store/session authority is still installed.
+				a.pendingAdmissionRefresh = &taskAdmissionRefresh{
+					store: binding.store, sessionID: binding.sessionID,
+					sessionGeneration: binding.generation, storeGeneration: binding.storeGeneration,
+				}
+			}
+		}
 		a.taskMu.Unlock()
 		a.reportTaskPersistenceError(ev, err)
 		return true, err
