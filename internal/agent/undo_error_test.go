@@ -316,7 +316,7 @@ func TestFailedJournalPublicationDoesNotAdvertiseProcessLocalUndo(t *testing.T) 
 }
 
 func TestUndoRejectsWorkspaceRebindBeforeUndoLock(t *testing.T) {
-	oldWorkspace, newWorkspace := t.TempDir(), t.TempDir()
+	oldWorkspace, newWorkspace := trailingWhitespaceWorkspacePair(t)
 	a := newUndoHookAgent(t, oldWorkspace)
 	defer a.Close()
 	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "write note.txt"}, allowUndoTest{})
@@ -342,7 +342,7 @@ func TestUndoRejectsWorkspaceRebindBeforeUndoLock(t *testing.T) {
 }
 
 func TestSetTaskSessionRejectsWorkspaceRebindBeforeUndoLock(t *testing.T) {
-	oldWorkspace, newWorkspace := t.TempDir(), t.TempDir()
+	oldWorkspace, newWorkspace := trailingWhitespaceWorkspacePair(t)
 	a := newUndoHookAgent(t, oldWorkspace)
 	defer a.Close()
 	store := taskstate.NewStore(t.TempDir())
@@ -413,6 +413,52 @@ func newUndoHookAgent(t *testing.T, dir string) *Agent {
 	cfg.Mode = config.ModeFast
 	cfg.Provider = config.ProviderOllama
 	return New(cfg, client, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
+}
+
+func trailingWhitespaceWorkspacePair(t *testing.T) (string, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Win32 paths do not preserve trailing spaces in directory names")
+	}
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "workspace")
+	trimmedDistinctWorkspace := workspace + " "
+	for _, path := range []string{workspace, trimmedDistinctWorkspace} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatalf("create workspace %q: %v", path, err)
+		}
+	}
+	if strings.TrimSpace(workspace) != strings.TrimSpace(trimmedDistinctWorkspace) {
+		t.Fatal("fixture paths must compare equal after trimming whitespace")
+	}
+	return workspace, trimmedDistinctWorkspace
+}
+
+func TestSameUndoWorkspaceIdentityAcceptsPathAliases(t *testing.T) {
+	workspace := t.TempDir()
+	var alias string
+	if runtime.GOOS == "windows" {
+		alias = strings.ToUpper(workspace)
+	} else {
+		alias = filepath.Join(filepath.Dir(workspace), filepath.Base(workspace)+"-alias")
+		if err := os.Symlink(workspace, alias); err != nil {
+			t.Skipf("create workspace alias: %v", err)
+		}
+	}
+	workspaceInfo, err := os.Stat(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasInfo, err := os.Stat(alias)
+	if err != nil {
+		t.Fatalf("stat workspace alias: %v", err)
+	}
+	if !os.SameFile(workspaceInfo, aliasInfo) {
+		t.Skip("the platform did not resolve the candidate path as a filesystem alias")
+	}
+	if !sameUndoWorkspaceIdentity(workspace, alias) {
+		t.Fatalf("canonical workspace identity rejected filesystem aliases %q and %q", workspace, alias)
+	}
 }
 
 type allowUndoTest struct{ NopHandler }

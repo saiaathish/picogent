@@ -61,6 +61,28 @@ func undoWorkspaceIdentity(workspace string) (string, error) {
 	return filepath.Clean(identity), nil
 }
 
+func sameUndoWorkspaceIdentity(left, right string) bool {
+	leftEmpty := strings.TrimSpace(left) == ""
+	rightEmpty := strings.TrimSpace(right) == ""
+	if leftEmpty || rightEmpty {
+		return leftEmpty && rightEmpty
+	}
+	leftIdentity, err := undoWorkspaceIdentity(left)
+	if err != nil {
+		return false
+	}
+	rightIdentity, err := undoWorkspaceIdentity(right)
+	if err != nil {
+		return false
+	}
+	leftInfo, err := os.Stat(leftIdentity)
+	if err != nil {
+		return false
+	}
+	rightInfo, err := os.Stat(rightIdentity)
+	return err == nil && os.SameFile(leftInfo, rightInfo)
+}
+
 func safeUndoSessionID(id string) bool {
 	if id == "" || id == "." || id == ".." || len(id) > 200 {
 		return false

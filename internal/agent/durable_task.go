@@ -197,7 +197,7 @@ func (a *Agent) setTaskSessionWithHook(sessionID string, beforeUndoLock func()) 
 	}
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
-	if strings.TrimSpace(a.ConfigSnapshot().Workspace) != strings.TrimSpace(workspaceRoot) {
+	if !sameUndoWorkspaceIdentity(a.ConfigSnapshot().Workspace, workspaceRoot) {
 		return fmt.Errorf("task session attachment: %w", errWorkspaceAuthorityChanged)
 	}
 	a.taskMu.Lock()

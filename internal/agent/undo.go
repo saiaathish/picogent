@@ -330,7 +330,7 @@ func (a *Agent) undoLastTurnWithHook(beforeUndoLock func()) (string, error) {
 	}
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
-	if strings.TrimSpace(a.ConfigSnapshot().Workspace) != strings.TrimSpace(workspace) {
+	if !sameUndoWorkspaceIdentity(a.ConfigSnapshot().Workspace, workspace) {
 		return "", fmt.Errorf("undo workspace: %w", errWorkspaceAuthorityChanged)
 	}
 	if a.undoReattachRequired {
@@ -673,12 +673,7 @@ func (a *Agent) undoBelongsToCurrentSession(u *turnUndo) bool {
 	if a == nil || u == nil {
 		return false
 	}
-	currentWorkspace, err := undoWorkspaceIdentity(a.ConfigSnapshot().Workspace)
-	if err != nil {
-		return false
-	}
-	checkpointWorkspace, err := undoWorkspaceIdentity(u.workspace)
-	if err != nil || currentWorkspace != checkpointWorkspace {
+	if !sameUndoWorkspaceIdentity(a.ConfigSnapshot().Workspace, u.workspace) {
 		return false
 	}
 	a.taskMu.RLock()
