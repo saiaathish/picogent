@@ -5,6 +5,7 @@ package workspace
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -139,6 +140,85 @@ func openDir(root, path string) (*os.File, error) {
 		return nil, fmt.Errorf("workspace path %q is not a directory", path)
 	}
 	return f, nil
+}
+
+func securePrivateDirectoryAndFiles(root string, parts []string) error {
+	current, err := openUnixRoot(root)
+	if err != nil {
+		return fmt.Errorf("open workspace directory: %w", err)
+	}
+	defer func() { _ = unix.Close(current) }()
+	for index, part := range parts {
+		child, err := unix.Openat(current, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		if err != nil {
+			return fmt.Errorf("open private workspace directory %q: %w", part, err)
+		}
+		_ = unix.Close(current)
+		current = child
+		if index == len(parts)-1 {
+			return securePrivateDirectoryHandle(current)
+		}
+	}
+	return errors.New("private directory path is empty")
+}
+
+func securePrivateDirectoryHandle(directoryFD int) error {
+	if err := unix.Fchmod(directoryFD, 0o700); err != nil {
+		return fmt.Errorf("secure private workspace directory: %w", err)
+	}
+	duplicate, err := unix.Dup(directoryFD)
+	if err != nil {
+		return fmt.Errorf("duplicate private directory handle: %w", err)
+	}
+	directory := os.NewFile(uintptr(duplicate), "private workspace directory")
+	if directory == nil {
+		_ = unix.Close(duplicate)
+		return errors.New("wrap private directory handle")
+	}
+	defer directory.Close()
+	for {
+		names, readErr := directory.Readdirnames(64)
+		for _, name := range names {
+			if name == "." || name == ".." {
+				continue
+			}
+			if name == "" || strings.ContainsAny(name, "/\\\x00") {
+				return fmt.Errorf("unsafe private directory entry %q", name)
+			}
+			fd, openErr := unix.Openat(directoryFD, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+			if openErr != nil {
+				return fmt.Errorf("open private workspace entry %q: %w", name, openErr)
+			}
+			var opened unix.Stat_t
+			statErr := unix.Fstat(fd, &opened)
+			if statErr == nil && opened.Mode&unix.S_IFMT != unix.S_IFREG {
+				statErr = fmt.Errorf("private directory entry %q is not a regular file", name)
+			}
+			if statErr == nil && opened.Nlink != 1 {
+				statErr = fmt.Errorf("private directory entry %q has an unsafe link count", name)
+			}
+			if statErr == nil {
+				statErr = unix.Fchmod(fd, 0o600)
+			}
+			var named unix.Stat_t
+			if statErr == nil {
+				statErr = unix.Fstatat(directoryFD, name, &named, unix.AT_SYMLINK_NOFOLLOW)
+			}
+			_ = unix.Close(fd)
+			if statErr != nil {
+				return fmt.Errorf("secure private workspace entry %q: %w", name, statErr)
+			}
+			if named.Mode&unix.S_IFMT != unix.S_IFREG || opened.Dev != named.Dev || opened.Ino != named.Ino {
+				return fmt.Errorf("private workspace entry %q changed while securing permissions", name)
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+		if readErr != nil {
+			return fmt.Errorf("read private workspace directory: %w", readErr)
+		}
+	}
 }
 
 func openParent(root, rel string, create bool) (int, string, error) {
@@ -387,6 +467,19 @@ func writeAtomicWithDurability(root, path string, data []byte, requestedMode os.
 	if err := hooks.check(); err != nil {
 		return err
 	}
+	privateJournal := durable && setMode && requestedMode.Perm() == 0o600 && hooks.CreateParentMode.Perm() == 0o700 && hooks.PrivateParentDirectory
+	if hooks.PrivateParentDirectory && !privateJournal {
+		return errors.New("private parent directory requires a durable 0600 write and 0700 creation mode")
+	}
+	if privateJournal {
+		parts, err := pathParts(rel)
+		if err != nil {
+			return err
+		}
+		if len(parts) < 2 {
+			return errors.New("private journal storage must be below the workspace root")
+		}
+	}
 	parentMode := hooks.CreateParentMode.Perm()
 	if parentMode == 0 {
 		parentMode = 0o755
@@ -396,6 +489,11 @@ func writeAtomicWithDurability(root, path string, data []byte, requestedMode os.
 		return err
 	}
 	defer unix.Close(parent)
+	if privateJournal {
+		if err := securePrivateDirectoryHandle(parent); err != nil {
+			return fmt.Errorf("secure private workspace journal directory: %w", err)
+		}
+	}
 	if durable {
 		if err := unix.Fsync(parent); err != nil {
 			return fmt.Errorf("sync workspace directory before durable write: %w", err)

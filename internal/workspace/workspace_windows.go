@@ -202,6 +202,9 @@ func openWindowsRoot(root string) (windows.Handle, error) {
 }
 
 func openWindowsRootWithAccess(root string, access uint32) (windows.Handle, error) {
+	// Relative opens require traversal authority on the directory handle even
+	// when the caller only intends to read an existing child.
+	access |= windows.FILE_TRAVERSE
 	name, err := windows.NewNTUnicodeString(ntPath(root))
 	if err != nil {
 		return 0, err
@@ -238,6 +241,7 @@ func openWindowsDirectoryWithAccess(parent windows.Handle, name string, create b
 }
 
 func openWindowsDirectoryWithAccessAndSecurity(parent windows.Handle, name string, create bool, access uint32, security *windows.SECURITY_DESCRIPTOR) (windows.Handle, error) {
+	access |= windows.FILE_TRAVERSE
 	objectName, err := windows.NewNTUnicodeString(name)
 	if err != nil {
 		return 0, err
@@ -265,6 +269,43 @@ func openWindowsDirectoryWithAccessAndSecurity(parent windows.Handle, name strin
 		0,
 	)
 	if err != nil {
+		return 0, translateNTError(err)
+	}
+	return handle, nil
+}
+
+// createWindowsDirectoryExclusiveWithSecurity never opens an existing
+// directory. Callers handle STATUS_OBJECT_NAME_COLLISION by opening the
+// winner explicitly and verifying or hardening its security descriptor.
+func createWindowsDirectoryExclusiveWithSecurity(parent windows.Handle, name string, access uint32, security *windows.SECURITY_DESCRIPTOR) (windows.Handle, error) {
+	access |= windows.FILE_TRAVERSE
+	objectName, err := windows.NewNTUnicodeString(name)
+	if err != nil {
+		return 0, err
+	}
+	oa := objectAttributes(objectName, parent)
+	oa.SecurityDescriptor = security
+	var iosb windows.IO_STATUS_BLOCK
+	var allocation int64
+	var handle windows.Handle
+	err = windows.NtCreateFile(
+		&handle,
+		access,
+		&oa,
+		&iosb,
+		&allocation,
+		0,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_CREATE,
+		windows.FILE_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT,
+		0,
+		0,
+	)
+	if err != nil {
+		var status windows.NTStatus
+		if errors.As(err, &status) && status == windows.STATUS_OBJECT_NAME_COLLISION {
+			return 0, fmt.Errorf("%w: %v", os.ErrExist, err)
+		}
 		return 0, translateNTError(err)
 	}
 	return handle, nil

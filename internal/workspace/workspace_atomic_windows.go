@@ -5,7 +5,9 @@ package workspace
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -54,7 +56,13 @@ func writeAtomicWithRenameDurability(root, path string, data []byte, requestedMo
 	if err := hooks.check(); err != nil {
 		return err
 	}
-	privateJournal := durable && setMode && requestedMode.Perm() == 0o600 && hooks.CreateParentMode.Perm() == 0o700
+	privateJournal := durable && setMode && requestedMode.Perm() == 0o600 && hooks.CreateParentMode.Perm() == 0o700 && hooks.PrivateParentDirectory
+	if hooks.PrivateParentDirectory && !privateJournal {
+		return errors.New("private parent directory requires a durable 0600 write and 0700 creation mode")
+	}
+	if privateJournal && len(parts) < 2 {
+		return errors.New("private journal storage must be below the workspace root")
+	}
 	var directorySecurity, fileSecurity *windows.SECURITY_DESCRIPTOR
 	if privateJournal {
 		directorySecurity, err = privateWindowsSecurityDescriptor(true)
@@ -93,7 +101,19 @@ func writeAtomicWithRenameDurability(root, path string, data []byte, requestedMo
 			// Existing ancestors are only opened for traversal. Requesting write
 			// access to their parents is necessary only when this operation must
 			// create a directory entry there.
-			child, openErr = openWindowsDirectory(current, part, false)
+			privateParent := privateJournal && index == len(parts)-2
+			directoryAccess := uint32(windows.FILE_GENERIC_READ)
+			if privateParent {
+				directoryAccess |= windows.READ_CONTROL | windows.WRITE_DAC
+			}
+			child, openErr = openWindowsDirectoryWithAccess(current, part, false, directoryAccess)
+			if openErr == nil && privateParent {
+				if securityErr := setPrivateWindowsDACL(child, directorySecurity, true); securityErr != nil {
+					_ = windows.CloseHandle(child)
+					child = 0
+					openErr = fmt.Errorf("secure existing private journal directory %q: %w", part, securityErr)
+				}
+			}
 			if errors.Is(openErr, os.ErrNotExist) {
 				durableCreationParent, parentErr := openWorkspaceDurableParent(root, parts[:index])
 				if parentErr != nil {
@@ -117,7 +137,12 @@ func writeAtomicWithRenameDurability(root, path string, data []byte, requestedMo
 					_ = windows.CloseHandle(durableCreationParent)
 					return fmt.Errorf("flush workspace directory parent before creation: %w", err)
 				}
-				child, openErr = openWindowsDirectoryWithAccessAndSecurity(current, part, true, windows.FILE_GENERIC_READ, directorySecurity)
+				if privateJournal {
+					createAccess := uint32(windows.FILE_GENERIC_READ | windows.READ_CONTROL | windows.WRITE_DAC)
+					child, openErr = createPrivateWindowsDirectory(current, part, createAccess, directorySecurity)
+				} else {
+					child, openErr = openWindowsDirectoryWithAccessAndSecurity(current, part, true, windows.FILE_GENERIC_READ, nil)
+				}
 				if openErr == nil {
 					if flushErr := windows.FlushFileBuffers(durableCreationParent); flushErr != nil {
 						_ = windows.CloseHandle(child)
@@ -163,6 +188,11 @@ func writeAtomicWithRenameDurability(root, path string, data []byte, requestedMo
 	}
 
 	leaf := parts[len(parts)-1]
+	if privateJournal {
+		if err := securePrivateWindowsDirectoryEntries(current, fileSecurity); err != nil {
+			return fmt.Errorf("secure existing workspace journal files: %w", err)
+		}
+	}
 	if _, err := workspaceRegularEntry(current, leaf); err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("inspect workspace file %q: %w", rel, err)
@@ -187,6 +217,12 @@ func writeAtomicWithRenameDurability(root, path string, data []byte, requestedMo
 	}
 	if file == nil {
 		return errors.New("could not allocate a workspace temporary file")
+	}
+	if privateJournal {
+		if err := verifyPrivateWindowsDACL(windows.Handle(file.Fd()), fileSecurity, false); err != nil {
+			_ = file.Close()
+			return fmt.Errorf("verify private workspace temporary file %q: %w", rel, err)
+		}
 	}
 	removeTemp := true
 	defer func() {
@@ -336,6 +372,250 @@ func privateWindowsSecurityDescriptor(directory bool) (*windows.SECURITY_DESCRIP
 		return nil, errors.New("private DACL does not grant the current user required journal access")
 	}
 	return descriptor, nil
+}
+
+func createPrivateWindowsDirectory(parent windows.Handle, name string, access uint32, descriptor *windows.SECURITY_DESCRIPTOR) (windows.Handle, error) {
+	for attempt := 0; attempt < 8; attempt++ {
+		handle, err := createWindowsDirectoryExclusiveWithSecurity(parent, name, access, descriptor)
+		if err == nil {
+			if err := verifyPrivateWindowsDACL(handle, descriptor, true); err != nil {
+				_ = windows.CloseHandle(handle)
+				return 0, fmt.Errorf("verify newly created directory ACL: %w", err)
+			}
+			return handle, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return 0, err
+		}
+
+		// A creator may have won after the caller observed the directory as
+		// missing. Open that exact entry, replace its inherited ACL, and verify
+		// the resulting descriptor before it can be used for journal storage.
+		handle, err = openWindowsDirectoryWithAccess(parent, name, false, access)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("open directory created concurrently: %w", err)
+		}
+		if err := setPrivateWindowsDACL(handle, descriptor, true); err != nil {
+			_ = windows.CloseHandle(handle)
+			return 0, fmt.Errorf("secure directory created concurrently: %w", err)
+		}
+		return handle, nil
+	}
+	return 0, errors.New("workspace directory changed repeatedly during private creation")
+}
+
+func securePrivateDirectoryAndFiles(root string, parts []string) error {
+	directorySecurity, err := privateWindowsSecurityDescriptor(true)
+	if err != nil {
+		return fmt.Errorf("prepare private workspace directory security: %w", err)
+	}
+	fileSecurity, err := privateWindowsSecurityDescriptor(false)
+	if err != nil {
+		return fmt.Errorf("prepare private workspace file security: %w", err)
+	}
+	current, err := openWindowsRoot(root)
+	if err != nil {
+		return fmt.Errorf("open workspace directory: %w", err)
+	}
+	defer func() { _ = windows.CloseHandle(current) }()
+	for index, part := range parts {
+		access := uint32(windows.FILE_GENERIC_READ)
+		if index == len(parts)-1 {
+			access |= windows.READ_CONTROL | windows.WRITE_DAC
+		}
+		child, err := openWindowsDirectoryWithAccess(current, part, false, access)
+		if err != nil {
+			return fmt.Errorf("open private workspace directory %q: %w", part, err)
+		}
+		if index == len(parts)-1 {
+			if err := setPrivateWindowsDACL(child, directorySecurity, true); err != nil {
+				_ = windows.CloseHandle(child)
+				return fmt.Errorf("secure private workspace directory %q: %w", part, err)
+			}
+			_ = windows.CloseHandle(current)
+			current = child
+			return securePrivateWindowsDirectoryEntries(current, fileSecurity)
+		}
+		_ = windows.CloseHandle(current)
+		current = child
+	}
+	return errors.New("private directory path is empty")
+}
+
+func setPrivateWindowsDACL(handle windows.Handle, expected *windows.SECURITY_DESCRIPTOR, directory bool) error {
+	dacl, _, err := expected.DACL()
+	if err != nil || dacl == nil {
+		if err != nil {
+			return fmt.Errorf("read expected private DACL: %w", err)
+		}
+		return errors.New("expected private DACL is missing")
+	}
+	securityInformation := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION)
+	if err := windows.SetSecurityInfo(handle, windows.SE_FILE_OBJECT, securityInformation, nil, nil, dacl, nil); err != nil {
+		return fmt.Errorf("apply protected current-user DACL: %w", err)
+	}
+	return verifyPrivateWindowsDACL(handle, expected, directory)
+}
+
+func verifyPrivateWindowsDACL(handle windows.Handle, expected *windows.SECURITY_DESCRIPTOR, directory bool) error {
+	actual, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read applied DACL: %w", err)
+	}
+	actualControl, _, err := actual.Control()
+	if err != nil {
+		return fmt.Errorf("inspect applied DACL protection: %w", err)
+	}
+	if actualControl&windows.SE_DACL_PROTECTED == 0 {
+		return errors.New("applied DACL remains inheritable")
+	}
+	actualDACL, _, err := actual.DACL()
+	if err != nil || actualDACL == nil || actualDACL.AceCount != 1 {
+		if err != nil {
+			return fmt.Errorf("inspect applied DACL entries: %w", err)
+		}
+		return errors.New("applied DACL must contain exactly one current-user entry")
+	}
+	var actualACE *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(actualDACL, 0, &actualACE); err != nil {
+		return fmt.Errorf("inspect applied DACL entry: %w", err)
+	}
+	expectedDACL, _, err := expected.DACL()
+	if err != nil || expectedDACL == nil || expectedDACL.AceCount != 1 {
+		if err != nil {
+			return fmt.Errorf("inspect expected DACL entries: %w", err)
+		}
+		return errors.New("expected private DACL must contain exactly one user entry")
+	}
+	var expectedACE *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(expectedDACL, 0, &expectedACE); err != nil {
+		return fmt.Errorf("inspect expected DACL entry: %w", err)
+	}
+	wantFlags := uint8(0)
+	if directory {
+		wantFlags = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	}
+	if actualACE.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || actualACE.Header.AceFlags != wantFlags ||
+		!windows.EqualSid((*windows.SID)(unsafe.Pointer(&actualACE.SidStart)), (*windows.SID)(unsafe.Pointer(&expectedACE.SidStart))) {
+		return errors.New("applied DACL does not grant only the current user")
+	}
+	requiredAccess := windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE)
+	if actualACE.Mask&requiredAccess != requiredAccess {
+		return errors.New("applied DACL does not grant the current user required journal access")
+	}
+	return nil
+}
+
+func securePrivateWindowsDirectoryEntries(directory windows.Handle, fileSecurity *windows.SECURITY_DESCRIPTOR) error {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(directory, &info); err != nil {
+		return fmt.Errorf("inspect journal directory: %w", err)
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0 {
+		return errors.New("journal directory is not a regular directory")
+	}
+	var duplicate windows.Handle
+	if err := windows.DuplicateHandle(windows.CurrentProcess(), directory, windows.CurrentProcess(), &duplicate, 0, false, windows.DUPLICATE_SAME_ACCESS); err != nil {
+		return fmt.Errorf("duplicate journal directory handle: %w", err)
+	}
+	entries := os.NewFile(uintptr(duplicate), "undo journal directory")
+	if entries == nil {
+		_ = windows.CloseHandle(duplicate)
+		return errors.New("wrap journal directory handle")
+	}
+	defer entries.Close()
+	for {
+		batch, readErr := entries.ReadDir(64)
+		for _, entry := range batch {
+			name := entry.Name()
+			if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\\:`) {
+				return fmt.Errorf("unsafe journal directory entry %q", name)
+			}
+			if err := hardenPrivateWindowsFile(directory, name, fileSecurity); err != nil {
+				return fmt.Errorf("secure journal entry %q: %w", name, err)
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+		if readErr != nil {
+			return fmt.Errorf("read journal directory: %w", readErr)
+		}
+	}
+}
+
+func hardenPrivateWindowsFile(parent windows.Handle, name string, fileSecurity *windows.SECURITY_DESCRIPTOR) error {
+	file, err := openWindowsFileForSecurity(parent, name)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(windows.Handle(file.Fd()), &info); err != nil {
+		return fmt.Errorf("inspect file: %w", err)
+	}
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		return errors.New("journal entry is not a regular file")
+	}
+	if err := rejectHardLinkFile(file); err != nil {
+		return fmt.Errorf("journal entry has an unsafe link count: %w", err)
+	}
+	identity, err := identityForFile(file)
+	if err != nil {
+		return fmt.Errorf("identify journal entry: %w", err)
+	}
+	if err := setPrivateWindowsDACL(windows.Handle(file.Fd()), fileSecurity, false); err != nil {
+		return err
+	}
+	byName, err := openWindowsFileForSecurity(parent, name)
+	if err != nil {
+		return fmt.Errorf("reopen secured journal entry: %w", err)
+	}
+	defer byName.Close()
+	actual, err := identityForFile(byName)
+	if err != nil {
+		return fmt.Errorf("reidentify secured journal entry: %w", err)
+	}
+	if actual != identity {
+		return errors.New("journal entry changed while securing its DACL")
+	}
+	return nil
+}
+
+func openWindowsFileForSecurity(parent windows.Handle, name string) (*os.File, error) {
+	objectName, err := windows.NewNTUnicodeString(name)
+	if err != nil {
+		return nil, err
+	}
+	oa := objectAttributes(objectName, parent)
+	var iosb windows.IO_STATUS_BLOCK
+	var allocation int64
+	var handle windows.Handle
+	err = windows.NtCreateFile(
+		&handle,
+		windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL|windows.WRITE_DAC,
+		&oa,
+		&iosb,
+		&allocation,
+		0,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE,
+		windows.FILE_OPEN,
+		windows.FILE_NON_DIRECTORY_FILE|windows.FILE_OPEN_REPARSE_POINT,
+		0,
+		0,
+	)
+	if err != nil {
+		return nil, translateNTError(err)
+	}
+	file := os.NewFile(uintptr(handle), name)
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, errors.New("wrap journal file handle")
+	}
+	return file, nil
 }
 
 func workspaceRegularEntry(parent windows.Handle, name string) (Identity, error) {

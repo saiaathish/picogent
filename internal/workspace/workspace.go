@@ -236,17 +236,21 @@ func WriteAtomicWithPublishHook(root, path string, data []byte, hook func(os.Fil
 // and staging and again after preparation, immediately before publication
 // (including every Windows rename retry).
 // CreateParentMode overrides the Unix mode for newly created parent
-// directories; zero keeps the platform default. On Windows, the private
-// 0700-parent/0600-file combination used by durable undo journals receives
-// protected current-user-only ACLs; other writes retain inherited ACLs.
+// directories; zero keeps the platform default. PrivateParentDirectory opts a
+// durable 0600 write into private-storage handling for only the containing
+// directory and its direct files. Existing ancestors are traversed but not
+// migrated; newly created parents retain CreateParentMode. On Windows, the
+// private directory receives a protected current-user-only ACL. Other writes
+// retain inherited ACLs.
 // A refusal stops future side effects; already-authorized parent creation is
 // not rolled back. Like the underlying pathname primitives, this is not an
 // atomic lock against an uncooperative writer changing authority after Check.
 type WriteHooks struct {
-	Check             func() error
-	CheckRootIdentity RootIdentityCheck
-	PreparePublish    func(os.FileMode) error
-	CreateParentMode  os.FileMode
+	Check                  func() error
+	CheckRootIdentity      RootIdentityCheck
+	PreparePublish         func(os.FileMode) error
+	CreateParentMode       os.FileMode
+	PrivateParentDirectory bool
 }
 
 func (h WriteHooks) check() error {
@@ -268,6 +272,27 @@ func WriteAtomicWithHooks(root, path string, data []byte, hooks WriteHooks) erro
 // the new entry is durable.
 func WriteAtomicDurableWithModeAndHooks(root, path string, data []byte, mode os.FileMode, hooks WriteHooks) error {
 	return writeAtomicDurableWithHook(root, path, data, mode, true, hooks)
+}
+
+// SecurePrivateDirectoryAndFiles hardens the existing target directory below
+// root and each regular file directly inside it for private application state.
+// It preserves file contents, rejects links and non-regular entries, does not
+// create missing directories, and leaves root and all ancestor directories
+// unchanged. Missing directories return os.ErrNotExist so readers can treat an
+// absent store as an absent document.
+func SecurePrivateDirectoryAndFiles(root, path string) error {
+	rel, err := Relative(root, path)
+	if err != nil {
+		return err
+	}
+	parts, err := pathParts(rel)
+	if err != nil {
+		return err
+	}
+	if len(parts) == 0 {
+		return errors.New("private directory must be below the workspace root")
+	}
+	return securePrivateDirectoryAndFiles(root, parts)
 }
 
 // WriteAtomicWithMode writes a complete file below root and publishes its

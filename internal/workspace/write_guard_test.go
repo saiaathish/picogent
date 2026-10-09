@@ -58,7 +58,8 @@ func TestDurableWriteUsesRootIdentityAndPrivateModes(t *testing.T) {
 			}
 			return nil
 		},
-		CreateParentMode: 0o700,
+		CreateParentMode:       0o700,
+		PrivateParentDirectory: true,
 	})
 	if err != nil {
 		t.Fatalf("durable write = %v", err)
@@ -78,6 +79,67 @@ func TestDurableWriteUsesRootIdentityAndPrivateModes(t *testing.T) {
 		if err != nil || info.Mode().Perm() != 0o600 {
 			t.Fatalf("durable file mode = %v, %v; want 0600", info, err)
 		}
+	}
+}
+
+func TestDurablePrivateWriteLeavesExistingProjectStateParentUnchanged(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows ACL migration is covered by Windows-specific tests")
+	}
+	root := t.TempDir()
+	projectStateDir := filepath.Join(root, ".picogent")
+	undoDir := filepath.Join(projectStateDir, "undo")
+	if err := os.Mkdir(projectStateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(undoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rulesPath := filepath.Join(projectStateDir, "rules.md")
+	if err := os.WriteFile(rulesPath, []byte("shared rules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(rulesPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	existingPath := filepath.Join(undoDir, "older.json")
+	if err := os.WriteFile(existingPath, []byte("preserve journal\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(existingPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(undoDir, "current.json")
+	if err := workspace.WriteAtomicDurableWithModeAndHooks(root, path, []byte("new journal\n"), 0o600, workspace.WriteHooks{
+		CreateParentMode:       0o700,
+		PrivateParentDirectory: true,
+	}); err != nil {
+		t.Fatalf("write private journal: %v", err)
+	}
+	for _, check := range []struct {
+		path string
+		mode os.FileMode
+	}{
+		{path: projectStateDir, mode: 0o755},
+		{path: rulesPath, mode: 0o644},
+		{path: undoDir, mode: 0o700},
+		{path: existingPath, mode: 0o600},
+		{path: path, mode: 0o600},
+	} {
+		info, err := os.Stat(check.path)
+		if err != nil {
+			t.Errorf("stat %s: %v", check.path, err)
+			continue
+		}
+		if got := info.Mode().Perm(); got != check.mode {
+			t.Errorf("permissions for %s = %04o, want %04o", check.path, got, check.mode)
+		}
+	}
+	if got, err := os.ReadFile(existingPath); err != nil || string(got) != "preserve journal\n" {
+		t.Errorf("existing undo journal=%q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(rulesPath); err != nil || string(got) != "shared rules\n" {
+		t.Errorf("project rules=%q err=%v", got, err)
 	}
 }
 
