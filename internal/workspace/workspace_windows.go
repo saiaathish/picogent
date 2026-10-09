@@ -26,6 +26,10 @@ func isWorkspaceNotExist(err error) bool {
 }
 
 func open(root, path string, kind openKind) (*os.File, error) {
+	return openWithRootIdentityCheck(root, path, kind, nil)
+}
+
+func openWithRootIdentityCheck(root, path string, kind openKind, checkRootIdentity RootIdentityCheck) (*os.File, error) {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return nil, err
@@ -37,13 +41,30 @@ func open(root, path string, kind openKind) (*os.File, error) {
 
 	parent, err := openWindowsRoot(root)
 	if err != nil {
+		if checkRootIdentity != nil && isWorkspaceNotExist(err) {
+			return nil, fmt.Errorf("%w: %w", ErrWorkspaceParentNotExist, err)
+		}
 		return nil, err
+	}
+	if checkRootIdentity != nil {
+		identity, identityErr := workspaceRootIdentityForHandle(parent)
+		if identityErr != nil {
+			_ = windows.CloseHandle(parent)
+			return nil, fmt.Errorf("identify opened workspace root: %w", identityErr)
+		}
+		if checkErr := checkRootIdentity(identity); checkErr != nil {
+			_ = windows.CloseHandle(parent)
+			return nil, checkErr
+		}
 	}
 	current := parent
 	for _, part := range parts[:len(parts)-1] {
 		child, openErr := openWindowsDirectory(current, part, kind == openWrite)
 		if openErr != nil {
 			_ = windows.CloseHandle(current)
+			if checkRootIdentity != nil && isWorkspaceNotExist(openErr) {
+				return nil, fmt.Errorf("%w: %w", ErrWorkspaceParentNotExist, openErr)
+			}
 			return nil, fmt.Errorf("open workspace directory %q: %w", part, openErr)
 		}
 		_ = windows.CloseHandle(current)
@@ -65,6 +86,15 @@ func open(root, path string, kind openKind) (*os.File, error) {
 		return nil, fmt.Errorf("workspace file %q failed containment check: %w", rel, err)
 	}
 	return f, nil
+}
+
+func workspaceRootIdentityForHandle(handle windows.Handle) (Identity, error) {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &info); err != nil {
+		return Identity{}, err
+	}
+	fileIndex := uint64(info.FileIndexHigh)<<32 | uint64(info.FileIndexLow)
+	return Identity{Volume: uint64(info.VolumeSerialNumber), File: fileIndex, Known: info.VolumeSerialNumber != 0 || fileIndex != 0}, nil
 }
 
 func openDir(root, path string) (*os.File, error) {
@@ -317,11 +347,15 @@ func remove(root, path string) error {
 }
 
 func removeWithCheck(root, path string, check func() error) error {
+	return removeWithChecks(root, path, check, nil)
+}
+
+func removeWithChecks(root, path string, check func() error, checkRootIdentity RootIdentityCheck) error {
 	current, err := OpenRead(root, path)
 	if err != nil {
 		return err
 	}
-	removeErr := removeIfSameWithCheck(root, path, current, check)
+	removeErr := removeIfSameWithChecks(root, path, current, check, checkRootIdentity)
 	closeErr := current.Close()
 	return errors.Join(removeErr, closeErr)
 }
@@ -331,6 +365,10 @@ func removeIfSame(root, path string, source *os.File) error {
 }
 
 func removeIfSameWithCheck(root, path string, source *os.File, check func() error) error {
+	return removeIfSameWithChecks(root, path, source, check, nil)
+}
+
+func removeIfSameWithChecks(root, path string, source *os.File, check func() error, checkRootIdentity RootIdentityCheck) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -346,9 +384,25 @@ func removeIfSameWithCheck(root, path string, source *os.File, check func() erro
 	if err != nil {
 		return err
 	}
+	if check != nil && checkRootIdentity != nil {
+		if err := check(); err != nil {
+			return err
+		}
+	}
 	parent, err := openWindowsRoot(root)
 	if err != nil {
 		return err
+	}
+	if checkRootIdentity != nil {
+		identity, identityErr := workspaceRootIdentityForHandle(parent)
+		if identityErr != nil {
+			_ = windows.CloseHandle(parent)
+			return fmt.Errorf("identify opened workspace root: %w", identityErr)
+		}
+		if checkErr := checkRootIdentity(identity); checkErr != nil {
+			_ = windows.CloseHandle(parent)
+			return checkErr
+		}
 	}
 	parentHandle := parent
 	for _, part := range parts[:len(parts)-1] {

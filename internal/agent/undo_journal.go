@@ -256,7 +256,13 @@ func removeUndoJournal(workspacePath, sessionID string, pending bool, expected u
 	}
 	path := filepath.Join(".picogent", "undo", name)
 	checkInstance := func() error { return validateUndoWorkspaceInstance(workspacePath, expected) }
-	if err := workspace.RemoveWithCheck(root, path, checkInstance); err != nil && !errors.Is(err, os.ErrNotExist) {
+	checkRootIdentity := func(actual workspace.Identity) error {
+		if !expected.valid() || !actual.Known || actual != expected.Directory {
+			return errors.New("durable undo workspace directory changed")
+		}
+		return nil
+	}
+	if err := workspace.RemoveWithChecks(root, path, checkInstance, checkRootIdentity); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove undo journal: %w", err)
 	}
 	return nil

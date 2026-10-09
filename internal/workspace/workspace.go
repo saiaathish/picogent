@@ -18,9 +18,15 @@ import (
 // ErrContentConflict reports that a file changed after an edit operation read
 // it. The caller must re-read the file and recompute the edit.
 var (
-	ErrContentConflict = errors.New("workspace file changed during edit")
-	ErrTargetChanged   = errors.New("workspace target identity changed")
+	ErrContentConflict         = errors.New("workspace file changed during edit")
+	ErrTargetChanged           = errors.New("workspace target identity changed")
+	ErrRootIdentityChanged     = errors.New("workspace root identity changed")
+	ErrWorkspaceParentNotExist = errors.New("workspace root or parent directory does not exist")
 )
+
+// RootIdentityCheck validates the identity obtained from the opened workspace
+// root handle that anchors a filesystem operation.
+type RootIdentityCheck func(Identity) error
 
 func rejectHardLinkCount(count uint64) error {
 	if count > 1 {
@@ -122,6 +128,21 @@ func OpenRead(root, path string) (*os.File, error) {
 	return open(root, path, openRead)
 }
 
+// OpenReadWithRootIdentity opens a regular file only when the directory handle
+// used to reach it matches expectedRoot. This binds the read to the requested
+// workspace even if its pathname is swapped while the operation is starting.
+func OpenReadWithRootIdentity(root, path string, expectedRoot Identity) (*os.File, error) {
+	if !expectedRoot.Known {
+		return nil, errors.New("expected workspace root identity is unknown")
+	}
+	return openWithRootIdentityCheck(root, path, openRead, func(actual Identity) error {
+		if !actual.Known || actual != expectedRoot {
+			return ErrRootIdentityChanged
+		}
+		return nil
+	})
+}
+
 // OpenDir opens a directory below root without following path-component
 // symlinks or reparse points. The workspace root itself may be named by path;
 // callers do not need to special-case listing ".".
@@ -179,14 +200,17 @@ func WriteAtomicWithPublishHook(root, path string, data []byte, hook func(os.Fil
 }
 
 // WriteHooks separates repeatable authority checks from recovery preparation.
-// Check runs before parent creation and staging and again after preparation,
-// immediately before publication (including every Windows rename retry).
+// CheckRootIdentity validates the identity captured from the opened workspace
+// root handle before any anchored mutation. Check runs before parent creation
+// and staging and again after preparation, immediately before publication
+// (including every Windows rename retry).
 // A refusal stops future side effects; already-authorized parent creation is
 // not rolled back. Like the underlying pathname primitives, this is not an
 // atomic lock against an uncooperative writer changing authority after Check.
 type WriteHooks struct {
-	Check          func() error
-	PreparePublish func(os.FileMode) error
+	Check             func() error
+	CheckRootIdentity RootIdentityCheck
+	PreparePublish    func(os.FileMode) error
 }
 
 func (h WriteHooks) check() error {
@@ -333,13 +357,19 @@ func writeWorkspaceAll(file *os.File, data []byte) error {
 // pathname operation, so a replacement after that check is still outside this
 // helper's universal same-UID race guarantee.
 func Remove(root, path string) error {
-	return RemoveWithCheck(root, path, nil)
+	return RemoveWithChecks(root, path, nil, nil)
 }
 
 // RemoveWithCheck removes a regular file only after check succeeds against
 // the descriptor-anchored parent that will perform the removal.
 func RemoveWithCheck(root, path string, check func() error) error {
-	return removeWithCheck(root, path, check)
+	return RemoveWithChecks(root, path, check, nil)
+}
+
+// RemoveWithChecks removes a regular file after checking caller authority and
+// the identity of the opened workspace root that anchors the removal.
+func RemoveWithChecks(root, path string, check func() error, checkRootIdentity RootIdentityCheck) error {
+	return removeWithChecks(root, path, check, checkRootIdentity)
 }
 
 // RemoveIfUnchanged removes a regular file only when its current content
@@ -348,21 +378,28 @@ func RemoveWithCheck(root, path string, check func() error) error {
 // pathname removal are a best-effort boundary for uncooperative same-UID
 // writers; callers should also hold their project run lock when available.
 func RemoveIfUnchanged(root, path string, expected []byte, expectedMode os.FileMode) error {
-	return RemoveIfUnchangedWithCheck(root, path, expected, expectedMode, nil)
+	return RemoveIfUnchangedWithChecks(root, path, expected, expectedMode, nil, nil)
 }
 
 // RemoveIfUnchangedWithCheck removes a regular file only when its bytes and
 // mode still match expected and check succeeds against the descriptor-anchored
 // parent that will perform the removal.
 func RemoveIfUnchangedWithCheck(root, path string, expected []byte, expectedMode os.FileMode, check func() error) error {
-	return removeIfUnchanged(root, path, expected, expectedMode, nil, check)
+	return RemoveIfUnchangedWithChecks(root, path, expected, expectedMode, check, nil)
+}
+
+// RemoveIfUnchangedWithChecks removes a regular file only when its bytes and
+// mode still match expected, caller authority remains valid, and the opened
+// workspace root has the expected identity.
+func RemoveIfUnchangedWithChecks(root, path string, expected []byte, expectedMode os.FileMode, check func() error, checkRootIdentity RootIdentityCheck) error {
+	return removeIfUnchanged(root, path, expected, expectedMode, nil, check, checkRootIdentity)
 }
 
 func removeIfUnchangedWithHook(root, path string, expected []byte, expectedMode os.FileMode, beforeRemove func() error) error {
-	return removeIfUnchanged(root, path, expected, expectedMode, beforeRemove, nil)
+	return removeIfUnchanged(root, path, expected, expectedMode, beforeRemove, nil, nil)
 }
 
-func removeIfUnchanged(root, path string, expected []byte, expectedMode os.FileMode, beforeRemove, check func() error) error {
+func removeIfUnchanged(root, path string, expected []byte, expectedMode os.FileMode, beforeRemove, check func() error, checkRootIdentity RootIdentityCheck) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -394,7 +431,7 @@ func removeIfUnchanged(root, path string, expected []byte, expectedMode os.FileM
 			return errors.Join(fmt.Errorf("prepare workspace removal %q: %w", rel, hookErr), closeErr)
 		}
 	}
-	removeErr := removeIfSameWithCheck(root, path, current, check)
+	removeErr := removeIfSameWithChecks(root, path, current, check, checkRootIdentity)
 	closeErr := current.Close()
 	return errors.Join(removeErr, closeErr)
 }

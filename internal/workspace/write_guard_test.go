@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -105,6 +106,9 @@ func TestWriteGuardRechecksAfterPreparationForWritesAndEdits(t *testing.T) {
 }
 
 func TestWritePublicationStaysOnOpenedWorkspaceAfterRootSwap(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not permit this directory swap while publication handles are open; replacement-before-open coverage runs on Windows")
+	}
 	parent := t.TempDir()
 	root := filepath.Join(parent, "workspace")
 	if err := os.Mkdir(root, 0o700); err != nil {
@@ -114,30 +118,46 @@ func TestWritePublicationStaysOnOpenedWorkspaceAfterRootSwap(t *testing.T) {
 	if err := os.WriteFile(path, []byte("agent\n"), 0o640); err != nil {
 		t.Fatal(err)
 	}
+	expected, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	parked := filepath.Join(parent, "parked-workspace")
 	checks := 0
-	err := workspace.WriteAtomicIfUnchangedWithHooks(root, "note.txt", []byte("agent\n"), []byte("before\n"), workspace.WriteHooks{
+	swapped := false
+	err = workspace.WriteAtomicIfUnchangedWithHooks(root, "note.txt", []byte("agent\n"), []byte("before\n"), workspace.WriteHooks{
 		Check: func() error {
 			checks++
-			if checks == 3 {
-				if err := os.Rename(root, parked); err != nil {
-					return err
-				}
-				if err := os.Mkdir(root, 0o700); err != nil {
-					return err
-				}
-				if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("agent\n"), 0o640); err != nil {
-					return err
-				}
+			return nil
+		},
+		CheckRootIdentity: func(actual workspace.Identity) error {
+			if actual != expected {
+				return workspace.ErrRootIdentityChanged
 			}
+			if swapped {
+				return nil
+			}
+			if err := os.Rename(root, parked); err != nil {
+				return err
+			}
+			if err := os.Mkdir(root, 0o700); err != nil {
+				return err
+			}
+			if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("agent\n"), 0o640); err != nil {
+				return err
+			}
+			swapped = true
 			return nil
 		},
 	})
 	if err != nil {
 		t.Fatalf("atomic restore after root swap: %v", err)
 	}
-	if checks < 3 {
-		t.Fatalf("publication checks = %d, want final descriptor-anchored check", checks)
+	if !swapped {
+		t.Fatal("workspace root was not replaced after the original root handle opened")
+	}
+	if checks < 2 {
+		t.Fatalf("publication checks = %d, want a final descriptor-anchored check", checks)
 	}
 	if got, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(got) != "agent\n" {
 		t.Fatalf("replacement workspace file = %q, err=%v", got, err)
@@ -147,7 +167,10 @@ func TestWritePublicationStaysOnOpenedWorkspaceAfterRootSwap(t *testing.T) {
 	}
 }
 
-func TestRemoveWithCheckStaysOnOpenedWorkspaceAfterRootSwap(t *testing.T) {
+func TestRemoveRefusesReplacementAfterRootHandleOpen(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not permit this directory swap while removal handles are open; replacement-before-open coverage runs on Windows")
+	}
 	parent := t.TempDir()
 	root := filepath.Join(parent, "workspace")
 	if err := os.Mkdir(root, 0o700); err != nil {
@@ -156,28 +179,147 @@ func TestRemoveWithCheckStaysOnOpenedWorkspaceAfterRootSwap(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "pending.json"), []byte("original"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	expected, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	parked := filepath.Join(parent, "parked-workspace")
 	checks := 0
-	err := workspace.RemoveWithCheck(root, "pending.json", func() error {
+	swapped := false
+	err = workspace.RemoveWithChecks(root, "pending.json", func() error {
 		checks++
+		if !swapped {
+			return nil
+		}
+		actual, err := workspace.DirectoryIdentity(root)
+		if err != nil {
+			return err
+		}
+		if actual != expected {
+			return workspace.ErrRootIdentityChanged
+		}
+		return nil
+	}, func(actual workspace.Identity) error {
+		if actual != expected {
+			return workspace.ErrRootIdentityChanged
+		}
 		if err := os.Rename(root, parked); err != nil {
 			return err
 		}
 		if err := os.Mkdir(root, 0o700); err != nil {
 			return err
 		}
-		return os.WriteFile(filepath.Join(root, "pending.json"), []byte("replacement"), 0o600)
+		if err := os.WriteFile(filepath.Join(root, "pending.json"), []byte("replacement"), 0o600); err != nil {
+			return err
+		}
+		swapped = true
+		return nil
 	})
-	if err != nil {
-		t.Fatalf("remove after root swap: %v", err)
+	if err == nil {
+		t.Fatal("remove after root replacement succeeded; want a fail-closed refusal")
 	}
-	if checks != 1 {
-		t.Fatalf("removal checks = %d, want one check after parent open", checks)
+	if !swapped {
+		t.Fatal("workspace root was not replaced after the original root handle opened")
+	}
+	if checks < 1 {
+		t.Fatalf("removal authority checks = %d, want initial authority check", checks)
 	}
 	if got, err := os.ReadFile(filepath.Join(root, "pending.json")); err != nil || string(got) != "replacement" {
 		t.Fatalf("replacement journal = %q, err=%v", got, err)
 	}
-	if _, err := os.Stat(filepath.Join(parked, "pending.json")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("original journal was not removed: %v", err)
+	if got, err := os.ReadFile(filepath.Join(parked, "pending.json")); err != nil || string(got) != "original" {
+		t.Fatalf("original journal changed after refusal = %q, err=%v", got, err)
+	}
+}
+
+func TestWriteRootIdentityGuardRejectsSwapDuringRootOpen(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	replacement := filepath.Join(parent, "replacement")
+	parkedOriginal := filepath.Join(parent, "parked-original")
+	for _, dir := range []string{root, replacement} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "note.txt"), []byte("agent"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expected, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementInstalled := false
+	err = workspace.WriteAtomicIfUnchangedWithHooks(root, "note.txt", []byte("agent"), []byte("restored"), workspace.WriteHooks{
+		Check: func() error {
+			if replacementInstalled {
+				return nil
+			}
+			if err := os.Rename(root, parkedOriginal); err != nil {
+				return err
+			}
+			if err := os.Rename(replacement, root); err != nil {
+				return err
+			}
+			replacementInstalled = true
+			return nil
+		},
+		CheckRootIdentity: func(actual workspace.Identity) error {
+			if actual != expected {
+				return workspace.ErrRootIdentityChanged
+			}
+			return nil
+		},
+	})
+	if !errors.Is(err, workspace.ErrRootIdentityChanged) {
+		t.Fatalf("write after transient root swap = %v, want root-identity rejection", err)
+	}
+	if !replacementInstalled {
+		t.Fatal("replacement was not installed before the workspace root opened")
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(got) != "agent" {
+		t.Fatalf("replacement workspace file = %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(parkedOriginal, "note.txt")); err != nil || string(got) != "agent" {
+		t.Fatalf("original workspace file = %q, %v", got, err)
+	}
+}
+
+func TestRemoveRootIdentityGuardRejectsReplacement(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	replacement := filepath.Join(parent, "replacement")
+	parkedOriginal := filepath.Join(parent, "parked-original")
+	for _, dir := range []string{root, replacement} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "pending.json"), []byte("pending"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expected, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(root, parkedOriginal); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, root); err != nil {
+		t.Fatal(err)
+	}
+	err = workspace.RemoveWithChecks(root, "pending.json", nil, func(actual workspace.Identity) error {
+		if actual != expected {
+			return workspace.ErrRootIdentityChanged
+		}
+		return nil
+	})
+	if !errors.Is(err, workspace.ErrRootIdentityChanged) {
+		t.Fatalf("remove after root replacement = %v, want root-identity rejection", err)
+	}
+	for _, path := range []string{filepath.Join(root, "pending.json"), filepath.Join(parkedOriginal, "pending.json")} {
+		if got, err := os.ReadFile(path); err != nil || string(got) != "pending" {
+			t.Fatalf("pending file %s = %q, %v", path, got, err)
+		}
 	}
 }

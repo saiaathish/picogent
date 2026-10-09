@@ -30,13 +30,20 @@ func isWorkspaceNotExist(err error) bool {
 }
 
 func open(root, path string, kind openKind) (*os.File, error) {
+	return openWithRootIdentityCheck(root, path, kind, nil)
+}
+
+func openWithRootIdentityCheck(root, path string, kind openKind, checkRootIdentity RootIdentityCheck) (*os.File, error) {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return nil, err
 	}
 	createParents := kind == openWrite
-	parent, leaf, err := openParent(root, rel, createParents)
+	parent, leaf, err := openParentWithRootIdentityCheck(root, rel, createParents, checkRootIdentity, nil)
 	if err != nil {
+		if checkRootIdentity != nil && isWorkspaceNotExist(err) {
+			return nil, fmt.Errorf("%w: %w", ErrWorkspaceParentNotExist, err)
+		}
 		return nil, err
 	}
 	defer unix.Close(parent)
@@ -121,6 +128,10 @@ func openParent(root, rel string, create bool) (int, string, error) {
 }
 
 func openParentWithGuard(root, rel string, create bool, guard func() error) (int, string, error) {
+	return openParentWithRootIdentityCheck(root, rel, create, nil, guard)
+}
+
+func openParentWithRootIdentityCheck(root, rel string, create bool, checkRootIdentity RootIdentityCheck, guard func() error) (int, string, error) {
 	parts, err := pathParts(rel)
 	if err != nil {
 		return -1, "", err
@@ -128,6 +139,17 @@ func openParentWithGuard(root, rel string, create bool, guard func() error) (int
 	fd, err := openUnixRoot(root)
 	if err != nil {
 		return -1, "", fmt.Errorf("open workspace directory: %w", err)
+	}
+	if checkRootIdentity != nil {
+		identity, identityErr := workspaceRootIdentityForFD(fd)
+		if identityErr != nil {
+			_ = unix.Close(fd)
+			return -1, "", fmt.Errorf("identify opened workspace root: %w", identityErr)
+		}
+		if checkErr := checkRootIdentity(identity); checkErr != nil {
+			_ = unix.Close(fd)
+			return -1, "", checkErr
+		}
 	}
 	current := fd
 	for _, part := range parts[:len(parts)-1] {
@@ -153,6 +175,14 @@ func openParentWithGuard(root, rel string, create bool, guard func() error) (int
 		current = child
 	}
 	return current, parts[len(parts)-1], nil
+}
+
+func workspaceRootIdentityForFD(fd int) (Identity, error) {
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return Identity{}, err
+	}
+	return Identity{Volume: uint64(stat.Dev), File: uint64(stat.Ino), Known: stat.Dev != 0 || stat.Ino != 0}, nil
 }
 
 func openUnixRoot(root string) (int, error) {
@@ -218,11 +248,15 @@ func remove(root, path string) error {
 }
 
 func removeWithCheck(root, path string, check func() error) error {
+	return removeWithChecks(root, path, check, nil)
+}
+
+func removeWithChecks(root, path string, check func() error, checkRootIdentity RootIdentityCheck) error {
 	current, err := OpenRead(root, path)
 	if err != nil {
 		return err
 	}
-	removeErr := removeIfSameWithCheck(root, path, current, check)
+	removeErr := removeIfSameWithChecks(root, path, current, check, checkRootIdentity)
 	closeErr := current.Close()
 	return errors.Join(removeErr, closeErr)
 }
@@ -232,6 +266,10 @@ func removeIfSame(root, path string, current *os.File) error {
 }
 
 func removeIfSameWithCheck(root, path string, current *os.File, check func() error) error {
+	return removeIfSameWithChecks(root, path, current, check, nil)
+}
+
+func removeIfSameWithChecks(root, path string, current *os.File, check func() error, checkRootIdentity RootIdentityCheck) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -243,7 +281,12 @@ func removeIfSameWithCheck(root, path string, current *os.File, check func() err
 	if err != nil {
 		return fmt.Errorf("identify workspace file %q for removal: %w", rel, err)
 	}
-	parent, leaf, err := openParent(root, rel, false)
+	if check != nil && checkRootIdentity != nil {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	parent, leaf, err := openParentWithRootIdentityCheck(root, rel, false, checkRootIdentity, nil)
 	if err != nil {
 		return err
 	}
@@ -282,7 +325,7 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 	if err := hooks.check(); err != nil {
 		return err
 	}
-	parent, leaf, err := openParentWithGuard(root, rel, true, hooks.Check)
+	parent, leaf, err := openParentWithRootIdentityCheck(root, rel, true, hooks.CheckRootIdentity, hooks.Check)
 	if err != nil {
 		return err
 	}

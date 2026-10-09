@@ -46,6 +46,17 @@ func writeAtomicWithRename(root, path string, data []byte, requestedMode os.File
 	if err != nil {
 		return fmt.Errorf("open workspace directory: %w", err)
 	}
+	if hooks.CheckRootIdentity != nil {
+		identity, identityErr := workspaceRootIdentityForHandle(parent)
+		if identityErr != nil {
+			_ = windows.CloseHandle(parent)
+			return fmt.Errorf("identify opened workspace root: %w", identityErr)
+		}
+		if checkErr := hooks.CheckRootIdentity(identity); checkErr != nil {
+			_ = windows.CloseHandle(parent)
+			return checkErr
+		}
+	}
 	current := parent
 	defer func() { _ = windows.CloseHandle(current) }()
 	for _, part := range parts[:len(parts)-1] {
