@@ -20,7 +20,7 @@ func TestReleaseArtifactsWorkflowContract(t *testing.T) {
 	}
 	workflow := string(data)
 	for _, required := range []string{
-		"go-version: \"1.25.14\"",
+		"go-version: \"1.26.9\"",
 		"actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
 		"actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff",
 		"actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6",
