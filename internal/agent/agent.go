@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -427,22 +428,48 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 func (a *Agent) acquireProjectRunLockForWorkspace(workspace string, binding nativeTaskBinding) (func() error, error) {
 	store := binding.store
 	var storeErr error
+	var releaseStore func() error
 	if store != nil {
 		release, err := store.AcquireRunLock()
 		if err == nil {
-			return release, nil
+			releaseStore = release
+		} else {
+			storeErr = err
 		}
-		storeErr = err
 	}
 	if strings.TrimSpace(workspace) != "" {
-		release, err := taskstate.WorkspaceStore(workspace).AcquireRunLock()
+		identity, err := undoWorkspaceIdentity(workspace)
+		if err != nil {
+			if releaseStore != nil {
+				err = errors.Join(err, releaseStore())
+			}
+			return nil, fmt.Errorf("resolve project workspace lock: %w", err)
+		}
+		// A custom task store may live outside the workspace and have its own
+		// run lock. Keep that lock for store-wide coordination, and also lock
+		// inside the canonical workspace so agents using different task stores
+		// cannot interleave workspace writes and undo-journal recovery.
+		workspaceStore := taskstate.NewStore(filepath.Join(identity, ".picogent", "project-run"))
+		releaseWorkspace, err := workspaceStore.AcquireRunLock()
 		if err == nil {
-			return release, nil
+			return func() error {
+				workspaceErr := releaseWorkspace()
+				if releaseStore == nil {
+					return workspaceErr
+				}
+				return errors.Join(workspaceErr, releaseStore())
+			}, nil
+		}
+		if releaseStore != nil {
+			err = errors.Join(err, releaseStore())
 		}
 		if storeErr != nil {
-			return nil, fmt.Errorf("task store lock: %v; workspace lock: %w", storeErr, err)
+			return nil, fmt.Errorf("task store lock: %v; workspace run lock: %w", storeErr, err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("workspace run lock: %w", err)
+	}
+	if releaseStore != nil {
+		return releaseStore, nil
 	}
 	if storeErr != nil {
 		return nil, storeErr

@@ -729,11 +729,25 @@ func validateDurableUndoTask(u *turnUndo, task *taskstate.Task) error {
 	return nil
 }
 
-// loadValidatedDurableUndo validates the persisted turn owner before it may
-// clean up a pending record that never reached a workspace rename. Keeping the
-// raw loader read-only ensures a replacement task cannot consume another
-// task's recovery journal merely by attaching to the same session ID.
+// loadValidatedDurableUndo refreshes the persisted turn owner before it may
+// clean up a pending record that never reached a workspace rename. A caller's
+// snapshot can be stale even when non-nil, so it must never authorize journal
+// deletion or recovery on its own.
 func loadValidatedDurableUndo(workspace, sessionID string, generation uint64, task *taskstate.Task, authorities ...undoTaskStoreAuthority) (*turnUndo, error) {
+	// The task snapshot held by an Agent can be stale after another Agent or
+	// process replaces or advances the task. Resolve the durable owner before
+	// validating the journal; callers still validate it before any task
+	// normalization or recovery write.
+	if len(authorities) > 0 && authorities[0].store != nil {
+		current, err := authorities[0].store.OwnershipSnapshot(sessionID)
+		if errors.Is(err, taskstate.ErrNotFound) {
+			err = nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect durable task for undo: %w", err)
+		}
+		task = current
+	}
 	u, err := loadLatestDurableUndo(workspace, sessionID, generation, authorities...)
 	if err != nil {
 		return nil, err
