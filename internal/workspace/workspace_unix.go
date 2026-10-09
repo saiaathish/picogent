@@ -117,6 +117,10 @@ func openDir(root, path string) (*os.File, error) {
 }
 
 func openParent(root, rel string, create bool) (int, string, error) {
+	return openParentWithGuard(root, rel, create, nil)
+}
+
+func openParentWithGuard(root, rel string, create bool, guard func() error) (int, string, error) {
 	parts, err := pathParts(rel)
 	if err != nil {
 		return -1, "", err
@@ -129,6 +133,12 @@ func openParent(root, rel string, create bool) (int, string, error) {
 	for _, part := range parts[:len(parts)-1] {
 		child, openErr := unix.Openat(current, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 		if openErr != nil && create && errors.Is(openErr, unix.ENOENT) {
+			if guard != nil {
+				if err := guard(); err != nil {
+					_ = unix.Close(current)
+					return -1, "", err
+				}
+			}
 			if mkdirErr := unix.Mkdirat(current, part, 0o755); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
 				_ = unix.Close(current)
 				return -1, "", fmt.Errorf("create workspace directory %q: %w", part, mkdirErr)
@@ -244,19 +254,22 @@ func removeIfSame(root, path string, current *os.File) error {
 }
 
 func writeAtomic(root, path string, data []byte) error {
-	return writeAtomicWithHook(root, path, data, 0, false, nil)
+	return writeAtomicWithHook(root, path, data, 0, false, WriteHooks{})
 }
 
 func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMode, setMode bool) error {
-	return writeAtomicWithHook(root, path, data, requestedMode, setMode, nil)
+	return writeAtomicWithHook(root, path, data, requestedMode, setMode, WriteHooks{})
 }
 
-func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hook func(os.FileMode) error) error {
+func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
 	}
-	parent, leaf, err := openParent(root, rel, true)
+	if err := hooks.check(); err != nil {
+		return err
+	}
+	parent, leaf, err := openParentWithGuard(root, rel, true, hooks.Check)
 	if err != nil {
 		return err
 	}
@@ -277,6 +290,9 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 	tmpName := ""
 	var file *os.File
 	for attempt := uint64(0); attempt < 32; attempt++ {
+		if err := hooks.check(); err != nil {
+			return err
+		}
 		seq := workspaceTempSequence.Add(1)
 		tmpName = fmt.Sprintf(".picogent-workspace-%d-%d-%d.tmp", os.Getpid(), time.Now().UnixNano(), seq)
 		fd, openErr := unix.Openat(parent, tmpName, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_CLOEXEC|unix.O_NOFOLLOW, createMode)
@@ -325,14 +341,17 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 	if _, _, err := workspaceTargetMode(parent, leaf); err != nil {
 		return fmt.Errorf("validate workspace target %q: %w", rel, err)
 	}
-	if hook != nil {
+	if hooks.PreparePublish != nil {
 		info, err := file.Stat()
 		if err != nil {
 			return fmt.Errorf("inspect workspace publication %q: %w", rel, err)
 		}
-		if err := hook(info.Mode()); err != nil {
+		if err := hooks.PreparePublish(info.Mode()); err != nil {
 			return fmt.Errorf("prepare workspace publication %q: %w", rel, err)
 		}
+	}
+	if err := hooks.check(); err != nil {
+		return err
 	}
 	// Renameat publishes a complete inode, so ordinary path readers never see
 	// the temporary file being filled. POSIX has no compare-and-rename-by-inode

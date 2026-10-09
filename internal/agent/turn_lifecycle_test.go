@@ -27,6 +27,7 @@ type durableTurnProbeClient struct {
 	cancel      context.CancelFunc
 	observed    chan *taskstate.TurnRecord
 	observeOnce sync.Once
+	onChat      func()
 }
 
 func (c *durableTurnProbeClient) Chat(_ context.Context, _ llm.ChatRequest) (llm.ChatResponse, error) {
@@ -35,6 +36,9 @@ func (c *durableTurnProbeClient) Chat(_ context.Context, _ llm.ChatRequest) (llm
 		return llm.ChatResponse{}, err
 	}
 	c.observeOnce.Do(func() { c.observed <- task.LastTurn() })
+	if c.onChat != nil {
+		c.onChat()
+	}
 	if c.cancel != nil {
 		c.cancel()
 	}
@@ -73,25 +77,6 @@ func (h *turnCloseFailureHandler) OnTaskState(task *taskstate.Task) {
 	}
 	last := task.LastTurn()
 	if last == nil || last.State != taskstate.TurnActive || len(task.ChangedFiles) == 0 {
-		return
-	}
-	h.switched = true
-	h.ag.SetTaskStore(h.badStore)
-}
-
-type providerFailureCloseHandler struct {
-	allowAll
-	ag       *agent.Agent
-	badStore *taskstate.Store
-	switched bool
-}
-
-func (h *providerFailureCloseHandler) OnTaskState(task *taskstate.Task) {
-	if h.switched || task == nil {
-		return
-	}
-	last := task.LastTurn()
-	if last == nil || last.State != taskstate.TurnActive {
 		return
 	}
 	h.switched = true
@@ -365,14 +350,21 @@ func TestRunWithOptionsReturnsTurnCloseFailureWithProviderError(t *testing.T) {
 	if err := a.SetTaskSession(sessionID); err != nil {
 		t.Fatal(err)
 	}
-	h := &providerFailureCloseHandler{ag: a, badStore: taskstate.NewStore(badRoot)}
+	switched := false
+	client.onChat = func() {
+		// Admission now rejects a callback's store replacement before the
+		// provider runs. Inject the close failure inside the provider instead
+		// so this test still exercises both genuine error causes.
+		a.SetTaskStore(taskstate.NewStore(badRoot))
+		switched = true
+	}
 
-	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "investigate the provider failure"}, h)
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "investigate the provider failure"}, allowAll{})
 	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "provider unavailable") || !strings.Contains(strings.ToLower(err.Error()), "durable task state was not saved") {
 		t.Fatalf("provider and turn-close failures = %v, want both causes", err)
 	}
-	if !h.switched {
-		t.Fatal("test did not switch stores after active turn persistence")
+	if !switched {
+		t.Fatal("test did not switch stores inside the provider")
 	}
 	if result.GoalDone || result.Task == nil {
 		t.Fatalf("provider failure result = %#v goalDone=%v, want resumable task", result.Task, result.GoalDone)

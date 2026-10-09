@@ -140,7 +140,7 @@ func (writeFile) Run(ctx context.Context, args string, c Context) (string, error
 			return c.BeforeWorkspacePublish(abs, data, mode)
 		}
 	}
-	if err := workspace.WriteAtomicWithPublishHook(ws, abs, data, hook); err != nil {
+	if err := workspace.WriteAtomicWithHooks(ws, abs, data, workspace.WriteHooks{Check: nativeWriteGuard(ctx, c, abs), PreparePublish: hook}); err != nil {
 		return "", err
 	}
 	return "wrote " + relDisplay(ws, abs), nil
@@ -232,10 +232,24 @@ func (editFile) Run(ctx context.Context, args string, c Context) (string, error)
 			return c.BeforeWorkspacePublish(abs, newData, mode)
 		}
 	}
-	if err := workspace.WriteAtomicIfUnchangedWithPublishHook(ws, abs, data, newData, hook); err != nil {
+	if err := workspace.WriteAtomicIfUnchangedWithHooks(ws, abs, data, newData, workspace.WriteHooks{Check: nativeWriteGuard(ctx, c, abs), PreparePublish: hook}); err != nil {
 		return "", err
 	}
 	return "edited " + relDisplay(ws, abs), nil
+}
+
+func nativeWriteGuard(ctx context.Context, c Context, path string) func() error {
+	return func() error {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		if c.BeforeWorkspaceMutation != nil {
+			return c.BeforeWorkspaceMutation(path)
+		}
+		return nil
+	}
 }
 
 func readBoundedReader(r io.Reader, limit int) ([]byte, bool, error) {

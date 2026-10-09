@@ -16,20 +16,30 @@ import (
 var workspaceTempSequence atomic.Uint64
 
 func writeAtomic(root, path string, data []byte) error {
-	return writeAtomicWithHook(root, path, data, 0, false, nil)
+	return writeAtomicWithHook(root, path, data, 0, false, WriteHooks{})
 }
 
 func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMode, setMode bool) error {
-	return writeAtomicWithHook(root, path, data, requestedMode, setMode, nil)
+	return writeAtomicWithHook(root, path, data, requestedMode, setMode, WriteHooks{})
 }
 
-func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hook func(os.FileMode) error) error {
+func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks) error {
+	return writeAtomicWithRename(root, path, data, requestedMode, setMode, hooks, renameWorkspaceHandle)
+}
+
+// The per-operation rename parameter lets platform tests force retryable
+// failures without depending on filesystem sharing/antivirus timing or a
+// mutable process-wide syscall override.
+func writeAtomicWithRename(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks, rename func(windows.Handle, windows.Handle, string) error) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
 	}
 	parts, err := pathParts(rel)
 	if err != nil {
+		return err
+	}
+	if err := hooks.check(); err != nil {
 		return err
 	}
 	parent, err := openWindowsRoot(root)
@@ -39,6 +49,9 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 	current := parent
 	defer func() { _ = windows.CloseHandle(current) }()
 	for _, part := range parts[:len(parts)-1] {
+		if err := hooks.check(); err != nil {
+			return err
+		}
 		child, openErr := openWindowsDirectory(current, part, true)
 		if openErr != nil {
 			return fmt.Errorf("open workspace directory %q: %w", part, openErr)
@@ -57,6 +70,9 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 	tmpName := ""
 	var file *os.File
 	for attempt := uint64(0); attempt < 32; attempt++ {
+		if err := hooks.check(); err != nil {
+			return err
+		}
 		seq := workspaceTempSequence.Add(1)
 		tmpName = fmt.Sprintf(".picogent-workspace-%d-%d-%d.tmp", os.Getpid(), time.Now().UnixNano(), seq)
 		file, err = openWorkspaceExclusive(current, tmpName, path)
@@ -97,17 +113,20 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 	if _, err := workspaceRegularEntry(current, leaf); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("validate workspace target %q: %w", rel, err)
 	}
-	if hook != nil {
+	if hooks.PreparePublish != nil {
 		info, err := file.Stat()
 		if err != nil {
 			return fmt.Errorf("inspect workspace publication %q: %w", rel, err)
 		}
-		if err := hook(info.Mode()); err != nil {
+		if err := hooks.PreparePublish(info.Mode()); err != nil {
 			return fmt.Errorf("prepare workspace publication %q: %w", rel, err)
 		}
 	}
 	for attempt := 0; ; attempt++ {
-		if err := renameWorkspaceHandle(windows.Handle(file.Fd()), current, leaf); err == nil {
+		if err := hooks.check(); err != nil {
+			return err
+		}
+		if err := rename(windows.Handle(file.Fd()), current, leaf); err == nil {
 			break
 		} else if !retryWorkspaceRename(err) || attempt >= 99 {
 			return fmt.Errorf("publish workspace file %q: %w", rel, err)

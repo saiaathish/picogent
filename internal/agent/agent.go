@@ -505,11 +505,20 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		return history, Result{Task: a.TaskSnapshot()}, err
 	}
 	state.Goal, state.GoalRevision = admittedGoal, admittedRevision
-	if failed, taskErr := a.beginDurableTaskInState(durablePrompt, ev, false, state); failed {
+	nativeOwner := a.nativeTaskBinding()
+	admission := &nativeAdmissionEvents{EventHandler: ev}
+	if failed, taskErr := a.beginDurableTaskInState(durablePrompt, admission, false, state); failed {
 		if taskErr == nil {
 			taskErr = errors.New("durable task state is unavailable")
 		}
 		return history, Result{Task: a.TaskSnapshot()}, taskErr
+	}
+	if admission.snapshot != nil {
+		nativeOwner = nativeOwner.withAdmittedTask(admission.snapshot)
+	}
+	if err := a.checkNativeTaskBinding(ctx, nativeOwner); err != nil {
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
 	}
 	admittedGoal, admittedRevision, err = a.reconcileReplacedWorkspaceGoal(cfg.Workspace, state.Goal, state.GoalRevision)
 	if err != nil {
@@ -520,9 +529,14 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	var turnSequence uint64
 	if task := a.TaskSnapshot(); task != nil {
 		var started bool
-		turnSequence, started = a.beginDurableTurn(durableTurnStartRoute(task, taskMode), ev)
+		turnSequence, started = a.beginDurableTurn(durableTurnStartRoute(task, taskMode), admission)
 		if !started {
 			return history, Result{Task: a.TaskSnapshot()}, errors.New("durable turn could not be started")
+		}
+		nativeOwner = nativeOwner.withAdmittedTask(admission.snapshot)
+		if err := a.checkNativeTaskBinding(ctx, nativeOwner); err != nil {
+			ev.OnError(err)
+			return history, Result{Task: a.TaskSnapshot()}, err
 		}
 	}
 
@@ -532,18 +546,27 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
 	turnUndo.turnSequence = turnSequence
 	turnClosed := turnSequence == 0
-	// Every native write needs its expected fingerprint before publication,
-	// including process-only undo. Recovery journal eligibility is separate.
-	regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+	regCtx.BeforeWorkspaceMutation = func(string) error {
+		if err := a.checkNativeTaskBinding(ctx, nativeOwner); err != nil {
+			return err
+		}
 		// Informational prompts do not eagerly create tasks. Once an approved
-		// native write is about to publish, admit its durable ownership before
-		// journaling/rename, not after a successful tool result can be lost.
+		// native write reaches its first side-effect boundary, persist ownership
+		// before even creating a parent directory or staging a temporary file.
 		if turnSequence == 0 && a.TaskStoreSnapshot() != nil && sessionID != "" {
+			admission := &nativeAdmissionEvents{EventHandler: ev}
 			if a.TaskSnapshot() == nil {
-				if failed, err := a.beginDurableTaskInState(durablePrompt, ev, true, state); failed {
+				if failed, err := a.beginDurableTaskInState(durablePrompt, admission, true, state); failed {
 					if err == nil {
 						err = errors.New("durable task state is unavailable")
 					}
+					return err
+				}
+				if admission.snapshot == nil {
+					return errors.New("native mutation requires a saved task admission")
+				}
+				nativeOwner = nativeOwner.withAdmittedTask(admission.snapshot)
+				if err := a.checkNativeTaskBinding(ctx, nativeOwner); err != nil {
 					return err
 				}
 			}
@@ -551,13 +574,24 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			if task == nil {
 				return errors.New("native publication requires a durable task")
 			}
-			sequence, started := a.beginDurableTurn(durableTurnStartRoute(task, taskMode), ev)
+			sequence, started := a.beginDurableTurn(durableTurnStartRoute(task, taskMode), admission)
 			if !started || sequence == 0 {
 				return errors.New("native publication requires a durable turn")
 			}
 			turnSequence = sequence
 			turnUndo.turnSequence = sequence
 			turnClosed = false
+			// Retain the original store/session generation while adopting only
+			// the exact saved turn, not a callback's replacement identity.
+			nativeOwner = nativeOwner.withAdmittedTask(admission.snapshot)
+		}
+		return a.checkNativeTaskBinding(ctx, nativeOwner)
+	}
+	// Every native write needs its expected fingerprint before publication,
+	// including process-only undo. Recovery journal eligibility is separate.
+	regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+		if err := a.checkNativeTaskBinding(ctx, nativeOwner); err != nil {
+			return err
 		}
 		return turnUndo.preparePublish(path, data, mode)
 	}

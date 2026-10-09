@@ -175,7 +175,30 @@ func WriteAtomic(root, path string, data []byte) error {
 // persist recovery metadata before the workspace rename without exposing a
 // temporary pathname or weakening the normal workspace safety checks.
 func WriteAtomicWithPublishHook(root, path string, data []byte, hook func(os.FileMode) error) error {
-	return writeAtomicWithHook(root, path, data, 0, false, hook)
+	return WriteAtomicWithHooks(root, path, data, WriteHooks{PreparePublish: hook})
+}
+
+// WriteHooks separates repeatable authority checks from recovery preparation.
+// Check runs before parent creation and staging and again after preparation,
+// immediately before publication (including every Windows rename retry).
+// A refusal stops future side effects; already-authorized parent creation is
+// not rolled back. Like the underlying pathname primitives, this is not an
+// atomic lock against an uncooperative writer changing authority after Check.
+type WriteHooks struct {
+	Check          func() error
+	PreparePublish func(os.FileMode) error
+}
+
+func (h WriteHooks) check() error {
+	if h.Check != nil {
+		return h.Check()
+	}
+	return nil
+}
+
+// WriteAtomicWithHooks is WriteAtomic with repeated caller-owned guards.
+func WriteAtomicWithHooks(root, path string, data []byte, hooks WriteHooks) error {
+	return writeAtomicWithHook(root, path, data, 0, false, hooks)
 }
 
 // WriteAtomicWithMode writes a complete file below root and publishes its
@@ -205,7 +228,7 @@ func WriteAtomicIfUnchanged(root, path string, expected, data []byte) error {
 // publication path so callers that already performed a preflight check get a
 // second content-and-mode check right before the replacement is prepared.
 func WriteAtomicIfUnchangedWithMode(root, path string, expected []byte, expectedMode os.FileMode, data []byte, mode os.FileMode) error {
-	return writeAtomicIfUnchangedWithModeHook(root, path, expected, expectedMode, true, data, mode, true, nil)
+	return writeAtomicIfUnchangedWithModeHook(root, path, expected, expectedMode, true, data, mode, true, WriteHooks{})
 }
 
 // WriteAtomicIfMissingWithMode publishes data only while the target remains
@@ -232,10 +255,16 @@ func WriteAtomicIfMissingWithMode(root, path string, data []byte, mode os.FileMo
 // primitive with the same pre-publication recovery hook as
 // WriteAtomicWithPublishHook.
 func WriteAtomicIfUnchangedWithPublishHook(root, path string, expected, data []byte, hook func(os.FileMode) error) error {
-	return writeAtomicIfUnchangedWithModeHook(root, path, expected, 0, false, data, 0, false, hook)
+	return WriteAtomicIfUnchangedWithHooks(root, path, expected, data, WriteHooks{PreparePublish: hook})
 }
 
-func writeAtomicIfUnchangedWithModeHook(root, path string, expected []byte, expectedMode os.FileMode, checkMode bool, data []byte, mode os.FileMode, setMode bool, hook func(os.FileMode) error) error {
+// WriteAtomicIfUnchangedWithHooks preserves edit freshness checks and repeats
+// the same authority checks as WriteAtomicWithHooks.
+func WriteAtomicIfUnchangedWithHooks(root, path string, expected, data []byte, hooks WriteHooks) error {
+	return writeAtomicIfUnchangedWithModeHook(root, path, expected, 0, false, data, 0, false, hooks)
+}
+
+func writeAtomicIfUnchangedWithModeHook(root, path string, expected []byte, expectedMode os.FileMode, checkMode bool, data []byte, mode os.FileMode, setMode bool, hooks WriteHooks) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -263,7 +292,7 @@ func writeAtomicIfUnchangedWithModeHook(root, path string, expected []byte, expe
 	if !bytes.Equal(currentContent, expected) || (checkMode && comparableMode(info.Mode()) != comparableMode(expectedMode)) {
 		return fmt.Errorf("%w: %s", ErrContentConflict, rel)
 	}
-	return writeAtomicWithHook(root, path, data, mode, setMode, hook)
+	return writeAtomicWithHook(root, path, data, mode, setMode, hooks)
 }
 
 func writeWorkspaceAll(file *os.File, data []byte) error {
