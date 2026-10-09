@@ -236,7 +236,9 @@ func WriteAtomicWithPublishHook(root, path string, data []byte, hook func(os.Fil
 // and staging and again after preparation, immediately before publication
 // (including every Windows rename retry).
 // CreateParentMode overrides the Unix mode for newly created parent
-// directories; zero keeps the platform default. Windows uses inherited ACLs.
+// directories; zero keeps the platform default. On Windows, the private
+// 0700-parent/0600-file combination used by durable undo journals receives
+// protected current-user-only ACLs; other writes retain inherited ACLs.
 // A refusal stops future side effects; already-authorized parent creation is
 // not rolled back. Like the underlying pathname primitives, this is not an
 // atomic lock against an uncooperative writer changing authority after Check.

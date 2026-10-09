@@ -54,6 +54,18 @@ func writeAtomicWithRenameDurability(root, path string, data []byte, requestedMo
 	if err := hooks.check(); err != nil {
 		return err
 	}
+	privateJournal := durable && setMode && requestedMode.Perm() == 0o600 && hooks.CreateParentMode.Perm() == 0o700
+	var directorySecurity, fileSecurity *windows.SECURITY_DESCRIPTOR
+	if privateJournal {
+		directorySecurity, err = privateWindowsSecurityDescriptor(true)
+		if err != nil {
+			return fmt.Errorf("prepare private workspace directory security: %w", err)
+		}
+		fileSecurity, err = privateWindowsSecurityDescriptor(false)
+		if err != nil {
+			return fmt.Errorf("prepare private workspace file security: %w", err)
+		}
+	}
 	parent, err := openWindowsRoot(root)
 	if err != nil {
 		return fmt.Errorf("open workspace directory: %w", err)
@@ -75,45 +87,54 @@ func writeAtomicWithRenameDurability(root, path string, data []byte, requestedMo
 		if err := hooks.check(); err != nil {
 			return err
 		}
-		var durableCreationParent windows.Handle
+		var child windows.Handle
+		var openErr error
 		if durable {
-			durableCreationParent, err = openWorkspaceDurableParent(root, parts[:index])
-			if err != nil {
-				return fmt.Errorf("open durable parent for workspace directory %q: %w", part, err)
-			}
-			openedIdentity, identityErr := workspaceRootIdentityForHandle(current)
-			if identityErr != nil {
+			// Existing ancestors are only opened for traversal. Requesting write
+			// access to their parents is necessary only when this operation must
+			// create a directory entry there.
+			child, openErr = openWindowsDirectory(current, part, false)
+			if errors.Is(openErr, os.ErrNotExist) {
+				durableCreationParent, parentErr := openWorkspaceDurableParent(root, parts[:index])
+				if parentErr != nil {
+					return fmt.Errorf("open durable parent for workspace directory %q: %w", part, parentErr)
+				}
+				openedIdentity, identityErr := workspaceRootIdentityForHandle(current)
+				if identityErr != nil {
+					_ = windows.CloseHandle(durableCreationParent)
+					return fmt.Errorf("identify workspace directory parent: %w", identityErr)
+				}
+				durableIdentity, identityErr := workspaceRootIdentityForHandle(durableCreationParent)
+				if identityErr != nil {
+					_ = windows.CloseHandle(durableCreationParent)
+					return fmt.Errorf("identify durable workspace directory parent: %w", identityErr)
+				}
+				if !openedIdentity.Known || !durableIdentity.Known || openedIdentity != durableIdentity {
+					_ = windows.CloseHandle(durableCreationParent)
+					return errors.New("workspace directory parent identity changed during durable open")
+				}
+				if err := windows.FlushFileBuffers(durableCreationParent); err != nil {
+					_ = windows.CloseHandle(durableCreationParent)
+					return fmt.Errorf("flush workspace directory parent before creation: %w", err)
+				}
+				child, openErr = openWindowsDirectoryWithAccessAndSecurity(current, part, true, windows.FILE_GENERIC_READ, directorySecurity)
+				if openErr == nil {
+					if flushErr := windows.FlushFileBuffers(durableCreationParent); flushErr != nil {
+						_ = windows.CloseHandle(child)
+						child = 0
+						openErr = fmt.Errorf("flush workspace directory parent after creation: %w", flushErr)
+					}
+				}
 				_ = windows.CloseHandle(durableCreationParent)
-				return fmt.Errorf("identify workspace directory parent: %w", identityErr)
 			}
-			durableIdentity, identityErr := workspaceRootIdentityForHandle(durableCreationParent)
-			if identityErr != nil {
-				_ = windows.CloseHandle(durableCreationParent)
-				return fmt.Errorf("identify durable workspace directory parent: %w", identityErr)
-			}
-			if !openedIdentity.Known || !durableIdentity.Known || openedIdentity != durableIdentity {
-				_ = windows.CloseHandle(durableCreationParent)
-				return errors.New("workspace directory parent identity changed during durable open")
-			}
-			if err := windows.FlushFileBuffers(durableCreationParent); err != nil {
-				_ = windows.CloseHandle(durableCreationParent)
-				return fmt.Errorf("flush workspace directory parent before creation: %w", err)
-			}
+		} else {
+			child, openErr = openWindowsDirectory(current, part, true)
 		}
-		child, openErr := openWindowsDirectory(current, part, true)
 		if openErr != nil {
-			if durableCreationParent != 0 && durableCreationParent != windows.InvalidHandle {
-				_ = windows.CloseHandle(durableCreationParent)
-			}
 			return fmt.Errorf("open workspace directory %q: %w", part, openErr)
 		}
-		if durable {
-			flushErr := windows.FlushFileBuffers(durableCreationParent)
-			_ = windows.CloseHandle(durableCreationParent)
-			if flushErr != nil {
-				_ = windows.CloseHandle(child)
-				return fmt.Errorf("flush workspace directory parent after creation: %w", flushErr)
-			}
+		if child == 0 || child == windows.InvalidHandle {
+			return fmt.Errorf("open workspace directory %q returned an invalid handle", part)
 		}
 		_ = windows.CloseHandle(current)
 		current = child
@@ -156,7 +177,7 @@ func writeAtomicWithRenameDurability(root, path string, data []byte, requestedMo
 		}
 		seq := workspaceTempSequence.Add(1)
 		tmpName = fmt.Sprintf(".picogent-workspace-%d-%d-%d.tmp", os.Getpid(), time.Now().UnixNano(), seq)
-		file, err = openWorkspaceExclusive(current, tmpName, path)
+		file, err = openWorkspaceExclusive(current, tmpName, path, fileSecurity)
 		if err == nil {
 			break
 		}
@@ -226,12 +247,13 @@ func writeAtomicWithRenameDurability(root, path string, data []byte, requestedMo
 	return nil
 }
 
-func openWorkspaceExclusive(parent windows.Handle, name, display string) (*os.File, error) {
+func openWorkspaceExclusive(parent windows.Handle, name, display string, security *windows.SECURITY_DESCRIPTOR) (*os.File, error) {
 	objectName, err := windows.NewNTUnicodeString(name)
 	if err != nil {
 		return nil, err
 	}
 	oa := objectAttributes(objectName, parent)
+	oa.SecurityDescriptor = security
 	var iosb windows.IO_STATUS_BLOCK
 	var allocation int64
 	var handle windows.Handle
@@ -261,6 +283,59 @@ func openWorkspaceExclusive(parent windows.Handle, name, display string) (*os.Fi
 		return nil, fmt.Errorf("open workspace file %q: could not wrap handle", display)
 	}
 	return file, nil
+}
+
+func privateWindowsSecurityDescriptor(directory bool) (*windows.SECURITY_DESCRIPTOR, error) {
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		return nil, fmt.Errorf("get current process user: %w", err)
+	}
+	if user == nil || user.User.Sid == nil {
+		return nil, errors.New("current process has no user SID")
+	}
+	sid := user.User.Sid.String()
+	if sid == "" {
+		return nil, errors.New("could not format current process user SID")
+	}
+	inheritance := ""
+	if directory {
+		inheritance = "OICI"
+	}
+	descriptor, err := windows.SecurityDescriptorFromString(fmt.Sprintf("D:P(A;%s;FA;;;%s)", inheritance, sid))
+	if err != nil {
+		return nil, fmt.Errorf("build protected user-only DACL: %w", err)
+	}
+	control, _, err := descriptor.Control()
+	if err != nil {
+		return nil, fmt.Errorf("inspect private DACL protection: %w", err)
+	}
+	if control&windows.SE_DACL_PROTECTED == 0 {
+		return nil, errors.New("private DACL is not protected from inheritance")
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil || dacl == nil || dacl.AceCount != 1 {
+		if err != nil {
+			return nil, fmt.Errorf("inspect private DACL entries: %w", err)
+		}
+		return nil, errors.New("private DACL must contain exactly one user entry")
+	}
+	var ace *windows.ACCESS_ALLOWED_ACE
+	if err := windows.GetAce(dacl, 0, &ace); err != nil {
+		return nil, fmt.Errorf("inspect private DACL user entry: %w", err)
+	}
+	wantFlags := uint8(0)
+	if directory {
+		wantFlags = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+	}
+	if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || ace.Header.AceFlags != wantFlags ||
+		!windows.EqualSid((*windows.SID)(unsafe.Pointer(&ace.SidStart)), user.User.Sid) {
+		return nil, errors.New("private DACL does not grant only the current user")
+	}
+	requiredAccess := windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE)
+	if ace.Mask&requiredAccess != requiredAccess {
+		return nil, errors.New("private DACL does not grant the current user required journal access")
+	}
+	return descriptor, nil
 }
 
 func workspaceRegularEntry(parent windows.Handle, name string) (Identity, error) {

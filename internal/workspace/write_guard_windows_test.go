@@ -4,13 +4,137 @@ package workspace
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
+
+func TestDurableWriteUsesProtectedCurrentUserACLs(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".picogent", "undo", "session.json")
+	err := WriteAtomicDurableWithModeAndHooks(root, path, []byte("private journal\n"), 0o600, WriteHooks{
+		CreateParentMode: 0o700,
+	})
+	if err != nil {
+		t.Fatalf("write durable journal: %v", err)
+	}
+
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || user == nil || user.User.Sid == nil {
+		t.Fatalf("get current process user SID: user=%v err=%v", user, err)
+	}
+	for _, check := range []struct {
+		path      string
+		directory bool
+	}{
+		{path: filepath.Join(root, ".picogent"), directory: true},
+		{path: filepath.Join(root, ".picogent", "undo"), directory: true},
+		{path: path},
+	} {
+		sd, err := windows.GetNamedSecurityInfo(check.path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+		if err != nil || sd == nil {
+			t.Fatalf("read security descriptor for %s: %v", check.path, err)
+		}
+		control, _, err := sd.Control()
+		if err != nil {
+			t.Fatalf("read DACL control for %s: %v", check.path, err)
+		}
+		if control&windows.SE_DACL_PROTECTED == 0 {
+			t.Errorf("%s DACL is inheritable; want protected", check.path)
+		}
+		dacl, _, err := sd.DACL()
+		if err != nil || dacl == nil || dacl.AceCount != 1 {
+			t.Errorf("%s DACL=%v err=%v; want exactly one current-user ACE", check.path, dacl, err)
+			continue
+		}
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, 0, &ace); err != nil {
+			t.Fatalf("read DACL entry for %s: %v", check.path, err)
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			t.Errorf("%s DACL entry type=%d; want allowed ACE", check.path, ace.Header.AceType)
+		}
+		requiredAccess := windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE)
+		if ace.Mask&requiredAccess != requiredAccess {
+			t.Errorf("%s DACL mask=%#x; lacks required journal access %#x", check.path, ace.Mask, requiredAccess)
+		}
+		wantFlags := uint8(0)
+		if check.directory {
+			wantFlags = windows.OBJECT_INHERIT_ACE | windows.CONTAINER_INHERIT_ACE
+		}
+		if ace.Header.AceFlags != wantFlags {
+			t.Errorf("%s DACL inheritance flags=%#x; want %#x", check.path, ace.Header.AceFlags, wantFlags)
+		}
+		aceSID := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if !windows.EqualSid(aceSID, user.User.Sid) {
+			t.Errorf("%s DACL grants access to a SID other than the current user", check.path)
+		}
+	}
+}
+
+func TestDurableWriteDoesNotRequireWritableExistingWorkspaceRoot(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, ".picogent", "undo", "session.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || user == nil || user.User.Sid == nil {
+		t.Fatalf("get current process user SID: user=%v err=%v", user, err)
+	}
+	sid := user.User.Sid.String()
+	if sid == "" {
+		t.Fatal("format current process user SID")
+	}
+	setWindowsTestDACL(t, root, fmt.Sprintf("D:P(A;;GRGX;;;%s)", sid))
+	t.Cleanup(func() {
+		if err := setWindowsPathDACL(root, fmt.Sprintf("D:P(A;OICI;FA;;;%s)", sid)); err != nil {
+			t.Errorf("restore workspace root DACL: %v", err)
+		}
+	})
+	if handle, err := openWindowsRootWithAccess(root, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE); err == nil {
+		_ = windows.CloseHandle(handle)
+		t.Fatal("test setup left the workspace root writable")
+	}
+
+	if err := WriteAtomicDurableWithModeAndHooks(root, path, []byte("durable\n"), 0o600, WriteHooks{
+		CreateParentMode: 0o700,
+	}); err != nil {
+		t.Fatalf("durable write below existing writable journal directory: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "durable\n" {
+		t.Fatalf("journal contents=%q err=%v", got, err)
+	}
+}
+
+func setWindowsTestDACL(t *testing.T, path, sddl string) {
+	t.Helper()
+	if err := setWindowsPathDACL(path, sddl); err != nil {
+		t.Fatalf("set test DACL for %s: %v", path, err)
+	}
+}
+
+func setWindowsPathDACL(path, sddl string) error {
+	sd, err := windows.SecurityDescriptorFromString(sddl)
+	if err != nil {
+		return fmt.Errorf("parse security descriptor: %w", err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		return fmt.Errorf("read DACL: %w", err)
+	}
+	securityInformation := windows.SECURITY_INFORMATION(windows.DACL_SECURITY_INFORMATION | windows.PROTECTED_DACL_SECURITY_INFORMATION)
+	if err := windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, securityInformation, nil, nil, dacl, nil); err != nil {
+		return fmt.Errorf("write DACL: %w", err)
+	}
+	return nil
+}
 
 func TestWriteGuardRechecksWindowsRenameRetry(t *testing.T) {
 	for _, revoked := range []bool{true, false} {

@@ -234,11 +234,16 @@ func openWindowsDirectory(parent windows.Handle, name string, create bool) (wind
 }
 
 func openWindowsDirectoryWithAccess(parent windows.Handle, name string, create bool, access uint32) (windows.Handle, error) {
+	return openWindowsDirectoryWithAccessAndSecurity(parent, name, create, access, nil)
+}
+
+func openWindowsDirectoryWithAccessAndSecurity(parent windows.Handle, name string, create bool, access uint32, security *windows.SECURITY_DESCRIPTOR) (windows.Handle, error) {
 	objectName, err := windows.NewNTUnicodeString(name)
 	if err != nil {
 		return 0, err
 	}
 	oa := objectAttributes(objectName, parent)
+	oa.SecurityDescriptor = security
 	var iosb windows.IO_STATUS_BLOCK
 	var allocation int64
 	disposition := uint32(windows.FILE_OPEN)
