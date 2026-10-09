@@ -22,7 +22,7 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version: "1.25.14"
+          go-version: "1.26.9"
       - name: Prepare external artifact directory
         env:
           ARTIFACT_DIR: ${{ runner.temp }}/picogent-release-artifacts
@@ -42,7 +42,7 @@ jobs:
             --output-dir "$ARTIFACT_DIR" \
             --candidate-sha "$EXPECTED_SHA" \
             --source-date-epoch "$SOURCE_DATE_EPOCH" \
-            --go-version "go1.25.14" \
+            --go-version "go1.26.9" \
             --targets linux/amd64,darwin/arm64,windows/amd64 \
             > "$ARTIFACT_DIR/release-artifact-manifest.stdout.json"
       - name: Prepare release-artifact attestation predicate
