@@ -106,33 +106,34 @@ type Result struct {
 }
 
 type Agent struct {
-	CFG                   config.Config
-	LLM                   llm.Client
-	Tools                 *tools.Registry
-	Gate                  *perm.Gate
-	ProjectRules          string
-	SkillRules            string
-	Memory                evolve.Store // learned habits/playbooks; injected per-turn with a hard byte budget
-	TaskMode              TaskMode
-	Goal                  string
-	GoalRevision          uint64
-	Trace                 *trace.Log
-	TaskStore             *taskstate.Store
-	TaskSession           string
-	taskSessionGeneration uint64
-	taskStoreGeneration   uint64
-	taskRunBinding        *nativeTaskBinding
-	taskRunCancel         context.CancelFunc
-	taskSessionSwitching  bool
-	stateMu               sync.RWMutex
-	taskMu                sync.RWMutex
-	task                  *taskstate.Task
-	taskLoadErr           error
-	undoMu                sync.Mutex
-	latestUndo            *turnUndo
-	undoLoadErr           error
-	undoReattachRequired  bool
-	runTool               func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
+	CFG                     config.Config
+	LLM                     llm.Client
+	Tools                   *tools.Registry
+	Gate                    *perm.Gate
+	ProjectRules            string
+	SkillRules              string
+	Memory                  evolve.Store // learned habits/playbooks; injected per-turn with a hard byte budget
+	TaskMode                TaskMode
+	Goal                    string
+	GoalRevision            uint64
+	Trace                   *trace.Log
+	TaskStore               *taskstate.Store
+	TaskSession             string
+	taskSessionGeneration   uint64
+	taskStoreGeneration     uint64
+	taskRunBinding          *nativeTaskBinding
+	pendingAdmissionRefresh *taskAdmissionRefresh
+	taskRunCancel           context.CancelFunc
+	taskSessionSwitching    bool
+	stateMu                 sync.RWMutex
+	taskMu                  sync.RWMutex
+	task                    *taskstate.Task
+	taskLoadErr             error
+	undoMu                  sync.Mutex
+	latestUndo              *turnUndo
+	undoLoadErr             error
+	undoReattachRequired    bool
+	runTool                 func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
 }
 
 // RuntimeState is an immutable-at-the-call-boundary view of the settings that
@@ -251,6 +252,7 @@ func (a *Agent) SetTaskStore(store *taskstate.Store) {
 	}
 	a.taskStoreGeneration++
 	a.TaskStore = store
+	a.pendingAdmissionRefresh = nil
 	a.taskLoadErr = nil
 	if strings.TrimSpace(a.TaskSession) != "" {
 		a.undoReattachRequired = true
@@ -553,6 +555,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	}
 	if durablePrompt == "" {
 		durablePrompt = userText
+	}
+	if err := a.refreshPendingAdmissionForNewRun(lockOwner, cfg.Workspace); err != nil {
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
 	}
 	nativeOwner := lockOwner
 	// Freeze the locked substrate, but admit task progress only after waiting:
