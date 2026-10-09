@@ -435,16 +435,7 @@ func trailingWhitespaceWorkspacePair(t *testing.T) (string, string) {
 }
 
 func TestSameUndoWorkspaceIdentityAcceptsPathAliases(t *testing.T) {
-	workspace := t.TempDir()
-	var alias string
-	if runtime.GOOS == "windows" {
-		alias = strings.ToUpper(workspace)
-	} else {
-		alias = filepath.Join(filepath.Dir(workspace), filepath.Base(workspace)+"-alias")
-		if err := os.Symlink(workspace, alias); err != nil {
-			t.Skipf("create workspace alias: %v", err)
-		}
-	}
+	workspace, alias := workspacePathAlias(t)
 	workspaceInfo, err := os.Stat(workspace)
 	if err != nil {
 		t.Fatal(err)
@@ -459,6 +450,35 @@ func TestSameUndoWorkspaceIdentityAcceptsPathAliases(t *testing.T) {
 	if !sameUndoWorkspaceIdentity(workspace, alias) {
 		t.Fatalf("canonical workspace identity rejected filesystem aliases %q and %q", workspace, alias)
 	}
+}
+
+func workspacePathAlias(t *testing.T) (string, string) {
+	t.Helper()
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS == "windows" {
+		alias := filepath.Join(parent, "WORKSPACE")
+		workspaceInfo, err := os.Stat(workspace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		aliasInfo, err := os.Stat(alias)
+		if err != nil {
+			t.Skipf("case-variant workspace alias is unavailable: %v", err)
+		}
+		if !os.SameFile(workspaceInfo, aliasInfo) {
+			t.Skip("case-variant path does not resolve to the same workspace on this filesystem")
+		}
+		return workspace, alias
+	}
+	alias := filepath.Join(parent, "workspace-alias")
+	if err := os.Symlink(workspace, alias); err != nil {
+		t.Skipf("create workspace alias: %v", err)
+	}
+	return workspace, alias
 }
 
 type allowUndoTest struct{ NopHandler }

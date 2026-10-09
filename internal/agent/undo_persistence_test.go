@@ -507,6 +507,41 @@ func TestVersionTwoUndoJournalRequiresIntentRevisionField(t *testing.T) {
 	}
 }
 
+func TestValidateUndoJournalUsesWorkspaceFilesystemIdentity(t *testing.T) {
+	workspace, alias := workspacePathAlias(t)
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Capture(workspace, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cp.PrepareExpected(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := undoWorkspaceIdentity(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "workspace-alias-validation"
+	journal := undoJournal{
+		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity,
+		SessionID: sessionID, TurnSequence: 1, TaskID: "workspace-alias-owner",
+		Checkpoint: record,
+	}
+	if err := validateUndoJournal(journal, alias, sessionID); err != nil {
+		t.Fatalf("journal rejected an alias of its workspace: %v", err)
+	}
+	if err := validateUndoJournal(journal, t.TempDir(), sessionID); err == nil || !strings.Contains(err.Error(), "workspace mismatch") {
+		t.Fatalf("journal for a distinct workspace = %v", err)
+	}
+}
+
 func TestUnpublishedPendingUndoPreservesJournalBeforeOwnerValidation(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "note.txt")

@@ -126,11 +126,10 @@ func validateUndoJournal(journal undoJournal, workspace, sessionID string) error
 	if journal.Version == undoJournalVersion && strings.TrimSpace(journal.TaskID) == "" {
 		return errors.New("undo journal task owner identity is empty")
 	}
-	identity, err := undoWorkspaceIdentity(workspace)
-	if err != nil {
+	if _, err := undoWorkspaceIdentity(workspace); err != nil {
 		return err
 	}
-	if journal.Workspace != identity {
+	if !sameUndoWorkspaceIdentity(workspace, journal.Workspace) {
 		return errors.New("undo journal workspace mismatch")
 	}
 	if _, err := checkpoint.Import(workspace, journal.Checkpoint); err != nil {

@@ -631,11 +631,11 @@ func (a *Agent) rememberVerification(output string) {
 		return
 	}
 	state := a.RuntimeSnapshot()
-	workspace := strings.TrimSpace(state.CFG.Workspace)
-	if workspace == "" {
+	workspace := state.CFG.Workspace
+	if strings.TrimSpace(workspace) == "" {
 		return
 	}
-	if strings.TrimSpace(state.Memory.Workspace) == "" || state.Memory.Workspace != workspace {
+	if memoryWorkspace := state.Memory.Workspace; strings.TrimSpace(memoryWorkspace) != "" && memoryWorkspace != workspace {
 		return
 	}
 	hint := state.Goal
