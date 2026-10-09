@@ -20,10 +20,11 @@ import (
 )
 
 var (
-	ErrNotSealed       = errors.New("checkpoint is not sealed")
-	ErrAlreadySealed   = errors.New("checkpoint is already sealed")
-	ErrAlreadyRestored = errors.New("checkpoint is already restored")
-	ErrConflict        = errors.New("checkpoint restore conflicts with newer changes")
+	ErrNotSealed        = errors.New("checkpoint is not sealed")
+	ErrAlreadySealed    = errors.New("checkpoint is already sealed")
+	ErrAlreadyRestored  = errors.New("checkpoint is already restored")
+	ErrConflict         = errors.New("checkpoint restore conflicts with newer changes")
+	ErrWorkspaceChanged = errors.New("checkpoint workspace directory changed")
 )
 
 const (
@@ -89,12 +90,13 @@ type RestoreResult struct {
 // Checkpoint holds the pre-turn state for an explicit set of workspace files.
 // Call Seal after the turn's edits and before offering Restore to the user.
 type Checkpoint struct {
-	mu        sync.Mutex
-	rootInput string
-	root      string
-	entries   []entry
-	sealed    bool
-	restored  bool
+	mu           sync.Mutex
+	rootInput    string
+	root         string
+	rootIdentity workspace.Identity
+	entries      []entry
+	sealed       bool
+	restored     bool
 
 	// restoreBeforeApply is only used by package tests to exercise an
 	// interleaving between restore preflight and publication.
@@ -126,11 +128,15 @@ func Capture(workspace string, paths []string) (*Checkpoint, error) {
 	if err != nil {
 		return nil, err
 	}
+	rootIdentity, err := rootDirectoryIdentity(root)
+	if err != nil {
+		return nil, fmt.Errorf("identify checkpoint workspace: %w", err)
+	}
 	if len(paths) == 0 {
 		return nil, errors.New("checkpoint requires at least one path")
 	}
 
-	cp := &Checkpoint{rootInput: rootInput, root: root}
+	cp := &Checkpoint{rootInput: rootInput, root: root, rootIdentity: rootIdentity}
 	if err := cp.add(paths); err != nil {
 		return nil, err
 	}
@@ -236,6 +242,15 @@ func (c *Checkpoint) Paths() []string {
 		out[i] = filepath.ToSlash(c.entries[i].path)
 	}
 	return out
+}
+
+// RootIdentity returns the filesystem identity captured when this checkpoint
+// was created or imported. It is immutable and intended for equality checks.
+func (c *Checkpoint) RootIdentity() workspace.Identity {
+	if c == nil {
+		return workspace.Identity{}
+	}
+	return c.rootIdentity
 }
 
 // Seal finalizes the expected states for the turn. Prepared writes retain their
@@ -441,6 +456,10 @@ func Import(workspace string, record Record) (*Checkpoint, error) {
 	if err != nil {
 		return nil, err
 	}
+	rootIdentity, err := rootDirectoryIdentity(root)
+	if err != nil {
+		return nil, fmt.Errorf("identify checkpoint workspace: %w", err)
+	}
 	entries := make([]entry, 0, len(record.Entries))
 	seen := make(map[string]struct{}, len(record.Entries))
 	bytes := 0
@@ -486,7 +505,23 @@ func Import(workspace string, record Record) (*Checkpoint, error) {
 		}
 		entries = append(entries, entry{path: rel, before: before, expected: expected, expectedSet: true, published: published, publishedSet: publishedSet})
 	}
-	return &Checkpoint{rootInput: rootInput, root: root, entries: entries, sealed: true}, nil
+	return &Checkpoint{rootInput: rootInput, root: root, rootIdentity: rootIdentity, entries: entries, sealed: true}, nil
+}
+
+// ImportBound imports a portable record only when the current workspace root
+// is the same directory object captured by its durable owner.
+func ImportBound(workspace string, record Record, expected workspace.Identity) (*Checkpoint, error) {
+	if !expected.Known {
+		return nil, fmt.Errorf("%w: saved identity is unknown", ErrWorkspaceChanged)
+	}
+	cp, err := Import(workspace, record)
+	if err != nil {
+		return nil, err
+	}
+	if cp.rootIdentity != expected {
+		return nil, ErrWorkspaceChanged
+	}
+	return cp, nil
 }
 
 // PublishedSubset returns a checkpoint containing only entries whose current
@@ -535,7 +570,7 @@ func (c *Checkpoint) PublishedSubset() (*Checkpoint, bool, error) {
 	if len(entries) == 0 {
 		return nil, false, nil
 	}
-	return &Checkpoint{rootInput: c.rootInput, root: c.root, entries: entries, sealed: true}, true, nil
+	return &Checkpoint{rootInput: c.rootInput, root: c.root, rootIdentity: c.rootIdentity, entries: entries, sealed: true}, true, nil
 }
 
 // ChangedPaths returns paths whose sealed state differs from their captured
@@ -576,6 +611,10 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 	}
 	if c.restored {
 		return result, ErrAlreadyRestored
+	}
+	if err := checkWorkspaceIdentity(c.root, c.rootIdentity); err != nil {
+		result.Failures = append(result.Failures, failure(".", "workspace identity", err))
+		return result, err
 	}
 
 	mutations := make([]mutation, 0, len(c.entries))
@@ -621,13 +660,16 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 	}
 
 	for i := range mutations {
-		if opErr := applyMutation(c.root, &mutations[i], c.restoreBeforeApply); opErr != nil {
+		if opErr := applyMutation(c.root, &mutations[i], c.restoreBeforeApply, c.rootIdentity); opErr != nil {
 			if errors.Is(opErr.err, ErrConflict) {
 				result.Conflicts = append(result.Conflicts, Conflict{
 					Path: filepath.ToSlash(opErr.path), Reason: opErr.err.Error(),
 				})
 			} else {
 				result.Failures = append(result.Failures, failure(opErr.path, opErr.operation, opErr.err))
+			}
+			if errors.Is(opErr.err, ErrWorkspaceChanged) {
+				return result, fmt.Errorf("checkpoint restore stopped after workspace replacement: %w", opErr.err)
 			}
 			result.RolledBack = rollback(c.root, mutations[:i+1], &result)
 			if len(result.Conflicts) > 0 {
@@ -671,7 +713,7 @@ type operationError struct {
 	err       error
 }
 
-func applyMutation(root string, m *mutation, beforeWrite func(string)) *operationError {
+func applyMutation(root string, m *mutation, beforeWrite func(string), expectedRootIdentity workspace.Identity) *operationError {
 	// Restore preflight already captured the post-turn state in m.after. The
 	// workspace compare-and-publish primitive below performs the required final
 	// content, mode, and path-identity check immediately before publication;
@@ -681,6 +723,9 @@ func applyMutation(root string, m *mutation, beforeWrite func(string)) *operatio
 	// fail closed.
 	if beforeWrite != nil {
 		beforeWrite(filepath.ToSlash(m.entry.path))
+	}
+	if err := checkWorkspaceIdentity(root, expectedRootIdentity); err != nil {
+		return &operationError{m.entry.path, "verify workspace identity", err}
 	}
 	if err := writeWorkspaceState(root, m.entry.path, m.after, m.entry.before); err != nil {
 		if errors.Is(err, workspace.ErrContentConflict) {
@@ -726,6 +771,31 @@ func rollback(root string, mutations []mutation, result *RestoreResult) bool {
 		}
 	}
 	return attempted && ok
+}
+
+func rootDirectoryIdentity(root string) (workspace.Identity, error) {
+	identity, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		return workspace.Identity{}, err
+	}
+	if !identity.Known {
+		return workspace.Identity{}, ErrWorkspaceChanged
+	}
+	return identity, nil
+}
+
+func checkWorkspaceIdentity(root string, expected workspace.Identity) error {
+	if !expected.Known {
+		return fmt.Errorf("%w: checkpoint identity is unknown", ErrWorkspaceChanged)
+	}
+	current, err := rootDirectoryIdentity(root)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrWorkspaceChanged, err)
+	}
+	if current != expected {
+		return ErrWorkspaceChanged
+	}
+	return nil
 }
 
 func resolveWorkspace(workspace string) (string, string, error) {

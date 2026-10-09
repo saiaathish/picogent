@@ -43,6 +43,52 @@ func TestRestoreRechecksPathBeforePublishing(t *testing.T) {
 	}
 }
 
+func TestRestoreRefusesReplacementWorkspaceBeforePublishing(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("agent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	parked := filepath.Join(parent, "parked-workspace")
+	cp.restoreBeforeApply = func(rel string) {
+		cp.restoreBeforeApply = nil
+		if err := os.Rename(root, parked); err != nil {
+			t.Fatalf("park original workspace: %v", err)
+		}
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatalf("create replacement workspace: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(root, rel), []byte("replacement post-turn"), 0o644); err != nil {
+			t.Fatalf("write replacement workspace: %v", err)
+		}
+	}
+
+	result, err := cp.Restore()
+	if !errors.Is(err, ErrWorkspaceChanged) {
+		t.Fatalf("restore error = %v, want workspace identity change", err)
+	}
+	if result.Complete || result.RolledBack || len(result.Failures) == 0 {
+		t.Fatalf("replacement restore result = %+v", result)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(got) != "replacement post-turn" {
+		t.Fatalf("replacement file = %q, err=%v", got, err)
+	}
+}
+
 func TestRestoreTreatsAlreadyRestoredPathAsUnchanged(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "note.txt")

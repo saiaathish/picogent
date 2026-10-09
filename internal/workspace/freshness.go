@@ -164,6 +164,21 @@ func Capture(ctx context.Context, root string, paths []string) (Observation, err
 	return observation, nil
 }
 
+// DirectoryIdentity returns the current filesystem identity of a directory.
+// Callers that persist workspace ownership must pair this value with an
+// independent token: filesystem IDs can be reused after a directory is
+// removed, and this value alone is not an authorization decision.
+func DirectoryIdentity(root string) (Identity, error) {
+	observation, err := Capture(context.Background(), root, nil)
+	if err != nil {
+		return Identity{}, err
+	}
+	if !observation.RootIdentity.Known {
+		return Identity{}, errors.New("workspace directory identity is unknown")
+	}
+	return observation.RootIdentity, nil
+}
+
 func trackedPaths(root string, paths []string) ([]string, bool, error) {
 	inputLimit := len(paths)
 	truncated := inputLimit > MaxPathInputs

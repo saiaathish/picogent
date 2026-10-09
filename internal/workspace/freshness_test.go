@@ -90,6 +90,32 @@ func TestCaptureRootReplacementFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDirectoryIdentityChangesWhenRootIsReplaced(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before, err := DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked := filepath.Join(parent, "parked-workspace")
+	if err := os.Rename(root, parked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	after, err := DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatalf("replacement directory reused identity %+v while original still exists", before)
+	}
+}
+
 func TestCaptureTruncationIsNeverFresh(t *testing.T) {
 	root := t.TempDir()
 	paths := make([]string, MaxTrackedFiles+1)
