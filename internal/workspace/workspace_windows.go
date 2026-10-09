@@ -313,16 +313,24 @@ func normalizeFinalPath(path string) string {
 }
 
 func remove(root, path string) error {
+	return removeWithCheck(root, path, nil)
+}
+
+func removeWithCheck(root, path string, check func() error) error {
 	current, err := OpenRead(root, path)
 	if err != nil {
 		return err
 	}
-	removeErr := removeIfSame(root, path, current)
+	removeErr := removeIfSameWithCheck(root, path, current, check)
 	closeErr := current.Close()
 	return errors.Join(removeErr, closeErr)
 }
 
 func removeIfSame(root, path string, source *os.File) error {
+	return removeIfSameWithCheck(root, path, source, nil)
+}
+
+func removeIfSameWithCheck(root, path string, source *os.File, check func() error) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -369,6 +377,11 @@ func removeIfSame(root, path string, source *os.File) error {
 	}
 	if expected != actual {
 		return fmt.Errorf("remove workspace file %q: %w", rel, ErrTargetChanged)
+	}
+	if check != nil {
+		if err := check(); err != nil {
+			return fmt.Errorf("check workspace authority before removing %q: %w", rel, err)
+		}
 	}
 	if err := deleteWorkspaceHandle(windows.Handle(target.Fd())); err != nil {
 		return fmt.Errorf("remove workspace file %q: %w", rel, err)

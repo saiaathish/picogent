@@ -116,6 +116,34 @@ func TestDirectoryIdentityChangesWhenRootIsReplaced(t *testing.T) {
 	}
 }
 
+func TestDirectoryIdentityIgnoresConcurrentEntryChanges(t *testing.T) {
+	root := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 200; i++ {
+			entry := filepath.Join(root, fmt.Sprintf("entry-%d", i))
+			if err := os.Mkdir(entry, 0o700); err != nil {
+				done <- err
+				return
+			}
+			if err := os.Remove(entry); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	for i := 0; i < 200; i++ {
+		if _, err := DirectoryIdentity(root); err != nil {
+			t.Errorf("identity during ordinary entry changes: %v", err)
+			break
+		}
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCaptureTruncationIsNeverFresh(t *testing.T) {
 	root := t.TempDir()
 	paths := make([]string, MaxTrackedFiles+1)

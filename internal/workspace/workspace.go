@@ -228,7 +228,16 @@ func WriteAtomicIfUnchanged(root, path string, expected, data []byte) error {
 // publication path so callers that already performed a preflight check get a
 // second content-and-mode check right before the replacement is prepared.
 func WriteAtomicIfUnchangedWithMode(root, path string, expected []byte, expectedMode os.FileMode, data []byte, mode os.FileMode) error {
-	return writeAtomicIfUnchangedWithModeHook(root, path, expected, expectedMode, true, data, mode, true, WriteHooks{})
+	return WriteAtomicIfUnchangedWithModeAndHooks(root, path, expected, expectedMode, data, mode, WriteHooks{})
+}
+
+// WriteAtomicIfUnchangedWithModeAndHooks is the mode-preserving compare-and-
+// publish primitive with repeated authority checks around its descriptor-
+// anchored publication. A check after opening the destination parent ensures
+// pathname replacement before publication is rejected; replacement after
+// that check remains anchored to the already-open parent directory.
+func WriteAtomicIfUnchangedWithModeAndHooks(root, path string, expected []byte, expectedMode os.FileMode, data []byte, mode os.FileMode, hooks WriteHooks) error {
+	return writeAtomicIfUnchangedWithModeHook(root, path, expected, expectedMode, true, data, mode, true, hooks)
 }
 
 // WriteAtomicIfMissingWithMode publishes data only while the target remains
@@ -236,8 +245,17 @@ func WriteAtomicIfUnchangedWithMode(root, path string, expected []byte, expected
 // WriteAtomicIfUnchangedWithMode and is used when undo restores a file that
 // the turn deleted.
 func WriteAtomicIfMissingWithMode(root, path string, data []byte, mode os.FileMode) error {
+	return WriteAtomicIfMissingWithModeAndHooks(root, path, data, mode, WriteHooks{})
+}
+
+// WriteAtomicIfMissingWithModeAndHooks creates a file only while the target
+// remains absent, with the same repeated authority checks as WriteAtomicWithHooks.
+func WriteAtomicIfMissingWithModeAndHooks(root, path string, data []byte, mode os.FileMode, hooks WriteHooks) error {
 	rel, err := Relative(root, path)
 	if err != nil {
+		return err
+	}
+	if err := hooks.check(); err != nil {
 		return err
 	}
 	current, err := OpenRead(root, path)
@@ -248,7 +266,7 @@ func WriteAtomicIfMissingWithMode(root, path string, data []byte, mode os.FileMo
 	if !isWorkspaceNotExist(err) {
 		return err
 	}
-	return writeAtomicWithMode(root, path, data, mode, true)
+	return writeAtomicWithHook(root, path, data, mode, true, hooks)
 }
 
 // WriteAtomicIfUnchangedWithPublishHook is the compare-before-publish edit
@@ -315,7 +333,13 @@ func writeWorkspaceAll(file *os.File, data []byte) error {
 // pathname operation, so a replacement after that check is still outside this
 // helper's universal same-UID race guarantee.
 func Remove(root, path string) error {
-	return remove(root, path)
+	return RemoveWithCheck(root, path, nil)
+}
+
+// RemoveWithCheck removes a regular file only after check succeeds against
+// the descriptor-anchored parent that will perform the removal.
+func RemoveWithCheck(root, path string, check func() error) error {
+	return removeWithCheck(root, path, check)
 }
 
 // RemoveIfUnchanged removes a regular file only when its current content
@@ -324,10 +348,21 @@ func Remove(root, path string) error {
 // pathname removal are a best-effort boundary for uncooperative same-UID
 // writers; callers should also hold their project run lock when available.
 func RemoveIfUnchanged(root, path string, expected []byte, expectedMode os.FileMode) error {
-	return removeIfUnchangedWithHook(root, path, expected, expectedMode, nil)
+	return RemoveIfUnchangedWithCheck(root, path, expected, expectedMode, nil)
+}
+
+// RemoveIfUnchangedWithCheck removes a regular file only when its bytes and
+// mode still match expected and check succeeds against the descriptor-anchored
+// parent that will perform the removal.
+func RemoveIfUnchangedWithCheck(root, path string, expected []byte, expectedMode os.FileMode, check func() error) error {
+	return removeIfUnchanged(root, path, expected, expectedMode, nil, check)
 }
 
 func removeIfUnchangedWithHook(root, path string, expected []byte, expectedMode os.FileMode, beforeRemove func() error) error {
+	return removeIfUnchanged(root, path, expected, expectedMode, beforeRemove, nil)
+}
+
+func removeIfUnchanged(root, path string, expected []byte, expectedMode os.FileMode, beforeRemove, check func() error) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -359,7 +394,7 @@ func removeIfUnchangedWithHook(root, path string, expected []byte, expectedMode 
 			return errors.Join(fmt.Errorf("prepare workspace removal %q: %w", rel, hookErr), closeErr)
 		}
 	}
-	removeErr := removeIfSame(root, path, current)
+	removeErr := removeIfSameWithCheck(root, path, current, check)
 	closeErr := current.Close()
 	return errors.Join(removeErr, closeErr)
 }

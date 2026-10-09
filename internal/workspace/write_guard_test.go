@@ -103,3 +103,81 @@ func TestWriteGuardRechecksAfterPreparationForWritesAndEdits(t *testing.T) {
 		})
 	}
 }
+
+func TestWritePublicationStaysOnOpenedWorkspaceAfterRootSwap(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("agent\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	parked := filepath.Join(parent, "parked-workspace")
+	checks := 0
+	err := workspace.WriteAtomicIfUnchangedWithHooks(root, "note.txt", []byte("agent\n"), []byte("before\n"), workspace.WriteHooks{
+		Check: func() error {
+			checks++
+			if checks == 3 {
+				if err := os.Rename(root, parked); err != nil {
+					return err
+				}
+				if err := os.Mkdir(root, 0o700); err != nil {
+					return err
+				}
+				if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("agent\n"), 0o640); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("atomic restore after root swap: %v", err)
+	}
+	if checks < 3 {
+		t.Fatalf("publication checks = %d, want final descriptor-anchored check", checks)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(got) != "agent\n" {
+		t.Fatalf("replacement workspace file = %q, err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(parked, "note.txt")); err != nil || string(got) != "before\n" {
+		t.Fatalf("original workspace file = %q, err=%v", got, err)
+	}
+}
+
+func TestRemoveWithCheckStaysOnOpenedWorkspaceAfterRootSwap(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pending.json"), []byte("original"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parked := filepath.Join(parent, "parked-workspace")
+	checks := 0
+	err := workspace.RemoveWithCheck(root, "pending.json", func() error {
+		checks++
+		if err := os.Rename(root, parked); err != nil {
+			return err
+		}
+		if err := os.Mkdir(root, 0o700); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(root, "pending.json"), []byte("replacement"), 0o600)
+	})
+	if err != nil {
+		t.Fatalf("remove after root swap: %v", err)
+	}
+	if checks != 1 {
+		t.Fatalf("removal checks = %d, want one check after parent open", checks)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "pending.json")); err != nil || string(got) != "replacement" {
+		t.Fatalf("replacement journal = %q, err=%v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(parked, "pending.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("original journal was not removed: %v", err)
+	}
+}
