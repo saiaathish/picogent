@@ -101,6 +101,10 @@ type Checkpoint struct {
 	// restoreBeforeApply is only used by package tests to exercise an
 	// interleaving between restore preflight and publication.
 	restoreBeforeApply func(string)
+	// These hooks are only used by package tests to exercise root replacement
+	// during the read-only restore preflight.
+	restoreAfterInitialIdentityCheck func()
+	restoreBeforePreflightComplete   func()
 }
 
 type entry struct {
@@ -600,6 +604,13 @@ func (c *Checkpoint) ChangedPaths() ([]string, error) {
 // operation fails, the in-memory post-turn states are replayed on a best-effort
 // basis and the result says whether rollback succeeded.
 func (c *Checkpoint) Restore() (RestoreResult, error) {
+	return c.RestoreWithWorkspaceGuard(nil)
+}
+
+// RestoreWithWorkspaceGuard restores the checkpoint while also checking a
+// caller-owned durable workspace binding at preflight and publication
+// boundaries. The guard pairs filesystem identity with an independent token.
+func (c *Checkpoint) RestoreWithWorkspaceGuard(guard func() error) (RestoreResult, error) {
 	var result RestoreResult
 	if c == nil {
 		return result, ErrNotSealed
@@ -612,9 +623,12 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 	if c.restored {
 		return result, ErrAlreadyRestored
 	}
-	if err := checkWorkspaceIdentity(c.root, c.rootIdentity); err != nil {
+	if err := checkRestoreWorkspace(c.root, c.rootIdentity, guard); err != nil {
 		result.Failures = append(result.Failures, failure(".", "workspace identity", err))
 		return result, err
+	}
+	if c.restoreAfterInitialIdentityCheck != nil {
+		c.restoreAfterInitialIdentityCheck()
 	}
 
 	mutations := make([]mutation, 0, len(c.entries))
@@ -645,6 +659,13 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 		}
 		mutations = append(mutations, mutation{entry: &c.entries[i], after: current})
 	}
+	if c.restoreBeforePreflightComplete != nil {
+		c.restoreBeforePreflightComplete()
+	}
+	if err := checkRestoreWorkspace(c.root, c.rootIdentity, guard); err != nil {
+		result.Failures = append(result.Failures, failure(".", "workspace identity", err))
+		return result, err
+	}
 	if len(result.Conflicts) > 0 {
 		sortConflicts(result.Conflicts)
 		return result, ErrConflict
@@ -653,6 +674,30 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 		return result, errors.New("checkpoint restore preflight failed")
 	}
 	if len(mutations) == 0 {
+		// Re-read before consuming a no-op checkpoint. A transient replacement
+		// can expose pre-turn bytes during the first preflight and then restore
+		// the original root before the authority recheck.
+		for i := range c.entries {
+			current, err := readWorkspaceFile(c.root, c.entries[i].path)
+			if err != nil {
+				result.Failures = append(result.Failures, failure(c.entries[i].path, "confirm unchanged", err))
+				return result, errors.New("checkpoint restore confirmation failed")
+			}
+			if current.sum != c.entries[i].before.sum {
+				result.Conflicts = append(result.Conflicts, Conflict{
+					Path: filepath.ToSlash(c.entries[i].path), Reason: "file changed during restore preflight",
+				})
+			}
+		}
+		if err := checkRestoreWorkspace(c.root, c.rootIdentity, guard); err != nil {
+			result.Failures = append(result.Failures, failure(".", "workspace identity", err))
+			return result, err
+		}
+		if len(result.Conflicts) > 0 {
+			result.Unchanged = nil
+			sortConflicts(result.Conflicts)
+			return result, ErrConflict
+		}
 		result.Complete = true
 		c.restored = true
 		sort.Strings(result.Unchanged)
@@ -660,7 +705,7 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 	}
 
 	for i := range mutations {
-		if opErr := applyMutation(c.root, &mutations[i], c.restoreBeforeApply, c.rootIdentity); opErr != nil {
+		if opErr := applyMutation(c.root, &mutations[i], c.restoreBeforeApply, c.rootIdentity, guard); opErr != nil {
 			if errors.Is(opErr.err, ErrConflict) {
 				result.Conflicts = append(result.Conflicts, Conflict{
 					Path: filepath.ToSlash(opErr.path), Reason: opErr.err.Error(),
@@ -671,7 +716,7 @@ func (c *Checkpoint) Restore() (RestoreResult, error) {
 			if errors.Is(opErr.err, ErrWorkspaceChanged) {
 				return result, fmt.Errorf("checkpoint restore stopped after workspace replacement: %w", opErr.err)
 			}
-			result.RolledBack = rollback(c.root, mutations[:i+1], &result)
+			result.RolledBack = rollback(c.root, mutations[:i+1], &result, c.rootIdentity, guard)
 			if len(result.Conflicts) > 0 {
 				return result, ErrConflict
 			}
@@ -713,7 +758,7 @@ type operationError struct {
 	err       error
 }
 
-func applyMutation(root string, m *mutation, beforeWrite func(string), expectedRootIdentity workspace.Identity) *operationError {
+func applyMutation(root string, m *mutation, beforeWrite func(string), expectedRootIdentity workspace.Identity, guard func() error) *operationError {
 	// Restore preflight already captured the post-turn state in m.after. The
 	// workspace compare-and-publish primitive below performs the required final
 	// content, mode, and path-identity check immediately before publication;
@@ -724,11 +769,14 @@ func applyMutation(root string, m *mutation, beforeWrite func(string), expectedR
 	if beforeWrite != nil {
 		beforeWrite(filepath.ToSlash(m.entry.path))
 	}
-	if err := checkWorkspaceIdentity(root, expectedRootIdentity); err != nil {
+	if err := checkRestoreWorkspace(root, expectedRootIdentity, guard); err != nil {
 		return &operationError{m.entry.path, "verify workspace identity", err}
 	}
-	if err := writeWorkspaceState(root, m.entry.path, m.after, m.entry.before); err != nil {
+	if err := writeWorkspaceState(root, m.entry.path, m.after, m.entry.before, expectedRootIdentity, guard); err != nil {
 		if errors.Is(err, workspace.ErrContentConflict) {
+			if guardErr := checkRestoreWorkspace(root, expectedRootIdentity, guard); guardErr != nil {
+				return &operationError{m.entry.path, "verify workspace identity", guardErr}
+			}
 			if current, inspectErr := readWorkspaceFile(root, m.entry.path); inspectErr == nil && current.sum == m.entry.before.sum {
 				m.alreadyRestored = true
 				return nil
@@ -745,7 +793,7 @@ func applyMutation(root string, m *mutation, beforeWrite func(string), expectedR
 	return nil
 }
 
-func rollback(root string, mutations []mutation, result *RestoreResult) bool {
+func rollback(root string, mutations []mutation, result *RestoreResult, expectedRootIdentity workspace.Identity, guard func() error) bool {
 	ok := true
 	attempted := false
 	for i := len(mutations) - 1; i >= 0; i-- {
@@ -754,6 +802,10 @@ func rollback(root string, mutations []mutation, result *RestoreResult) bool {
 			continue
 		}
 		attempted = true
+		if err := checkRestoreWorkspace(root, expectedRootIdentity, guard); err != nil {
+			result.Failures = append(result.Failures, failure(m.entry.path, "rollback workspace identity", err))
+			return false
+		}
 		current, err := readWorkspaceFile(root, m.entry.path)
 		if err != nil {
 			result.Failures = append(result.Failures, failure(m.entry.path, "rollback inspect", err))
@@ -765,9 +817,12 @@ func rollback(root string, mutations []mutation, result *RestoreResult) bool {
 			ok = false
 			continue
 		}
-		if err := writeWorkspaceState(root, m.entry.path, m.entry.before, m.after); err != nil {
+		if err := writeWorkspaceState(root, m.entry.path, m.entry.before, m.after, expectedRootIdentity, guard); err != nil {
 			result.Failures = append(result.Failures, failure(m.entry.path, "rollback restore", err))
 			ok = false
+			if errors.Is(err, ErrWorkspaceChanged) {
+				return false
+			}
 		}
 	}
 	return attempted && ok
@@ -794,6 +849,18 @@ func checkWorkspaceIdentity(root string, expected workspace.Identity) error {
 	}
 	if current != expected {
 		return ErrWorkspaceChanged
+	}
+	return nil
+}
+
+func checkRestoreWorkspace(root string, expected workspace.Identity, guard func() error) error {
+	if err := checkWorkspaceIdentity(root, expected); err != nil {
+		return err
+	}
+	if guard != nil {
+		if err := guard(); err != nil {
+			return fmt.Errorf("%w: durable workspace guard: %v", ErrWorkspaceChanged, err)
+		}
 	}
 	return nil
 }
@@ -899,21 +966,23 @@ func readWorkspaceFile(root, rel string) (fileState, error) {
 	return readRegularFileHandle(f)
 }
 
-func writeWorkspaceState(root, rel string, expected, state fileState) error {
+func writeWorkspaceState(root, rel string, expected, state fileState, expectedRootIdentity workspace.Identity, guard func() error) error {
+	checkRoot := func() error { return checkRestoreWorkspace(root, expectedRootIdentity, guard) }
+	hooks := workspace.WriteHooks{Check: checkRoot}
 	if !state.exists {
 		if expected.exists {
-			return workspace.RemoveIfUnchanged(root, rel, expected.data, expected.mode)
+			return workspace.RemoveIfUnchangedWithCheck(root, rel, expected.data, expected.mode, checkRoot)
 		}
-		err := workspace.Remove(root, rel)
+		err := workspace.RemoveWithCheck(root, rel, checkRoot)
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return err
 	}
 	if expected.exists {
-		return workspace.WriteAtomicIfUnchangedWithMode(root, rel, expected.data, expected.mode, state.data, state.mode)
+		return workspace.WriteAtomicIfUnchangedWithModeAndHooks(root, rel, expected.data, expected.mode, state.data, state.mode, hooks)
 	}
-	return workspace.WriteAtomicIfMissingWithMode(root, rel, state.data, state.mode)
+	return workspace.WriteAtomicIfMissingWithModeAndHooks(root, rel, state.data, state.mode, hooks)
 }
 
 func readRegularFileHandle(f *os.File) (fileState, error) {

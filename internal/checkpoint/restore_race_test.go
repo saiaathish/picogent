@@ -2,9 +2,11 @@ package checkpoint
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -86,6 +88,122 @@ func TestRestoreRefusesReplacementWorkspaceBeforePublishing(t *testing.T) {
 	}
 	if got, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(got) != "replacement post-turn" {
 		t.Fatalf("replacement file = %q, err=%v", got, err)
+	}
+}
+
+func TestRestoreDoesNotConsumeNoOpCheckpointAfterTransientWorkspaceReplacement(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("agent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	parked := filepath.Join(parent, "parked-workspace")
+	transient := filepath.Join(parent, "transient-replacement")
+	cp.restoreAfterInitialIdentityCheck = func() {
+		cp.restoreAfterInitialIdentityCheck = nil
+		if err := os.Rename(root, parked); err != nil {
+			t.Fatalf("park original workspace: %v", err)
+		}
+		if err := os.Mkdir(root, 0o755); err != nil {
+			t.Fatalf("create transient replacement: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("before"), 0o644); err != nil {
+			t.Fatalf("write transient pre-turn state: %v", err)
+		}
+	}
+	cp.restoreBeforePreflightComplete = func() {
+		cp.restoreBeforePreflightComplete = nil
+		if err := os.Rename(root, transient); err != nil {
+			t.Fatalf("park transient replacement: %v", err)
+		}
+		if err := os.Rename(parked, root); err != nil {
+			t.Fatalf("restore original workspace: %v", err)
+		}
+	}
+
+	result, err := cp.Restore()
+	if !errors.Is(err, ErrConflict) || result.Complete || len(result.Conflicts) != 1 {
+		t.Fatalf("transient-replacement restore = result:%+v err:%v", result, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "agent" {
+		t.Fatalf("original workspace changed after rejected no-op: %q, %v", got, err)
+	}
+
+	result, err = cp.Restore()
+	if err != nil || !result.Complete || len(result.Restored) != 1 {
+		t.Fatalf("retry after transient replacement = result:%+v err:%v", result, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "before" {
+		t.Fatalf("retry did not restore original workspace: %q, %v", got, err)
+	}
+}
+
+func TestRestorePublicationRechecksDurableWorkspaceGuard(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("agent"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	current, err := readWorkspaceFile(root, "note.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(root, ".picogent", "workspace-instance")
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const expectedToken = "expected-workspace-token"
+	if err := os.WriteFile(markerPath, []byte(expectedToken+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	checks := 0
+	guard := func() error {
+		checks++
+		if checks == 3 {
+			if err := os.WriteFile(markerPath, []byte("replacement-workspace-token\n"), 0o600); err != nil {
+				return err
+			}
+		}
+		data, err := os.ReadFile(markerPath)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(string(data)) != expectedToken {
+			return fmt.Errorf("workspace marker token changed")
+		}
+		return nil
+	}
+
+	err = writeWorkspaceState(root, "note.txt", current, cp.entries[0].before, cp.rootIdentity, guard)
+	if !errors.Is(err, ErrWorkspaceChanged) {
+		t.Fatalf("restore publication error = %v, want workspace guard rejection", err)
+	}
+	if checks != 3 {
+		t.Fatalf("workspace guard checks = %d, want the pre-publication check", checks)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "agent" {
+		t.Fatalf("workspace file changed after guard rejection: %q, %v", got, err)
 	}
 }
 
