@@ -24,13 +24,25 @@ func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMo
 }
 
 func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks) error {
-	return writeAtomicWithRename(root, path, data, requestedMode, setMode, hooks, renameWorkspaceHandle)
+	return writeAtomicWithDurability(root, path, data, requestedMode, setMode, hooks, false)
+}
+
+func writeAtomicDurableWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks) error {
+	return writeAtomicWithDurability(root, path, data, requestedMode, setMode, hooks, true)
+}
+
+func writeAtomicWithDurability(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks, durable bool) error {
+	return writeAtomicWithRenameDurability(root, path, data, requestedMode, setMode, hooks, renameWorkspaceHandle, durable)
 }
 
 // The per-operation rename parameter lets platform tests force retryable
 // failures without depending on filesystem sharing/antivirus timing or a
 // mutable process-wide syscall override.
 func writeAtomicWithRename(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks, rename func(windows.Handle, windows.Handle, string) error) error {
+	return writeAtomicWithRenameDurability(root, path, data, requestedMode, setMode, hooks, rename, false)
+}
+
+func writeAtomicWithRenameDurability(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks, rename func(windows.Handle, windows.Handle, string) error, durable bool) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -59,16 +71,74 @@ func writeAtomicWithRename(root, path string, data []byte, requestedMode os.File
 	}
 	current := parent
 	defer func() { _ = windows.CloseHandle(current) }()
-	for _, part := range parts[:len(parts)-1] {
+	for index, part := range parts[:len(parts)-1] {
 		if err := hooks.check(); err != nil {
 			return err
 		}
+		var durableCreationParent windows.Handle
+		if durable {
+			durableCreationParent, err = openWorkspaceDurableParent(root, parts[:index])
+			if err != nil {
+				return fmt.Errorf("open durable parent for workspace directory %q: %w", part, err)
+			}
+			openedIdentity, identityErr := workspaceRootIdentityForHandle(current)
+			if identityErr != nil {
+				_ = windows.CloseHandle(durableCreationParent)
+				return fmt.Errorf("identify workspace directory parent: %w", identityErr)
+			}
+			durableIdentity, identityErr := workspaceRootIdentityForHandle(durableCreationParent)
+			if identityErr != nil {
+				_ = windows.CloseHandle(durableCreationParent)
+				return fmt.Errorf("identify durable workspace directory parent: %w", identityErr)
+			}
+			if !openedIdentity.Known || !durableIdentity.Known || openedIdentity != durableIdentity {
+				_ = windows.CloseHandle(durableCreationParent)
+				return errors.New("workspace directory parent identity changed during durable open")
+			}
+			if err := windows.FlushFileBuffers(durableCreationParent); err != nil {
+				_ = windows.CloseHandle(durableCreationParent)
+				return fmt.Errorf("flush workspace directory parent before creation: %w", err)
+			}
+		}
 		child, openErr := openWindowsDirectory(current, part, true)
 		if openErr != nil {
+			if durableCreationParent != 0 && durableCreationParent != windows.InvalidHandle {
+				_ = windows.CloseHandle(durableCreationParent)
+			}
 			return fmt.Errorf("open workspace directory %q: %w", part, openErr)
+		}
+		if durable {
+			flushErr := windows.FlushFileBuffers(durableCreationParent)
+			_ = windows.CloseHandle(durableCreationParent)
+			if flushErr != nil {
+				_ = windows.CloseHandle(child)
+				return fmt.Errorf("flush workspace directory parent after creation: %w", flushErr)
+			}
 		}
 		_ = windows.CloseHandle(current)
 		current = child
+	}
+	var durableParent windows.Handle
+	if durable {
+		durableParent, err = openWorkspaceDurableParent(root, parts[:len(parts)-1])
+		if err != nil {
+			return fmt.Errorf("open durable workspace directory: %w", err)
+		}
+		defer windows.CloseHandle(durableParent)
+		openedIdentity, identityErr := workspaceRootIdentityForHandle(current)
+		if identityErr != nil {
+			return fmt.Errorf("identify opened workspace directory: %w", identityErr)
+		}
+		durableIdentity, identityErr := workspaceRootIdentityForHandle(durableParent)
+		if identityErr != nil {
+			return fmt.Errorf("identify durable workspace directory: %w", identityErr)
+		}
+		if !openedIdentity.Known || !durableIdentity.Known || openedIdentity != durableIdentity {
+			return errors.New("workspace directory identity changed during durable open")
+		}
+		if err := windows.FlushFileBuffers(durableParent); err != nil {
+			return fmt.Errorf("flush workspace directory before durable write: %w", err)
+		}
 	}
 
 	leaf := parts[len(parts)-1]
@@ -147,6 +217,11 @@ func writeAtomicWithRename(root, path string, data []byte, requestedMode os.File
 	removeTemp = false
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close workspace file %q: %w", rel, err)
+	}
+	if durable {
+		if err := windows.FlushFileBuffers(durableParent); err != nil {
+			return fmt.Errorf("flush workspace directory after durable write: %w", err)
+		}
 	}
 	return nil
 }

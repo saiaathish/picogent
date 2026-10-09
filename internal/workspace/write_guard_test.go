@@ -43,6 +43,44 @@ func TestWriteGuardRefusesBeforeParentCreation(t *testing.T) {
 	assertNoStagedWrite(t, root)
 }
 
+func TestDurableWriteUsesRootIdentityAndPrivateModes(t *testing.T) {
+	root := t.TempDir()
+	identity, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, ".picogent", "undo", "session.json")
+	want := []byte("durable journal\n")
+	err = workspace.WriteAtomicDurableWithModeAndHooks(root, path, want, 0o600, workspace.WriteHooks{
+		CheckRootIdentity: func(actual workspace.Identity) error {
+			if actual != identity {
+				return workspace.ErrRootIdentityChanged
+			}
+			return nil
+		},
+		CreateParentMode: 0o700,
+	})
+	if err != nil {
+		t.Fatalf("durable write = %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != string(want) {
+		t.Fatalf("durable file = %q, %v", got, err)
+	}
+	if runtime.GOOS != "windows" {
+		for _, dir := range []string{filepath.Dir(filepath.Dir(path)), filepath.Dir(path)} {
+			info, err := os.Stat(dir)
+			if err != nil || info.Mode().Perm() != 0o700 {
+				t.Fatalf("durable parent %s mode = %v, %v; want 0700", dir, info, err)
+			}
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("durable file mode = %v, %v; want 0600", info, err)
+		}
+	}
+}
+
 func TestWriteGuardRechecksBeforeStaging(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "note.txt")

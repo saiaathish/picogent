@@ -198,6 +198,10 @@ func openDir(root, path string) (*os.File, error) {
 // creation. OBJ_DONT_REPARSE and FILE_OPEN_REPARSE_POINT make every component
 // fail closed if a symlink, junction, or other reparse point is introduced.
 func openWindowsRoot(root string) (windows.Handle, error) {
+	return openWindowsRootWithAccess(root, windows.FILE_GENERIC_READ)
+}
+
+func openWindowsRootWithAccess(root string, access uint32) (windows.Handle, error) {
 	name, err := windows.NewNTUnicodeString(ntPath(root))
 	if err != nil {
 		return 0, err
@@ -208,7 +212,7 @@ func openWindowsRoot(root string) (windows.Handle, error) {
 	var handle windows.Handle
 	err = windows.NtCreateFile(
 		&handle,
-		windows.FILE_GENERIC_READ,
+		access,
 		&oa,
 		&iosb,
 		&allocation,
@@ -226,6 +230,10 @@ func openWindowsRoot(root string) (windows.Handle, error) {
 }
 
 func openWindowsDirectory(parent windows.Handle, name string, create bool) (windows.Handle, error) {
+	return openWindowsDirectoryWithAccess(parent, name, create, windows.FILE_GENERIC_READ)
+}
+
+func openWindowsDirectoryWithAccess(parent windows.Handle, name string, create bool, access uint32) (windows.Handle, error) {
 	objectName, err := windows.NewNTUnicodeString(name)
 	if err != nil {
 		return 0, err
@@ -240,7 +248,7 @@ func openWindowsDirectory(parent windows.Handle, name string, create bool) (wind
 	var handle windows.Handle
 	err = windows.NtCreateFile(
 		&handle,
-		windows.FILE_GENERIC_READ,
+		access,
 		&oa,
 		&iosb,
 		&allocation,
@@ -255,6 +263,31 @@ func openWindowsDirectory(parent windows.Handle, name string, create bool) (wind
 		return 0, translateNTError(err)
 	}
 	return handle, nil
+}
+
+func openWorkspaceDurableParent(root string, parts []string) (windows.Handle, error) {
+	access := uint32(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE)
+	if len(parts) == 0 {
+		return openWindowsRootWithAccess(root, access)
+	}
+	current, err := openWindowsRoot(root)
+	if err != nil {
+		return 0, err
+	}
+	for _, part := range parts[:len(parts)-1] {
+		child, openErr := openWindowsDirectory(current, part, false)
+		_ = windows.CloseHandle(current)
+		if openErr != nil {
+			return 0, openErr
+		}
+		current = child
+	}
+	durable, err := openWindowsDirectoryWithAccess(current, parts[len(parts)-1], false, access)
+	_ = windows.CloseHandle(current)
+	if err != nil {
+		return 0, err
+	}
+	return durable, nil
 }
 
 func openWindowsFile(parent windows.Handle, name string, kind openKind) (windows.Handle, error) {

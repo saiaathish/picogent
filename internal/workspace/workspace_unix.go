@@ -150,6 +150,10 @@ func openParentWithGuard(root, rel string, create bool, guard func() error) (int
 }
 
 func openParentWithRootIdentityCheck(root, rel string, create bool, checkRootIdentity RootIdentityCheck, guard func() error) (int, string, error) {
+	return openParentWithRootIdentityCheckAndMode(root, rel, create, 0o755, checkRootIdentity, guard, false)
+}
+
+func openParentWithRootIdentityCheckAndMode(root, rel string, create bool, createMode os.FileMode, checkRootIdentity RootIdentityCheck, guard func() error, durable bool) (int, string, error) {
 	parts, err := pathParts(rel)
 	if err != nil {
 		return -1, "", err
@@ -179,9 +183,21 @@ func openParentWithRootIdentityCheck(root, rel string, create bool, checkRootIde
 					return -1, "", err
 				}
 			}
-			if mkdirErr := unix.Mkdirat(current, part, 0o755); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
+			if durable {
+				if err := unix.Fsync(current); err != nil {
+					_ = unix.Close(current)
+					return -1, "", fmt.Errorf("sync workspace directory before durable creation: %w", err)
+				}
+			}
+			if mkdirErr := unix.Mkdirat(current, part, uint32(createMode.Perm())); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
 				_ = unix.Close(current)
 				return -1, "", fmt.Errorf("create workspace directory %q: %w", part, mkdirErr)
+			}
+			if durable {
+				if err := unix.Fsync(current); err != nil {
+					_ = unix.Close(current)
+					return -1, "", fmt.Errorf("sync workspace directory after durable creation: %w", err)
+				}
 			}
 			child, openErr = unix.Openat(current, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 		}
@@ -356,6 +372,14 @@ func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMo
 }
 
 func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks) error {
+	return writeAtomicWithDurability(root, path, data, requestedMode, setMode, hooks, false)
+}
+
+func writeAtomicDurableWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks) error {
+	return writeAtomicWithDurability(root, path, data, requestedMode, setMode, hooks, true)
+}
+
+func writeAtomicWithDurability(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks, durable bool) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -363,11 +387,20 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 	if err := hooks.check(); err != nil {
 		return err
 	}
-	parent, leaf, err := openParentWithRootIdentityCheck(root, rel, true, hooks.CheckRootIdentity, hooks.Check)
+	parentMode := hooks.CreateParentMode.Perm()
+	if parentMode == 0 {
+		parentMode = 0o755
+	}
+	parent, leaf, err := openParentWithRootIdentityCheckAndMode(root, rel, true, parentMode, hooks.CheckRootIdentity, hooks.Check, durable)
 	if err != nil {
 		return err
 	}
 	defer unix.Close(parent)
+	if durable {
+		if err := unix.Fsync(parent); err != nil {
+			return fmt.Errorf("sync workspace directory before durable write: %w", err)
+		}
+	}
 
 	targetMode, targetExists, err := workspaceTargetMode(parent, leaf)
 	if err != nil {
@@ -458,8 +491,10 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close workspace file %q: %w", rel, err)
 	}
-	if err := unix.Fsync(parent); err != nil && !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EOPNOTSUPP) {
-		return fmt.Errorf("sync workspace directory for %q: %w", rel, err)
+	if err := unix.Fsync(parent); err != nil {
+		if durable || (!errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EOPNOTSUPP)) {
+			return fmt.Errorf("sync workspace directory for %q: %w", rel, err)
+		}
 	}
 	return nil
 }

@@ -247,7 +247,7 @@ func (a *Agent) setTaskSessionWithHook(sessionID string, beforeUndoLock func()) 
 		return nil
 	}
 	finishAttachment := func() error {
-		if a.undoLoadErr != nil && !errors.Is(a.undoLoadErr, errLegacyUndoJournal) {
+		if a.undoLoadErr != nil && !isLegacyUndoUnavailable(a.undoLoadErr) {
 			if requireReattachment {
 				return fmt.Errorf("validate undo recovery during session reattachment: %w", a.undoLoadErr)
 			}
@@ -273,7 +273,7 @@ func (a *Agent) setTaskSessionWithHook(sessionID string, beforeUndoLock func()) 
 	task, err := a.TaskStore.OwnershipSnapshot(a.TaskSession)
 	if errors.Is(err, taskstate.ErrNotFound) {
 		loadUndo(nil)
-		if a.undoLoadErr != nil && !errors.Is(a.undoLoadErr, errLegacyUndoJournal) {
+		if a.undoLoadErr != nil && !isLegacyUndoUnavailable(a.undoLoadErr) {
 			a.taskLoadErr = a.undoLoadErr
 		}
 		return finishAttachment()
@@ -286,7 +286,7 @@ func (a *Agent) setTaskSessionWithHook(sessionID string, beforeUndoLock func()) 
 	// legacy normalization, proof revalidation, or interrupted-turn recovery
 	// can write a replacement task record.
 	loadUndo(task)
-	if a.undoLoadErr != nil && !errors.Is(a.undoLoadErr, errLegacyUndoJournal) {
+	if a.undoLoadErr != nil && !isLegacyUndoUnavailable(a.undoLoadErr) {
 		a.taskLoadErr = a.undoLoadErr
 		return finishAttachment()
 	}

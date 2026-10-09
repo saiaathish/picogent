@@ -235,6 +235,8 @@ func WriteAtomicWithPublishHook(root, path string, data []byte, hook func(os.Fil
 // root handle before any anchored mutation. Check runs before parent creation
 // and staging and again after preparation, immediately before publication
 // (including every Windows rename retry).
+// CreateParentMode overrides the Unix mode for newly created parent
+// directories; zero keeps the platform default. Windows uses inherited ACLs.
 // A refusal stops future side effects; already-authorized parent creation is
 // not rolled back. Like the underlying pathname primitives, this is not an
 // atomic lock against an uncooperative writer changing authority after Check.
@@ -242,6 +244,7 @@ type WriteHooks struct {
 	Check             func() error
 	CheckRootIdentity RootIdentityCheck
 	PreparePublish    func(os.FileMode) error
+	CreateParentMode  os.FileMode
 }
 
 func (h WriteHooks) check() error {
@@ -254,6 +257,15 @@ func (h WriteHooks) check() error {
 // WriteAtomicWithHooks is WriteAtomic with repeated caller-owned guards.
 func WriteAtomicWithHooks(root, path string, data []byte, hooks WriteHooks) error {
 	return writeAtomicWithHook(root, path, data, 0, false, hooks)
+}
+
+// WriteAtomicDurableWithModeAndHooks is WriteAtomicWithHooks with an explicit
+// file mode and strict directory durability, including parent directories it
+// creates. It fails before staging if a directory cannot be synchronously
+// flushed, and reports a post-publication flush failure rather than claiming
+// the new entry is durable.
+func WriteAtomicDurableWithModeAndHooks(root, path string, data []byte, mode os.FileMode, hooks WriteHooks) error {
+	return writeAtomicDurableWithHook(root, path, data, mode, true, hooks)
 }
 
 // WriteAtomicWithMode writes a complete file below root and publishes its

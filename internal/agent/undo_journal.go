@@ -30,6 +30,10 @@ var (
 	errLegacyUndoWorkspaceBinding = errors.New("legacy undo journal lacks workspace instance identity")
 )
 
+func isLegacyUndoUnavailable(err error) bool {
+	return errors.Is(err, errLegacyUndoJournal) || errors.Is(err, errLegacyUndoWorkspaceBinding)
+}
+
 // undoJournal is deliberately separate from task state. Task revisions
 // describe outcome progress; this record owns the native-file bytes needed for
 // one latest-turn undo and survives a process restart.
@@ -164,14 +168,18 @@ func encodeUndoJournal(journal undoJournal) ([]byte, error) {
 	return data, nil
 }
 
-func saveUndoJournal(workspace, sessionID string, journal undoJournal, pending bool) error {
+func saveUndoJournal(workspacePath, sessionID string, journal undoJournal, pending bool) error {
+	return saveUndoJournalWithHooks(workspacePath, sessionID, journal, pending, workspace.WriteHooks{})
+}
+
+func saveUndoJournalWithHooks(workspacePath, sessionID string, journal undoJournal, pending bool, hooks workspace.WriteHooks) error {
 	if journal.Version != undoJournalVersion {
 		return fmt.Errorf("cannot write undo journal version %d", journal.Version)
 	}
-	if err := validateUndoJournal(journal, workspace, sessionID); err != nil {
+	if err := validateUndoJournal(journal, workspacePath, sessionID); err != nil {
 		return err
 	}
-	sealedPath, pendingPath, err := undoJournalPaths(workspace, sessionID)
+	sealedPath, pendingPath, err := undoJournalPaths(workspacePath, sessionID)
 	if err != nil {
 		return err
 	}
@@ -179,15 +187,32 @@ func saveUndoJournal(workspace, sessionID string, journal undoJournal, pending b
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(sealedPath)
-	if err := securefile.EnsureDir(dir, 0o700); err != nil {
-		return fmt.Errorf("create undo journal directory: %w", err)
-	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(sealedPath)))
 	path := sealedPath
 	if pending {
 		path = pendingPath
 	}
-	if err := securefile.WriteAtomicDurable(path, data, 0o600); err != nil {
+	check := hooks.Check
+	hooks.Check = func() error {
+		if check != nil {
+			if err := check(); err != nil {
+				return err
+			}
+		}
+		return validateUndoWorkspaceInstance(root, journal.WorkspaceInstance)
+	}
+	checkRootIdentity := hooks.CheckRootIdentity
+	hooks.CheckRootIdentity = func(actual workspace.Identity) error {
+		if !actual.Known || actual != journal.WorkspaceInstance.Directory {
+			return workspace.ErrRootIdentityChanged
+		}
+		if checkRootIdentity != nil {
+			return checkRootIdentity(actual)
+		}
+		return nil
+	}
+	hooks.CreateParentMode = 0o700
+	if err := workspace.WriteAtomicDurableWithModeAndHooks(root, path, data, 0o600, hooks); err != nil {
 		return fmt.Errorf("write undo journal: %w", err)
 	}
 	return nil
