@@ -194,7 +194,7 @@ func (u *turnUndo) persistSealed() error {
 	}
 	u.durable = true
 	u.journalSlot = undoJournalSealed
-	if err := removeUndoJournal(u.workspace, u.sessionID, true); err != nil {
+	if err := removeUndoJournal(u.workspace, u.sessionID, true, u.workspaceInstance); err != nil {
 		return err
 	}
 	return nil
@@ -225,7 +225,7 @@ func (u *turnUndo) discardPending() error {
 	if u == nil || u.sessionID == "" || u.turnSequence == 0 || u.journalSlot != undoJournalPending {
 		return nil
 	}
-	if err := removeUndoJournal(u.workspace, u.sessionID, true); err != nil {
+	if err := removeUndoJournal(u.workspace, u.sessionID, true, u.workspaceInstance); err != nil {
 		return err
 	}
 	u.durable = false
@@ -237,7 +237,7 @@ func (u *turnUndo) finalizeJournal() error {
 	if u == nil || !u.durable {
 		return nil
 	}
-	if err := removeAllUndoJournals(u.workspace, u.sessionID); err != nil {
+	if err := removeAllUndoJournals(u.workspace, u.sessionID, u.workspaceInstance); err != nil {
 		return err
 	}
 	u.durable = false
@@ -292,7 +292,11 @@ func (u *turnUndo) restore() (string, bool, error) {
 	if u.restored {
 		return u.restoreMessage, true, u.restoreErr
 	}
-	result, err := u.checkpoint.Restore()
+	var guard func() error
+	if u.sessionID != "" && u.turnSequence != 0 {
+		guard = func() error { return validateUndoWorkspaceInstance(u.workspace, u.workspaceInstance) }
+	}
+	result, err := u.checkpoint.RestoreWithWorkspaceGuard(guard)
 	msg, complete, restoreErr := formatUndoRestore(result, err)
 	if complete {
 		u.restored = true
@@ -791,7 +795,7 @@ func loadValidatedDurableUndo(workspace, sessionID string, generation uint64, ta
 	if u == nil || !u.pendingUnpublished {
 		return u, nil
 	}
-	if err := removeUndoJournal(workspace, sessionID, true); err != nil {
+	if err := removeUndoJournal(workspace, sessionID, true, u.workspaceInstance); err != nil {
 		return nil, err
 	}
 	u, err = loadLatestDurableUndo(workspace, sessionID, generation, authorities...)

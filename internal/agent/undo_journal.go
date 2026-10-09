@@ -12,6 +12,7 @@ import (
 
 	"github.com/saiaathish/picogent/internal/checkpoint"
 	"github.com/saiaathish/picogent/internal/securefile"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
 
 const (
@@ -241,23 +242,28 @@ func loadUndoJournal(workspace, sessionID string, pending bool) (*undoJournal, e
 	return &journal, nil
 }
 
-func removeUndoJournal(workspace, sessionID string, pending bool) error {
-	sealedPath, pendingPath, err := undoJournalPaths(workspace, sessionID)
+func removeUndoJournal(workspacePath, sessionID string, pending bool, expected undoWorkspaceInstance) error {
+	if !safeUndoSessionID(sessionID) {
+		return errors.New("invalid undo session id")
+	}
+	root, err := undoWorkspaceIdentity(workspacePath)
 	if err != nil {
 		return err
 	}
-	path := sealedPath
+	name := sessionID + ".json"
 	if pending {
-		path = pendingPath
+		name = sessionID + ".pending.json"
 	}
-	if err := securefile.RemoveFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	path := filepath.Join(".picogent", "undo", name)
+	checkInstance := func() error { return validateUndoWorkspaceInstance(workspacePath, expected) }
+	if err := workspace.RemoveWithCheck(root, path, checkInstance); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove undo journal: %w", err)
 	}
 	return nil
 }
 
-func removeAllUndoJournals(workspace, sessionID string) error {
-	return errors.Join(removeUndoJournal(workspace, sessionID, false), removeUndoJournal(workspace, sessionID, true))
+func removeAllUndoJournals(workspacePath, sessionID string, expected undoWorkspaceInstance) error {
+	return errors.Join(removeUndoJournal(workspacePath, sessionID, false, expected), removeUndoJournal(workspacePath, sessionID, true, expected))
 }
 
 func loadLatestDurableUndo(workspace, sessionID string, generation uint64, authorities ...undoTaskStoreAuthority) (*turnUndo, error) {

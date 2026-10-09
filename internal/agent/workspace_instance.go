@@ -116,7 +116,9 @@ func ensureUndoWorkspaceInstance(workspacePath string) (undoWorkspaceInstance, e
 		if tokenErr != nil {
 			return undoWorkspaceInstance{}, tokenErr
 		}
-		if writeErr := securefile.WriteExclusive(marker, []byte(token+"\n"), 0o600); writeErr != nil && !errors.Is(writeErr, os.ErrExist) {
+		// Publish the first marker atomically. A direct exclusive write can be
+		// left truncated if the process exits while writing its first token.
+		if writeErr := securefile.WriteAtomicDurable(marker, []byte(token+"\n"), 0o600); writeErr != nil {
 			return undoWorkspaceInstance{}, fmt.Errorf("create undo workspace marker: %w", writeErr)
 		}
 		data, err = securefile.ReadFileLimited(marker, maxUndoWorkspaceMarkerBytes)

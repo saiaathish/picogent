@@ -546,6 +546,76 @@ func TestValidateUndoJournalUsesWorkspaceFilesystemIdentity(t *testing.T) {
 	}
 }
 
+func TestRemoveUndoJournalAcceptsWorkspaceAlias(t *testing.T) {
+	root, alias := workspacePathAlias(t)
+	instance := testUndoWorkspaceInstance(t, root)
+	const sessionID = "workspace-alias-cleanup"
+	_, pendingPath, err := undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pendingPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pendingPath, []byte("pending"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeUndoJournal(alias, sessionID, true, instance); err != nil {
+		t.Fatalf("remove journal through workspace alias: %v", err)
+	}
+	if _, err := os.Stat(pendingPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pending journal remains after alias cleanup: %v", err)
+	}
+}
+
+func TestDurableUndoRejectsChangedWorkspaceMarker(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("agent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	instance := testUndoWorkspaceInstance(t, root)
+	undo := &turnUndo{
+		workspace: root, checkpoint: cp, sessionID: "marker-guard", turnSequence: 1,
+		workspaceInstance: instance,
+	}
+	markerPath := filepath.Join(root, filepath.FromSlash(undoWorkspaceInstanceMarker))
+	token := "0" + instance.Token[1:]
+	if token == instance.Token {
+		token = "1" + instance.Token[1:]
+	}
+	if err := os.WriteFile(markerPath, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatalf("change workspace marker: %v", err)
+	}
+
+	if _, complete, err := undo.restore(); err == nil || complete || !strings.Contains(err.Error(), "workspace") {
+		t.Fatalf("restore with changed marker = complete:%v err:%v", complete, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "agent\n" {
+		t.Fatalf("file changed after marker rejection: %q, %v", got, err)
+	}
+
+	if err := os.WriteFile(markerPath, []byte(instance.Token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, complete, err := undo.restore(); err != nil || !complete {
+		t.Fatalf("restore after marker repair = complete:%v err:%v", complete, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "before\n" {
+		t.Fatalf("retry did not restore checkpoint: %q, %v", got, err)
+	}
+}
+
 func TestCopiedWorkspaceCannotReuseUndoJournal(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "workspace")
@@ -635,6 +705,64 @@ func TestCopiedWorkspaceCannotReuseUndoJournal(t *testing.T) {
 	}
 	if after, err := os.ReadFile(sealedPath); err != nil || !reflect.DeepEqual(after, journalData) {
 		t.Fatalf("rejected journal changed: err=%v unchanged=%v", err, reflect.DeepEqual(after, journalData))
+	}
+}
+
+func TestPendingJournalCleanupRefusesCopiedWorkspace(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	instance := testUndoWorkspaceInstance(t, root)
+	const sessionID = "copied-pending-cleanup"
+	_, pendingPath, err := undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pendingPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pendingData := []byte("replacement pending journal\n")
+	if err := os.WriteFile(pendingPath, pendingData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(root, filepath.FromSlash(undoWorkspaceInstanceMarker))
+	markerData, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parked := filepath.Join(parent, "parked-workspace")
+	if err := os.Rename(root, parked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	markerPath = filepath.Join(root, filepath.FromSlash(undoWorkspaceInstanceMarker))
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, markerData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, pendingPath, err = undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pendingPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pendingPath, pendingData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := removeUndoJournal(root, sessionID, true, instance); err == nil || !strings.Contains(err.Error(), "workspace instance") {
+		t.Fatalf("copied pending journal cleanup = %v, want workspace-instance rejection", err)
+	}
+	if after, err := os.ReadFile(pendingPath); err != nil || !reflect.DeepEqual(after, pendingData) {
+		t.Fatalf("replacement pending journal changed: err=%v unchanged=%v", err, reflect.DeepEqual(after, pendingData))
 	}
 }
 
