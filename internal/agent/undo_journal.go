@@ -15,28 +15,33 @@ import (
 )
 
 const (
-	undoJournalVersion       = 2
-	undoJournalLegacyVersion = 1
-	undoJournalSealed        = "sealed"
-	undoJournalPending       = "recovery-pending"
-	undoJournalRestored      = "restored"
-	undoJournalMaxBytes      = 12 << 20
+	undoJournalVersion          = 3
+	undoJournalTaskOwnerVersion = 2
+	undoJournalLegacyVersion    = 1
+	undoJournalSealed           = "sealed"
+	undoJournalPending          = "recovery-pending"
+	undoJournalRestored         = "restored"
+	undoJournalMaxBytes         = 12 << 20
 )
 
-var errLegacyUndoJournal = errors.New("legacy undo journal lacks task owner identity")
+var (
+	errLegacyUndoJournal          = errors.New("legacy undo journal lacks task owner identity")
+	errLegacyUndoWorkspaceBinding = errors.New("legacy undo journal lacks workspace instance identity")
+)
 
 // undoJournal is deliberately separate from task state. Task revisions
 // describe outcome progress; this record owns the native-file bytes needed for
 // one latest-turn undo and survives a process restart.
 type undoJournal struct {
-	Version        int               `json:"version"`
-	State          string            `json:"state"`
-	Workspace      string            `json:"workspace"`
-	SessionID      string            `json:"session_id"`
-	TurnSequence   uint64            `json:"turn_sequence"`
-	TaskID         string            `json:"task_id,omitempty"`
-	IntentRevision uint64            `json:"turn_intent_revision"`
-	Checkpoint     checkpoint.Record `json:"checkpoint"`
+	Version           int                   `json:"version"`
+	State             string                `json:"state"`
+	Workspace         string                `json:"workspace"`
+	WorkspaceInstance undoWorkspaceInstance `json:"workspace_instance"`
+	SessionID         string                `json:"session_id"`
+	TurnSequence      uint64                `json:"turn_sequence"`
+	TaskID            string                `json:"task_id,omitempty"`
+	IntentRevision    uint64                `json:"turn_intent_revision"`
+	Checkpoint        checkpoint.Record     `json:"checkpoint"`
 }
 
 func undoWorkspaceIdentity(workspace string) (string, error) {
@@ -111,7 +116,7 @@ func undoJournalPaths(workspace, sessionID string) (string, string, error) {
 }
 
 func validateUndoJournal(journal undoJournal, workspace, sessionID string) error {
-	if journal.Version != undoJournalVersion && journal.Version != undoJournalLegacyVersion {
+	if journal.Version != undoJournalVersion && journal.Version != undoJournalTaskOwnerVersion && journal.Version != undoJournalLegacyVersion {
 		return fmt.Errorf("unsupported undo journal version %d", journal.Version)
 	}
 	if journal.State != undoJournalSealed && journal.State != undoJournalPending && journal.State != undoJournalRestored {
@@ -123,7 +128,7 @@ func validateUndoJournal(journal undoJournal, workspace, sessionID string) error
 	if journal.TurnSequence == 0 {
 		return errors.New("undo journal turn sequence is empty")
 	}
-	if journal.Version == undoJournalVersion && strings.TrimSpace(journal.TaskID) == "" {
+	if journal.Version >= undoJournalTaskOwnerVersion && strings.TrimSpace(journal.TaskID) == "" {
 		return errors.New("undo journal task owner identity is empty")
 	}
 	if _, err := undoWorkspaceIdentity(workspace); err != nil {
@@ -131,6 +136,14 @@ func validateUndoJournal(journal undoJournal, workspace, sessionID string) error
 	}
 	if !sameUndoWorkspaceIdentity(workspace, journal.Workspace) {
 		return errors.New("undo journal workspace mismatch")
+	}
+	if journal.Version == undoJournalVersion {
+		if !journal.WorkspaceInstance.valid() {
+			return errors.New("undo journal workspace instance is missing or malformed")
+		}
+		if err := validateUndoWorkspaceInstance(workspace, journal.WorkspaceInstance); err != nil {
+			return fmt.Errorf("undo journal workspace instance mismatch: %w", err)
+		}
 	}
 	if _, err := checkpoint.Import(workspace, journal.Checkpoint); err != nil {
 		return fmt.Errorf("validate undo journal checkpoint: %w", err)
@@ -208,14 +221,14 @@ func loadUndoJournal(workspace, sessionID string, pending bool) (*undoJournal, e
 		}
 		return nil, fmt.Errorf("decode undo journal: %w", err)
 	}
-	if journal.Version == undoJournalVersion {
+	if journal.Version >= undoJournalTaskOwnerVersion {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(data, &fields); err != nil {
 			return nil, fmt.Errorf("decode undo journal fields: %w", err)
 		}
 		revision, present := fields["turn_intent_revision"]
 		if !present || bytes.Equal(bytes.TrimSpace(revision), []byte("null")) {
-			return nil, errors.New("version-2 undo journal is missing turn intent revision")
+			return nil, fmt.Errorf("version-%d undo journal is missing turn intent revision", journal.Version)
 		}
 		var parsed uint64
 		if err := json.Unmarshal(revision, &parsed); err != nil {
@@ -253,10 +266,13 @@ func loadLatestDurableUndo(workspace, sessionID string, generation uint64, autho
 		if pending.Version == undoJournalLegacyVersion || strings.TrimSpace(pending.TaskID) == "" {
 			return nil, errLegacyUndoJournal
 		}
+		if pending.Version < undoJournalVersion {
+			return nil, errLegacyUndoWorkspaceBinding
+		}
 		if pending.State != undoJournalPending && pending.State != undoJournalRestored {
 			return nil, fmt.Errorf("pending undo journal has invalid state %q", pending.State)
 		}
-		cp, err := checkpoint.Import(workspace, pending.Checkpoint)
+		cp, err := checkpoint.ImportBound(workspace, pending.Checkpoint, pending.WorkspaceInstance.Directory)
 		if err != nil {
 			return nil, err
 		}
@@ -268,6 +284,7 @@ func loadLatestDurableUndo(workspace, sessionID string, generation uint64, autho
 			turnSequence:       pending.TurnSequence,
 			taskID:             pending.TaskID,
 			turnIntentRevision: pending.IntentRevision,
+			workspaceInstance:  pending.WorkspaceInstance,
 			durable:            true,
 			journalSlot:        undoJournalPending,
 		}
@@ -303,10 +320,13 @@ func loadLatestDurableUndo(workspace, sessionID string, generation uint64, autho
 	if sealed.Version == undoJournalLegacyVersion || strings.TrimSpace(sealed.TaskID) == "" {
 		return nil, errLegacyUndoJournal
 	}
+	if sealed.Version < undoJournalVersion {
+		return nil, errLegacyUndoWorkspaceBinding
+	}
 	if sealed.State != undoJournalSealed && sealed.State != undoJournalRestored {
 		return nil, fmt.Errorf("sealed undo journal has invalid state %q", sealed.State)
 	}
-	cp, err := checkpoint.Import(workspace, sealed.Checkpoint)
+	cp, err := checkpoint.ImportBound(workspace, sealed.Checkpoint, sealed.WorkspaceInstance.Directory)
 	if err != nil {
 		return nil, err
 	}
@@ -318,6 +338,7 @@ func loadLatestDurableUndo(workspace, sessionID string, generation uint64, autho
 		turnSequence:       sealed.TurnSequence,
 		taskID:             sealed.TaskID,
 		turnIntentRevision: sealed.IntentRevision,
+		workspaceInstance:  sealed.WorkspaceInstance,
 		durable:            true,
 		journalSlot:        undoJournalSealed,
 	}

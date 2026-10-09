@@ -704,6 +704,9 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			// the exact saved turn, not a callback's replacement identity.
 			nativeOwner = nativeOwner.withAdmittedTask(admission.snapshot)
 		}
+		if err := turnUndo.bindWorkspaceInstance(); err != nil {
+			return fmt.Errorf("bind durable undo workspace: %w", err)
+		}
 		return a.checkTaskRun(ctx)
 	}
 	// Every native write needs its expected fingerprint before publication,

@@ -69,6 +69,7 @@ func TestRepeatedWriteCrashChild(t *testing.T) {
 		workspace: root, checkpoint: cp, sessionID: "repeated-write", turnSequence: 1,
 		taskID: "repeated-write-task",
 	}
+	u.workspaceInstance = testUndoWorkspaceInstance(t, root)
 	write := func(data []byte) error {
 		return workspace.WriteAtomicWithPublishHook(root, path, data, func(mode os.FileMode) error {
 			if err := u.preparePublish(path, data, mode); err != nil {

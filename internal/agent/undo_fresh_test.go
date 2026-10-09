@@ -69,6 +69,86 @@ func TestUndoPersistsAcrossFreshAgent(t *testing.T) {
 	}
 }
 
+func TestUndoRefusesCopiedWorkspaceInstance(t *testing.T) {
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "copied-workspace-undo"
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	writer := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		toolResponse("write", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	writer.SetTaskStore(store)
+	if err := writer.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := writer.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UndoAvailable {
+		t.Fatalf("writer did not publish durable undo: %+v", result)
+	}
+
+	markerPath := filepath.Join(workspace, ".picogent", "workspace-instance")
+	journalPath := filepath.Join(workspace, ".picogent", "undo", sessionID+".json")
+	markerData, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalData, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked := filepath.Join(parent, "parked-workspace")
+	if err := os.Rename(workspace, parked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "note.txt"), []byte("after\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	markerPath = filepath.Join(workspace, ".picogent", "workspace-instance")
+	journalPath = filepath.Join(workspace, ".picogent", "undo", sessionID+".json")
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, markerData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(journalPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(journalPath, journalData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := writer.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "workspace instance") {
+		t.Fatalf("undo against copied workspace = %v, want workspace-instance rejection", err)
+	}
+	assertFreshUndoFileContent(t, filepath.Join(workspace, "note.txt"), "after\n")
+	if after, err := os.ReadFile(journalPath); err != nil || !reflect.DeepEqual(after, journalData) {
+		t.Fatalf("copied workspace journal changed: err=%v unchanged=%v", err, reflect.DeepEqual(after, journalData))
+	}
+}
+
 func TestUndoRevalidatesOwnerAfterStaleSessionAttachment(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "note.txt")
