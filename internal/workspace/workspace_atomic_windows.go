@@ -446,6 +446,9 @@ func securePrivateDirectoryAndFiles(root string, parts []string) error {
 }
 
 func setPrivateWindowsDACL(handle windows.Handle, expected *windows.SECURITY_DESCRIPTOR, directory bool) error {
+	if err := verifyPrivateWindowsObjectOwner(handle); err != nil {
+		return fmt.Errorf("refuse to migrate foreign-owned private storage: %w", err)
+	}
 	dacl, _, err := expected.DACL()
 	if err != nil || dacl == nil {
 		if err != nil {
@@ -461,9 +464,16 @@ func setPrivateWindowsDACL(handle windows.Handle, expected *windows.SECURITY_DES
 }
 
 func verifyPrivateWindowsDACL(handle windows.Handle, expected *windows.SECURITY_DESCRIPTOR, directory bool) error {
-	actual, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	actual, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
-		return fmt.Errorf("read applied DACL: %w", err)
+		return fmt.Errorf("read applied security descriptor: %w", err)
+	}
+	owner, _, err := actual.Owner()
+	if err != nil {
+		return fmt.Errorf("inspect applied object owner: %w", err)
+	}
+	if err := verifyPrivateWindowsTokenOwner(owner); err != nil {
+		return fmt.Errorf("verify applied object owner: %w", err)
 	}
 	actualControl, _, err := actual.Control()
 	if err != nil {
@@ -505,6 +515,51 @@ func verifyPrivateWindowsDACL(handle windows.Handle, expected *windows.SECURITY_
 	requiredAccess := windows.ACCESS_MASK(windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE)
 	if actualACE.Mask&requiredAccess != requiredAccess {
 		return errors.New("applied DACL does not grant the current user required journal access")
+	}
+	return nil
+}
+
+func verifyPrivateWindowsObjectOwner(handle windows.Handle) error {
+	descriptor, err := windows.GetSecurityInfo(handle, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return fmt.Errorf("read object owner: %w", err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return fmt.Errorf("inspect object owner: %w", err)
+	}
+	return verifyPrivateWindowsTokenOwner(owner)
+}
+
+type windowsTokenOwnerInfo struct {
+	Owner *windows.SID
+}
+
+func verifyPrivateWindowsTokenOwner(owner *windows.SID) error {
+	if owner == nil {
+		return errors.New("object owner is missing")
+	}
+	token := windows.GetCurrentProcessToken()
+	var size uint32
+	if err := windows.GetTokenInformation(token, windows.TokenOwner, nil, 0, &size); !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+		if err != nil {
+			return fmt.Errorf("query process token owner size: %w", err)
+		}
+		return errors.New("query process token owner returned no buffer size")
+	}
+	if size == 0 {
+		return errors.New("process token owner is empty")
+	}
+	buffer := make([]byte, size)
+	if err := windows.GetTokenInformation(token, windows.TokenOwner, &buffer[0], uint32(len(buffer)), &size); err != nil {
+		return fmt.Errorf("read process token owner: %w", err)
+	}
+	ownerInfo := (*windowsTokenOwnerInfo)(unsafe.Pointer(&buffer[0]))
+	if ownerInfo.Owner == nil {
+		return errors.New("process token owner SID is missing")
+	}
+	if !windows.EqualSid(owner, ownerInfo.Owner) {
+		return errors.New("object is owned by a different Windows token owner")
 	}
 	return nil
 }

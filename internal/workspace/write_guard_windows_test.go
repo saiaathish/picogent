@@ -14,6 +14,28 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func TestPrivateWindowsOwnerMustMatchCurrentTokenOwner(t *testing.T) {
+	root := t.TempDir()
+	descriptor, err := windows.GetNamedSecurityInfo(root, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil || descriptor == nil {
+		t.Fatalf("read temporary directory owner: %v", err)
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		t.Fatalf("inspect temporary directory owner: %v", err)
+	}
+	if err := verifyPrivateWindowsTokenOwner(owner); err != nil {
+		t.Fatalf("current process token owner was rejected: %v", err)
+	}
+	foreign, err := windows.StringToSid("S-1-1-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyPrivateWindowsTokenOwner(foreign); err == nil {
+		t.Fatal("Everyone SID was accepted as the current process token owner")
+	}
+}
+
 func TestDurableWriteUsesProtectedCurrentUserACLs(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ".picogent", "undo", "session.json")
