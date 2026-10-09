@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
@@ -314,6 +315,92 @@ func TestFailedJournalPublicationDoesNotAdvertiseProcessLocalUndo(t *testing.T) 
 	}
 }
 
+func TestUndoRejectsWorkspaceRebindBeforeUndoLock(t *testing.T) {
+	oldWorkspace, newWorkspace := trailingWhitespaceWorkspacePair(t)
+	a := newUndoHookAgent(t, oldWorkspace)
+	defer a.Close()
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "write note.txt"}, allowUndoTest{})
+	if err != nil || !result.UndoAvailable {
+		t.Fatalf("fixture did not create an undo checkpoint: available=%v err=%v", result.UndoAvailable, err)
+	}
+	path := filepath.Join(oldWorkspace, "note.txt")
+	if got, err := os.ReadFile(path); err != nil || string(got) != "after" {
+		t.Fatalf("fixture file = %q, %v", got, err)
+	}
+	_, err = a.undoLastTurnWithHook(func() {
+		a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = newWorkspace })
+	})
+	if !errors.Is(err, errWorkspaceAuthorityChanged) {
+		t.Fatalf("undo did not reject the stale workspace snapshot: %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "after" {
+		t.Fatalf("stale undo changed the original workspace: %q, %v", got, err)
+	}
+	if a.latestUndo == nil {
+		t.Fatal("stale undo discarded its recovery checkpoint")
+	}
+}
+
+func TestSetTaskSessionRejectsWorkspaceRebindBeforeUndoLock(t *testing.T) {
+	oldWorkspace, newWorkspace := trailingWhitespaceWorkspacePair(t)
+	a := newUndoHookAgent(t, oldWorkspace)
+	defer a.Close()
+	store := taskstate.NewStore(t.TempDir())
+	a.SetTaskStore(store)
+	if err := a.SetTaskSession("original-session"); err != nil {
+		t.Fatal(err)
+	}
+	beforeSession, beforeGeneration := a.taskSessionSnapshot()
+	err := a.setTaskSessionWithHook("replacement-session", func() {
+		a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = newWorkspace })
+	})
+	if !errors.Is(err, errWorkspaceAuthorityChanged) {
+		t.Fatalf("session attachment did not reject the stale workspace snapshot: %v", err)
+	}
+	afterSession, afterGeneration := a.taskSessionSnapshot()
+	if afterSession != beforeSession || afterGeneration != beforeGeneration || a.TaskStoreSnapshot() != store || a.TaskSnapshot() != nil {
+		t.Fatalf("refused attachment changed task authority: session=%q generation=%d store_same=%v task=%+v", afterSession, afterGeneration, a.TaskStoreSnapshot() == store, a.TaskSnapshot())
+	}
+}
+
+func TestUpdateConfigWaitsForUndoAuthorityWindow(t *testing.T) {
+	oldWorkspace, newWorkspace := t.TempDir(), t.TempDir()
+	a := newUndoHookAgent(t, oldWorkspace)
+	defer a.Close()
+
+	// Undo holds undoMu from its authority check through journal finalization.
+	// A workspace update must not cross that protected interval.
+	a.undoMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			a.undoMu.Unlock()
+		}
+	}()
+	started, finished := make(chan struct{}), make(chan struct{})
+	go func() {
+		close(started)
+		a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = newWorkspace })
+		close(finished)
+	}()
+	<-started
+	select {
+	case <-finished:
+		t.Fatal("workspace config crossed active undo authority")
+	case <-time.After(25 * time.Millisecond):
+	}
+	a.undoMu.Unlock()
+	locked = false
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("workspace config did not resume after undo authority released")
+	}
+	if got := a.ConfigSnapshot().Workspace; got != newWorkspace {
+		t.Fatalf("workspace = %q, want %q", got, newWorkspace)
+	}
+}
+
 func newUndoHookAgent(t *testing.T, dir string) *Agent {
 	t.Helper()
 	args, _ := json.Marshal(map[string]string{"path": "note.txt", "content": "after"})
@@ -326,6 +413,52 @@ func newUndoHookAgent(t *testing.T, dir string) *Agent {
 	cfg.Mode = config.ModeFast
 	cfg.Provider = config.ProviderOllama
 	return New(cfg, client, tools.NewRegistry(tools.Context{Workspace: dir}), perm.New(config.ModeFast, dir, nil))
+}
+
+func trailingWhitespaceWorkspacePair(t *testing.T) (string, string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Win32 paths do not preserve trailing spaces in directory names")
+	}
+	parent := t.TempDir()
+	workspace := filepath.Join(parent, "workspace")
+	trimmedDistinctWorkspace := workspace + " "
+	for _, path := range []string{workspace, trimmedDistinctWorkspace} {
+		if err := os.Mkdir(path, 0o700); err != nil {
+			t.Fatalf("create workspace %q: %v", path, err)
+		}
+	}
+	if strings.TrimSpace(workspace) != strings.TrimSpace(trimmedDistinctWorkspace) {
+		t.Fatal("fixture paths must compare equal after trimming whitespace")
+	}
+	return workspace, trimmedDistinctWorkspace
+}
+
+func TestSameUndoWorkspaceIdentityAcceptsPathAliases(t *testing.T) {
+	workspace := t.TempDir()
+	var alias string
+	if runtime.GOOS == "windows" {
+		alias = strings.ToUpper(workspace)
+	} else {
+		alias = filepath.Join(filepath.Dir(workspace), filepath.Base(workspace)+"-alias")
+		if err := os.Symlink(workspace, alias); err != nil {
+			t.Skipf("create workspace alias: %v", err)
+		}
+	}
+	workspaceInfo, err := os.Stat(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliasInfo, err := os.Stat(alias)
+	if err != nil {
+		t.Fatalf("stat workspace alias: %v", err)
+	}
+	if !os.SameFile(workspaceInfo, aliasInfo) {
+		t.Skip("the platform did not resolve the candidate path as a filesystem alias")
+	}
+	if !sameUndoWorkspaceIdentity(workspace, alias) {
+		t.Fatalf("canonical workspace identity rejected filesystem aliases %q and %q", workspace, alias)
+	}
 }
 
 type allowUndoTest struct{ NopHandler }

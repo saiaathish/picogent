@@ -69,6 +69,56 @@ func TestUndoPersistsAcrossFreshAgent(t *testing.T) {
 	}
 }
 
+func TestUndoRevalidatesOwnerAfterStaleSessionAttachment(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(t.TempDir())
+	const sessionID = "stale-undo-attachment"
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	writer := agent.New(cfg, &llm.Scripted{Responses: []llm.ChatResponse{
+		toolResponse("write", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	writer.SetTaskStore(store)
+	if err := writer.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+
+	// This Agent attaches before the writer creates durable task ownership.
+	// Its in-memory TaskSnapshot stays nil even after the writer publishes undo.
+	reader := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	reader.SetTaskStore(store)
+	if err := reader.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	if reader.TaskSnapshot() != nil || reader.UndoAvailable() {
+		t.Fatal("reader unexpectedly observed task ownership before the writer ran")
+	}
+
+	_, result, err := writer.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UndoAvailable {
+		t.Fatalf("writer did not publish durable undo: %+v", result)
+	}
+	message, err := reader.UndoLastTurn()
+	if err != nil || !strings.Contains(message, "restored note.txt") {
+		t.Fatalf("undo from stale attachment = (%q, %v)", message, err)
+	}
+	assertFreshUndoFileContent(t, path, "before\n")
+}
+
 func TestCachedUndoRequiresOriginalTaskStoreAuthority(t *testing.T) {
 	for _, scenario := range []string{"copied store", "same store setter", "store ABA"} {
 		t.Run(scenario, func(t *testing.T) {

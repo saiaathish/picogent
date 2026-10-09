@@ -608,6 +608,77 @@ func TestUnpublishedPendingUndoPreservesJournalBeforeOwnerValidation(t *testing.
 	}
 }
 
+func TestPendingUndoCleanupRefreshesStaleOwnerSnapshot(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "pending-stale-owner-refresh"
+	owner, err := taskstate.New(sessionID, "original outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := owner.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := owner.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok || !owner.FinishTurn(sequence, taskstate.TurnRouteImplement, "write note", "UNVERIFIED", taskstate.StopNone, 1, 1) {
+		t.Fatal("owner turn did not finish")
+	}
+
+	cp, err := checkpoint.Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cp.PrepareExpected(path, []byte("agent edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	undo := &turnUndo{
+		workspace: root, checkpoint: cp, sessionID: sessionID,
+		turnSequence: sequence, taskID: owner.ID,
+		turnIntentRevision: owner.LastTurn().IntentRevision,
+	}
+	if err := undo.saveJournal(record, undoJournalPending); err != nil {
+		t.Fatal(err)
+	}
+	_, pendingPath, err := undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pendingBefore, err := os.ReadFile(pendingPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	currentStore := taskstate.NewStore(t.TempDir())
+	replacement, err := taskstate.New(sessionID, "replacement outcome", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replacement.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if replacementSequence, ok := replacement.BeginTurn(taskstate.TurnRouteImplement); !ok || replacementSequence != sequence {
+		t.Fatalf("replacement turn sequence = %d, want %d", replacementSequence, sequence)
+	}
+	if err := currentStore.Save(replacement); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := loadValidatedDurableUndo(root, sessionID, 1, owner, undoTaskStoreAuthority{store: currentStore}); err == nil || !strings.Contains(err.Error(), "task identity mismatch") {
+		t.Fatalf("stale owner snapshot authorized pending recovery cleanup: %v", err)
+	}
+	pendingAfter, err := os.ReadFile(pendingPath)
+	if err != nil || !reflect.DeepEqual(pendingBefore, pendingAfter) {
+		t.Fatalf("replacement owner's pending journal changed: err=%v unchanged=%v", err, reflect.DeepEqual(pendingBefore, pendingAfter))
+	}
+}
+
 func TestUndoRefreshValidatesOwnerBeforeNormalizingReplacementTask(t *testing.T) {
 	a, store, owner := newDurableUndoFixture(t, taskstate.StatusWorking)
 	u := a.latestUndo

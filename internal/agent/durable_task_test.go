@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -242,7 +243,7 @@ func TestSetTaskSessionWithoutWorkspaceRecoversInterruptedTurn(t *testing.T) {
 	}
 }
 
-func TestSetTaskSessionWithoutWorkspaceAllowsStoreReattachment(t *testing.T) {
+func TestSetTaskSessionWithoutWorkspaceRequiresWorkspaceForStoreReattachment(t *testing.T) {
 	for _, scenario := range []string{"same store", "replacement store"} {
 		t.Run(scenario, func(t *testing.T) {
 			const sessionID = "no-workspace-reattach"
@@ -253,6 +254,9 @@ func TestSetTaskSessionWithoutWorkspaceAllowsStoreReattachment(t *testing.T) {
 			}
 			if err := taskA.SetStatus(taskstate.StatusWorking); err != nil {
 				t.Fatal(err)
+			}
+			if _, ok := taskA.BeginTurn(taskstate.TurnRouteImplement); !ok {
+				t.Fatal("original task turn did not start")
 			}
 			if err := storeA.Save(taskA); err != nil {
 				t.Fatal(err)
@@ -269,6 +273,9 @@ func TestSetTaskSessionWithoutWorkspaceAllowsStoreReattachment(t *testing.T) {
 				if err := taskB.SetStatus(taskstate.StatusWorking); err != nil {
 					t.Fatal(err)
 				}
+				if _, ok := taskB.BeginTurn(taskstate.TurnRouteImplement); !ok {
+					t.Fatal("replacement task turn did not start")
+				}
 				if err := storeB.Save(taskB); err != nil {
 					t.Fatal(err)
 				}
@@ -280,20 +287,67 @@ func TestSetTaskSessionWithoutWorkspaceAllowsStoreReattachment(t *testing.T) {
 				t.Fatal(err)
 			}
 			a.SetTaskStore(storeB)
+			beforeTask := a.TaskSnapshot()
+			if beforeTask == nil {
+				t.Fatal("original task was not attached before store replacement")
+			}
+			taskPath, err := storeB.Path(sessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeRecord, err := os.ReadFile(taskPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := a.SetTaskSession(sessionID); err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") {
+				t.Fatalf("reattachment without workspace = %v, want explicit workspace refusal", err)
+			}
+			if a.TaskSession != sessionID || !reflect.DeepEqual(beforeTask, a.TaskSnapshot()) {
+				t.Fatalf("refused attachment changed session/task state: session=%q task=%#v", a.TaskSession, a.TaskSnapshot())
+			}
+			afterRecord, err := os.ReadFile(taskPath)
+			if err != nil || string(afterRecord) != string(beforeRecord) {
+				t.Fatalf("refused attachment changed replacement record: err=%v", err)
+			}
+			if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(strings.ToLower(err.Error()), "reattach") {
+				t.Fatalf("undo after refused attachment = %v, want the reattachment fence to remain", err)
+			}
+
+			workspace := t.TempDir()
+			a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = workspace })
 			if err := a.SetTaskSession(sessionID); err != nil {
-				t.Fatalf("explicit task-store reattachment: %v", err)
+				t.Fatalf("reattach after restoring workspace: %v", err)
 			}
 			got := assertNoWorkspaceTaskStatus(t, a, storeB, sessionID, taskstate.StatusWorking)
 			if got.ID != wantID {
 				t.Fatalf("attached task ID = %q, want replacement store owner %q", got.ID, wantID)
 			}
-			if a.UndoAvailable() {
-				t.Fatal("undo was advertised without a configured workspace")
+			if last := got.LastTurn(); last == nil || last.State != taskstate.TurnInterrupted {
+				t.Fatalf("reattached task turn = %#v, want validated interrupted-turn recovery", last)
 			}
-			if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") {
-				t.Fatalf("undo without workspace = %v, want explicit workspace error", err)
+			if a.UndoAvailable() {
+				t.Fatal("undo was advertised without a validated journal")
 			}
 		})
+	}
+}
+
+func TestSetTaskSessionWithoutWorkspaceAllowsDetachAfterStoreRebind(t *testing.T) {
+	const sessionID = "no-workspace-detach-after-rebind"
+	a := newAgentWithoutWorkspace(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+
+	if err := a.SetTaskSession(""); err != nil {
+		t.Fatalf("detach after store rebind without workspace: %v", err)
+	}
+	if a.TaskSession != "" {
+		t.Fatalf("task session after detach = %q, want empty", a.TaskSession)
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") || strings.Contains(strings.ToLower(err.Error()), "reattach") {
+		t.Fatalf("undo after detach = %v, want workspace-unavailable error without a reattachment fence", err)
 	}
 }
 
@@ -397,7 +451,7 @@ func TestTaskStoreAttachmentExplainsLostProcessLocalUndo(t *testing.T) {
 	assertFreshUndoFileContent(t, path, "after\n")
 }
 
-func TestEmptyNoWorkspaceReattachmentAllowsUndoAfterWorkspaceReturns(t *testing.T) {
+func TestEmptyNoWorkspaceReattachmentWaitsForWorkspace(t *testing.T) {
 	workspace := t.TempDir()
 	path := filepath.Join(workspace, "note.txt")
 	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
@@ -434,13 +488,22 @@ func TestEmptyNoWorkspaceReattachmentAllowsUndoAfterWorkspaceReturns(t *testing.
 		t.Fatal(err)
 	}
 	a.SetTaskStore(storeB)
+	if err := a.SetTaskSession(sessionID); err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") {
+		t.Fatalf("reattach empty replacement store without workspace = %v, want explicit refusal", err)
+	}
+	if a.TaskSession != sessionID {
+		t.Fatalf("refused empty-store reattachment changed session to %q", a.TaskSession)
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(strings.ToLower(err.Error()), "reattach") {
+		t.Fatalf("undo after refused empty-store attachment = %v, want reattachment fence", err)
+	}
+	a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = workspace })
 	if err := a.SetTaskSession(sessionID); err != nil {
-		t.Fatalf("reattach empty replacement store without workspace: %v", err)
+		t.Fatalf("reattach empty store after workspace returns: %v", err)
 	}
 	if got := a.TaskSnapshot(); got != nil {
 		t.Fatalf("empty replacement store attached stale task %#v", got)
 	}
-	a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = workspace })
 	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{})
 	if err != nil {
 		t.Fatal(err)

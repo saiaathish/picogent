@@ -8,26 +8,74 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
 
-func (a *Agent) claimTaskRun(binding nativeTaskBinding) error {
+var errTaskSessionSwitchInProgress = errors.New("durable task session switch in progress")
+var errWorkspaceAuthorityChanged = errors.New("workspace changed while acquiring authority; retry")
+
+// reserveTaskSessionSwitch revokes the active run before waiting for the
+// project lock, and prevents a queued run from slipping ahead of the switch.
+func (a *Agent) reserveTaskSessionSwitch(binding nativeTaskBinding) (func(), error) {
 	a.taskMu.Lock()
-	defer a.taskMu.Unlock()
+	if a.TaskStore != binding.store || a.TaskSession != binding.sessionID || a.taskSessionGeneration != binding.generation || a.taskStoreGeneration != binding.storeGeneration {
+		a.taskMu.Unlock()
+		return nil, errTaskOwnershipChanged
+	}
+	if a.taskSessionSwitching {
+		a.taskMu.Unlock()
+		return nil, errTaskSessionSwitchInProgress
+	}
+	a.taskSessionSwitching = true
+	cancelRun := a.taskRunCancel
+	a.taskMu.Unlock()
+	if cancelRun != nil {
+		cancelRun()
+	}
+	return func() {
+		a.taskMu.Lock()
+		a.taskSessionSwitching = false
+		a.taskMu.Unlock()
+	}, nil
+}
+
+func (a *Agent) claimTaskRun(parent context.Context, binding nativeTaskBinding) (context.Context, error) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	runCtx, cancel := context.WithCancel(parent)
+	a.taskMu.Lock()
+	if a.taskSessionSwitching {
+		a.taskMu.Unlock()
+		cancel()
+		return nil, errTaskSessionSwitchInProgress
+	}
 	if a.taskRunBinding != nil || a.TaskStore != binding.store || a.TaskSession != binding.sessionID || a.taskSessionGeneration != binding.generation || a.taskStoreGeneration != binding.storeGeneration || !binding.owns(a.task) {
-		return errTaskOwnershipChanged
+		a.taskMu.Unlock()
+		cancel()
+		return nil, errTaskOwnershipChanged
 	}
 	a.taskRunBinding = &binding
-	return nil
+	a.taskRunCancel = cancel
+	a.taskMu.Unlock()
+	return runCtx, nil
 }
 
 func (a *Agent) checkTaskRun(ctx context.Context) error {
-	if ctx != nil && ctx.Err() != nil {
-		return ctx.Err()
-	}
 	a.taskMu.RLock()
 	defer a.taskMu.RUnlock()
 	if a.taskRunBinding == nil {
 		return errTaskOwnershipChanged
 	}
-	return a.checkTaskBindingLocked(*a.taskRunBinding)
+	if err := a.checkTaskBindingLocked(*a.taskRunBinding); err != nil {
+		return err
+	}
+	if ctx != nil {
+		if a.taskSessionSwitching {
+			return context.Canceled
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *Agent) checkTaskLockBinding(binding nativeTaskBinding) error {
@@ -48,7 +96,13 @@ func (a *Agent) checkTaskRunMemory() error {
 	if a.taskRunBinding == nil {
 		return errTaskOwnershipChanged
 	}
-	return a.checkTaskBindingMemoryLocked(*a.taskRunBinding)
+	if err := a.checkTaskBindingMemoryLocked(*a.taskRunBinding); err != nil {
+		return err
+	}
+	if a.taskSessionSwitching {
+		return context.Canceled
+	}
+	return nil
 }
 
 // Cleanup has the exact original durable binding, not the currently installed
@@ -57,12 +111,22 @@ func (a *Agent) checkTaskRunMemory() error {
 func (a *Agent) releaseTaskRun() (*taskstate.Task, error) {
 	a.taskMu.Lock()
 	if a.taskRunBinding == nil {
+		cancel := a.taskRunCancel
+		a.taskRunCancel = nil
 		a.taskMu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
 		return nil, nil
 	}
 	binding := *a.taskRunBinding
+	cancel := a.taskRunCancel
 	a.taskRunBinding = nil
+	a.taskRunCancel = nil
 	a.taskMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if binding.store == nil || binding.owner == nil || binding.owner.lastState != taskstate.TurnActive {
 		return nil, nil
 	}

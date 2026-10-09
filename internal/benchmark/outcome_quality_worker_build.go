@@ -81,9 +81,7 @@ func BuildOutcomeQualityWorker(ctx context.Context, binding OutcomeQualitySource
 	binaryPath := filepath.Join(buildDir, binaryName)
 	buildCtx, cancel := context.WithTimeout(ctx, maxOutcomeQualityWorkerBuildTimeout)
 	defer cancel()
-	command := exec.CommandContext(buildCtx, goCommand, "build", "-o", binaryPath, "./cmd/outcome-quality-worker")
-	command.Dir = workspace
-	command.Env = outcomeQualityWorkerEnvironmentWithCache(filepath.Join(buildDir, "go-cache"))
+	command := outcomeQualityWorkerBuildCommand(buildCtx, goCommand, workspace, binaryPath, filepath.Join(buildDir, "go-cache"))
 	var output outcomeQualityBuildBuffer
 	command.Stdout = &output
 	command.Stderr = &output
@@ -117,6 +115,15 @@ func BuildOutcomeQualityWorker(ctx context.Context, binding OutcomeQualitySource
 		},
 		dir: buildDir,
 	}, nil
+}
+
+func outcomeQualityWorkerBuildCommand(ctx context.Context, goCommand, workspace, binaryPath, cacheDir string) *exec.Cmd {
+	// Parent resource knobs are deliberately excluded by the sanitizer. Bound
+	// this build explicitly without changing the evaluated worker's runtime.
+	command := exec.CommandContext(ctx, goCommand, "build", "-p=1", "-o", binaryPath, "./cmd/outcome-quality-worker")
+	command.Dir = workspace
+	command.Env = append(outcomeQualityWorkerEnvironmentWithCache(cacheDir), "GOMAXPROCS=2")
+	return command
 }
 
 // ProcessExecutor returns the bounded executor backed by the built worker.

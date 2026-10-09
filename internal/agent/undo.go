@@ -311,6 +311,10 @@ func formatUndoRestore(result checkpoint.RestoreResult, err error) (string, bool
 // UndoLastTurn restores the latest completed turn that changed native workspace
 // files. Read-only turns do not discard the most recent undo checkpoint.
 func (a *Agent) UndoLastTurn() (string, error) {
+	return a.undoLastTurnWithHook(nil)
+}
+
+func (a *Agent) undoLastTurnWithHook(beforeUndoLock func()) (string, error) {
 	workspace := a.ConfigSnapshot().Workspace
 	binding := a.nativeTaskBinding()
 	releaseRun, err := a.acquireProjectRunLockForWorkspace(workspace, binding)
@@ -321,8 +325,14 @@ func (a *Agent) UndoLastTurn() (string, error) {
 	if err := a.checkTaskLockBinding(binding); err != nil {
 		return "", fmt.Errorf("undo authority changed while acquiring its lock: %w", err)
 	}
+	if beforeUndoLock != nil {
+		beforeUndoLock()
+	}
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
+	if !sameUndoWorkspaceIdentity(a.ConfigSnapshot().Workspace, workspace) {
+		return "", fmt.Errorf("undo workspace: %w", errWorkspaceAuthorityChanged)
+	}
 	if a.undoReattachRequired {
 		if a.latestUndo != nil && !a.latestUndo.durable {
 			return "", errors.New("cached process-local undo no longer matches the current task-store authority")
@@ -663,12 +673,7 @@ func (a *Agent) undoBelongsToCurrentSession(u *turnUndo) bool {
 	if a == nil || u == nil {
 		return false
 	}
-	currentWorkspace, err := undoWorkspaceIdentity(a.ConfigSnapshot().Workspace)
-	if err != nil {
-		return false
-	}
-	checkpointWorkspace, err := undoWorkspaceIdentity(u.workspace)
-	if err != nil || currentWorkspace != checkpointWorkspace {
+	if !sameUndoWorkspaceIdentity(a.ConfigSnapshot().Workspace, u.workspace) {
 		return false
 	}
 	a.taskMu.RLock()
@@ -719,11 +724,25 @@ func validateDurableUndoTask(u *turnUndo, task *taskstate.Task) error {
 	return nil
 }
 
-// loadValidatedDurableUndo validates the persisted turn owner before it may
-// clean up a pending record that never reached a workspace rename. Keeping the
-// raw loader read-only ensures a replacement task cannot consume another
-// task's recovery journal merely by attaching to the same session ID.
+// loadValidatedDurableUndo refreshes the persisted turn owner before it may
+// clean up a pending record that never reached a workspace rename. A caller's
+// snapshot can be stale even when non-nil, so it must never authorize journal
+// deletion or recovery on its own.
 func loadValidatedDurableUndo(workspace, sessionID string, generation uint64, task *taskstate.Task, authorities ...undoTaskStoreAuthority) (*turnUndo, error) {
+	// The task snapshot held by an Agent can be stale after another Agent or
+	// process replaces or advances the task. Resolve the durable owner before
+	// validating the journal; callers still validate it before any task
+	// normalization or recovery write.
+	if len(authorities) > 0 && authorities[0].store != nil {
+		current, err := authorities[0].store.OwnershipSnapshot(sessionID)
+		if errors.Is(err, taskstate.ErrNotFound) {
+			err = nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("inspect durable task for undo: %w", err)
+		}
+		task = current
+	}
 	u, err := loadLatestDurableUndo(workspace, sessionID, generation, authorities...)
 	if err != nil {
 		return nil, err

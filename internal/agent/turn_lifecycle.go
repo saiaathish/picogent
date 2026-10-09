@@ -76,8 +76,18 @@ func (a *Agent) finishAndCloseDurableTurn(ctx context.Context, root string, sequ
 		if last == nil || last.Sequence != sequence || last.State != taskstate.TurnActive || last.IntentRevision != task.IntentRevision {
 			return errTaskMutationSkipped
 		}
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		if _, err := revalidateTaskProof(ctx, root, task); err != nil {
 			return err
+		}
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 		}
 		// Use the candidate's latest proof, including retained proof or a
 		// changed record loaded on CAS retry, not this turn's narration.
@@ -110,6 +120,9 @@ func (a *Agent) finishAndCloseDurableTurn(ctx context.Context, root string, sequ
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return a.TaskSnapshot(), CompletionProjection{}, false, false, false, err
+		}
 		if errors.Is(err, errTaskMutationSkipped) {
 			// mutateTaskResult rebases the in-memory task before replaying the
 			// mutation. A stale sequence means that replay correctly refused to
