@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -439,6 +440,93 @@ func TestLegacyUndoJournalParsesButCannotRecoverWithoutOwner(t *testing.T) {
 	journalAfter, err := os.ReadFile(journalPath)
 	if err != nil || !reflect.DeepEqual(data, journalAfter) {
 		t.Fatalf("legacy journal was not preserved: err=%v unchanged=%v", err, reflect.DeepEqual(data, journalAfter))
+	}
+}
+
+func TestLoadUndoJournalHardensExistingUnixStorageWithoutChangingContents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows ACL migration is covered by Windows-specific tests")
+	}
+	a, _, task := newDurableUndoFixture(t, taskstate.StatusWorking)
+	root := a.ConfigSnapshot().Workspace
+	instance := testUndoWorkspaceInstance(t, root)
+	identity, err := undoWorkspaceIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := a.latestUndo.checkpoint.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := undoJournal{
+		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity,
+		WorkspaceInstance: instance, SessionID: task.SessionID,
+		TurnSequence: task.LastTurn().Sequence, TaskID: task.ID,
+		IntentRevision: task.LastTurn().IntentRevision, Checkpoint: record,
+	}
+	if err := saveUndoJournal(root, task.SessionID, journal, false); err != nil {
+		t.Fatal(err)
+	}
+	sealedPath, _, err := undoJournalPaths(root, task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	undoDir := filepath.Dir(sealedPath)
+	rulesPath := filepath.Join(filepath.Dir(undoDir), "rules.md")
+	if err := os.WriteFile(rulesPath, []byte("shared project rules\n"), 0o644); err != nil {
+		t.Fatalf("write unrelated project rules: %v", err)
+	}
+	before, err := os.ReadFile(sealedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Dir(undoDir), undoDir} {
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatalf("broaden directory mode for test: %v", err)
+		}
+	}
+	if err := os.Chmod(rulesPath, 0o644); err != nil {
+		t.Fatalf("set shared project rules mode for test: %v", err)
+	}
+	if err := os.Chmod(sealedPath, 0o644); err != nil {
+		t.Fatalf("broaden journal mode for test: %v", err)
+	}
+
+	loaded, err := loadUndoJournal(root, task.SessionID, false)
+	if err != nil || loaded == nil || loaded.SessionID != task.SessionID {
+		t.Fatalf("load after permission migration = (%#v, %v)", loaded, err)
+	}
+	after, err := os.ReadFile(sealedPath)
+	if err != nil || !reflect.DeepEqual(after, before) {
+		t.Fatalf("journal content changed during permission migration: err=%v unchanged=%v", err, reflect.DeepEqual(after, before))
+	}
+	parentInfo, err := os.Stat(filepath.Dir(undoDir))
+	if err != nil {
+		t.Errorf("stat shared .picogent directory: %v", err)
+	} else if parentInfo.Mode().Perm() != 0o755 {
+		t.Errorf("shared .picogent directory mode=%v, want unchanged 0755", parentInfo.Mode().Perm())
+	}
+	undoInfo, err := os.Stat(undoDir)
+	if err != nil {
+		t.Errorf("stat private undo directory: %v", err)
+	} else if undoInfo.Mode().Perm() != 0o700 {
+		t.Errorf("private undo directory mode=%v, want 0700", undoInfo.Mode().Perm())
+	}
+	rulesInfo, err := os.Stat(rulesPath)
+	if err != nil {
+		t.Errorf("stat shared project rules: %v", err)
+	} else if rulesInfo.Mode().Perm() != 0o644 {
+		t.Errorf("shared project rules mode=%v, want unchanged 0644", rulesInfo.Mode().Perm())
+	}
+	if rules, err := os.ReadFile(rulesPath); err != nil || string(rules) != "shared project rules\n" {
+		t.Errorf("shared project rules=%q err=%v", rules, err)
+	}
+	info, err := os.Stat(sealedPath)
+	if err != nil {
+		t.Fatalf("stat private journal: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("private journal mode=%v, want 0600", info.Mode().Perm())
 	}
 }
 

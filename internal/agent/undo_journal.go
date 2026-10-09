@@ -212,20 +212,28 @@ func saveUndoJournalWithHooks(workspacePath, sessionID string, journal undoJourn
 		return nil
 	}
 	hooks.CreateParentMode = 0o700
+	hooks.PrivateParentDirectory = true
 	if err := workspace.WriteAtomicDurableWithModeAndHooks(root, path, data, 0o600, hooks); err != nil {
 		return fmt.Errorf("write undo journal: %w", err)
 	}
 	return nil
 }
 
-func loadUndoJournal(workspace, sessionID string, pending bool) (*undoJournal, error) {
-	sealedPath, pendingPath, err := undoJournalPaths(workspace, sessionID)
+func loadUndoJournal(workspacePath, sessionID string, pending bool) (*undoJournal, error) {
+	sealedPath, pendingPath, err := undoJournalPaths(workspacePath, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	path := sealedPath
 	if pending {
 		path = pendingPath
+	}
+	root := filepath.Dir(filepath.Dir(filepath.Dir(sealedPath)))
+	if err := workspace.SecurePrivateDirectoryAndFiles(root, filepath.Dir(path)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, os.ErrNotExist
+		}
+		return nil, fmt.Errorf("secure undo journal storage: %w", err)
 	}
 	data, err := securefile.ReadFileLimited(path, undoJournalMaxBytes)
 	if errors.Is(err, os.ErrNotExist) {
@@ -261,7 +269,7 @@ func loadUndoJournal(workspace, sessionID string, pending bool) (*undoJournal, e
 			return nil, fmt.Errorf("decode undo journal turn intent revision: %w", err)
 		}
 	}
-	if err := validateUndoJournal(journal, workspace, sessionID); err != nil {
+	if err := validateUndoJournal(journal, workspacePath, sessionID); err != nil {
 		return nil, err
 	}
 	return &journal, nil
