@@ -12,10 +12,11 @@ import (
 // callback. Persistence revisions may advance under the same owner; task,
 // intent, turn and session-generation changes revoke the original authority.
 type nativeTaskBinding struct {
-	store      *taskstate.Store
-	sessionID  string
-	generation uint64
-	owner      *taskMutationOwner
+	store           *taskstate.Store
+	sessionID       string
+	generation      uint64
+	storeGeneration uint64
+	owner           *taskMutationOwner
 }
 
 // Capture the saved admission snapshot before notifying caller callbacks.
@@ -42,7 +43,7 @@ func (b nativeTaskBinding) withAdmittedTask(task *taskstate.Task) nativeTaskBind
 func (a *Agent) nativeTaskBinding() nativeTaskBinding {
 	a.taskMu.RLock()
 	defer a.taskMu.RUnlock()
-	binding := nativeTaskBinding{store: a.TaskStore, sessionID: a.TaskSession, generation: a.taskSessionGeneration}
+	binding := nativeTaskBinding{store: a.TaskStore, sessionID: a.TaskSession, generation: a.taskSessionGeneration, storeGeneration: a.taskStoreGeneration}
 	if a.task != nil {
 		owner := taskOwner(a.task)
 		binding.owner = &owner
@@ -65,16 +66,17 @@ func (a *Agent) checkNativeTaskBinding(ctx context.Context, b nativeTaskBinding)
 	}
 	a.taskMu.RLock()
 	defer a.taskMu.RUnlock()
-	if a.TaskStore != b.store || a.TaskSession != b.sessionID || a.taskSessionGeneration != b.generation || !b.owns(a.task) {
-		return errTaskOwnershipChanged
-	}
-	if a.taskLoadErr != nil {
-		return fmt.Errorf("native write requires available task state: %w", a.taskLoadErr)
+	return a.checkTaskBindingLocked(b)
+}
+
+func (a *Agent) checkTaskBindingLocked(b nativeTaskBinding) error {
+	if err := a.checkTaskBindingMemoryLocked(b); err != nil {
+		return err
 	}
 	if b.store == nil || b.sessionID == "" {
 		return nil // process-only undo still uses the caller's session binding
 	}
-	current, err := b.store.Load(b.sessionID)
+	current, err := b.store.OwnershipSnapshot(b.sessionID)
 	if errors.Is(err, taskstate.ErrNotFound) && b.owner == nil {
 		return nil
 	}
@@ -83,6 +85,16 @@ func (a *Agent) checkNativeTaskBinding(ctx context.Context, b nativeTaskBinding)
 	}
 	if !b.owns(current) {
 		return errTaskOwnershipChanged
+	}
+	return nil
+}
+
+func (a *Agent) checkTaskBindingMemoryLocked(b nativeTaskBinding) error {
+	if a.TaskStore != b.store || a.TaskSession != b.sessionID || a.taskSessionGeneration != b.generation || a.taskStoreGeneration != b.storeGeneration || !b.owns(a.task) {
+		return errTaskOwnershipChanged
+	}
+	if a.taskLoadErr != nil {
+		return fmt.Errorf("native write requires available task state: %w", a.taskLoadErr)
 	}
 	return nil
 }

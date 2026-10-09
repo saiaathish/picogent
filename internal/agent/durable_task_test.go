@@ -928,7 +928,7 @@ func TestDurableTaskDoesNotPublishUnsavedState(t *testing.T) {
 	}
 }
 
-func TestDurableTaskTerminalSaveFailureIsReturned(t *testing.T) {
+func TestDurableTaskTerminalStoreRevocationIsReturned(t *testing.T) {
 	workspace := t.TempDir()
 	goodStore := taskstate.NewStore(t.TempDir())
 	badRoot := filepath.Join(t.TempDir(), "not-a-directory")
@@ -957,8 +957,8 @@ func TestDurableTaskTerminalSaveFailureIsReturned(t *testing.T) {
 	h := &terminalSaveFailureHandler{ag: a, badStore: taskstate.NewStore(badRoot)}
 
 	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "fix the broken signup flow"}, h)
-	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "durable task state") {
-		t.Fatalf("terminal save failure = %v, want explicit persistence error", err)
+	if err == nil || !strings.Contains(err.Error(), "ownership changed") {
+		t.Fatalf("terminal store revocation = %v, want explicit ownership refusal", err)
 	}
 	if !h.switched {
 		t.Fatal("test did not switch stores after persisted verification")
@@ -976,10 +976,16 @@ func TestDurableTaskTerminalSaveFailureIsReturned(t *testing.T) {
 	if loaded.Status == taskstate.StatusDone || loaded.NeedsVerification() == false {
 		t.Fatalf("last persisted task = %#v, want non-terminal verification state", loaded)
 	}
+	if last := loaded.LastTurn(); last == nil || last.State != taskstate.TurnInterrupted {
+		t.Fatalf("original revoked turn was not interrupted: %+v", last)
+	}
+	if len(fake.Calls) != 2 {
+		t.Fatalf("revoked terminal run continued: provider calls=%d", len(fake.Calls))
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if len(h.errors) == 0 || !strings.Contains(strings.ToLower(h.errors[len(h.errors)-1].Error()), "durable task state was not saved") {
-		t.Fatalf("persistence error events = %v", h.errors)
+	if len(h.errors) == 0 || !strings.Contains(h.errors[len(h.errors)-1].Error(), "ownership changed") {
+		t.Fatalf("revocation error events = %v", h.errors)
 	}
 }
 
