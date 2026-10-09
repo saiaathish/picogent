@@ -164,6 +164,75 @@ func Capture(ctx context.Context, root string, paths []string) (Observation, err
 	return observation, nil
 }
 
+// DirectoryIdentity returns the current filesystem identity of a directory.
+// Callers that persist workspace ownership must pair this value with an
+// independent token: filesystem IDs can be reused after a directory is
+// removed, and this value alone is not an authorization decision.
+func DirectoryIdentity(root string) (Identity, error) {
+	if strings.TrimSpace(root) == "" {
+		return Identity{}, errors.New("workspace root is empty")
+	}
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return Identity{}, err
+	}
+	abs = filepath.Clean(abs)
+	before, err := directoryIdentityAt(abs)
+	if err != nil {
+		return Identity{}, fmt.Errorf("identify workspace directory: %w", err)
+	}
+	canonical, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return Identity{}, fmt.Errorf("resolve workspace directory symlinks: %w", err)
+	}
+	canonical = filepath.Clean(canonical)
+	resolved, err := directoryIdentityAt(canonical)
+	if err != nil {
+		return Identity{}, fmt.Errorf("identify resolved workspace directory: %w", err)
+	}
+	if before != resolved {
+		return Identity{}, errors.New("workspace directory changed while resolving")
+	}
+	current, err := directoryIdentityAt(abs)
+	if err != nil {
+		return Identity{}, fmt.Errorf("recheck workspace directory: %w", err)
+	}
+	if current != before {
+		return Identity{}, errors.New("workspace directory changed while identifying")
+	}
+	currentCanonical, err := directoryIdentityAt(canonical)
+	if err != nil {
+		return Identity{}, fmt.Errorf("recheck resolved workspace directory: %w", err)
+	}
+	if currentCanonical != before {
+		return Identity{}, errors.New("workspace directory changed while identifying")
+	}
+	return before, nil
+}
+
+func directoryIdentityAt(path string) (Identity, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Identity{}, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return Identity{}, err
+	}
+	if !info.IsDir() {
+		return Identity{}, errors.New("workspace root is not a directory")
+	}
+	identity, err := identityForFile(f)
+	if err != nil {
+		return Identity{}, err
+	}
+	if !identity.Known || (identity.Volume == 0 && identity.File == 0) {
+		return Identity{}, errors.New("workspace directory identity is unknown")
+	}
+	return identity, nil
+}
+
 func trackedPaths(root string, paths []string) ([]string, bool, error) {
 	inputLimit := len(paths)
 	truncated := inputLimit > MaxPathInputs

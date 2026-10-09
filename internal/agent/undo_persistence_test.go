@@ -187,6 +187,7 @@ func TestCachedUndoRefreshesAfterNewerDurableTurn(t *testing.T) {
 	oldUndo.turnSequence = task.Turns[0].Sequence
 	oldUndo.durable = true
 	oldUndo.journalSlot = undoJournalSealed
+	oldUndo.workspaceInstance = testUndoWorkspaceInstance(t, oldUndo.workspace)
 	oldRecord, err := oldUndo.checkpoint.Export()
 	if err != nil {
 		t.Fatal(err)
@@ -229,6 +230,7 @@ func TestCachedUndoRefreshesAfterNewerDurableTurn(t *testing.T) {
 		turnSequence:       sequence,
 		taskID:             current.ID,
 		turnIntentRevision: current.LastTurn().IntentRevision,
+		workspaceInstance:  oldUndo.workspaceInstance,
 		durable:            true,
 		journalSlot:        undoJournalSealed,
 	}
@@ -256,6 +258,7 @@ func TestUndoRefreshErrorClearsAfterJournalRecovery(t *testing.T) {
 	undo.turnSequence = task.Turns[0].Sequence
 	undo.durable = true
 	undo.journalSlot = undoJournalSealed
+	undo.workspaceInstance = testUndoWorkspaceInstance(t, undo.workspace)
 	record, err := undo.checkpoint.Export()
 	if err != nil {
 		t.Fatal(err)
@@ -449,7 +452,7 @@ func TestDurableUndoRequiresMatchingTurnIntent(t *testing.T) {
 	}
 }
 
-func TestVersionTwoUndoJournalRequiresIntentRevisionField(t *testing.T) {
+func TestVersionThreeUndoJournalRequiresIntentRevisionField(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "note.txt")
 	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
@@ -471,8 +474,9 @@ func TestVersionTwoUndoJournalRequiresIntentRevisionField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	instance := testUndoWorkspaceInstance(t, root)
 	journal := undoJournal{
-		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity,
+		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity, WorkspaceInstance: instance,
 		SessionID: sessionID, TurnSequence: 1, TaskID: "intent-owner",
 		IntentRevision: 0, Checkpoint: record,
 	}
@@ -503,7 +507,7 @@ func TestVersionTwoUndoJournalRequiresIntentRevisionField(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := loadUndoJournal(root, sessionID, false); err == nil || !strings.Contains(err.Error(), "missing turn intent revision") {
-		t.Fatalf("v2 journal without intent revision = %v", err)
+		t.Fatalf("v3 journal without intent revision = %v", err)
 	}
 }
 
@@ -530,7 +534,7 @@ func TestValidateUndoJournalUsesWorkspaceFilesystemIdentity(t *testing.T) {
 	}
 	const sessionID = "workspace-alias-validation"
 	journal := undoJournal{
-		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity,
+		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity, WorkspaceInstance: testUndoWorkspaceInstance(t, workspace),
 		SessionID: sessionID, TurnSequence: 1, TaskID: "workspace-alias-owner",
 		Checkpoint: record,
 	}
@@ -539,6 +543,305 @@ func TestValidateUndoJournalUsesWorkspaceFilesystemIdentity(t *testing.T) {
 	}
 	if err := validateUndoJournal(journal, t.TempDir(), sessionID); err == nil || !strings.Contains(err.Error(), "workspace mismatch") {
 		t.Fatalf("journal for a distinct workspace = %v", err)
+	}
+}
+
+func TestRemoveUndoJournalAcceptsWorkspaceAlias(t *testing.T) {
+	root, alias := workspacePathAlias(t)
+	instance := testUndoWorkspaceInstance(t, root)
+	const sessionID = "workspace-alias-cleanup"
+	_, pendingPath, err := undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pendingPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pendingPath, []byte("pending"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeUndoJournal(alias, sessionID, true, instance); err != nil {
+		t.Fatalf("remove journal through workspace alias: %v", err)
+	}
+	if _, err := os.Stat(pendingPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pending journal remains after alias cleanup: %v", err)
+	}
+}
+
+func TestRemoveUndoJournalDistinguishesMissingLeafFromParent(t *testing.T) {
+	root := t.TempDir()
+	instance := testUndoWorkspaceInstance(t, root)
+	const missingParentSession = "missing-undo-parent"
+	err := removeUndoJournal(root, missingParentSession, true, instance)
+	if !errors.Is(err, workspacepkg.ErrWorkspaceParentNotExist) {
+		t.Fatalf("cleanup with missing journal parent = %v, want parent-missing error", err)
+	}
+
+	undoDir := filepath.Join(root, ".picogent", "undo")
+	if err := os.MkdirAll(undoDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeUndoJournal(root, "missing-undo-leaf", true, instance); err != nil {
+		t.Fatalf("cleanup with only the journal leaf missing: %v", err)
+	}
+}
+
+func TestDurableUndoRejectsChangedWorkspaceMarker(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("agent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	instance := testUndoWorkspaceInstance(t, root)
+	undo := &turnUndo{
+		workspace: root, checkpoint: cp, sessionID: "marker-guard", turnSequence: 1,
+		workspaceInstance: instance,
+	}
+	markerPath := filepath.Join(root, filepath.FromSlash(undoWorkspaceInstanceMarker))
+	token := "0" + instance.Token[1:]
+	if token == instance.Token {
+		token = "1" + instance.Token[1:]
+	}
+	if err := os.WriteFile(markerPath, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatalf("change workspace marker: %v", err)
+	}
+
+	if _, complete, err := undo.restore(); err == nil || complete || !strings.Contains(err.Error(), "workspace") {
+		t.Fatalf("restore with changed marker = complete:%v err:%v", complete, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "agent\n" {
+		t.Fatalf("file changed after marker rejection: %q, %v", got, err)
+	}
+
+	if err := os.WriteFile(markerPath, []byte(instance.Token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, complete, err := undo.restore(); err != nil || !complete {
+		t.Fatalf("restore after marker repair = complete:%v err:%v", complete, err)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "before\n" {
+		t.Fatalf("retry did not restore checkpoint: %q, %v", got, err)
+	}
+}
+
+func TestCopiedWorkspaceCannotReuseUndoJournal(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cp.PrepareExpected(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance := testUndoWorkspaceInstance(t, root)
+	identity, err := undoWorkspaceIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "copied-workspace"
+	journal := undoJournal{
+		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity,
+		WorkspaceInstance: instance, SessionID: sessionID, TurnSequence: 1,
+		TaskID: "copied-workspace-owner", Checkpoint: record,
+	}
+	if err := saveUndoJournal(root, sessionID, journal, false); err != nil {
+		t.Fatal(err)
+	}
+	sealedPath, _, err := undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	journalData, err := os.ReadFile(sealedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(root, filepath.FromSlash(undoWorkspaceInstanceMarker))
+	markerData, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parked := filepath.Join(parent, "parked-workspace")
+	if err := os.Rename(root, parked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	markerPath = filepath.Join(root, filepath.FromSlash(undoWorkspaceInstanceMarker))
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, markerData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sealedPath, _, err = undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(sealedPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealedPath, journalData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadUndoJournal(root, sessionID, false)
+	if err == nil || loaded != nil || !strings.Contains(err.Error(), "workspace instance") {
+		t.Fatalf("copied journal load = (%#v, %v), want workspace-instance rejection", loaded, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(got) != "after\n" {
+		t.Fatalf("replacement workspace file = %q, err=%v", got, err)
+	}
+	if after, err := os.ReadFile(sealedPath); err != nil || !reflect.DeepEqual(after, journalData) {
+		t.Fatalf("rejected journal changed: err=%v unchanged=%v", err, reflect.DeepEqual(after, journalData))
+	}
+}
+
+func TestPendingJournalCleanupRefusesCopiedWorkspace(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	instance := testUndoWorkspaceInstance(t, root)
+	const sessionID = "copied-pending-cleanup"
+	_, pendingPath, err := undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pendingPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pendingData := []byte("replacement pending journal\n")
+	if err := os.WriteFile(pendingPath, pendingData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	markerPath := filepath.Join(root, filepath.FromSlash(undoWorkspaceInstanceMarker))
+	markerData, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parked := filepath.Join(parent, "parked-workspace")
+	if err := os.Rename(root, parked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	markerPath = filepath.Join(root, filepath.FromSlash(undoWorkspaceInstanceMarker))
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(markerPath, markerData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, pendingPath, err = undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pendingPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pendingPath, pendingData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := removeUndoJournal(root, sessionID, true, instance); err == nil || !strings.Contains(err.Error(), "workspace instance") {
+		t.Fatalf("copied pending journal cleanup = %v, want workspace-instance rejection", err)
+	}
+	if after, err := os.ReadFile(pendingPath); err != nil || !reflect.DeepEqual(after, pendingData) {
+		t.Fatalf("replacement pending journal changed: err=%v unchanged=%v", err, reflect.DeepEqual(after, pendingData))
+	}
+}
+
+func TestVersionTwoUndoJournalCannotBeBoundRetroactively(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cp.PrepareExpected(path, []byte("after\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := undoWorkspaceIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "legacy-path-only"
+	journal := undoJournal{
+		Version: undoJournalTaskOwnerVersion, State: undoJournalSealed, Workspace: identity,
+		SessionID: sessionID, TurnSequence: 1, TaskID: "legacy-owner",
+		IntentRevision: 0, Checkpoint: record,
+	}
+	data, err := json.Marshal(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	delete(fields, "workspace_instance")
+	data, err = json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealedPath, _, err := undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(sealedPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealedPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_ = testUndoWorkspaceInstance(t, root) // A current marker cannot retroactively bind a path-only journal.
+
+	loaded, err := loadLatestDurableUndo(root, sessionID, 1)
+	if !errors.Is(err, errLegacyUndoWorkspaceBinding) || loaded != nil {
+		t.Fatalf("v2 journal recovery = (%#v, %v), want fail-closed compatibility error", loaded, err)
+	}
+	if after, err := os.ReadFile(sealedPath); err != nil || !reflect.DeepEqual(after, data) {
+		t.Fatalf("legacy journal changed: err=%v unchanged=%v", err, reflect.DeepEqual(after, data))
 	}
 }
 
@@ -589,6 +892,7 @@ func TestUnpublishedPendingUndoPreservesJournalBeforeOwnerValidation(t *testing.
 		workspace: root, checkpoint: cp, sessionID: sessionID,
 		sessionGeneration: a.taskSessionGeneration, turnSequence: sequence,
 		taskID: owner.ID, turnIntentRevision: owner.LastTurn().IntentRevision,
+		workspaceInstance: testUndoWorkspaceInstance(t, root),
 	}
 	undo.bindTaskStore(storeA, a.taskStoreGeneration)
 	if err := undo.saveJournal(record, undoJournalPending); err != nil {
@@ -677,6 +981,7 @@ func TestPendingUndoCleanupRefreshesStaleOwnerSnapshot(t *testing.T) {
 		workspace: root, checkpoint: cp, sessionID: sessionID,
 		turnSequence: sequence, taskID: owner.ID,
 		turnIntentRevision: owner.LastTurn().IntentRevision,
+		workspaceInstance:  testUndoWorkspaceInstance(t, root),
 	}
 	if err := undo.saveJournal(record, undoJournalPending); err != nil {
 		t.Fatal(err)
@@ -720,6 +1025,7 @@ func TestUndoRefreshValidatesOwnerBeforeNormalizingReplacementTask(t *testing.T)
 	u.turnSequence = owner.LastTurn().Sequence
 	u.durable = true
 	u.journalSlot = undoJournalSealed
+	u.workspaceInstance = testUndoWorkspaceInstance(t, u.workspace)
 	record, err := u.checkpoint.Export()
 	if err != nil {
 		t.Fatal(err)
@@ -777,6 +1083,7 @@ func TestUndoRefreshWithoutJournalNormalizesAndRevalidatesTask(t *testing.T) {
 			u.turnSequence = owner.LastTurn().Sequence
 			u.durable = true
 			u.journalSlot = undoJournalSealed
+			u.workspaceInstance = testUndoWorkspaceInstance(t, u.workspace)
 			record, err := u.checkpoint.Export()
 			if err != nil {
 				t.Fatal(err)
@@ -901,6 +1208,15 @@ func newDurableUndoFixture(t *testing.T, status taskstate.Status) (*Agent, *task
 		taskID: task.ID, turnIntentRevision: task.LastTurn().IntentRevision,
 	}
 	return a, store, task
+}
+
+func testUndoWorkspaceInstance(t *testing.T, root string) undoWorkspaceInstance {
+	t.Helper()
+	instance, err := ensureUndoWorkspaceInstance(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return instance
 }
 
 func assertUndoFileContent(t *testing.T, path, want string) {

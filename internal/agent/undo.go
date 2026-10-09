@@ -16,6 +16,7 @@ import (
 // rounds during the same turn.
 type turnUndo struct {
 	workspace          string
+	workspaceInstance  undoWorkspaceInstance
 	checkpoint         *checkpoint.Checkpoint
 	sessionID          string
 	sessionGeneration  uint64
@@ -54,6 +55,29 @@ func (u *turnUndo) bindTaskStore(store *taskstate.Store, epoch uint64) {
 	u.taskStoreBound = true
 }
 
+func (u *turnUndo) bindWorkspaceInstance() error {
+	if u == nil || u.sessionID == "" || u.turnSequence == 0 {
+		return nil
+	}
+	instance := u.workspaceInstance
+	if instance.valid() {
+		if err := validateUndoWorkspaceInstance(u.workspace, instance); err != nil {
+			return err
+		}
+	} else {
+		var err error
+		instance, err = ensureUndoWorkspaceInstance(u.workspace)
+		if err != nil {
+			return err
+		}
+	}
+	if u.checkpoint != nil && u.checkpoint.RootIdentity() != instance.Directory {
+		return checkpoint.ErrWorkspaceChanged
+	}
+	u.workspaceInstance = instance
+	return nil
+}
+
 func (u *turnUndo) bindDurableTurn(task *taskstate.Task, sequence uint64) error {
 	if u == nil || sequence == 0 {
 		return nil
@@ -78,6 +102,11 @@ func (u *turnUndo) bindDurableTurn(task *taskstate.Task, sequence uint64) error 
 func (u *turnUndo) preparePublish(path string, data []byte, mode os.FileMode) (err error) {
 	if u == nil || u.checkpoint == nil {
 		return nil
+	}
+	if u.sessionID != "" && u.turnSequence != 0 {
+		if err := u.bindWorkspaceInstance(); err != nil {
+			return err
+		}
 	}
 	defer func() {
 		if err != nil {
@@ -128,19 +157,23 @@ func (u *turnUndo) saveJournalAt(record checkpoint.Record, state string, pending
 	if strings.TrimSpace(u.taskID) == "" {
 		return errors.New("durable undo journal has no task owner identity")
 	}
+	if err := validateUndoWorkspaceInstance(u.workspace, u.workspaceInstance); err != nil {
+		return fmt.Errorf("validate durable undo workspace: %w", err)
+	}
 	identity, err := undoWorkspaceIdentity(u.workspace)
 	if err != nil {
 		return err
 	}
 	j := undoJournal{
-		Version:        undoJournalVersion,
-		State:          state,
-		Workspace:      identity,
-		SessionID:      u.sessionID,
-		TurnSequence:   u.turnSequence,
-		TaskID:         u.taskID,
-		IntentRevision: u.turnIntentRevision,
-		Checkpoint:     record,
+		Version:           undoJournalVersion,
+		State:             state,
+		Workspace:         identity,
+		WorkspaceInstance: u.workspaceInstance,
+		SessionID:         u.sessionID,
+		TurnSequence:      u.turnSequence,
+		TaskID:            u.taskID,
+		IntentRevision:    u.turnIntentRevision,
+		Checkpoint:        record,
 	}
 	return saveUndoJournal(u.workspace, u.sessionID, j, pending)
 }
@@ -161,7 +194,7 @@ func (u *turnUndo) persistSealed() error {
 	}
 	u.durable = true
 	u.journalSlot = undoJournalSealed
-	if err := removeUndoJournal(u.workspace, u.sessionID, true); err != nil {
+	if err := removeUndoJournal(u.workspace, u.sessionID, true, u.workspaceInstance); err != nil {
 		return err
 	}
 	return nil
@@ -192,7 +225,7 @@ func (u *turnUndo) discardPending() error {
 	if u == nil || u.sessionID == "" || u.turnSequence == 0 || u.journalSlot != undoJournalPending {
 		return nil
 	}
-	if err := removeUndoJournal(u.workspace, u.sessionID, true); err != nil {
+	if err := removeUndoJournal(u.workspace, u.sessionID, true, u.workspaceInstance); err != nil {
 		return err
 	}
 	u.durable = false
@@ -204,7 +237,7 @@ func (u *turnUndo) finalizeJournal() error {
 	if u == nil || !u.durable {
 		return nil
 	}
-	if err := removeAllUndoJournals(u.workspace, u.sessionID); err != nil {
+	if err := removeAllUndoJournals(u.workspace, u.sessionID, u.workspaceInstance); err != nil {
 		return err
 	}
 	u.durable = false
@@ -216,6 +249,11 @@ func (u *turnUndo) capture(path string) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return errors.New("write path is empty")
+	}
+	if u.sessionID != "" && u.turnSequence != 0 {
+		if err := u.bindWorkspaceInstance(); err != nil {
+			return err
+		}
 	}
 	if u.checkpoint == nil {
 		cp, err := checkpoint.Capture(u.workspace, []string{path})
@@ -254,7 +292,11 @@ func (u *turnUndo) restore() (string, bool, error) {
 	if u.restored {
 		return u.restoreMessage, true, u.restoreErr
 	}
-	result, err := u.checkpoint.Restore()
+	var guard func() error
+	if u.sessionID != "" && u.turnSequence != 0 {
+		guard = func() error { return validateUndoWorkspaceInstance(u.workspace, u.workspaceInstance) }
+	}
+	result, err := u.checkpoint.RestoreWithWorkspaceGuard(guard)
 	msg, complete, restoreErr := formatUndoRestore(result, err)
 	if complete {
 		u.restored = true
@@ -753,7 +795,7 @@ func loadValidatedDurableUndo(workspace, sessionID string, generation uint64, ta
 	if u == nil || !u.pendingUnpublished {
 		return u, nil
 	}
-	if err := removeUndoJournal(workspace, sessionID, true); err != nil {
+	if err := removeUndoJournal(workspace, sessionID, true, u.workspaceInstance); err != nil {
 		return nil, err
 	}
 	u, err = loadLatestDurableUndo(workspace, sessionID, generation, authorities...)
