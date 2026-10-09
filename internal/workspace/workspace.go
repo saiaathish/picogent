@@ -143,6 +143,13 @@ func OpenReadWithRootIdentity(root, path string, expectedRoot Identity) (*os.Fil
 	})
 }
 
+func openReadForOperation(root, path string, checkRootIdentity RootIdentityCheck) (*os.File, error) {
+	if checkRootIdentity == nil {
+		return OpenRead(root, path)
+	}
+	return openWithRootIdentityCheck(root, path, openRead, checkRootIdentity)
+}
+
 // OpenDir opens a directory below root without following path-component
 // symlinks or reparse points. The workspace root itself may be named by path;
 // callers do not need to special-case listing ".".
@@ -282,10 +289,13 @@ func WriteAtomicIfMissingWithModeAndHooks(root, path string, data []byte, mode o
 	if err := hooks.check(); err != nil {
 		return err
 	}
-	current, err := OpenRead(root, path)
+	current, err := openReadForOperation(root, path, hooks.CheckRootIdentity)
 	if err == nil {
 		_ = current.Close()
 		return fmt.Errorf("%w: %s already exists", ErrContentConflict, rel)
+	}
+	if errors.Is(err, ErrWorkspaceParentNotExist) {
+		return err
 	}
 	if !isWorkspaceNotExist(err) {
 		return err
@@ -311,8 +321,14 @@ func writeAtomicIfUnchangedWithModeHook(root, path string, expected []byte, expe
 	if err != nil {
 		return err
 	}
-	current, err := OpenRead(root, path)
+	if err := hooks.check(); err != nil {
+		return err
+	}
+	current, err := openReadForOperation(root, path, hooks.CheckRootIdentity)
 	if err != nil {
+		if errors.Is(err, ErrWorkspaceParentNotExist) {
+			return err
+		}
 		if isWorkspaceNotExist(err) {
 			return fmt.Errorf("%w: %s is missing", ErrContentConflict, rel)
 		}
@@ -404,8 +420,11 @@ func removeIfUnchanged(root, path string, expected []byte, expectedMode os.FileM
 	if err != nil {
 		return err
 	}
-	current, err := OpenRead(root, path)
+	current, err := openReadForOperation(root, path, checkRootIdentity)
 	if err != nil {
+		if errors.Is(err, ErrWorkspaceParentNotExist) {
+			return err
+		}
 		if isWorkspaceNotExist(err) {
 			return fmt.Errorf("%w: %s is missing", ErrContentConflict, rel)
 		}

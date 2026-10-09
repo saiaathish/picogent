@@ -105,7 +105,124 @@ func TestWriteGuardRechecksAfterPreparationForWritesAndEdits(t *testing.T) {
 	}
 }
 
-func TestWritePublicationStaysOnOpenedWorkspaceAfterRootSwap(t *testing.T) {
+func TestWriteIfUnchangedBindsCompareToExpectedRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	replacement := filepath.Join(parent, "replacement")
+	for _, dir := range []string{root, replacement} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("newer user edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(replacement, "note.txt"), []byte("expected"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parkedOriginal := filepath.Join(parent, "parked-original")
+	parkedReplacement := filepath.Join(parent, "parked-replacement")
+	checks := 0
+	err = workspace.WriteAtomicIfUnchangedWithHooks(root, "note.txt", []byte("expected"), []byte("restored"), workspace.WriteHooks{
+		Check: func() error {
+			checks++
+			if checks == 1 {
+				if err := os.Rename(root, parkedOriginal); err != nil {
+					return err
+				}
+				return os.Rename(replacement, root)
+			}
+			if checks == 2 {
+				if err := os.Rename(root, parkedReplacement); err != nil {
+					return err
+				}
+				return os.Rename(parkedOriginal, root)
+			}
+			return nil
+		},
+		CheckRootIdentity: func(actual workspace.Identity) error {
+			if actual != expected {
+				return workspace.ErrRootIdentityChanged
+			}
+			return nil
+		},
+	})
+	if !errors.Is(err, workspace.ErrRootIdentityChanged) {
+		t.Fatalf("compare across replacement workspace = %v, want root-identity rejection", err)
+	}
+	if checks != 1 {
+		t.Fatalf("authority checks = %d, want rejection before publication", checks)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(got) != "expected" {
+		t.Fatalf("replacement workspace file = %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(parkedOriginal, "note.txt")); err != nil || string(got) != "newer user edit" {
+		t.Fatalf("original workspace file = %q, %v", got, err)
+	}
+}
+
+func TestWriteIfMissingBindsAbsenceCheckToExpectedRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	replacement := filepath.Join(parent, "replacement")
+	for _, dir := range []string{root, replacement} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("newer user edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	expected, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parkedOriginal := filepath.Join(parent, "parked-original")
+	parkedReplacement := filepath.Join(parent, "parked-replacement")
+	checks := 0
+	err = workspace.WriteAtomicIfMissingWithModeAndHooks(root, "note.txt", []byte("created"), 0o600, workspace.WriteHooks{
+		Check: func() error {
+			checks++
+			if checks == 1 {
+				if err := os.Rename(root, parkedOriginal); err != nil {
+					return err
+				}
+				return os.Rename(replacement, root)
+			}
+			if checks == 2 {
+				if err := os.Rename(root, parkedReplacement); err != nil {
+					return err
+				}
+				return os.Rename(parkedOriginal, root)
+			}
+			return nil
+		},
+		CheckRootIdentity: func(actual workspace.Identity) error {
+			if actual != expected {
+				return workspace.ErrRootIdentityChanged
+			}
+			return nil
+		},
+	})
+	if !errors.Is(err, workspace.ErrRootIdentityChanged) {
+		t.Fatalf("absence check across replacement workspace = %v, want root-identity rejection", err)
+	}
+	if checks != 1 {
+		t.Fatalf("authority checks = %d, want rejection before publication", checks)
+	}
+	if _, err := os.Stat(filepath.Join(root, "note.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("replacement workspace gained a file: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(parkedOriginal, "note.txt")); err != nil || string(got) != "newer user edit" {
+		t.Fatalf("original workspace file = %q, %v", got, err)
+	}
+}
+
+func TestWritePublicationRejectsWorkspaceSwapAfterCompare(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not permit this directory swap while publication handles are open; replacement-before-open coverage runs on Windows")
 	}
@@ -150,19 +267,19 @@ func TestWritePublicationStaysOnOpenedWorkspaceAfterRootSwap(t *testing.T) {
 			return nil
 		},
 	})
-	if err != nil {
-		t.Fatalf("atomic restore after root swap: %v", err)
+	if !errors.Is(err, workspace.ErrRootIdentityChanged) {
+		t.Fatalf("atomic restore after root swap = %v, want root-identity rejection", err)
 	}
 	if !swapped {
 		t.Fatal("workspace root was not replaced after the original root handle opened")
 	}
-	if checks < 2 {
-		t.Fatalf("publication checks = %d, want a final descriptor-anchored check", checks)
+	if checks != 2 {
+		t.Fatalf("publication checks = %d, want compare and pre-publication checks", checks)
 	}
 	if got, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(got) != "agent\n" {
 		t.Fatalf("replacement workspace file = %q, err=%v", got, err)
 	}
-	if got, err := os.ReadFile(filepath.Join(parked, "note.txt")); err != nil || string(got) != "before\n" {
+	if got, err := os.ReadFile(filepath.Join(parked, "note.txt")); err != nil || string(got) != "agent\n" {
 		t.Fatalf("original workspace file = %q, err=%v", got, err)
 	}
 }

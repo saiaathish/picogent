@@ -1025,20 +1025,25 @@ func writeWorkspaceState(root, rel string, expected, state fileState, expectedRo
 	checkRoot := func() error { return checkRestoreWorkspace(root, expectedRootIdentity, guard) }
 	checkRootIdentity := checkWorkspaceRootHandleIdentity(expectedRootIdentity)
 	hooks := workspace.WriteHooks{Check: checkRoot, CheckRootIdentity: checkRootIdentity}
+	var err error
 	if !state.exists {
 		if expected.exists {
-			return workspace.RemoveIfUnchangedWithChecks(root, rel, expected.data, expected.mode, checkRoot, checkRootIdentity)
+			err = workspace.RemoveIfUnchangedWithChecks(root, rel, expected.data, expected.mode, checkRoot, checkRootIdentity)
+		} else {
+			err = workspace.RemoveWithChecks(root, rel, checkRoot, checkRootIdentity)
 		}
-		err := workspace.RemoveWithChecks(root, rel, checkRoot, checkRootIdentity)
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return err
+	} else if expected.exists {
+		err = workspace.WriteAtomicIfUnchangedWithModeAndHooks(root, rel, expected.data, expected.mode, state.data, state.mode, hooks)
+	} else {
+		err = workspace.WriteAtomicIfMissingWithModeAndHooks(root, rel, state.data, state.mode, hooks)
 	}
-	if expected.exists {
-		return workspace.WriteAtomicIfUnchangedWithModeAndHooks(root, rel, expected.data, expected.mode, state.data, state.mode, hooks)
+	if errors.Is(err, workspace.ErrWorkspaceParentNotExist) {
+		return fmt.Errorf("%w: %w", ErrWorkspaceChanged, err)
 	}
-	return workspace.WriteAtomicIfMissingWithModeAndHooks(root, rel, state.data, state.mode, hooks)
+	if !state.exists && !expected.exists && errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func readRegularFileHandle(f *os.File) (fileState, error) {

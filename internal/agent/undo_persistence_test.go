@@ -568,6 +568,24 @@ func TestRemoveUndoJournalAcceptsWorkspaceAlias(t *testing.T) {
 	}
 }
 
+func TestRemoveUndoJournalDistinguishesMissingLeafFromParent(t *testing.T) {
+	root := t.TempDir()
+	instance := testUndoWorkspaceInstance(t, root)
+	const missingParentSession = "missing-undo-parent"
+	err := removeUndoJournal(root, missingParentSession, true, instance)
+	if !errors.Is(err, workspacepkg.ErrWorkspaceParentNotExist) {
+		t.Fatalf("cleanup with missing journal parent = %v, want parent-missing error", err)
+	}
+
+	undoDir := filepath.Join(root, ".picogent", "undo")
+	if err := os.MkdirAll(undoDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := removeUndoJournal(root, "missing-undo-leaf", true, instance); err != nil {
+		t.Fatalf("cleanup with only the journal leaf missing: %v", err)
+	}
+}
+
 func TestDurableUndoRejectsChangedWorkspaceMarker(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "note.txt")

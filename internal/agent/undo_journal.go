@@ -258,14 +258,21 @@ func removeUndoJournal(workspacePath, sessionID string, pending bool, expected u
 	checkInstance := func() error { return validateUndoWorkspaceInstance(workspacePath, expected) }
 	checkRootIdentity := func(actual workspace.Identity) error {
 		if !expected.valid() || !actual.Known || actual != expected.Directory {
-			return errors.New("durable undo workspace directory changed")
+			return errors.New("durable undo workspace instance directory changed")
 		}
 		return nil
 	}
-	if err := workspace.RemoveWithChecks(root, path, checkInstance, checkRootIdentity); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := workspace.RemoveWithChecks(root, path, checkInstance, checkRootIdentity); err != nil {
+		if isMissingUndoJournal(err) {
+			return nil
+		}
 		return fmt.Errorf("remove undo journal: %w", err)
 	}
 	return nil
+}
+
+func isMissingUndoJournal(err error) bool {
+	return errors.Is(err, os.ErrNotExist) && !errors.Is(err, workspace.ErrWorkspaceParentNotExist)
 }
 
 func removeAllUndoJournals(workspacePath, sessionID string, expected undoWorkspaceInstance) error {

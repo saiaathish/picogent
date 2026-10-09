@@ -252,7 +252,7 @@ func removeWithCheck(root, path string, check func() error) error {
 }
 
 func removeWithChecks(root, path string, check func() error, checkRootIdentity RootIdentityCheck) error {
-	current, err := OpenRead(root, path)
+	current, err := openReadForOperation(root, path, checkRootIdentity)
 	if err != nil {
 		return err
 	}
