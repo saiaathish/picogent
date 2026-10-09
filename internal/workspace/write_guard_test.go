@@ -222,7 +222,7 @@ func TestWriteIfMissingBindsAbsenceCheckToExpectedRoot(t *testing.T) {
 	}
 }
 
-func TestWritePublicationRejectsWorkspaceSwapAfterCompare(t *testing.T) {
+func TestWriteCompareRejectsWorkspaceSwapAfterRootHandleOpen(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows does not permit this directory swap while publication handles are open; replacement-before-open coverage runs on Windows")
 	}
@@ -273,8 +273,8 @@ func TestWritePublicationRejectsWorkspaceSwapAfterCompare(t *testing.T) {
 	if !swapped {
 		t.Fatal("workspace root was not replaced after the original root handle opened")
 	}
-	if checks != 2 {
-		t.Fatalf("publication checks = %d, want compare and pre-publication checks", checks)
+	if checks != 1 {
+		t.Fatalf("publication checks = %d, want initial check before root-identity rejection", checks)
 	}
 	if got, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(got) != "agent\n" {
 		t.Fatalf("replacement workspace file = %q, err=%v", got, err)
@@ -338,8 +338,8 @@ func TestRemoveRefusesReplacementAfterRootHandleOpen(t *testing.T) {
 	if !swapped {
 		t.Fatal("workspace root was not replaced after the original root handle opened")
 	}
-	if checks < 1 {
-		t.Fatalf("removal authority checks = %d, want initial authority check", checks)
+	if checks != 0 {
+		t.Fatalf("removal authority checks = %d, want root-identity rejection before authorization check", checks)
 	}
 	if got, err := os.ReadFile(filepath.Join(root, "pending.json")); err != nil || string(got) != "replacement" {
 		t.Fatalf("replacement journal = %q, err=%v", got, err)

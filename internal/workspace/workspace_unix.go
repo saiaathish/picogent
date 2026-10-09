@@ -34,6 +34,10 @@ func open(root, path string, kind openKind) (*os.File, error) {
 }
 
 func openWithRootIdentityCheck(root, path string, kind openKind, checkRootIdentity RootIdentityCheck) (*os.File, error) {
+	return openWithRootIdentityCheckAndHooks(root, path, kind, checkRootIdentity, ReadHooks{})
+}
+
+func openWithRootIdentityCheckAndHooks(root, path string, kind openKind, checkRootIdentity RootIdentityCheck, hooks ReadHooks) (*os.File, error) {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return nil, err
@@ -47,6 +51,9 @@ func openWithRootIdentityCheck(root, path string, kind openKind, checkRootIdenti
 		return nil, err
 	}
 	defer unix.Close(parent)
+	if hooks.AfterParentOpen != nil {
+		hooks.AfterParentOpen()
+	}
 
 	flags := unix.O_CLOEXEC | unix.O_NOFOLLOW
 	switch kind {
@@ -64,7 +71,18 @@ func openWithRootIdentityCheck(root, path string, kind openKind, checkRootIdenti
 
 	fd, err := unix.Openat(parent, leaf, flags, 0o644)
 	if err != nil {
+		if checkRootIdentity != nil && isWorkspaceNotExist(err) {
+			if parentErr := verifyOpenedUnixParent(root, rel, parent, checkRootIdentity); parentErr != nil {
+				return nil, parentErr
+			}
+		}
 		return nil, fmt.Errorf("open workspace file %q: %w", rel, err)
+	}
+	if checkRootIdentity != nil {
+		if parentErr := verifyOpenedUnixParent(root, rel, parent, checkRootIdentity); parentErr != nil {
+			_ = unix.Close(fd)
+			return nil, parentErr
+		}
 	}
 	f := os.NewFile(uintptr(fd), path)
 	if f == nil {
@@ -185,6 +203,26 @@ func workspaceRootIdentityForFD(fd int) (Identity, error) {
 	return Identity{Volume: uint64(stat.Dev), File: uint64(stat.Ino), Known: stat.Dev != 0 || stat.Ino != 0}, nil
 }
 
+func verifyOpenedUnixParent(root, rel string, openedParent int, checkRootIdentity RootIdentityCheck) error {
+	openedIdentity, err := workspaceRootIdentityForFD(openedParent)
+	if err != nil {
+		return fmt.Errorf("identify opened workspace parent: %w", err)
+	}
+	namedParent, _, err := openParentWithRootIdentityCheck(root, rel, false, checkRootIdentity, nil)
+	if err != nil {
+		return classifyWorkspaceParentError(err)
+	}
+	defer unix.Close(namedParent)
+	namedIdentity, err := workspaceRootIdentityForFD(namedParent)
+	if err != nil {
+		return fmt.Errorf("identify named workspace parent: %w", err)
+	}
+	if !openedIdentity.Known || !namedIdentity.Known || openedIdentity != namedIdentity {
+		return fmt.Errorf("%w: opened parent for %q no longer matches its path", ErrWorkspaceParentNotExist, rel)
+	}
+	return nil
+}
+
 func openUnixRoot(root string) (int, error) {
 	root, err := workspaceRootPath(root)
 	if err != nil {
@@ -288,7 +326,7 @@ func removeIfSameWithChecks(root, path string, current *os.File, check func() er
 	}
 	parent, leaf, err := openParentWithRootIdentityCheck(root, rel, false, checkRootIdentity, nil)
 	if err != nil {
-		return err
+		return classifyWorkspaceParentError(err)
 	}
 	defer unix.Close(parent)
 	actual, _, exists, err := workspaceTargetEntry(parent, leaf)

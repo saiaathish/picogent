@@ -28,6 +28,20 @@ var (
 // root handle that anchors a filesystem operation.
 type RootIdentityCheck func(Identity) error
 
+// ReadHooks provides narrow observation points for a root-bound read.
+// AfterParentOpen runs after descriptor-anchored parent traversal and before
+// opening the final file name.
+type ReadHooks struct {
+	AfterParentOpen func()
+}
+
+func classifyWorkspaceParentError(err error) error {
+	if err == nil || errors.Is(err, ErrWorkspaceParentNotExist) || !isWorkspaceNotExist(err) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrWorkspaceParentNotExist, err)
+}
+
 func rejectHardLinkCount(count uint64) error {
 	if count > 1 {
 		return errors.New("workspace files with multiple hard links are not allowed")
@@ -132,15 +146,25 @@ func OpenRead(root, path string) (*os.File, error) {
 // used to reach it matches expectedRoot. This binds the read to the requested
 // workspace even if its pathname is swapped while the operation is starting.
 func OpenReadWithRootIdentity(root, path string, expectedRoot Identity) (*os.File, error) {
+	return OpenReadWithRootIdentityAndHooks(root, path, expectedRoot, ReadHooks{})
+}
+
+// OpenReadWithRootIdentityAndHooks opens a regular file using the expected
+// workspace root and confirms that the opened parent still resolves to the
+// requested path before returning either a file or a missing-leaf result. The
+// hook is intended for deterministic operation instrumentation; ordinary
+// callers should use OpenReadWithRootIdentity.
+func OpenReadWithRootIdentityAndHooks(root, path string, expectedRoot Identity, hooks ReadHooks) (*os.File, error) {
 	if !expectedRoot.Known {
 		return nil, errors.New("expected workspace root identity is unknown")
 	}
-	return openWithRootIdentityCheck(root, path, openRead, func(actual Identity) error {
+	checkRootIdentity := func(actual Identity) error {
 		if !actual.Known || actual != expectedRoot {
 			return ErrRootIdentityChanged
 		}
 		return nil
-	})
+	}
+	return openWithRootIdentityCheckAndHooks(root, path, openRead, checkRootIdentity, hooks)
 }
 
 func openReadForOperation(root, path string, checkRootIdentity RootIdentityCheck) (*os.File, error) {

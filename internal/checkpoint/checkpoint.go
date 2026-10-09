@@ -106,6 +106,7 @@ type Checkpoint struct {
 	restoreAfterInitialIdentityCheck func()
 	restoreBeforePreflightComplete   func()
 	restoreReadHook                  func(stage, path string, after bool)
+	restoreParentOpenHook            func(stage, path string)
 }
 
 type entry struct {
@@ -991,7 +992,11 @@ func readWorkspaceFile(root, rel string) (fileState, error) {
 }
 
 func readWorkspaceFileWithRootIdentity(root, rel string, expectedRootIdentity workspace.Identity) (fileState, error) {
-	f, err := workspace.OpenReadWithRootIdentity(root, rel, expectedRootIdentity)
+	return readWorkspaceFileWithRootIdentityAndParentHook(root, rel, expectedRootIdentity, nil)
+}
+
+func readWorkspaceFileWithRootIdentityAndParentHook(root, rel string, expectedRootIdentity workspace.Identity, afterParentOpen func()) (fileState, error) {
+	f, err := workspace.OpenReadWithRootIdentityAndHooks(root, rel, expectedRootIdentity, workspace.ReadHooks{AfterParentOpen: afterParentOpen})
 	if errors.Is(err, workspace.ErrRootIdentityChanged) {
 		return fileState{}, fmt.Errorf("%w: %w", ErrWorkspaceChanged, err)
 	}
@@ -1014,7 +1019,13 @@ func (c *Checkpoint) readRestoreWorkspaceFile(rel, stage string) (fileState, err
 	if c.restoreReadHook != nil {
 		c.restoreReadHook(stage, filepath.ToSlash(rel), false)
 	}
-	state, err := readWorkspaceFileWithRootIdentity(c.root, rel, c.rootIdentity)
+	var afterParentOpen func()
+	if c.restoreParentOpenHook != nil {
+		afterParentOpen = func() {
+			c.restoreParentOpenHook(stage, filepath.ToSlash(rel))
+		}
+	}
+	state, err := readWorkspaceFileWithRootIdentityAndParentHook(c.root, rel, c.rootIdentity, afterParentOpen)
 	if c.restoreReadHook != nil {
 		c.restoreReadHook(stage, filepath.ToSlash(rel), true)
 	}

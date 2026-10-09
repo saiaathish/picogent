@@ -393,6 +393,37 @@ func TestRemoveIfSameRejectsChangedIdentity(t *testing.T) {
 	}
 }
 
+func TestRemoveIfUnchangedClassifiesParentMissingOnSecondWalk(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, "nested")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(parent, "state.txt")
+	if err := os.WriteFile(path, []byte("journal state\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parkedParent := filepath.Join(root, "parked-parent")
+	var renameErr error
+	err = removeIfUnchangedWithHook(root, "nested/state.txt", []byte("journal state\n"), info.Mode(), func() error {
+		renameErr = os.Rename(parent, parkedParent)
+		return renameErr
+	})
+	if runtime.GOOS == "windows" && renameErr != nil {
+		t.Skipf("Windows filesystem refused the deterministic open-parent rename: %v", renameErr)
+	}
+	if !errors.Is(err, ErrWorkspaceParentNotExist) {
+		t.Fatalf("removal after parent disappeared = %v, want ErrWorkspaceParentNotExist", err)
+	}
+	if got, readErr := os.ReadFile(filepath.Join(parkedParent, "state.txt")); readErr != nil || string(got) != "journal state\n" {
+		t.Fatalf("journal file moved with detached parent = %q, %v", got, readErr)
+	}
+}
+
 func replaceTestFile(path string, data []byte, mode os.FileMode) error {
 	if err := os.Remove(path); err != nil {
 		return err

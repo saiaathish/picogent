@@ -91,6 +91,95 @@ func TestRestoreRefusesReplacementWorkspaceBeforePublishing(t *testing.T) {
 	}
 }
 
+func TestRestoreRejectsDetachedIntermediateParentDuringRead(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		leafPresent  bool
+		originalData string
+	}{
+		{name: "missing leaf", leafPresent: false},
+		{name: "existing leaf", leafPresent: true, originalData: "agent"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := t.TempDir()
+			root := filepath.Join(base, "workspace")
+			parent := filepath.Join(root, "nested")
+			if err := os.MkdirAll(parent, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(parent, "note.txt")
+			if err := os.WriteFile(path, []byte("before"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cp, err := Capture(root, []string{"nested/note.txt"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.leafPresent {
+				if err := os.WriteFile(path, []byte(test.originalData), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := cp.Seal(); err != nil {
+				t.Fatal(err)
+			}
+
+			parkedParent := filepath.Join(base, "parked-parent")
+			swapped := false
+			var renameErr error
+			cp.restoreParentOpenHook = func(stage, rel string) {
+				if swapped || stage != "preflight" || rel != "nested/note.txt" {
+					return
+				}
+				if err := os.Rename(parent, parkedParent); err != nil {
+					if runtime.GOOS == "windows" {
+						renameErr = err
+						return
+					}
+					t.Fatalf("park opened parent: %v", err)
+				}
+				if err := os.Mkdir(parent, 0o755); err != nil {
+					t.Fatalf("create replacement parent: %v", err)
+				}
+				if test.leafPresent {
+					if err := os.WriteFile(filepath.Join(parent, "note.txt"), []byte(test.originalData), 0o644); err != nil {
+						t.Fatalf("write matching replacement leaf: %v", err)
+					}
+				}
+				swapped = true
+			}
+
+			result, err := cp.Restore()
+			if runtime.GOOS == "windows" && renameErr != nil {
+				t.Skipf("Windows filesystem refused the deterministic open-parent rename: %v", renameErr)
+			}
+			if !swapped {
+				t.Fatal("restore did not reach the deterministic parent-swap point")
+			}
+			if !errors.Is(err, ErrWorkspaceChanged) || result.Complete || len(result.Failures) == 0 {
+				t.Fatalf("restore after detached-parent read = result:%+v err:%v, want workspace-change failure", result, err)
+			}
+			if test.leafPresent {
+				if got, err := os.ReadFile(filepath.Join(parent, "note.txt")); err != nil || string(got) != test.originalData {
+					t.Fatalf("replacement parent leaf changed: %q, %v", got, err)
+				}
+				if got, err := os.ReadFile(filepath.Join(parkedParent, "note.txt")); err != nil || string(got) != test.originalData {
+					t.Fatalf("detached original leaf changed: %q, %v", got, err)
+				}
+			} else {
+				if _, err := os.Stat(filepath.Join(parent, "note.txt")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("replacement parent received restored file: %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(parkedParent, "note.txt")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("detached original parent unexpectedly received file: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestRestoreRejectsTransientReplacementDuringPreflight(t *testing.T) {
 	parent := t.TempDir()
 	root := filepath.Join(parent, "workspace")
