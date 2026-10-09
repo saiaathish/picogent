@@ -467,6 +467,70 @@ func TestProjectHealthAdmissionInvalidatesHealthAfterSteeringOrWorkspaceChange(t
 	}
 }
 
+func TestProjectHealthAdmissionFreshRejectsWhitespaceWorkspaceRebind(t *testing.T) {
+	workspace, reboundWorkspace := trailingWhitespaceWorkspacePair(t)
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	a := New(cfg, &admissionModel{}, reg, perm.New(config.ModeFast, workspace, nil))
+	task := setAdmissionTask(t, a, "make this ready to launch")
+	state := a.RuntimeSnapshot()
+	binding := a.nativeTaskBinding()
+	snapshot := projectHealthAdmissionSnapshot{
+		workspace:         state.CFG.Workspace,
+		registryWorkspace: reg.ContextSnapshot().Workspace,
+		goal:              state.Goal,
+		goalRevision:      state.GoalRevision,
+		store:             binding.store,
+		storeGeneration:   binding.storeGeneration,
+		sessionID:         binding.sessionID,
+		sessionGeneration: binding.generation,
+		registry:          state.Tools,
+		task:              task,
+	}
+
+	// UpdateConfig publishes CFG before refreshing the registry context. Model
+	// that intermediate state deterministically, where the registry still looks
+	// current but the configured workspace has already changed.
+	a.stateMu.Lock()
+	a.CFG.Workspace = reboundWorkspace
+	a.stateMu.Unlock()
+	if a.projectHealthAdmissionFresh(snapshot) {
+		t.Fatal("admission remained fresh after a distinct workspace rebind")
+	}
+}
+
+func TestProjectHealthAdmissionFreshAcceptsRegistryWorkspaceAlias(t *testing.T) {
+	workspace, alias := workspacePathAlias(t)
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	reg := tools.NewRegistry(tools.Context{Workspace: workspace})
+	a := New(cfg, &admissionModel{}, reg, perm.New(config.ModeFast, workspace, nil))
+	task := setAdmissionTask(t, a, "make this ready to launch")
+	state := a.RuntimeSnapshot()
+	binding := a.nativeTaskBinding()
+	snapshot := projectHealthAdmissionSnapshot{
+		workspace:         state.CFG.Workspace,
+		registryWorkspace: reg.ContextSnapshot().Workspace,
+		goal:              state.Goal,
+		goalRevision:      state.GoalRevision,
+		store:             binding.store,
+		storeGeneration:   binding.storeGeneration,
+		sessionID:         binding.sessionID,
+		sessionGeneration: binding.generation,
+		registry:          state.Tools,
+		task:              task,
+	}
+	reg.UpdateContext(func(c *tools.Context) { c.Workspace = alias })
+	if !a.projectHealthAdmissionFresh(snapshot) {
+		t.Fatal("admission rejected a registry path alias for the same workspace")
+	}
+}
+
 func TestProjectHealthAdmissionFallsBackWhenRuntimeOrToolIsUnavailable(t *testing.T) {
 	a, reg, workspace := newAdmissionAgent(t, &admissionModel{}, config.ModeFast)
 	task := setAdmissionTask(t, a, "make this ready to launch")

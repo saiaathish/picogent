@@ -176,6 +176,10 @@ func (a *Agent) continueAfterVerificationFailure(text string, round int, evidenc
 // SetTaskSession switches durable task state with the chat session. Task state
 // stays outside chat history, so compaction cannot erase execution progress.
 func (a *Agent) SetTaskSession(sessionID string) error {
+	return a.setTaskSessionWithHook(sessionID, nil)
+}
+
+func (a *Agent) setTaskSessionWithHook(sessionID string, beforeUndoLock func()) error {
 	workspaceRoot := a.ConfigSnapshot().Workspace
 	binding := a.nativeTaskBinding()
 	releaseSwitch, err := a.reserveTaskSessionSwitch(binding)
@@ -188,71 +192,139 @@ func (a *Agent) SetTaskSession(sessionID string) error {
 		return fmt.Errorf("project run is unavailable: %w", err)
 	}
 	defer releaseRun()
+	if beforeUndoLock != nil {
+		beforeUndoLock()
+	}
 	a.undoMu.Lock()
 	defer a.undoMu.Unlock()
+	if !sameUndoWorkspaceIdentity(a.ConfigSnapshot().Workspace, workspaceRoot) {
+		return fmt.Errorf("task session attachment: %w", errWorkspaceAuthorityChanged)
+	}
 	a.taskMu.Lock()
 	defer a.taskMu.Unlock()
 	if a.TaskStore != binding.store || a.taskStoreGeneration != binding.storeGeneration || a.TaskSession != binding.sessionID || a.taskSessionGeneration != binding.generation {
 		return errTaskOwnershipChanged
 	}
-	a.TaskSession = strings.TrimSpace(sessionID)
+	requireReattachment := a.undoReattachRequired
+	targetSessionID := strings.TrimSpace(sessionID)
+	if requireReattachment && targetSessionID != "" && strings.TrimSpace(workspaceRoot) == "" {
+		// A store rebind revokes cached undo authority. Without the workspace,
+		// the durable journal cannot be validated, so refuse before changing
+		// session state or recovering (and possibly rewriting) a task record.
+		return errors.New("cannot reattach task-store authority without a configured workspace")
+	}
+	a.TaskSession = targetSessionID
 	a.taskSessionGeneration++
 	a.latestUndo = nil
 	a.undoLoadErr = nil
 	a.task = nil
 	a.taskLoadErr = nil
 	if a.TaskSession == "" {
+		a.undoReattachRequired = false
+		return nil
+	}
+	if strings.TrimSpace(workspaceRoot) == "" {
+		a.undoLoadErr = errors.New("undo recovery is unavailable without a configured workspace")
+		if a.TaskStore != nil {
+			task, err := a.TaskStore.OwnershipSnapshot(a.TaskSession)
+			if errors.Is(err, taskstate.ErrNotFound) {
+				task = nil
+			} else if err != nil {
+				a.taskLoadErr = err
+				return fmt.Errorf("inspect durable task for session attachment: %w", err)
+			}
+			if task != nil {
+				if err := prepareTaskForAttachment(workspaceRoot, a.TaskStore, task); err != nil {
+					a.taskLoadErr = err
+					return err
+				}
+				a.task = task
+			}
+		}
+		if requireReattachment {
+			a.undoReattachRequired = false
+		}
+		return nil
+	}
+	finishAttachment := func() error {
+		if a.undoLoadErr != nil && !isLegacyUndoUnavailable(a.undoLoadErr) {
+			if requireReattachment {
+				return fmt.Errorf("validate undo recovery during session reattachment: %w", a.undoLoadErr)
+			}
+			return fmt.Errorf("validate undo recovery: %w", a.undoLoadErr)
+		}
+		if requireReattachment {
+			a.undoReattachRequired = false
+		}
 		return nil
 	}
 	loadUndo := func(task *taskstate.Task) {
-		undo, loadErr := loadLatestDurableUndo(workspaceRoot, a.TaskSession, a.taskSessionGeneration)
+		undo, loadErr := loadValidatedDurableUndo(workspaceRoot, a.TaskSession, a.taskSessionGeneration, task, undoTaskStoreAuthority{store: a.TaskStore, epoch: a.taskStoreGeneration})
 		if loadErr != nil {
 			a.undoLoadErr = loadErr
 			return
-		}
-		if task != nil {
-			if validationErr := validateDurableUndoTask(undo, task); validationErr != nil {
-				a.undoLoadErr = validationErr
-				return
-			}
 		}
 		a.latestUndo = undo
 	}
 	if a.TaskStore == nil {
 		loadUndo(nil)
-		return nil
+		return finishAttachment()
 	}
-	task, err := a.TaskStore.Load(a.TaskSession)
-	if err == nil {
-		changed, revalidateErr := revalidatePersistedTask(workspaceRoot, task)
-		if revalidateErr != nil {
-			a.taskLoadErr = revalidateErr
-			return revalidateErr
-		}
-		// A task loaded with an active turn was left behind by a process that
-		// did not reach its close point. The project run lock makes this
-		// attachment boundary exclusive, so record the stale attempt before
-		// publishing the resumed task.
-		if task.RecoverActiveTurn() {
-			changed = true
-		}
-		if changed {
-			if err := a.TaskStore.Save(task); err != nil {
-				revalidateErr := fmt.Errorf("persist recovered durable task: %w", err)
-				a.taskLoadErr = revalidateErr
-				return revalidateErr
-			}
-		}
-		a.task = task
-		loadUndo(task)
-		return nil
-	}
+	task, err := a.TaskStore.OwnershipSnapshot(a.TaskSession)
 	if errors.Is(err, taskstate.ErrNotFound) {
 		loadUndo(nil)
+		if a.undoLoadErr != nil && !isLegacyUndoUnavailable(a.undoLoadErr) {
+			a.taskLoadErr = a.undoLoadErr
+		}
+		return finishAttachment()
+	}
+	if err != nil {
+		a.taskLoadErr = err
+		return fmt.Errorf("inspect durable task for session attachment: %w", err)
+	}
+	// Validate durable undo against the read-only owner snapshot before Load,
+	// legacy normalization, proof revalidation, or interrupted-turn recovery
+	// can write a replacement task record.
+	loadUndo(task)
+	if a.undoLoadErr != nil && !isLegacyUndoUnavailable(a.undoLoadErr) {
+		a.taskLoadErr = a.undoLoadErr
+		return finishAttachment()
+	}
+	if err := prepareTaskForAttachment(workspaceRoot, a.TaskStore, task); err != nil {
+		a.taskLoadErr = err
+		return err
+	}
+	a.task = task
+	return finishAttachment()
+}
+
+// prepareTaskForAttachment restores persisted task trust before the snapshot
+// becomes agent state. An empty workspace fails proof revalidation closed.
+func prepareTaskForAttachment(workspaceRoot string, store *taskstate.Store, task *taskstate.Task) error {
+	if task == nil {
 		return nil
 	}
-	a.taskLoadErr = err
-	return err
+	changed := task.NormalizeLegacyCompletion()
+	revalidated, err := revalidatePersistedTask(workspaceRoot, task)
+	if err != nil {
+		return err
+	}
+	changed = changed || revalidated
+	// A task with an active turn was left behind by a process that did not
+	// reach its close point. Record the stale attempt before publishing it.
+	if task.RecoverActiveTurn() {
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if store == nil {
+		return errors.New("persist recovered durable task: task store is unavailable")
+	}
+	if err := store.Save(task); err != nil {
+		return fmt.Errorf("persist recovered durable task: %w", err)
+	}
+	return nil
 }
 
 func (a *Agent) taskSessionSnapshot() (string, uint64) {
@@ -559,11 +631,11 @@ func (a *Agent) rememberVerification(output string) {
 		return
 	}
 	state := a.RuntimeSnapshot()
-	workspace := strings.TrimSpace(state.CFG.Workspace)
-	if workspace == "" {
+	workspace := state.CFG.Workspace
+	if strings.TrimSpace(workspace) == "" {
 		return
 	}
-	if strings.TrimSpace(state.Memory.Workspace) == "" || state.Memory.Workspace != workspace {
+	if memoryWorkspace := state.Memory.Workspace; strings.TrimSpace(memoryWorkspace) != "" && memoryWorkspace != workspace {
 		return
 	}
 	hint := state.Goal
@@ -630,7 +702,9 @@ func revalidateTaskProof(ctx context.Context, root string, task *taskstate.Task)
 		return false, nil
 	}
 	reason := "persisted verification has no complete PASS status"
-	if verificationStatus(latest.Summary) == "PASS" {
+	if strings.TrimSpace(root) == "" {
+		reason = "configured workspace is unavailable for persisted proof revalidation"
+	} else if verificationStatus(latest.Summary) == "PASS" {
 		evidence := verificationEvidence{
 			output:            latest.Summary,
 			targets:           observationPaths(latest.Observation),

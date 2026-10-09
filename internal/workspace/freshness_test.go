@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,6 +88,111 @@ func TestCaptureRootReplacementFailsClosed(t *testing.T) {
 	comparison := Compare(before, after)
 	if !comparison.Changed || comparison.Fresh {
 		t.Fatalf("root replacement comparison = %+v", comparison)
+	}
+}
+
+func TestDirectoryIdentityChangesWhenRootIsReplaced(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	before, err := DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked := filepath.Join(parent, "parked-workspace")
+	if err := os.Rename(root, parked); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	after, err := DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Fatalf("replacement directory reused identity %+v while original still exists", before)
+	}
+}
+
+func TestDirectoryIdentityIgnoresConcurrentEntryChanges(t *testing.T) {
+	root := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 200; i++ {
+			entry := filepath.Join(root, fmt.Sprintf("entry-%d", i))
+			if err := os.Mkdir(entry, 0o700); err != nil {
+				done <- err
+				return
+			}
+			if err := os.Remove(entry); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	for i := 0; i < 200; i++ {
+		if _, err := DirectoryIdentity(root); err != nil {
+			t.Errorf("identity during ordinary entry changes: %v", err)
+			break
+		}
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRootIdentityCheckedAgainstOpenedReadHandle(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	replacement := filepath.Join(parent, "replacement")
+	parkedOriginal := filepath.Join(parent, "parked-original")
+	parkedReplacement := filepath.Join(parent, "parked-replacement")
+	for _, item := range []struct {
+		path string
+		data string
+	}{{root, "original"}, {replacement, "replacement"}} {
+		if err := os.Mkdir(item.path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(item.path, "note.txt"), []byte(item.data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	expected, err := DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(root, parkedOriginal); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(replacement, root); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = openWithRootIdentityCheck(root, "note.txt", openRead, func(actual Identity) error {
+		if err := os.Rename(root, parkedReplacement); err != nil {
+			return err
+		}
+		if err := os.Rename(parkedOriginal, root); err != nil {
+			return err
+		}
+		if actual != expected {
+			return ErrRootIdentityChanged
+		}
+		return nil
+	})
+	if !errors.Is(err, ErrRootIdentityChanged) {
+		t.Fatalf("read through transient replacement = %v, want root identity rejection", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "note.txt")); err != nil || string(got) != "original" {
+		t.Fatalf("original root path = %q, %v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(parkedReplacement, "note.txt")); err != nil || string(got) != "replacement" {
+		t.Fatalf("replacement root = %q, %v", got, err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -130,6 +131,7 @@ type Agent struct {
 	undoMu                sync.Mutex
 	latestUndo            *turnUndo
 	undoLoadErr           error
+	undoReattachRequired  bool
 	runTool               func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
 }
 
@@ -236,6 +238,11 @@ func (a *Agent) SetSkillRules(rules string) {
 }
 
 func (a *Agent) SetTaskStore(store *taskstate.Store) {
+	// Undo holds this lock across workspace restore and durable task/journal
+	// finalization. Keep a store replacement from interleaving with that
+	// authority-sensitive sequence. Lock order matches SetTaskSession.
+	a.undoMu.Lock()
+	defer a.undoMu.Unlock()
 	a.taskMu.Lock()
 	if a.taskStoreGeneration == ^uint64(0) {
 		a.taskLoadErr = errors.New("task store authority generation exhausted")
@@ -245,6 +252,9 @@ func (a *Agent) SetTaskStore(store *taskstate.Store) {
 	a.taskStoreGeneration++
 	a.TaskStore = store
 	a.taskLoadErr = nil
+	if strings.TrimSpace(a.TaskSession) != "" {
+		a.undoReattachRequired = true
+	}
 	cancelRun := a.taskRunCancel
 	a.taskMu.Unlock()
 	if cancelRun != nil {
@@ -262,6 +272,11 @@ func (a *Agent) UpdateConfig(update func(*config.Config)) {
 	if update == nil {
 		return
 	}
+	// Config updates can rebind the workspace. Undo holds undoMu across restore
+	// and journal finalization, so serialize config changes with that authority
+	// window using the same undoMu -> stateMu lock order.
+	a.undoMu.Lock()
+	defer a.undoMu.Unlock()
 	a.stateMu.Lock()
 	update(&a.CFG)
 	cfg := a.CFG
@@ -413,22 +428,48 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 func (a *Agent) acquireProjectRunLockForWorkspace(workspace string, binding nativeTaskBinding) (func() error, error) {
 	store := binding.store
 	var storeErr error
+	var releaseStore func() error
 	if store != nil {
 		release, err := store.AcquireRunLock()
 		if err == nil {
-			return release, nil
+			releaseStore = release
+		} else {
+			storeErr = err
 		}
-		storeErr = err
 	}
 	if strings.TrimSpace(workspace) != "" {
-		release, err := taskstate.WorkspaceStore(workspace).AcquireRunLock()
+		identity, err := undoWorkspaceIdentity(workspace)
+		if err != nil {
+			if releaseStore != nil {
+				err = errors.Join(err, releaseStore())
+			}
+			return nil, fmt.Errorf("resolve project workspace lock: %w", err)
+		}
+		// A custom task store may live outside the workspace and have its own
+		// run lock. Keep that lock for store-wide coordination, and also lock
+		// inside the canonical workspace so agents using different task stores
+		// cannot interleave workspace writes and undo-journal recovery.
+		workspaceStore := taskstate.NewStore(filepath.Join(identity, ".picogent", "project-run"))
+		releaseWorkspace, err := workspaceStore.AcquireRunLock()
 		if err == nil {
-			return release, nil
+			return func() error {
+				workspaceErr := releaseWorkspace()
+				if releaseStore == nil {
+					return workspaceErr
+				}
+				return errors.Join(workspaceErr, releaseStore())
+			}, nil
+		}
+		if releaseStore != nil {
+			err = errors.Join(err, releaseStore())
 		}
 		if storeErr != nil {
-			return nil, fmt.Errorf("task store lock: %v; workspace lock: %w", storeErr, err)
+			return nil, fmt.Errorf("task store lock: %v; workspace run lock: %w", storeErr, err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("workspace run lock: %w", err)
+	}
+	if releaseStore != nil {
+		return releaseStore, nil
 	}
 	if storeErr != nil {
 		return nil, storeErr
@@ -612,7 +653,14 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	changed := map[string]struct{}{}
 	sessionID, sessionGeneration := a.taskSessionSnapshot()
 	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
+	turnUndo.bindTaskStore(nativeOwner.store, nativeOwner.storeGeneration)
 	turnUndo.turnSequence = turnSequence
+	if turnSequence != 0 {
+		if err := turnUndo.bindDurableTurn(admission.snapshot, turnSequence); err != nil {
+			ev.OnError(err)
+			return history, Result{Task: a.TaskSnapshot()}, err
+		}
+	}
 	turnClosed := turnSequence == 0
 	regCtx.BeforeWorkspaceMutation = func(string) error {
 		if err := a.checkTaskRun(ctx); err != nil {
@@ -648,10 +696,16 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			turnSequence = sequence
 			turnUndo.turnSequence = sequence
+			if err := turnUndo.bindDurableTurn(admission.snapshot, sequence); err != nil {
+				return err
+			}
 			turnClosed = false
 			// Retain the original store/session generation while adopting only
 			// the exact saved turn, not a callback's replacement identity.
 			nativeOwner = nativeOwner.withAdmittedTask(admission.snapshot)
+		}
+		if err := turnUndo.bindWorkspaceInstance(); err != nil {
+			return fmt.Errorf("bind durable undo workspace: %w", err)
 		}
 		return a.checkTaskRun(ctx)
 	}

@@ -9,6 +9,7 @@ import (
 )
 
 var errTaskSessionSwitchInProgress = errors.New("durable task session switch in progress")
+var errWorkspaceAuthorityChanged = errors.New("workspace changed while acquiring authority; retry")
 
 // reserveTaskSessionSwitch revokes the active run before waiting for the
 // project lock, and prevents a queued run from slipping ahead of the switch.

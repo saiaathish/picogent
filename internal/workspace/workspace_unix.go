@@ -5,6 +5,7 @@ package workspace
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -30,16 +31,30 @@ func isWorkspaceNotExist(err error) bool {
 }
 
 func open(root, path string, kind openKind) (*os.File, error) {
+	return openWithRootIdentityCheck(root, path, kind, nil)
+}
+
+func openWithRootIdentityCheck(root, path string, kind openKind, checkRootIdentity RootIdentityCheck) (*os.File, error) {
+	return openWithRootIdentityCheckAndHooks(root, path, kind, checkRootIdentity, ReadHooks{})
+}
+
+func openWithRootIdentityCheckAndHooks(root, path string, kind openKind, checkRootIdentity RootIdentityCheck, hooks ReadHooks) (*os.File, error) {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return nil, err
 	}
 	createParents := kind == openWrite
-	parent, leaf, err := openParent(root, rel, createParents)
+	parent, leaf, err := openParentWithRootIdentityCheck(root, rel, createParents, checkRootIdentity, nil)
 	if err != nil {
+		if checkRootIdentity != nil && isWorkspaceNotExist(err) {
+			return nil, fmt.Errorf("%w: %w", ErrWorkspaceParentNotExist, err)
+		}
 		return nil, err
 	}
 	defer unix.Close(parent)
+	if hooks.AfterParentOpen != nil {
+		hooks.AfterParentOpen()
+	}
 
 	flags := unix.O_CLOEXEC | unix.O_NOFOLLOW
 	switch kind {
@@ -57,7 +72,18 @@ func open(root, path string, kind openKind) (*os.File, error) {
 
 	fd, err := unix.Openat(parent, leaf, flags, 0o644)
 	if err != nil {
+		if checkRootIdentity != nil && isWorkspaceNotExist(err) {
+			if parentErr := verifyOpenedUnixParent(root, rel, parent, checkRootIdentity); parentErr != nil {
+				return nil, parentErr
+			}
+		}
 		return nil, fmt.Errorf("open workspace file %q: %w", rel, err)
+	}
+	if checkRootIdentity != nil {
+		if parentErr := verifyOpenedUnixParent(root, rel, parent, checkRootIdentity); parentErr != nil {
+			_ = unix.Close(fd)
+			return nil, parentErr
+		}
 	}
 	f := os.NewFile(uintptr(fd), path)
 	if f == nil {
@@ -116,11 +142,98 @@ func openDir(root, path string) (*os.File, error) {
 	return f, nil
 }
 
+func securePrivateDirectoryAndFiles(root string, parts []string) error {
+	current, err := openUnixRoot(root)
+	if err != nil {
+		return fmt.Errorf("open workspace directory: %w", err)
+	}
+	defer func() { _ = unix.Close(current) }()
+	for index, part := range parts {
+		child, err := unix.Openat(current, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+		if err != nil {
+			return fmt.Errorf("open private workspace directory %q: %w", part, err)
+		}
+		_ = unix.Close(current)
+		current = child
+		if index == len(parts)-1 {
+			return securePrivateDirectoryHandle(current)
+		}
+	}
+	return errors.New("private directory path is empty")
+}
+
+func securePrivateDirectoryHandle(directoryFD int) error {
+	if err := unix.Fchmod(directoryFD, 0o700); err != nil {
+		return fmt.Errorf("secure private workspace directory: %w", err)
+	}
+	duplicate, err := unix.Dup(directoryFD)
+	if err != nil {
+		return fmt.Errorf("duplicate private directory handle: %w", err)
+	}
+	directory := os.NewFile(uintptr(duplicate), "private workspace directory")
+	if directory == nil {
+		_ = unix.Close(duplicate)
+		return errors.New("wrap private directory handle")
+	}
+	defer directory.Close()
+	for {
+		names, readErr := directory.Readdirnames(64)
+		for _, name := range names {
+			if name == "." || name == ".." {
+				continue
+			}
+			if name == "" || strings.ContainsAny(name, "/\\\x00") {
+				return fmt.Errorf("unsafe private directory entry %q", name)
+			}
+			fd, openErr := unix.Openat(directoryFD, name, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0)
+			if openErr != nil {
+				return fmt.Errorf("open private workspace entry %q: %w", name, openErr)
+			}
+			var opened unix.Stat_t
+			statErr := unix.Fstat(fd, &opened)
+			if statErr == nil && opened.Mode&unix.S_IFMT != unix.S_IFREG {
+				statErr = fmt.Errorf("private directory entry %q is not a regular file", name)
+			}
+			if statErr == nil && opened.Nlink != 1 {
+				statErr = fmt.Errorf("private directory entry %q has an unsafe link count", name)
+			}
+			if statErr == nil {
+				statErr = unix.Fchmod(fd, 0o600)
+			}
+			var named unix.Stat_t
+			if statErr == nil {
+				statErr = unix.Fstatat(directoryFD, name, &named, unix.AT_SYMLINK_NOFOLLOW)
+			}
+			_ = unix.Close(fd)
+			if statErr != nil {
+				return fmt.Errorf("secure private workspace entry %q: %w", name, statErr)
+			}
+			if named.Mode&unix.S_IFMT != unix.S_IFREG || opened.Dev != named.Dev || opened.Ino != named.Ino {
+				return fmt.Errorf("private workspace entry %q changed while securing permissions", name)
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			return nil
+		}
+		if readErr != nil {
+			return fmt.Errorf("read private workspace directory: %w", readErr)
+		}
+	}
+}
+
 func openParent(root, rel string, create bool) (int, string, error) {
 	return openParentWithGuard(root, rel, create, nil)
 }
 
 func openParentWithGuard(root, rel string, create bool, guard func() error) (int, string, error) {
+	return openParentWithRootIdentityCheck(root, rel, create, nil, guard)
+}
+
+func openParentWithRootIdentityCheck(root, rel string, create bool, checkRootIdentity RootIdentityCheck, guard func() error) (int, string, error) {
+	return openParentWithRootIdentityCheckAndMode(root, rel, create, 0o755, checkRootIdentity, guard, false)
+}
+
+func openParentWithRootIdentityCheckAndMode(root, rel string, create bool, createMode os.FileMode, checkRootIdentity RootIdentityCheck, guard func() error, durable bool) (int, string, error) {
 	parts, err := pathParts(rel)
 	if err != nil {
 		return -1, "", err
@@ -128,6 +241,17 @@ func openParentWithGuard(root, rel string, create bool, guard func() error) (int
 	fd, err := openUnixRoot(root)
 	if err != nil {
 		return -1, "", fmt.Errorf("open workspace directory: %w", err)
+	}
+	if checkRootIdentity != nil {
+		identity, identityErr := workspaceRootIdentityForFD(fd)
+		if identityErr != nil {
+			_ = unix.Close(fd)
+			return -1, "", fmt.Errorf("identify opened workspace root: %w", identityErr)
+		}
+		if checkErr := checkRootIdentity(identity); checkErr != nil {
+			_ = unix.Close(fd)
+			return -1, "", checkErr
+		}
 	}
 	current := fd
 	for _, part := range parts[:len(parts)-1] {
@@ -139,9 +263,21 @@ func openParentWithGuard(root, rel string, create bool, guard func() error) (int
 					return -1, "", err
 				}
 			}
-			if mkdirErr := unix.Mkdirat(current, part, 0o755); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
+			if durable {
+				if err := unix.Fsync(current); err != nil {
+					_ = unix.Close(current)
+					return -1, "", fmt.Errorf("sync workspace directory before durable creation: %w", err)
+				}
+			}
+			if mkdirErr := unix.Mkdirat(current, part, uint32(createMode.Perm())); mkdirErr != nil && !errors.Is(mkdirErr, unix.EEXIST) {
 				_ = unix.Close(current)
 				return -1, "", fmt.Errorf("create workspace directory %q: %w", part, mkdirErr)
+			}
+			if durable {
+				if err := unix.Fsync(current); err != nil {
+					_ = unix.Close(current)
+					return -1, "", fmt.Errorf("sync workspace directory after durable creation: %w", err)
+				}
 			}
 			child, openErr = unix.Openat(current, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 		}
@@ -153,6 +289,34 @@ func openParentWithGuard(root, rel string, create bool, guard func() error) (int
 		current = child
 	}
 	return current, parts[len(parts)-1], nil
+}
+
+func workspaceRootIdentityForFD(fd int) (Identity, error) {
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err != nil {
+		return Identity{}, err
+	}
+	return Identity{Volume: uint64(stat.Dev), File: uint64(stat.Ino), Known: stat.Dev != 0 || stat.Ino != 0}, nil
+}
+
+func verifyOpenedUnixParent(root, rel string, openedParent int, checkRootIdentity RootIdentityCheck) error {
+	openedIdentity, err := workspaceRootIdentityForFD(openedParent)
+	if err != nil {
+		return fmt.Errorf("identify opened workspace parent: %w", err)
+	}
+	namedParent, _, err := openParentWithRootIdentityCheck(root, rel, false, checkRootIdentity, nil)
+	if err != nil {
+		return classifyWorkspaceParentError(err)
+	}
+	defer unix.Close(namedParent)
+	namedIdentity, err := workspaceRootIdentityForFD(namedParent)
+	if err != nil {
+		return fmt.Errorf("identify named workspace parent: %w", err)
+	}
+	if !openedIdentity.Known || !namedIdentity.Known || openedIdentity != namedIdentity {
+		return fmt.Errorf("%w: opened parent for %q no longer matches its path", ErrWorkspaceParentNotExist, rel)
+	}
+	return nil
 }
 
 func openUnixRoot(root string) (int, error) {
@@ -214,16 +378,32 @@ func workspaceRootPath(root string) (string, error) {
 }
 
 func remove(root, path string) error {
-	current, err := OpenRead(root, path)
+	return removeWithCheck(root, path, nil)
+}
+
+func removeWithCheck(root, path string, check func() error) error {
+	return removeWithChecks(root, path, check, nil)
+}
+
+func removeWithChecks(root, path string, check func() error, checkRootIdentity RootIdentityCheck) error {
+	current, err := openReadForOperation(root, path, checkRootIdentity)
 	if err != nil {
 		return err
 	}
-	removeErr := removeIfSame(root, path, current)
+	removeErr := removeIfSameWithChecks(root, path, current, check, checkRootIdentity)
 	closeErr := current.Close()
 	return errors.Join(removeErr, closeErr)
 }
 
 func removeIfSame(root, path string, current *os.File) error {
+	return removeIfSameWithCheck(root, path, current, nil)
+}
+
+func removeIfSameWithCheck(root, path string, current *os.File, check func() error) error {
+	return removeIfSameWithChecks(root, path, current, check, nil)
+}
+
+func removeIfSameWithChecks(root, path string, current *os.File, check func() error, checkRootIdentity RootIdentityCheck) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -235,9 +415,14 @@ func removeIfSame(root, path string, current *os.File) error {
 	if err != nil {
 		return fmt.Errorf("identify workspace file %q for removal: %w", rel, err)
 	}
-	parent, leaf, err := openParent(root, rel, false)
+	if check != nil && checkRootIdentity != nil {
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	parent, leaf, err := openParentWithRootIdentityCheck(root, rel, false, checkRootIdentity, nil)
 	if err != nil {
-		return err
+		return classifyWorkspaceParentError(err)
 	}
 	defer unix.Close(parent)
 	actual, _, exists, err := workspaceTargetEntry(parent, leaf)
@@ -246,6 +431,11 @@ func removeIfSame(root, path string, current *os.File) error {
 	}
 	if !exists || expected != actual {
 		return fmt.Errorf("remove workspace file %q: %w", rel, ErrTargetChanged)
+	}
+	if check != nil {
+		if err := check(); err != nil {
+			return fmt.Errorf("check workspace authority before removing %q: %w", rel, err)
+		}
 	}
 	if err := unix.Unlinkat(parent, leaf, 0); err != nil {
 		return fmt.Errorf("remove workspace file %q: %w", rel, err)
@@ -262,6 +452,14 @@ func writeAtomicWithMode(root, path string, data []byte, requestedMode os.FileMo
 }
 
 func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks) error {
+	return writeAtomicWithDurability(root, path, data, requestedMode, setMode, hooks, false)
+}
+
+func writeAtomicDurableWithHook(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks) error {
+	return writeAtomicWithDurability(root, path, data, requestedMode, setMode, hooks, true)
+}
+
+func writeAtomicWithDurability(root, path string, data []byte, requestedMode os.FileMode, setMode bool, hooks WriteHooks, durable bool) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -269,11 +467,38 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 	if err := hooks.check(); err != nil {
 		return err
 	}
-	parent, leaf, err := openParentWithGuard(root, rel, true, hooks.Check)
+	privateJournal := durable && setMode && requestedMode.Perm() == 0o600 && hooks.CreateParentMode.Perm() == 0o700 && hooks.PrivateParentDirectory
+	if hooks.PrivateParentDirectory && !privateJournal {
+		return errors.New("private parent directory requires a durable 0600 write and 0700 creation mode")
+	}
+	if privateJournal {
+		parts, err := pathParts(rel)
+		if err != nil {
+			return err
+		}
+		if len(parts) < 2 {
+			return errors.New("private journal storage must be below the workspace root")
+		}
+	}
+	parentMode := hooks.CreateParentMode.Perm()
+	if parentMode == 0 {
+		parentMode = 0o755
+	}
+	parent, leaf, err := openParentWithRootIdentityCheckAndMode(root, rel, true, parentMode, hooks.CheckRootIdentity, hooks.Check, durable)
 	if err != nil {
 		return err
 	}
 	defer unix.Close(parent)
+	if privateJournal {
+		if err := securePrivateDirectoryHandle(parent); err != nil {
+			return fmt.Errorf("secure private workspace journal directory: %w", err)
+		}
+	}
+	if durable {
+		if err := unix.Fsync(parent); err != nil {
+			return fmt.Errorf("sync workspace directory before durable write: %w", err)
+		}
+	}
 
 	targetMode, targetExists, err := workspaceTargetMode(parent, leaf)
 	if err != nil {
@@ -364,8 +589,10 @@ func writeAtomicWithHook(root, path string, data []byte, requestedMode os.FileMo
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close workspace file %q: %w", rel, err)
 	}
-	if err := unix.Fsync(parent); err != nil && !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EOPNOTSUPP) {
-		return fmt.Errorf("sync workspace directory for %q: %w", rel, err)
+	if err := unix.Fsync(parent); err != nil {
+		if durable || (!errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.ENOTSUP) && !errors.Is(err, unix.EOPNOTSUPP)) {
+			return fmt.Errorf("sync workspace directory for %q: %w", rel, err)
+		}
 	}
 	return nil
 }

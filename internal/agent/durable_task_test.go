@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -158,6 +159,407 @@ func TestDurableTaskLoadFailureIsSurfaced(t *testing.T) {
 	if got := a.TaskSnapshot(); got != nil {
 		t.Fatalf("corrupt task state was accepted: %#v", got)
 	}
+}
+
+func TestSetTaskSessionWithoutWorkspaceNormalizesLegacyCompletion(t *testing.T) {
+	store := taskstate.NewStore(t.TempDir())
+	task, err := taskstate.New("no-workspace-legacy-done", "finish the task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	task.Status = taskstate.StatusDone
+	writeRawDurableTask(t, store, task)
+
+	a := newAgentWithoutWorkspace(store)
+	if err := a.SetTaskSession(task.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	assertNoWorkspaceTaskStatus(t, a, store, task.SessionID, taskstate.StatusWorking)
+}
+
+func TestSetTaskSessionWithoutWorkspaceInvalidatesPersistedProof(t *testing.T) {
+	workspace := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspace, "fixed.txt"), []byte("verified\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	observation, err := workspacepkg.Capture(t.Context(), workspace, []string{"fixed.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := taskstate.New("no-workspace-stale-proof", "finish the task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	sequence, ok := task.BeginTurn(taskstate.TurnRouteImplement)
+	if !ok {
+		t.Fatal("task turn did not start")
+	}
+	task.RecordChanged("fixed.txt")
+	if !task.FinishTurn(sequence, taskstate.TurnRouteImplement, "verify the file", "PASS", taskstate.StopNone, 1, 1) {
+		t.Fatal("task turn did not finish")
+	}
+	task.AddVerificationWithObservation("verify fixed.txt", true, "verify PASS\n1 passed", &observation)
+	if err := task.SetStatus(taskstate.StatusDone); err != nil {
+		t.Fatal(err)
+	}
+	store := taskstate.NewStore(t.TempDir())
+	writeRawDurableTask(t, store, task)
+
+	a := newAgentWithoutWorkspace(store)
+	if err := a.SetTaskSession(task.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	got := assertNoWorkspaceTaskStatus(t, a, store, task.SessionID, taskstate.StatusVerifying)
+	latest := got.Verification[len(got.Verification)-1]
+	if latest.Passed || !strings.HasPrefix(latest.Summary, "verify INCONCLUSIVE") || !strings.Contains(latest.Summary, "configured workspace is unavailable") {
+		t.Fatalf("workspace proof stayed active without a configured workspace: %#v", latest)
+	}
+}
+
+func TestSetTaskSessionWithoutWorkspaceRecoversInterruptedTurn(t *testing.T) {
+	task, err := taskstate.New("no-workspace-interrupted-turn", "finish the task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := task.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := task.BeginTurn(taskstate.TurnRouteImplement); !ok {
+		t.Fatal("task turn did not start")
+	}
+	store := taskstate.NewStore(t.TempDir())
+	writeRawDurableTask(t, store, task)
+
+	a := newAgentWithoutWorkspace(store)
+	if err := a.SetTaskSession(task.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	got := assertNoWorkspaceTaskStatus(t, a, store, task.SessionID, taskstate.StatusWorking)
+	if last := got.LastTurn(); last == nil || last.State != taskstate.TurnInterrupted || last.StopReason != taskstate.StopProcessRestart {
+		t.Fatalf("interrupted task turn = %#v", last)
+	}
+}
+
+func TestSetTaskSessionWithoutWorkspaceRequiresWorkspaceForStoreReattachment(t *testing.T) {
+	for _, scenario := range []string{"same store", "replacement store"} {
+		t.Run(scenario, func(t *testing.T) {
+			const sessionID = "no-workspace-reattach"
+			storeA := taskstate.NewStore(t.TempDir())
+			taskA, err := taskstate.New(sessionID, "original task", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := taskA.SetStatus(taskstate.StatusWorking); err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := taskA.BeginTurn(taskstate.TurnRouteImplement); !ok {
+				t.Fatal("original task turn did not start")
+			}
+			if err := storeA.Save(taskA); err != nil {
+				t.Fatal(err)
+			}
+
+			storeB := storeA
+			wantID := taskA.ID
+			if scenario == "replacement store" {
+				storeB = taskstate.NewStore(t.TempDir())
+				taskB, err := taskstate.New(sessionID, "replacement task", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := taskB.SetStatus(taskstate.StatusWorking); err != nil {
+					t.Fatal(err)
+				}
+				if _, ok := taskB.BeginTurn(taskstate.TurnRouteImplement); !ok {
+					t.Fatal("replacement task turn did not start")
+				}
+				if err := storeB.Save(taskB); err != nil {
+					t.Fatal(err)
+				}
+				wantID = taskB.ID
+			}
+
+			a := newAgentWithoutWorkspace(storeA)
+			if err := a.SetTaskSession(sessionID); err != nil {
+				t.Fatal(err)
+			}
+			a.SetTaskStore(storeB)
+			beforeTask := a.TaskSnapshot()
+			if beforeTask == nil {
+				t.Fatal("original task was not attached before store replacement")
+			}
+			taskPath, err := storeB.Path(sessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeRecord, err := os.ReadFile(taskPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := a.SetTaskSession(sessionID); err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") {
+				t.Fatalf("reattachment without workspace = %v, want explicit workspace refusal", err)
+			}
+			if a.TaskSession != sessionID || !reflect.DeepEqual(beforeTask, a.TaskSnapshot()) {
+				t.Fatalf("refused attachment changed session/task state: session=%q task=%#v", a.TaskSession, a.TaskSnapshot())
+			}
+			afterRecord, err := os.ReadFile(taskPath)
+			if err != nil || string(afterRecord) != string(beforeRecord) {
+				t.Fatalf("refused attachment changed replacement record: err=%v", err)
+			}
+			if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(strings.ToLower(err.Error()), "reattach") {
+				t.Fatalf("undo after refused attachment = %v, want the reattachment fence to remain", err)
+			}
+
+			workspace := t.TempDir()
+			a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = workspace })
+			if err := a.SetTaskSession(sessionID); err != nil {
+				t.Fatalf("reattach after restoring workspace: %v", err)
+			}
+			got := assertNoWorkspaceTaskStatus(t, a, storeB, sessionID, taskstate.StatusWorking)
+			if got.ID != wantID {
+				t.Fatalf("attached task ID = %q, want replacement store owner %q", got.ID, wantID)
+			}
+			if last := got.LastTurn(); last == nil || last.State != taskstate.TurnInterrupted {
+				t.Fatalf("reattached task turn = %#v, want validated interrupted-turn recovery", last)
+			}
+			if a.UndoAvailable() {
+				t.Fatal("undo was advertised without a validated journal")
+			}
+		})
+	}
+}
+
+func TestSetTaskSessionWithoutWorkspaceAllowsDetachAfterStoreRebind(t *testing.T) {
+	const sessionID = "no-workspace-detach-after-rebind"
+	a := newAgentWithoutWorkspace(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+
+	if err := a.SetTaskSession(""); err != nil {
+		t.Fatalf("detach after store rebind without workspace: %v", err)
+	}
+	if a.TaskSession != "" {
+		t.Fatalf("task session after detach = %q, want empty", a.TaskSession)
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") || strings.Contains(strings.ToLower(err.Error()), "reattach") {
+		t.Fatalf("undo after detach = %v, want workspace-unavailable error without a reattachment fence", err)
+	}
+}
+
+func TestDetachedTaskSessionAllowsFreshProcessLocalUndo(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		toolResponse("write", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+		toolResponse("write-again", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession("detached-undo-session"); err != nil {
+		t.Fatal(err)
+	}
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if err := a.SetTaskSession(""); err != nil {
+		t.Fatalf("detach task session after store replacement: %v", err)
+	}
+
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UndoAvailable || !a.UndoAvailable() {
+		t.Fatalf("fresh process-local undo was unavailable after detaching: %+v", result)
+	}
+	message, err := a.UndoLastTurn()
+	if err != nil || !strings.Contains(message, "restored note.txt") {
+		t.Fatalf("process-local undo after detach = (%q, %v)", message, err)
+	}
+	assertFreshUndoFileContent(t, path, "before\n")
+
+	_, result, err = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt again"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UndoAvailable || !a.UndoAvailable() {
+		t.Fatalf("second process-local undo was unavailable: %+v", result)
+	}
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if a.UndoAvailable() {
+		t.Fatal("store replacement retained process-local undo from the prior authority")
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "process-local") || strings.Contains(err.Error(), "reattach") {
+		t.Fatalf("undo after detached store replacement = %v, want an explicit process-local authority refusal", err)
+	}
+	assertFreshUndoFileContent(t, path, "after\n")
+}
+
+func TestTaskStoreAttachmentExplainsLostProcessLocalUndo(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		toolResponse("write", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	if err := a.SetTaskSession("session-without-task-store"); err != nil {
+		t.Fatal(err)
+	}
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UndoAvailable || !a.UndoAvailable() {
+		t.Fatalf("process-local undo was unavailable before store attachment: %+v", result)
+	}
+
+	a.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	if a.UndoAvailable() {
+		t.Fatal("task-store attachment retained process-local undo from the prior authority")
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(err.Error(), "process-local") || strings.Contains(err.Error(), "reattach") {
+		t.Fatalf("undo after task-store attachment = %v, want an explicit process-local authority refusal", err)
+	}
+	assertFreshUndoFileContent(t, path, "after\n")
+}
+
+func TestEmptyNoWorkspaceReattachmentWaitsForWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	path := filepath.Join(workspace, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const sessionID = "empty-no-workspace-reattach"
+	storeA := taskstate.NewStore(t.TempDir())
+	oldTask, err := taskstate.New(sessionID, "old task", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := oldTask.SetStatus(taskstate.StatusWorking); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeA.Save(oldTask); err != nil {
+		t.Fatal(err)
+	}
+	storeB := taskstate.NewStore(t.TempDir())
+	args, err := json.Marshal(map[string]string{"path": "note.txt", "content": "after\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Workspace = ""
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	fake := &llm.Scripted{Responses: []llm.ChatResponse{
+		toolResponse("write", "write_file", json.RawMessage(args)),
+		{Message: llm.Message{Role: "assistant", Content: "done"}},
+	}}
+	a := agent.New(cfg, fake, tools.NewRegistry(tools.Context{}), perm.New(config.ModeFast, "", nil))
+	a.SetTaskStore(storeA)
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatal(err)
+	}
+	a.SetTaskStore(storeB)
+	if err := a.SetTaskSession(sessionID); err == nil || !strings.Contains(strings.ToLower(err.Error()), "workspace") {
+		t.Fatalf("reattach empty replacement store without workspace = %v, want explicit refusal", err)
+	}
+	if a.TaskSession != sessionID {
+		t.Fatalf("refused empty-store reattachment changed session to %q", a.TaskSession)
+	}
+	if _, err := a.UndoLastTurn(); err == nil || !strings.Contains(strings.ToLower(err.Error()), "reattach") {
+		t.Fatalf("undo after refused empty-store attachment = %v, want reattachment fence", err)
+	}
+	a.UpdateConfig(func(cfg *config.Config) { cfg.Workspace = workspace })
+	if err := a.SetTaskSession(sessionID); err != nil {
+		t.Fatalf("reattach empty store after workspace returns: %v", err)
+	}
+	if got := a.TaskSnapshot(); got != nil {
+		t.Fatalf("empty replacement store attached stale task %#v", got)
+	}
+	_, result, err := a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "update note.txt"}, allowAll{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.UndoAvailable || !a.UndoAvailable() {
+		t.Fatalf("new workspace write did not publish usable undo: %+v", result)
+	}
+	if got, err := os.ReadFile(path); err != nil || string(got) != "after\n" {
+		t.Fatalf("write result = %q, err=%v", got, err)
+	}
+	message, err := a.UndoLastTurn()
+	if err != nil || !strings.Contains(message, "restored note.txt") {
+		t.Fatalf("undo after empty-store reattachment = (%q, %v)", message, err)
+	}
+	assertFreshUndoFileContent(t, path, "before\n")
+}
+
+func newAgentWithoutWorkspace(store *taskstate.Store) *agent.Agent {
+	cfg := config.Default()
+	cfg.Workspace = ""
+	cfg.Mode = config.ModeFast
+	cfg.Provider = config.ProviderOllama
+	a := agent.New(cfg, &llm.Scripted{}, tools.NewRegistry(tools.Context{}), perm.New(config.ModeFast, "", nil))
+	a.SetTaskStore(store)
+	return a
+}
+
+func writeRawDurableTask(t *testing.T, store *taskstate.Store, task *taskstate.Task) {
+	t.Helper()
+	data, err := json.Marshal(task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := store.Path(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertNoWorkspaceTaskStatus(t *testing.T, a *agent.Agent, store *taskstate.Store, sessionID string, want taskstate.Status) *taskstate.Task {
+	t.Helper()
+	got := a.TaskSnapshot()
+	if got == nil || got.Status != want {
+		t.Fatalf("attached task = %#v, want status %q", got, want)
+	}
+	persisted, err := store.OwnershipSnapshot(sessionID)
+	if err != nil || persisted == nil || persisted.Status != want {
+		t.Fatalf("persisted task = %#v, err=%v, want status %q", persisted, err, want)
+	}
+	return got
 }
 
 func TestDurableTaskLoadFailureStopsBeforeProvider(t *testing.T) {

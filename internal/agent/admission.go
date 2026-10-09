@@ -119,7 +119,7 @@ func eligibleForProjectHealthAdmission(prompt string, mode TaskMode, scopeBounda
 func (a *Agent) projectHealthAdmissionFresh(snapshot projectHealthAdmissionSnapshot) bool {
 	current := a.RuntimeSnapshot()
 	binding := a.nativeTaskBinding()
-	if strings.TrimSpace(current.CFG.Workspace) != strings.TrimSpace(snapshot.workspace) ||
+	if !sameUndoWorkspaceIdentity(current.CFG.Workspace, snapshot.workspace) ||
 		current.Goal != snapshot.goal ||
 		current.GoalRevision != snapshot.goalRevision ||
 		current.Tools != snapshot.registry ||
@@ -129,7 +129,7 @@ func (a *Agent) projectHealthAdmissionFresh(snapshot projectHealthAdmissionSnaps
 		binding.generation != snapshot.sessionGeneration {
 		return false
 	}
-	if current.Tools != nil && current.Tools.ContextSnapshot().Workspace != snapshot.registryWorkspace {
+	if current.Tools != nil && !sameUndoWorkspaceIdentity(current.Tools.ContextSnapshot().Workspace, snapshot.registryWorkspace) {
 		return false
 	}
 	return reflect.DeepEqual(snapshot.task, a.TaskSnapshot())
