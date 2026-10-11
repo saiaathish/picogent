@@ -71,7 +71,7 @@ func (a *Agent) refreshPendingAdmissionForNewRun(binding nativeTaskBinding, work
 		undoErr = errors.New("undo recovery is unavailable without a configured workspace")
 	} else {
 		refreshedUndo, undoErr = loadValidatedDurableUndo(workspace, binding.sessionID, binding.generation, task, undoTaskStoreAuthority{store: binding.store, epoch: binding.storeGeneration})
-		if undoErr != nil && !errors.Is(undoErr, errLegacyUndoJournal) {
+		if undoErr != nil && !isLegacyUndoUnavailable(undoErr) {
 			return fmt.Errorf("validate undo recovery after admission conflict: %w", undoErr)
 		}
 	}
