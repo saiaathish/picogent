@@ -208,6 +208,12 @@ func TestDurableWriteDoesNotRequireWritableExistingWorkspaceRoot(t *testing.T) {
 	if sid == "" {
 		t.Fatal("format current process user SID")
 	}
+	// Keep the promised writable subtree independent of inherited root ACLs.
+	// A non-inheritable root ACL otherwise removes inherited child authority
+	// during propagation and tests a denied subtree, not a read-only root.
+	for _, directory := range []string{filepath.Join(root, ".picogent"), filepath.Dir(path)} {
+		setWindowsTestDACL(t, directory, fmt.Sprintf("D:P(A;OICI;FA;;;%s)", sid))
+	}
 	setWindowsTestDACL(t, root, fmt.Sprintf("D:P(A;;GRGX;;;%s)", sid))
 	t.Cleanup(func() {
 		if err := setWindowsPathDACL(root, fmt.Sprintf("D:P(A;OICI;FA;;;%s)", sid)); err != nil {
@@ -217,6 +223,13 @@ func TestDurableWriteDoesNotRequireWritableExistingWorkspaceRoot(t *testing.T) {
 	if handle, err := openWindowsRootWithAccess(root, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE); err == nil {
 		_ = windows.CloseHandle(handle)
 		t.Fatal("test setup left the workspace root writable")
+	}
+	for _, directory := range []string{filepath.Join(root, ".picogent"), filepath.Dir(path)} {
+		handle, err := openWindowsRootWithAccess(directory, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE)
+		if err != nil {
+			t.Fatalf("test setup denied existing writable subtree %s: %v", directory, err)
+		}
+		_ = windows.CloseHandle(handle)
 	}
 
 	if err := WriteAtomicDurableWithModeAndHooks(root, path, []byte("durable\n"), 0o600, WriteHooks{
@@ -228,6 +241,52 @@ func TestDurableWriteDoesNotRequireWritableExistingWorkspaceRoot(t *testing.T) {
 	got, err := os.ReadFile(path)
 	if err != nil || string(got) != "durable\n" {
 		t.Fatalf("journal contents=%q err=%v", got, err)
+	}
+}
+
+func TestDurableWriteRefusesMissingJournalBelowReadOnlyParent(t *testing.T) {
+	root := t.TempDir()
+	parent := filepath.Join(root, ".picogent")
+	path := filepath.Join(parent, "undo", "session.json")
+	if err := os.Mkdir(parent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil || user == nil || user.User.Sid == nil {
+		t.Fatalf("get current process user SID: user=%v err=%v", user, err)
+	}
+	sid := user.User.Sid.String()
+	if sid == "" {
+		t.Fatal("format current process user SID")
+	}
+	t.Cleanup(func() {
+		if err := setWindowsPathDACL(parent, fmt.Sprintf("D:P(A;OICI;FA;;;%s)", sid)); err != nil {
+			t.Errorf("restore parent DACL: %v", err)
+		}
+	})
+	setWindowsTestDACL(t, parent, fmt.Sprintf("D:P(A;;GRGX;;;%s)", sid))
+	assertParentReadOnly := func() {
+		t.Helper()
+		read, err := openWindowsRoot(parent)
+		if err != nil {
+			t.Fatalf("test setup denied read/traverse authority: %v", err)
+		}
+		_ = windows.CloseHandle(read)
+		if handle, err := openWindowsRootWithAccess(parent, windows.FILE_GENERIC_READ|windows.FILE_GENERIC_WRITE); err == nil {
+			_ = windows.CloseHandle(handle)
+			t.Fatal("journal parent unexpectedly writable")
+		}
+	}
+	assertParentReadOnly()
+	if err := WriteAtomicDurableWithModeAndHooks(root, path, []byte("must not publish\n"), 0o600, WriteHooks{
+		CreateParentMode:       0o700,
+		PrivateParentDirectory: true,
+	}); err == nil {
+		t.Fatal("durable write created journal below read-only existing parent")
+	}
+	assertParentReadOnly()
+	if _, err := os.Stat(filepath.Dir(path)); !os.IsNotExist(err) {
+		t.Fatalf("refused write created journal directory: %v", err)
 	}
 }
 
