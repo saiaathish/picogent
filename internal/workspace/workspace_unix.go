@@ -120,12 +120,6 @@ func openWithRootIdentityCheckAndHooks(root, path string, kind openKind, checkRo
 		_ = f.Close()
 		return nil, fmt.Errorf("open workspace file %q: %w", rel, err)
 	}
-	if kind == openLock {
-		if err := f.Chmod(0o600); err != nil {
-			_ = f.Close()
-			return nil, fmt.Errorf("secure workspace lock: %w", err)
-		}
-	}
 	return f, nil
 }
 

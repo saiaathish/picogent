@@ -122,6 +122,9 @@ func ensureUndoWorkspaceInstanceWithHooks(workspacePath string, hooks undoWorksp
 	if hooks.AfterLock != nil {
 		hooks.AfterLock()
 	}
+	if err := verifyUndoWorkspaceFileName(root, marker+".lock", before, lock); err != nil {
+		return undoWorkspaceInstance{}, fmt.Errorf("verify undo workspace marker lock: %w", err)
+	}
 
 	data, err := readUndoWorkspaceFile(root, marker, before, maxUndoWorkspaceMarkerBytes)
 	if errors.Is(err, os.ErrNotExist) {

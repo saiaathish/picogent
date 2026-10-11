@@ -94,6 +94,31 @@ func TestEnsureUndoWorkspaceInstanceDoesNotMutateReplacementRoot(t *testing.T) {
 	}
 }
 
+func TestEnsureUndoWorkspaceInstanceRefusesReplacedLockFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows byte-range locking prevents replacing the exclusively locked marker lock file")
+	}
+	root := t.TempDir()
+	instance, err := ensureUndoWorkspaceInstanceWithHooks(root, undoWorkspaceInitHooks{
+		AfterLock: func() {
+			lockPath := filepath.Join(root, filepath.FromSlash(undoWorkspaceInstanceMarker)+".lock")
+			if err := os.Rename(lockPath, lockPath+".old"); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(lockPath, []byte("replacement lock\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+	})
+	if err == nil || instance.valid() {
+		t.Fatalf("initialization accepted a replaced lock: instance=%+v err=%v", instance, err)
+	}
+	marker := filepath.Join(root, filepath.FromSlash(undoWorkspaceInstanceMarker))
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("initialization created marker after lock replacement: %v", err)
+	}
+}
+
 func TestEnsureUndoWorkspaceInstanceConcurrentInitialization(t *testing.T) {
 	root := t.TempDir()
 	const workers = 8
