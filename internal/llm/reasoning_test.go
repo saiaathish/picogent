@@ -139,6 +139,8 @@ func TestCodexForwardsReasoning(t *testing.T) {
 	stream := strings.Join([]string{
 		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}",
 		"",
+		"data: {\"type\":\"response.completed\"}",
+		"",
 	}, "\n")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
