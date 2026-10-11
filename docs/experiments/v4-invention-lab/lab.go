@@ -124,11 +124,16 @@ const (
 	effectNotStarted effectState = "NOT_STARTED"
 	effectConfirmed  effectState = "CONFIRMED"
 	effectUnknown    effectState = "UNKNOWN_AFTER_CRASH"
+	effectInvalid    effectState = "INVALID_RECEIPT"
 )
 
 // effectStateAfterCrash records only what the caller knows. A missing
-// acknowledgement cannot prove that an external action did not happen.
+// acknowledgement cannot prove that an external action did not happen, and a
+// contradictory receipt cannot prove that it did not start.
 func effectStateAfterCrash(attempted, acknowledged bool) effectState {
+	if acknowledged && !attempted {
+		return effectInvalid
+	}
 	if !attempted {
 		return effectNotStarted
 	}

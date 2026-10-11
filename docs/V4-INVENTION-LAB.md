@@ -44,24 +44,24 @@ Decision: retain this parity check as scaffolding for #807. It neither reconstru
 
 ### 2. Exact-path scope fence
 
-Given a structured allow-list of `README.md`, the fixture checks turn-attributed changes, a rename represented by both paths, path traversal, a pre-existing dirty file omitted from the turn’s path list, and a capped path list. It flags the exact unauthorized paths and returns `INCONCLUSIVE` when attribution is incomplete.
+Given a structured allow-list of `README.md`, the fixture checks current-turn-attributed paths, a rename represented by both paths, path traversal, and a capped path list. It does not validate how turn attribution was produced or distinguish pre-existing dirty paths; those remain explicit limitations. It flags exact unauthorized paths and returns `INCONCLUSIVE` when the supplied attribution is incomplete.
 
 Observed test line:
 
 ```text
-scope-fence: baseline_dirty=ignored allowed=IN_SCOPE drift=SCOPE_DRIFT rename=SCOPE_DRIFT traversal=SCOPE_DRIFT capped=INCONCLUSIVE
+scope-fence: allowed=IN_SCOPE drift=SCOPE_DRIFT rename=SCOPE_DRIFT traversal=SCOPE_DRIFT capped=INCONCLUSIVE
 ```
 
 Decision: defer a product change. This prototype does not translate natural-language constraints into a safe allow-list.
 
 ### 3. Lost-ack external effect
 
-The state-machine fixture models an action that was attempted, may have committed, and lost its acknowledgement before process recovery. It must become `UNKNOWN_AFTER_CRASH`; the runner may not retry it or claim complete undo. A confirmed action and a not-started action remain distinct.
+The state-machine fixture models an action that was attempted, may have committed, and lost its acknowledgement before process recovery. It must become `UNKNOWN_AFTER_CRASH`; the runner may not retry it or claim complete undo. A confirmed action and a not-started action remain distinct. A contradictory receipt (`acknowledged` without `attempted`) becomes `INVALID_RECEIPT` and also fails closed against retry or complete-undo claims.
 
 Observed test line:
 
 ```text
-effect-receipt: lost_ack=UNKNOWN_AFTER_CRASH retry=false undo_complete=false acknowledged=CONFIRMED not_started=NOT_STARTED
+effect-receipt: lost_ack=UNKNOWN_AFTER_CRASH retry=false undo_complete=false acknowledged=CONFIRMED not_started=NOT_STARTED inconsistent=INVALID_RECEIPT retry=false undo_complete=false
 ```
 
 Adversarial result and rejection: a receipt records uncertainty but cannot reconcile the external system. Automatically retrying would risk duplicate effects. A generic receipt/replay feature is rejected; the simpler safe behavior is to mark the effect non-undoable, stop, and tell the user what is unknown.
@@ -80,7 +80,7 @@ Adversarial result and rejection: the label and source identity survive this one
 
 ### 5. Ninety-six-turn retention/cost comparison
 
-The fixture places one historical complete tool exchange before 95 later user turns, then compares a 10-message `ValueAwareWindow` with `TruncateTail`. Both preserve the newest turn and its complete tool exchange. The value-aware window retains the historical target; the recency control does not. The retained value-aware output has no orphan tool result.
+The fixture places one historical complete tool exchange before 95 later user turns, then compares a 10-message `ValueAwareWindow` with `TruncateTail`. Both preserve the newest turn and its complete tool exchange. The value-aware window retains the historical target and the test asserts the recency control does not. The retained value-aware output has no orphan tool result.
 
 Observed test line:
 

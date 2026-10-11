@@ -34,8 +34,6 @@ func TestPrototypeTelemetryParityRejectsMissingAndDuplicateFields(t *testing.T) 
 
 func TestPrototypeScopeFenceUsesTurnAttribution(t *testing.T) {
 	allowed := []string{"README.md"}
-	// internal/preexisting.go is dirty before the turn and is deliberately not
-	// included in turnChangedPaths.
 	within := inspectExactScope(allowed, []string{"./README.md"}, false)
 	drift := inspectExactScope(allowed, []string{"README.md", "internal/agent.go"}, false)
 	rename := inspectExactScope(allowed, []string{"README.md", "docs/renamed.md"}, false)
@@ -45,13 +43,14 @@ func TestPrototypeScopeFenceUsesTurnAttribution(t *testing.T) {
 		traversal.status != scopeDrift || capped.status != scopeInconclusive {
 		t.Fatalf("scope results within=%#v drift=%#v rename=%#v traversal=%#v capped=%#v", within, drift, rename, traversal, capped)
 	}
-	t.Logf("scope-fence: baseline_dirty=ignored allowed=%s drift=%s rename=%s traversal=%s capped=%s", within.status, drift.status, rename.status, traversal.status, capped.status)
+	t.Logf("scope-fence: allowed=%s drift=%s rename=%s traversal=%s capped=%s", within.status, drift.status, rename.status, traversal.status, capped.status)
 }
 
 func TestPrototypeExternalEffectReceiptFailsClosedOnLostAck(t *testing.T) {
 	unknown := effectStateAfterCrash(true, false)
 	confirmed := effectStateAfterCrash(true, true)
 	notStarted := effectStateAfterCrash(false, false)
+	invalid := effectStateAfterCrash(false, true)
 	if unknown != effectUnknown || effectMayBeRetried(unknown) || effectUndoCanBeDeclaredComplete(unknown) {
 		t.Fatalf("lost acknowledgement was treated as safe to retry/undo: state=%s retry=%v undo_complete=%v", unknown, effectMayBeRetried(unknown), effectUndoCanBeDeclaredComplete(unknown))
 	}
@@ -61,7 +60,10 @@ func TestPrototypeExternalEffectReceiptFailsClosedOnLostAck(t *testing.T) {
 	if notStarted != effectNotStarted || !effectMayBeRetried(notStarted) {
 		t.Fatalf("unstarted external effect was not distinguished: state=%s", notStarted)
 	}
-	t.Logf("effect-receipt: lost_ack=%s retry=false undo_complete=false acknowledged=%s not_started=%s", unknown, confirmed, notStarted)
+	if invalid != effectInvalid || effectMayBeRetried(invalid) || effectUndoCanBeDeclaredComplete(invalid) {
+		t.Fatalf("contradictory external-effect receipt was treated as safe: state=%s retry=%v undo_complete=%v", invalid, effectMayBeRetried(invalid), effectUndoCanBeDeclaredComplete(invalid))
+	}
+	t.Logf("effect-receipt: lost_ack=%s retry=false undo_complete=false acknowledged=%s not_started=%s inconsistent=%s retry=false undo_complete=false", unknown, confirmed, notStarted, invalid)
 }
 
 func TestPrototypeToolTrustLabelSurvivesStaleDigest(t *testing.T) {
@@ -93,6 +95,9 @@ func TestPrototypeRetentionQualityBound96Turns(t *testing.T) {
 	}
 	if !containsToolPair(valueAware, "latest-complete") || !containsToolPair(recency, "latest-complete") {
 		t.Fatalf("a window lost the newest complete tool exchange: value-aware=%v recency=%v", containsToolPair(valueAware, "latest-complete"), containsToolPair(recency, "latest-complete"))
+	}
+	if !hasTargetPair(valueAware) || hasTargetPair(recency) {
+		t.Fatalf("historical target coverage changed: value-aware=%v recency=%v", hasTargetPair(valueAware), hasTargetPair(recency))
 	}
 	assertCompleteToolPairs(t, valueAware)
 	assertCompleteToolPairs(t, recency)
