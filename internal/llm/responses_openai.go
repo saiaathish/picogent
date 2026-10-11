@@ -50,9 +50,5 @@ func openAIResponsesChat(ctx context.Context, httpClient *http.Client, url, bear
 		payload, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 		return ChatResponse{}, fmt.Errorf("opencode responses http %d: %s", res.StatusCode, truncate(string(payload), 400))
 	}
-	msg, err := readResponsesStream(res.Body, req.OnDelta)
-	if err != nil {
-		return ChatResponse{}, err
-	}
-	return ChatResponse{Message: msg}, nil
+	return readResponsesStream(res.Body, req.OnDelta)
 }

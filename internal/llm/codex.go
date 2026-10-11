@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 )
 
 const defaultCodexURL = "https://chatgpt.com/backend-api/codex"
+
+var errCodexUnauthorized = errors.New("codex http 401")
 
 type TokenSource interface {
 	Token(ctx context.Context) (access, account string, err error)
@@ -60,13 +63,13 @@ func NewCodex(model string) *Codex {
 }
 
 type responsesReq struct {
-	Model        string             `json:"model"`
-	Instructions string             `json:"instructions,omitempty"`
-	Input        []any              `json:"input"`
-	Tools        []responsesTool    `json:"tools,omitempty"`
-	ToolChoice   string             `json:"tool_choice,omitempty"`
-	Store        bool               `json:"store"`
-	Stream       bool               `json:"stream"`
+	Model        string              `json:"model"`
+	Instructions string              `json:"instructions,omitempty"`
+	Input        []any               `json:"input"`
+	Tools        []responsesTool     `json:"tools,omitempty"`
+	ToolChoice   string              `json:"tool_choice,omitempty"`
+	Store        bool                `json:"store"`
+	Stream       bool                `json:"stream"`
 	Reasoning    *responsesReasoning `json:"reasoning,omitempty"`
 }
 
@@ -82,16 +85,17 @@ type responsesTool struct {
 }
 
 func (c *Codex) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
-	out, err := c.chatOnce(ctx, req, false)
-	if err != nil && isAuthErr(err) {
+	out, err := c.chatOnce(ctx, req)
+	// Only an HTTP 401 before streaming is safe to replay. A stream error can
+	// consume tokens even when no visible text or usage has arrived yet.
+	if errors.Is(err, errCodexUnauthorized) {
 		_ = c.Tokens.ForceRefresh(ctx)
-		return c.chatOnce(ctx, req, true)
+		return c.chatOnce(ctx, req)
 	}
 	return out, err
 }
 
-func (c *Codex) chatOnce(ctx context.Context, req ChatRequest, retried bool) (ChatResponse, error) {
-	_ = retried
+func (c *Codex) chatOnce(ctx context.Context, req ChatRequest) (ChatResponse, error) {
 	access, account, err := c.Tokens.Token(ctx)
 	if err != nil {
 		return ChatResponse{}, err
@@ -142,25 +146,13 @@ func (c *Codex) chatOnce(ctx context.Context, req ChatRequest, retried bool) (Ch
 	}
 	defer res.Body.Close()
 	if res.StatusCode == http.StatusUnauthorized {
-		return ChatResponse{}, fmt.Errorf("codex http 401")
+		return ChatResponse{}, errCodexUnauthorized
 	}
 	if res.StatusCode >= 400 {
 		payload, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 		return ChatResponse{}, fmt.Errorf("codex http %d: %s", res.StatusCode, truncate(string(payload), 400))
 	}
-	msg, err := readResponsesStream(res.Body, req.OnDelta)
-	if err != nil {
-		return ChatResponse{}, err
-	}
-	return ChatResponse{Message: msg}, nil
-}
-
-func isAuthErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "http 401") || strings.Contains(s, "unauthorized")
+	return readResponsesStream(res.Body, req.OnDelta)
 }
 
 func toResponsesTools(in []ToolSpec) []responsesTool {
@@ -265,12 +257,22 @@ func responsesUserContent(text string, parts []Part) []map[string]any {
 	return content
 }
 
-func readResponsesStream(r io.Reader, onDelta func(string)) (Message, error) {
+func readResponsesStream(r io.Reader, onDelta func(string)) (ChatResponse, error) {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 4<<20)
 	var event, data string
 	var text strings.Builder
 	var calls []ToolCall
+	var promptTokens, completionTokens int
+	var usageReported, completed bool
+	snapshot := func() ChatResponse {
+		return ChatResponse{
+			Message:          Message{Role: "assistant", Content: text.String(), ToolCalls: calls},
+			PromptTokens:     promptTokens,
+			CompletionTokens: completionTokens,
+			UsageReported:    usageReported,
+		}
+	}
 	flush := func() error {
 		if strings.TrimSpace(data) == "" {
 			event, data = "", ""
@@ -281,15 +283,36 @@ func readResponsesStream(r io.Reader, onDelta func(string)) (Message, error) {
 			return nil
 		}
 		var payload map[string]any
-		if err := json.Unmarshal([]byte(data), &payload); err != nil {
-			event, data = "", ""
-			return nil
+		decoder := json.NewDecoder(strings.NewReader(data))
+		decoder.UseNumber()
+		if err := decoder.Decode(&payload); err != nil {
+			return fmt.Errorf("decode responses stream event: %w", err)
+		}
+		if payload == nil {
+			return fmt.Errorf("responses stream event must be an object")
+		}
+		if err := decoder.Decode(new(any)); err != io.EOF {
+			return fmt.Errorf("responses stream event contains trailing data")
 		}
 		typ, _ := payload["type"].(string)
 		if typ == "" {
 			typ = event
 		}
+		response, _ := payload["response"].(map[string]any)
+		if typ == "response.completed" || typ == "response.failed" || typ == "response.incomplete" {
+			promptTokens, completionTokens, usageReported = responsesStreamUsage(response)
+		}
 		switch typ {
+		case "response.completed":
+			completed = true
+		case "response.incomplete":
+			reason := "unspecified reason"
+			if details, _ := response["incomplete_details"].(map[string]any); details != nil {
+				if value, _ := details["reason"].(string); value != "" {
+					reason = value
+				}
+			}
+			return fmt.Errorf("responses stream incomplete: %s", reason)
 		case "response.output_text.delta":
 			if d, _ := payload["delta"].(string); d != "" {
 				text.WriteString(d)
@@ -298,8 +321,15 @@ func readResponsesStream(r io.Reader, onDelta func(string)) (Message, error) {
 				}
 			}
 		case "response.failed", "error", "response.error":
-			msg := "codex stream error"
-			if e, _ := payload["error"].(map[string]any); e != nil {
+			msg := "responses stream error"
+			if m, _ := payload["message"].(string); m != "" {
+				msg = m
+			}
+			e, _ := payload["error"].(map[string]any)
+			if e == nil {
+				e, _ = response["error"].(map[string]any)
+			}
+			if e != nil {
 				if m, _ := e["message"].(string); m != "" {
 					msg = m
 				}
@@ -336,7 +366,7 @@ func readResponsesStream(r io.Reader, onDelta func(string)) (Message, error) {
 		line := strings.TrimRight(sc.Text(), "\r")
 		if line == "" {
 			if err := flush(); err != nil {
-				return Message{}, err
+				return snapshot(), err
 			}
 			continue
 		}
@@ -353,12 +383,39 @@ func readResponsesStream(r io.Reader, onDelta func(string)) (Message, error) {
 		}
 	}
 	if err := flush(); err != nil {
-		return Message{}, err
+		return snapshot(), err
 	}
 	if err := sc.Err(); err != nil {
-		return Message{}, err
+		return snapshot(), err
 	}
-	return Message{Role: "assistant", Content: text.String(), ToolCalls: calls}, nil
+	if !completed {
+		return snapshot(), fmt.Errorf("responses stream closed before completion")
+	}
+	return snapshot(), nil
+}
+
+// Terminal usage is a snapshot, not a delta. Keep available counters even if
+// the pair is incomplete, but only mark a fully valid pair as reported.
+func responsesStreamUsage(response map[string]any) (int, int, bool) {
+	usage, _ := response["usage"].(map[string]any)
+	input, inputOK := responsesStreamTokenCount(usage["input_tokens"])
+	output, outputOK := responsesStreamTokenCount(usage["output_tokens"])
+	if input > int(^uint(0)>>1)-output {
+		return 0, 0, false
+	}
+	return input, output, inputOK && outputOK
+}
+
+func responsesStreamTokenCount(raw any) (int, bool) {
+	number, ok := raw.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	value, err := number.Int64()
+	if err != nil || value < 0 || uint64(value) > uint64(^uint(0)>>1) {
+		return 0, false
+	}
+	return int(value), true
 }
 
 func extractItemText(item map[string]any) string {

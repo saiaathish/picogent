@@ -100,7 +100,7 @@ func TestCodexRequiresStreamTrue(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"pong\"}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"pong\"}\n\ndata: {\"type\":\"response.completed\"}\n\n"))
 	}))
 	defer srv.Close()
 	c := &Codex{BaseURL: srv.URL, Tokens: fakeTok{access: "t"}, HTTP: srv.Client(), Originator: "x"}
