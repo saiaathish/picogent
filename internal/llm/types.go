@@ -52,6 +52,10 @@ type ChatResponse struct {
 	Message          Message
 	PromptTokens     int
 	CompletionTokens int
+	// UsageReported is true when the provider reports both valid token counts.
+	// False means the counts may be partial or unavailable; zero is not proof
+	// that a request consumed no tokens. Legacy clients may leave this unset.
+	UsageReported bool
 }
 
 type Client interface {
