@@ -1,12 +1,71 @@
 package agent
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/saiaathish/picogent/internal/securefile"
+	"github.com/saiaathish/picogent/internal/workspace"
 )
+
+func TestReadUndoWorkspaceFileRefusesReplacedLeafAfterLock(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "marker")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := readUndoWorkspaceFileWithHooks(root, path, identity, maxUndoWorkspaceMarkerBytes, func() {
+		if err := os.Rename(path, filepath.Join(root, "old-marker")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("new\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !errors.Is(err, securefile.ErrReadChanged) || data != nil {
+		t.Fatalf("stale locked read = %q, %v", data, err)
+	}
+}
+
+func TestEnsureUndoWorkspaceInstanceDoesNotMutateReplacementRoot(t *testing.T) {
+	for _, point := range []string{"after-identity", "after-lock"} {
+		t.Run(point, func(t *testing.T) {
+			parent := t.TempDir()
+			root := filepath.Join(parent, "workspace")
+			if err := os.Mkdir(root, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			swap := func() {
+				if err := os.Rename(root, filepath.Join(parent, "original")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Mkdir(root, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			hooks := undoWorkspaceInitHooks{}
+			if point == "after-identity" {
+				hooks.AfterIdentity = swap
+			} else {
+				hooks.AfterLock = swap
+			}
+			if instance, err := ensureUndoWorkspaceInstanceWithHooks(root, hooks); err == nil || instance.valid() {
+				t.Fatalf("replacement root initialized: instance=%+v err=%v", instance, err)
+			}
+			if _, err := os.Stat(filepath.Join(root, ".picogent")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("refused initialization mutated replacement root: %v", err)
+			}
+		})
+	}
+}
 
 func TestEnsureUndoWorkspaceInstanceConcurrentInitialization(t *testing.T) {
 	root := t.TempDir()

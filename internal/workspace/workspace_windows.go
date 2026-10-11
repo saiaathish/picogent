@@ -19,6 +19,7 @@ const (
 	openRead openKind = iota
 	openWrite
 	openEdit
+	openLock
 )
 
 func isWorkspaceNotExist(err error) bool {
@@ -62,8 +63,42 @@ func openWithRootIdentityCheckAndHooks(root, path string, kind openKind, checkRo
 		}
 	}
 	current := parent
-	for _, part := range parts[:len(parts)-1] {
+	for index, part := range parts[:len(parts)-1] {
 		child, openErr := openWindowsDirectory(current, part, kind == openWrite)
+		if kind == openLock && errors.Is(openErr, os.ErrNotExist) {
+			// Reopen only for the flush authority needed to create a child,
+			// then match that handle to the already-anchored parent.
+			durableParent, parentErr := openWorkspaceDurableParent(root, parts[:index])
+			if parentErr != nil {
+				_ = windows.CloseHandle(current)
+				return nil, parentErr
+			}
+			opened, identityErr := workspaceRootIdentityForHandle(current)
+			durable, durableErr := workspaceRootIdentityForHandle(durableParent)
+			if identityErr != nil || durableErr != nil || !opened.Known || opened != durable {
+				_ = windows.CloseHandle(durableParent)
+				_ = windows.CloseHandle(current)
+				return nil, errors.Join(ErrRootIdentityChanged, identityErr, durableErr)
+			}
+			security, securityErr := privateWindowsSecurityDescriptor(true)
+			if securityErr == nil {
+				securityErr = windows.FlushFileBuffers(durableParent)
+			}
+			if securityErr == nil {
+				child, openErr = createPrivateWindowsDirectory(current, part, windows.FILE_GENERIC_READ|windows.READ_CONTROL|windows.WRITE_DAC, security)
+				if openErr == nil {
+					securityErr = windows.FlushFileBuffers(durableParent)
+				}
+			}
+			_ = windows.CloseHandle(durableParent)
+			if securityErr != nil {
+				if child != 0 {
+					_ = windows.CloseHandle(child)
+				}
+				_ = windows.CloseHandle(current)
+				return nil, securityErr
+			}
+		}
 		if openErr != nil {
 			_ = windows.CloseHandle(current)
 			if checkRootIdentity != nil && isWorkspaceNotExist(openErr) {
@@ -346,11 +381,18 @@ func openWindowsFile(parent windows.Handle, name string, kind openKind) (windows
 	var allocation int64
 	access := uint32(windows.FILE_GENERIC_READ)
 	disposition := uint32(windows.FILE_OPEN)
-	if kind == openWrite {
+	if kind == openWrite || kind == openLock {
 		access = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE
 		disposition = windows.FILE_OPEN_IF
 	} else if kind == openEdit {
 		access = windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE
+	}
+	if kind == openLock {
+		security, err := privateWindowsSecurityDescriptor(false)
+		if err != nil {
+			return 0, err
+		}
+		oa.SecurityDescriptor = security
 	}
 	var handle windows.Handle
 	err = windows.NtCreateFile(

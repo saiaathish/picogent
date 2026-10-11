@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/checkpoint"
-	"github.com/saiaathish/picogent/internal/securefile"
 	"github.com/saiaathish/picogent/internal/workspace"
 )
 
@@ -220,6 +219,10 @@ func saveUndoJournalWithHooks(workspacePath, sessionID string, journal undoJourn
 }
 
 func loadUndoJournal(workspacePath, sessionID string, pending bool) (*undoJournal, error) {
+	return loadUndoJournalWithHooks(workspacePath, sessionID, pending, nil)
+}
+
+func loadUndoJournalWithHooks(workspacePath, sessionID string, pending bool, afterValidation func()) (*undoJournal, error) {
 	sealedPath, pendingPath, err := undoJournalPaths(workspacePath, sessionID)
 	if err != nil {
 		return nil, err
@@ -229,19 +232,45 @@ func loadUndoJournal(workspacePath, sessionID string, pending bool) (*undoJourna
 		path = pendingPath
 	}
 	root := filepath.Dir(filepath.Dir(filepath.Dir(sealedPath)))
-	if err := workspace.SecurePrivateDirectoryAndFiles(root, filepath.Dir(path)); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, os.ErrNotExist
-		}
-		return nil, fmt.Errorf("secure undo journal storage: %w", err)
+	expectedRoot, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		return nil, fmt.Errorf("identify undo journal workspace: %w", err)
 	}
-	data, err := securefile.ReadFileLimited(path, undoJournalMaxBytes)
+	data, err := readUndoWorkspaceFile(root, path, expectedRoot, undoJournalMaxBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, os.ErrNotExist
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read undo journal: %w", err)
 	}
+	journal, err := decodeUndoJournal(data, workspacePath, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	// Legacy records remain parseable for compatibility but carry no trusted
+	// filesystem-instance owner. They never authorize permission migration.
+	if journal.Version < undoJournalVersion {
+		return journal, nil
+	}
+	if journal.WorkspaceInstance.Directory != expectedRoot {
+		return nil, workspace.ErrRootIdentityChanged
+	}
+	if afterValidation != nil {
+		afterValidation()
+	}
+	if err := workspace.SecurePrivateDirectoryAndFilesWithRootIdentity(root, filepath.Dir(path), expectedRoot); err != nil {
+		return nil, fmt.Errorf("secure owned undo journal storage: %w", err)
+	}
+	// Consume the private snapshot, not the pre-migration bytes. Revalidate
+	// both journal ownership and the root used to reach it after hardening.
+	data, err = readUndoWorkspaceFile(root, path, expectedRoot, undoJournalMaxBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read secured undo journal: %w", err)
+	}
+	return decodeUndoJournal(data, workspacePath, sessionID)
+}
+
+func decodeUndoJournal(data []byte, workspacePath, sessionID string) (*undoJournal, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	var journal undoJournal

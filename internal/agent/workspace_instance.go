@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,7 +55,7 @@ func readUndoWorkspaceInstance(workspacePath string) (undoWorkspaceInstance, err
 	if err != nil {
 		return undoWorkspaceInstance{}, fmt.Errorf("identify undo workspace: %w", err)
 	}
-	data, err := securefile.ReadFileLimited(marker, maxUndoWorkspaceMarkerBytes)
+	data, err := readUndoWorkspaceFile(root, marker, before, maxUndoWorkspaceMarkerBytes)
 	if err != nil {
 		return undoWorkspaceInstance{}, fmt.Errorf("read undo workspace marker: %w", err)
 	}
@@ -88,6 +89,15 @@ func validateUndoWorkspaceInstance(workspacePath string, expected undoWorkspaceI
 }
 
 func ensureUndoWorkspaceInstance(workspacePath string) (undoWorkspaceInstance, error) {
+	return ensureUndoWorkspaceInstanceWithHooks(workspacePath, undoWorkspaceInitHooks{})
+}
+
+type undoWorkspaceInitHooks struct {
+	AfterIdentity func()
+	AfterLock     func()
+}
+
+func ensureUndoWorkspaceInstanceWithHooks(workspacePath string, hooks undoWorkspaceInitHooks) (undoWorkspaceInstance, error) {
 	root, marker, err := undoWorkspaceMarkerPath(workspacePath)
 	if err != nil {
 		return undoWorkspaceInstance{}, err
@@ -96,10 +106,10 @@ func ensureUndoWorkspaceInstance(workspacePath string) (undoWorkspaceInstance, e
 	if err != nil {
 		return undoWorkspaceInstance{}, fmt.Errorf("identify undo workspace: %w", err)
 	}
-	if err := securefile.EnsureDir(filepath.Dir(marker), 0o700); err != nil {
-		return undoWorkspaceInstance{}, fmt.Errorf("prepare undo workspace marker: %w", err)
+	if hooks.AfterIdentity != nil {
+		hooks.AfterIdentity()
 	}
-	lock, err := securefile.OpenLockFile(marker + ".lock")
+	lock, err := workspace.OpenLockWithRootIdentity(root, marker+".lock", before)
 	if err != nil {
 		return undoWorkspaceInstance{}, fmt.Errorf("open undo workspace marker lock: %w", err)
 	}
@@ -109,8 +119,11 @@ func ensureUndoWorkspaceInstance(workspacePath string) (undoWorkspaceInstance, e
 		return undoWorkspaceInstance{}, fmt.Errorf("lock undo workspace marker: %w", err)
 	}
 	defer unlock()
+	if hooks.AfterLock != nil {
+		hooks.AfterLock()
+	}
 
-	data, err := securefile.ReadFileLimited(marker, maxUndoWorkspaceMarkerBytes)
+	data, err := readUndoWorkspaceFile(root, marker, before, maxUndoWorkspaceMarkerBytes)
 	if errors.Is(err, os.ErrNotExist) {
 		token, tokenErr := newUndoWorkspaceToken()
 		if tokenErr != nil {
@@ -118,10 +131,19 @@ func ensureUndoWorkspaceInstance(workspacePath string) (undoWorkspaceInstance, e
 		}
 		// Publish the first marker atomically. A direct exclusive write can be
 		// left truncated if the process exits while writing its first token.
-		if writeErr := securefile.WriteAtomicDurable(marker, []byte(token+"\n"), 0o600); writeErr != nil {
+		writeHooks := workspace.WriteHooks{
+			CreateParentMode: 0o700,
+			CheckRootIdentity: func(actual workspace.Identity) error {
+				if !actual.Known || actual != before {
+					return workspace.ErrRootIdentityChanged
+				}
+				return nil
+			},
+		}
+		if writeErr := workspace.WriteAtomicDurableWithModeAndHooks(root, marker, []byte(token+"\n"), 0o600, writeHooks); writeErr != nil {
 			return undoWorkspaceInstance{}, fmt.Errorf("create undo workspace marker: %w", writeErr)
 		}
-		data, err = securefile.ReadFileLimited(marker, maxUndoWorkspaceMarkerBytes)
+		data, err = readUndoWorkspaceFile(root, marker, before, maxUndoWorkspaceMarkerBytes)
 	}
 	if err != nil {
 		return undoWorkspaceInstance{}, fmt.Errorf("read undo workspace marker: %w", err)
@@ -138,6 +160,51 @@ func ensureUndoWorkspaceInstance(workspacePath string) (undoWorkspaceInstance, e
 		return undoWorkspaceInstance{}, errors.New("undo workspace changed while initializing its marker")
 	}
 	return instance, nil
+}
+
+// readUndoWorkspaceFile never creates or changes permissions. Root identity is
+// checked on the native directory handle used to reach the regular file.
+func readUndoWorkspaceFile(root, path string, expected workspace.Identity, maxBytes int) ([]byte, error) {
+	return readUndoWorkspaceFileWithHooks(root, path, expected, maxBytes, nil)
+}
+
+func readUndoWorkspaceFileWithHooks(root, path string, expected workspace.Identity, maxBytes int, afterLock func()) ([]byte, error) {
+	file, err := workspace.OpenReadWithRootIdentity(root, path, expected)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := securefile.LockFile(file, false)
+	if err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	if afterLock != nil {
+		afterLock()
+	}
+	// Lock acquisition can wait while a writer replaces the named inode.
+	// Reopen through the same expected root and refuse a stale descriptor.
+	openedInfo, statErr := file.Stat()
+	if statErr != nil {
+		return nil, errors.Join(statErr, unlock(), file.Close())
+	}
+	named, nameErr := workspace.OpenReadWithRootIdentity(root, path, expected)
+	if nameErr != nil {
+		return nil, errors.Join(nameErr, unlock(), file.Close())
+	}
+	namedInfo, statErr := named.Stat()
+	closeErr := named.Close()
+	if statErr == nil && !os.SameFile(openedInfo, namedInfo) {
+		statErr = securefile.ErrReadChanged
+	}
+	if statErr != nil || closeErr != nil {
+		return nil, errors.Join(statErr, closeErr, unlock(), file.Close())
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, int64(maxBytes)+1))
+	if len(data) > maxBytes {
+		data = nil
+		readErr = securefile.ErrReadLimit
+	}
+	err = errors.Join(readErr, unlock(), file.Close())
+	return data, err
 }
 
 func newUndoWorkspaceToken() (string, error) {

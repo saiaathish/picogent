@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,7 +13,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func TestLoadUndoJournalHardensExistingWindowsStorageBeforeRead(t *testing.T) {
+func TestLoadUndoJournalHardensExistingWindowsStorageAfterOwnershipValidation(t *testing.T) {
 	a, _, task := newDurableUndoFixture(t, taskstate.StatusWorking)
 	root := a.ConfigSnapshot().Workspace
 	instance := testUndoWorkspaceInstance(t, root)
@@ -78,6 +79,62 @@ func TestLoadUndoJournalHardensExistingWindowsStorageBeforeRead(t *testing.T) {
 	assertAgentWindowsEveryoneDACL(t, rulesPath)
 	if rules, err := os.ReadFile(rulesPath); err != nil || string(rules) != "shared project rules\n" {
 		t.Fatalf("shared project rules=%q err=%v", rules, err)
+	}
+}
+
+func TestLoadUndoJournalRejectsForeignInstanceWithoutDACLChanges(t *testing.T) {
+	a, _, task := newDurableUndoFixture(t, taskstate.StatusWorking)
+	root := a.ConfigSnapshot().Workspace
+	instance := testUndoWorkspaceInstance(t, root)
+	identity, err := undoWorkspaceIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := a.latestUndo.checkpoint.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := undoJournal{
+		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity,
+		WorkspaceInstance: instance, SessionID: task.SessionID,
+		TurnSequence: task.LastTurn().Sequence, TaskID: task.ID,
+		IntentRevision: task.LastTurn().IntentRevision, Checkpoint: record,
+	}
+	if err := saveUndoJournal(root, task.SessionID, journal, false); err != nil {
+		t.Fatal(err)
+	}
+	sealedPath, _, err := undoJournalPaths(root, task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A structurally valid record copied from a different filesystem instance.
+	journal.WorkspaceInstance.Directory.File ^= 1
+	data, err := json.Marshal(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealedPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	undoDir := filepath.Dir(sealedPath)
+	sibling := filepath.Join(undoDir, "unrelated.json")
+	if err := os.WriteFile(sibling, []byte("unchanged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{undoDir, sealedPath, sibling} {
+		setAgentWindowsJournalDACL(t, path, "D:P(A;;FA;;;WD)")
+	}
+	if loaded, err := loadUndoJournal(root, task.SessionID, false); err == nil || loaded != nil {
+		t.Fatalf("foreign-instance load = (%#v, %v)", loaded, err)
+	}
+	for _, path := range []string{undoDir, sealedPath, sibling} {
+		assertAgentWindowsEveryoneDACL(t, path)
+	}
+	if after, err := os.ReadFile(sealedPath); err != nil || string(after) != string(data) {
+		t.Fatalf("rejected journal changed: err=%v unchanged=%v", err, string(after) == string(data))
+	}
+	if after, err := os.ReadFile(sibling); err != nil || string(after) != "unchanged\n" {
+		t.Fatalf("unowned sibling changed: %q err=%v", after, err)
 	}
 }
 

@@ -407,7 +407,7 @@ func createPrivateWindowsDirectory(parent windows.Handle, name string, access ui
 	return 0, errors.New("workspace directory changed repeatedly during private creation")
 }
 
-func securePrivateDirectoryAndFiles(root string, parts []string) error {
+func securePrivateDirectoryAndFiles(root string, parts []string, checkRootIdentity RootIdentityCheck) error {
 	directorySecurity, err := privateWindowsSecurityDescriptor(true)
 	if err != nil {
 		return fmt.Errorf("prepare private workspace directory security: %w", err)
@@ -421,6 +421,15 @@ func securePrivateDirectoryAndFiles(root string, parts []string) error {
 		return fmt.Errorf("open workspace directory: %w", err)
 	}
 	defer func() { _ = windows.CloseHandle(current) }()
+	if checkRootIdentity != nil {
+		identity, err := workspaceRootIdentityForHandle(current)
+		if err != nil {
+			return fmt.Errorf("identify private storage workspace root: %w", err)
+		}
+		if err := checkRootIdentity(identity); err != nil {
+			return err
+		}
+	}
 	for index, part := range parts {
 		access := uint32(windows.FILE_GENERIC_READ)
 		if index == len(parts)-1 {
