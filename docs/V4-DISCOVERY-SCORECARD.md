@@ -552,3 +552,20 @@ production-release readiness, or a general filesystem race guarantee. The
 hosted attestation itself is confirmed for the bounded evidence subjects, while
 the independent audit remains `INCONCLUSIVE` for release authorization. Parent
 #246 remains open while those boundaries remain unresolved.
+
+## Invention ledger checkpoint (2026-10-11)
+
+The v4 candidate ledger and five deterministic prototypes are recorded in
+[`V4-INVENTION-LAB.md`](V4-INVENTION-LAB.md), measured against product source
+`b291e2db3c56984e4f7e06b35c9582b5b9e1f391` with a test-only harness at
+`6ba2714a321d87ed6bdd75c46d8310554e154d1f`. In the 96-turn local fixture,
+both strategies preserved the latest complete tool exchange; value-aware
+retention also preserved one older complete exchange while the tail control
+did not. The value-aware strategy allocated `226,384 B/op` and `608 allocs/op`
+versus `2,192 B/op` and `3 allocs/op` for the control in one Apple M3 / Go
+1.26.9 run. This is a bounded synthetic cost/coverage measurement, not a
+product SLA or broad context-quality claim.
+
+The prior 80/80 comparison remains `INCONCLUSIVE`. Matched real engineering
+tasks remain separately tracked by #807; no v4 quality win or release
+readiness is inferred from this invention slice.
