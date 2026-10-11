@@ -91,8 +91,12 @@ func TestPrototypeRetentionQualityBound96Turns(t *testing.T) {
 	if len(valueAware) > 10 || !containsText(valueAware, "latest request") || !containsText(valueAware, "latest response") {
 		t.Fatalf("value-aware window broke its live bound/latest turn: messages=%d", len(valueAware))
 	}
+	if !containsToolPair(valueAware, "latest-complete") || !containsToolPair(recency, "latest-complete") {
+		t.Fatalf("a window lost the newest complete tool exchange: value-aware=%v recency=%v", containsToolPair(valueAware, "latest-complete"), containsToolPair(recency, "latest-complete"))
+	}
 	assertCompleteToolPairs(t, valueAware)
-	t.Logf("retention-96: turns=96 value_aware_target=%t value_aware_messages=%d recency_target=%t recency_messages=%d", hasTargetPair(valueAware), len(valueAware), hasTargetPair(recency), len(recency))
+	assertCompleteToolPairs(t, recency)
+	t.Logf("retention-96: turns=96 value_aware_target=%t value_aware_latest_pair=true value_aware_messages=%d recency_target=%t recency_latest_pair=true recency_messages=%d", hasTargetPair(valueAware), len(valueAware), hasTargetPair(recency), len(recency))
 }
 
 func zeroMetrics(names []string) []metricSample {
@@ -138,6 +142,8 @@ func retentionFixture96() []llm.Message {
 	}
 	messages = append(messages,
 		llm.Message{Role: "user", Content: "latest request"},
+		llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ID: "latest-complete", Name: "inspect", Arguments: `{}`}}},
+		llm.Message{Role: "tool", ToolCallID: "latest-complete", Name: "inspect", Content: "latest tool result"},
 		llm.Message{Role: "assistant", Content: "latest response"},
 	)
 	return messages
@@ -153,14 +159,18 @@ func containsText(messages []llm.Message, want string) bool {
 }
 
 func hasTargetPair(messages []llm.Message) bool {
+	return containsToolPair(messages, "retention-target")
+}
+
+func containsToolPair(messages []llm.Message, id string) bool {
 	call, result := false, false
 	for _, message := range messages {
 		if message.Role == "assistant" {
 			for _, toolCall := range message.ToolCalls {
-				call = call || toolCall.ID == "retention-target"
+				call = call || toolCall.ID == id
 			}
 		}
-		if message.Role == "tool" && message.ToolCallID == "retention-target" {
+		if message.Role == "tool" && message.ToolCallID == id {
 			result = true
 		}
 	}
