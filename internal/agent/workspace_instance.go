@@ -93,8 +93,9 @@ func ensureUndoWorkspaceInstance(workspacePath string) (undoWorkspaceInstance, e
 }
 
 type undoWorkspaceInitHooks struct {
-	AfterIdentity func()
-	AfterLock     func()
+	AfterIdentity            func()
+	AfterLock                func()
+	AfterMarkerReadNameCheck func()
 }
 
 func ensureUndoWorkspaceInstanceWithHooks(workspacePath string, hooks undoWorkspaceInitHooks) (undoWorkspaceInstance, error) {
@@ -126,8 +127,8 @@ func ensureUndoWorkspaceInstanceWithHooks(workspacePath string, hooks undoWorksp
 		return undoWorkspaceInstance{}, fmt.Errorf("verify undo workspace marker lock: %w", err)
 	}
 
-	data, err := readUndoWorkspaceFile(root, marker, before, maxUndoWorkspaceMarkerBytes)
-	if errors.Is(err, os.ErrNotExist) {
+	data, err := readUndoWorkspaceFileWithHooks(root, marker, before, maxUndoWorkspaceMarkerBytes, nil, hooks.AfterMarkerReadNameCheck)
+	if isMissingUndoWorkspaceFile(err) {
 		token, tokenErr := newUndoWorkspaceToken()
 		if tokenErr != nil {
 			return undoWorkspaceInstance{}, tokenErr
@@ -169,6 +170,10 @@ func ensureUndoWorkspaceInstanceWithHooks(workspacePath string, hooks undoWorksp
 // checked on the native directory handle used to reach the regular file.
 func readUndoWorkspaceFile(root, path string, expected workspace.Identity, maxBytes int) ([]byte, error) {
 	return readUndoWorkspaceFileWithHooks(root, path, expected, maxBytes, nil, nil)
+}
+
+func isMissingUndoWorkspaceFile(err error) bool {
+	return errors.Is(err, os.ErrNotExist) && !errors.Is(err, securefile.ErrReadChanged)
 }
 
 func readUndoWorkspaceFileWithHooks(root, path string, expected workspace.Identity, maxBytes int, afterLock, afterNameCheck func()) ([]byte, error) {

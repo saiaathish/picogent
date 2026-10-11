@@ -33,6 +33,11 @@ func isLegacyUndoUnavailable(err error) bool {
 	return errors.Is(err, errLegacyUndoJournal) || errors.Is(err, errLegacyUndoWorkspaceBinding)
 }
 
+type undoJournalLoadHooks struct {
+	AfterReadNameCheck func()
+	AfterValidation    func()
+}
+
 // undoJournal is deliberately separate from task state. Task revisions
 // describe outcome progress; this record owns the native-file bytes needed for
 // one latest-turn undo and survives a process restart.
@@ -219,10 +224,10 @@ func saveUndoJournalWithHooks(workspacePath, sessionID string, journal undoJourn
 }
 
 func loadUndoJournal(workspacePath, sessionID string, pending bool) (*undoJournal, error) {
-	return loadUndoJournalWithHooks(workspacePath, sessionID, pending, nil)
+	return loadUndoJournalWithHooks(workspacePath, sessionID, pending, undoJournalLoadHooks{})
 }
 
-func loadUndoJournalWithHooks(workspacePath, sessionID string, pending bool, afterValidation func()) (*undoJournal, error) {
+func loadUndoJournalWithHooks(workspacePath, sessionID string, pending bool, hooks undoJournalLoadHooks) (*undoJournal, error) {
 	sealedPath, pendingPath, err := undoJournalPaths(workspacePath, sessionID)
 	if err != nil {
 		return nil, err
@@ -236,8 +241,8 @@ func loadUndoJournalWithHooks(workspacePath, sessionID string, pending bool, aft
 	if err != nil {
 		return nil, fmt.Errorf("identify undo journal workspace: %w", err)
 	}
-	data, err := readUndoWorkspaceFile(root, path, expectedRoot, undoJournalMaxBytes)
-	if errors.Is(err, os.ErrNotExist) {
+	data, err := readUndoWorkspaceFileWithHooks(root, path, expectedRoot, undoJournalMaxBytes, nil, hooks.AfterReadNameCheck)
+	if isAbsentUndoJournal(err) {
 		return nil, os.ErrNotExist
 	}
 	if err != nil {
@@ -255,8 +260,8 @@ func loadUndoJournalWithHooks(workspacePath, sessionID string, pending bool, aft
 	if journal.WorkspaceInstance.Directory != expectedRoot {
 		return nil, workspace.ErrRootIdentityChanged
 	}
-	if afterValidation != nil {
-		afterValidation()
+	if hooks.AfterValidation != nil {
+		hooks.AfterValidation()
 	}
 	if err := workspace.SecurePrivateDirectoryAndFilesWithRootIdentity(root, filepath.Dir(path), expectedRoot); err != nil {
 		return nil, fmt.Errorf("secure owned undo journal storage: %w", err)
@@ -334,7 +339,11 @@ func removeUndoJournal(workspacePath, sessionID string, pending bool, expected u
 }
 
 func isMissingUndoJournal(err error) bool {
-	return errors.Is(err, os.ErrNotExist) && !errors.Is(err, workspace.ErrWorkspaceParentNotExist)
+	return isAbsentUndoJournal(err) && !errors.Is(err, workspace.ErrWorkspaceParentNotExist)
+}
+
+func isAbsentUndoJournal(err error) bool {
+	return isMissingUndoWorkspaceFile(err)
 }
 
 func removeAllUndoJournals(workspacePath, sessionID string, expected undoWorkspaceInstance) error {
@@ -342,7 +351,11 @@ func removeAllUndoJournals(workspacePath, sessionID string, expected undoWorkspa
 }
 
 func loadLatestDurableUndo(workspace, sessionID string, generation uint64, authorities ...undoTaskStoreAuthority) (*turnUndo, error) {
-	pending, pendingErr := loadUndoJournal(workspace, sessionID, true)
+	return loadLatestDurableUndoWithHooks(workspace, sessionID, generation, undoJournalLoadHooks{}, authorities...)
+}
+
+func loadLatestDurableUndoWithHooks(workspace, sessionID string, generation uint64, hooks undoJournalLoadHooks, authorities ...undoTaskStoreAuthority) (*turnUndo, error) {
+	pending, pendingErr := loadUndoJournalWithHooks(workspace, sessionID, true, hooks)
 	if pendingErr == nil {
 		if pending.Version == undoJournalLegacyVersion || strings.TrimSpace(pending.TaskID) == "" {
 			return nil, errLegacyUndoJournal
@@ -387,12 +400,12 @@ func loadLatestDurableUndo(workspace, sessionID string, generation uint64, autho
 			u.checkpoint = published
 		}
 		return u, nil
-	} else if !errors.Is(pendingErr, os.ErrNotExist) {
+	} else if !isAbsentUndoJournal(pendingErr) {
 		return nil, pendingErr
 	}
 
 	sealed, sealedErr := loadUndoJournal(workspace, sessionID, false)
-	if errors.Is(sealedErr, os.ErrNotExist) {
+	if isAbsentUndoJournal(sealedErr) {
 		return nil, nil
 	}
 	if sealedErr != nil {

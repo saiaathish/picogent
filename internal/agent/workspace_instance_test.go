@@ -59,6 +59,36 @@ func TestReadUndoWorkspaceFileRefusesReplacementDuringRead(t *testing.T) {
 	}
 }
 
+func TestEnsureUndoWorkspaceInstanceRefusesRemovedMarkerAfterNameCheck(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows byte-range locks prevent removing the open marker fixture")
+	}
+	root := t.TempDir()
+	if _, err := ensureUndoWorkspaceInstance(root); err != nil {
+		t.Fatal(err)
+	}
+	_, marker, err := undoWorkspaceMarkerPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instance, err := ensureUndoWorkspaceInstanceWithHooks(root, undoWorkspaceInitHooks{
+		AfterMarkerReadNameCheck: func() {
+			if err := os.Remove(marker); err != nil {
+				t.Fatal(err)
+			}
+		},
+	})
+	if err == nil || instance.valid() || !errors.Is(err, securefile.ErrReadChanged) {
+		t.Fatalf("initialization accepted a removed marker: instance=%+v err=%v", instance, err)
+	}
+	if isMissingUndoWorkspaceFile(err) {
+		t.Fatalf("marker replacement race was classified as ordinary absence: %v", err)
+	}
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("initialization recreated marker after replacement race: %v", err)
+	}
+}
+
 func TestEnsureUndoWorkspaceInstanceDoesNotMutateReplacementRoot(t *testing.T) {
 	for _, point := range []string{"after-identity", "after-lock"} {
 		t.Run(point, func(t *testing.T) {
