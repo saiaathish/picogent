@@ -166,6 +166,7 @@ Subagents, skills marketplace, plugins, embedding indexes.
 - v4 project-rule read evidence contract: [docs/V4-PROJECT-RULE-READ-EVIDENCE.md](docs/V4-PROJECT-RULE-READ-EVIDENCE.md)
 - v4 goal-state evidence contract: [docs/V4-GOAL-STATE-EVIDENCE.md](docs/V4-GOAL-STATE-EVIDENCE.md)
 - v4 project-health diagnosis contract: [docs/V4-PROJECT-HEALTH.md](docs/V4-PROJECT-HEALTH.md)
+- v4 invention ledger and deterministic prototypes: [docs/V4-INVENTION-LAB.md](docs/V4-INVENTION-LAB.md)
 - Current exact-head evidence packet: [docs/V4-TIP-EVIDENCE-CURRENT.md](docs/V4-TIP-EVIDENCE-CURRENT.md)
 - Last retained rendered evidence (historical behavior tip): [docs/V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md](docs/V4-RENDERED-CROSS-PLATFORM-EVIDENCE-3F5543D.md)
 - License: MIT
