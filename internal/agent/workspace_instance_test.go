@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +39,9 @@ func TestReadUndoWorkspaceFileRefusesReplacedLeafAfterLock(t *testing.T) {
 func TestEnsureUndoWorkspaceInstanceDoesNotMutateReplacementRoot(t *testing.T) {
 	for _, point := range []string{"after-identity", "after-lock"} {
 		t.Run(point, func(t *testing.T) {
+			if runtime.GOOS == "windows" && point == "after-lock" {
+				t.Skip("Windows byte-range lock prevents renaming its containing workspace; the separate after-identity test covers replacement before lock creation")
+			}
 			parent := t.TempDir()
 			root := filepath.Join(parent, "workspace")
 			if err := os.Mkdir(root, 0o700); err != nil {
