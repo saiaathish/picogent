@@ -202,6 +202,22 @@ func OpenWrite(root, path string) (*os.File, error) {
 	return open(root, path, openWrite)
 }
 
+// OpenLockWithRootIdentity opens or creates a private regular lock file using
+// the checked workspace root handle. Missing parents are created privately;
+// existing ancestors are not permission-migrated. The caller owns the file and
+// must lock it before using it for cross-process serialization.
+func OpenLockWithRootIdentity(root, path string, expectedRoot Identity) (*os.File, error) {
+	if !expectedRoot.Known {
+		return nil, errors.New("expected workspace root identity is unknown")
+	}
+	return openWithRootIdentityCheck(root, path, openLock, func(actual Identity) error {
+		if !actual.Known || actual != expectedRoot {
+			return ErrRootIdentityChanged
+		}
+		return nil
+	})
+}
+
 // OpenEdit opens an existing regular file below root for read/write without
 // following path-component symlinks, hard links, or reparse points.
 func OpenEdit(root, path string) (*os.File, error) {
@@ -281,6 +297,25 @@ func WriteAtomicDurableWithModeAndHooks(root, path string, data []byte, mode os.
 // unchanged. Missing directories return os.ErrNotExist so readers can treat an
 // absent store as an absent document.
 func SecurePrivateDirectoryAndFiles(root, path string) error {
+	return securePrivateDirectoryAndFilesWithCheck(root, path, nil)
+}
+
+// SecurePrivateDirectoryAndFilesWithRootIdentity verifies the native root
+// handle before any mode or DACL change. Traversal and hardening remain anchored
+// to that handle if the workspace pathname is subsequently replaced.
+func SecurePrivateDirectoryAndFilesWithRootIdentity(root, path string, expectedRoot Identity) error {
+	if !expectedRoot.Known {
+		return errors.New("expected workspace root identity is unknown")
+	}
+	return securePrivateDirectoryAndFilesWithCheck(root, path, func(actual Identity) error {
+		if !actual.Known || actual != expectedRoot {
+			return ErrRootIdentityChanged
+		}
+		return nil
+	})
+}
+
+func securePrivateDirectoryAndFilesWithCheck(root, path string, checkRootIdentity RootIdentityCheck) error {
 	rel, err := Relative(root, path)
 	if err != nil {
 		return err
@@ -292,7 +327,7 @@ func SecurePrivateDirectoryAndFiles(root, path string) error {
 	if len(parts) == 0 {
 		return errors.New("private directory must be below the workspace root")
 	}
-	return securePrivateDirectoryAndFiles(root, parts)
+	return securePrivateDirectoryAndFiles(root, parts, checkRootIdentity)
 }
 
 // WriteAtomicWithMode writes a complete file below root and publishes its

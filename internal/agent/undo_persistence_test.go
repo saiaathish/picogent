@@ -14,6 +14,7 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/securefile"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tools"
 	workspacepkg "github.com/saiaathish/picogent/internal/workspace"
@@ -393,11 +394,11 @@ func TestLegacyUndoJournalParsesButCannotRecoverWithoutOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(root, ".picogent", "undo")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	journalPath := filepath.Join(dir, sessionID+".json")
-	if err := os.WriteFile(journalPath, data, 0o600); err != nil {
+	if err := os.WriteFile(journalPath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	parsed, err := loadUndoJournal(root, sessionID, false)
@@ -440,6 +441,164 @@ func TestLegacyUndoJournalParsesButCannotRecoverWithoutOwner(t *testing.T) {
 	journalAfter, err := os.ReadFile(journalPath)
 	if err != nil || !reflect.DeepEqual(data, journalAfter) {
 		t.Fatalf("legacy journal was not preserved: err=%v unchanged=%v", err, reflect.DeepEqual(data, journalAfter))
+	}
+	assertLegacyUndoPermissionsUnchanged(t, journalPath)
+}
+
+func TestLoadUndoJournalRefusesRootSwapBeforePermissionMigration(t *testing.T) {
+	a, _, task := newDurableUndoFixture(t, taskstate.StatusWorking)
+	root := a.ConfigSnapshot().Workspace
+	instance := testUndoWorkspaceInstance(t, root)
+	identity, err := undoWorkspaceIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := a.latestUndo.checkpoint.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal := undoJournal{
+		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity,
+		WorkspaceInstance: instance, SessionID: task.SessionID,
+		TurnSequence: task.LastTurn().Sequence, TaskID: task.ID,
+		IntentRevision: task.LastTurn().IntentRevision, Checkpoint: record,
+	}
+	if err := saveUndoJournal(root, task.SessionID, journal, false); err != nil {
+		t.Fatal(err)
+	}
+	sealedPath, _, err := undoJournalPaths(root, task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(sealedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked := filepath.Join(t.TempDir(), "original")
+	swapped := false
+	loaded, err := loadUndoJournalWithHooks(root, task.SessionID, false, undoJournalLoadHooks{
+		AfterValidation: func() {
+			swapped = true
+			if err := os.Rename(root, parked); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(sealedPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(sealedPath, data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if runtime.GOOS != "windows" {
+				if err := os.Chmod(filepath.Dir(sealedPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+		},
+	})
+	if !swapped || loaded != nil || !errors.Is(err, workspacepkg.ErrRootIdentityChanged) {
+		t.Fatalf("load after validation/root swap = (%#v, %v), swapped=%v", loaded, err, swapped)
+	}
+	if after, err := os.ReadFile(sealedPath); err != nil || !reflect.DeepEqual(after, data) {
+		t.Fatalf("replacement journal changed: err=%v unchanged=%v", err, reflect.DeepEqual(after, data))
+	}
+	if runtime.GOOS != "windows" {
+		for path, mode := range map[string]os.FileMode{filepath.Dir(sealedPath): 0o755, sealedPath: 0o644} {
+			info, err := os.Stat(path)
+			if err != nil || info.Mode().Perm() != mode {
+				t.Errorf("root swap mutated permissions of %s: info=%v err=%v, want %v", path, info, err, mode)
+			}
+		}
+	}
+}
+
+func TestLoadUndoJournalRefusesRemovedPathAfterNameCheck(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows byte-range locks prevent removing the open journal fixture")
+	}
+	root := t.TempDir()
+	testUndoWorkspaceInstance(t, root)
+	const sessionID = "removed-pending-journal"
+	_, pendingPath, err := undoJournalPaths(root, sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pendingPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pendingPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	removed := false
+	loaded, err := loadUndoJournalWithHooks(root, sessionID, true, undoJournalLoadHooks{
+		AfterReadNameCheck: func() {
+			removed = true
+			if err := os.Remove(pendingPath); err != nil {
+				t.Fatal(err)
+			}
+		},
+	})
+	if !removed || loaded != nil || !errors.Is(err, securefile.ErrReadChanged) || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("load after pending-path removal = (%#v, %v), removed=%v", loaded, err, removed)
+	}
+	if isAbsentUndoJournal(err) || isMissingUndoJournal(err) {
+		t.Fatalf("replacement race was classified as an absent journal: %v", err)
+	}
+	if !isAbsentUndoJournal(os.ErrNotExist) || !isMissingUndoJournal(os.ErrNotExist) {
+		t.Fatal("ordinary journal absence was not recognized")
+	}
+	if !isAbsentUndoJournal(errors.Join(os.ErrNotExist, workspacepkg.ErrWorkspaceParentNotExist)) {
+		t.Fatal("missing journal parent was not recognized as ordinary read absence")
+	}
+}
+
+func TestLoadLatestDurableUndoDoesNotFallBackAfterPendingPathRemoval(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows byte-range locks prevent removing the open journal fixture")
+	}
+	a, _, task := newDurableUndoFixture(t, taskstate.StatusWorking)
+	root := a.ConfigSnapshot().Workspace
+	instance := testUndoWorkspaceInstance(t, root)
+	identity, err := undoWorkspaceIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := a.latestUndo.checkpoint.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := undoJournal{
+		Version: undoJournalVersion, State: undoJournalSealed, Workspace: identity,
+		WorkspaceInstance: instance, SessionID: task.SessionID,
+		TurnSequence: task.LastTurn().Sequence, TaskID: task.ID,
+		IntentRevision: task.LastTurn().IntentRevision, Checkpoint: record,
+	}
+	if err := saveUndoJournal(root, task.SessionID, sealed, false); err != nil {
+		t.Fatal(err)
+	}
+	_, pendingPath, err := undoJournalPaths(root, task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(pendingPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pendingPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadLatestDurableUndoWithHooks(root, task.SessionID, 1, undoJournalLoadHooks{
+		AfterReadNameCheck: func() {
+			if err := os.Remove(pendingPath); err != nil {
+				t.Fatal(err)
+			}
+		},
+	})
+	if loaded != nil || !errors.Is(err, securefile.ErrReadChanged) || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("latest undo after pending-path removal = (%#v, %v), want read-changed refusal", loaded, err)
+	}
+	if isAbsentUndoJournal(err) {
+		t.Fatalf("pending-path replacement fell through to sealed state: %v", err)
 	}
 }
 
@@ -795,11 +954,19 @@ func TestCopiedWorkspaceCannotReuseUndoJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(sealedPath), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(sealedPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(sealedPath, journalData, 0o600); err != nil {
+	if err := os.WriteFile(sealedPath, journalData, 0o644); err != nil {
 		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(filepath.Dir(sealedPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(sealedPath, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	loaded, err := loadUndoJournal(root, sessionID, false)
@@ -811,6 +978,14 @@ func TestCopiedWorkspaceCannotReuseUndoJournal(t *testing.T) {
 	}
 	if after, err := os.ReadFile(sealedPath); err != nil || !reflect.DeepEqual(after, journalData) {
 		t.Fatalf("rejected journal changed: err=%v unchanged=%v", err, reflect.DeepEqual(after, journalData))
+	}
+	if runtime.GOOS != "windows" {
+		for path, mode := range map[string]os.FileMode{filepath.Dir(sealedPath): 0o755, sealedPath: 0o644} {
+			info, err := os.Stat(path)
+			if err != nil || info.Mode().Perm() != mode {
+				t.Errorf("rejected journal mutated permissions of %s: info=%v err=%v, want %v", path, info, err, mode)
+			}
+		}
 	}
 }
 
@@ -916,10 +1091,10 @@ func TestVersionTwoUndoJournalCannotBeBoundRetroactively(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Dir(sealedPath), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(sealedPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(sealedPath, data, 0o600); err != nil {
+	if err := os.WriteFile(sealedPath, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_ = testUndoWorkspaceInstance(t, root) // A current marker cannot retroactively bind a path-only journal.
@@ -930,6 +1105,20 @@ func TestVersionTwoUndoJournalCannotBeBoundRetroactively(t *testing.T) {
 	}
 	if after, err := os.ReadFile(sealedPath); err != nil || !reflect.DeepEqual(after, data) {
 		t.Fatalf("legacy journal changed: err=%v unchanged=%v", err, reflect.DeepEqual(after, data))
+	}
+	assertLegacyUndoPermissionsUnchanged(t, sealedPath)
+}
+
+func assertLegacyUndoPermissionsUnchanged(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		return
+	}
+	for name, mode := range map[string]os.FileMode{filepath.Dir(path): 0o755, path: 0o644} {
+		info, err := os.Stat(name)
+		if err != nil || info.Mode().Perm() != mode {
+			t.Errorf("unbound legacy load mutated permissions of %s: info=%v err=%v, want %v", name, info, err, mode)
+		}
 	}
 }
 

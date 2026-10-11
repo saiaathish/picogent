@@ -22,6 +22,7 @@ const (
 	openRead openKind = iota
 	openWrite
 	openEdit
+	openLock
 )
 
 var workspaceTempSequence atomic.Uint64
@@ -43,8 +44,12 @@ func openWithRootIdentityCheckAndHooks(root, path string, kind openKind, checkRo
 	if err != nil {
 		return nil, err
 	}
-	createParents := kind == openWrite
-	parent, leaf, err := openParentWithRootIdentityCheck(root, rel, createParents, checkRootIdentity, nil)
+	createParents := kind == openWrite || kind == openLock
+	parentMode := os.FileMode(0o755)
+	if kind == openLock {
+		parentMode = 0o700
+	}
+	parent, leaf, err := openParentWithRootIdentityCheckAndMode(root, rel, createParents, parentMode, checkRootIdentity, nil, kind == openLock)
 	if err != nil {
 		if checkRootIdentity != nil && isWorkspaceNotExist(err) {
 			return nil, fmt.Errorf("%w: %w", ErrWorkspaceParentNotExist, err)
@@ -66,11 +71,23 @@ func openWithRootIdentityCheckAndHooks(root, path string, kind openKind, checkRo
 		flags |= unix.O_WRONLY | unix.O_CREAT
 	case openEdit:
 		flags |= unix.O_RDWR
+	case openLock:
+		flags |= unix.O_RDWR | unix.O_CREAT | unix.O_NONBLOCK
 	default:
 		return nil, fmt.Errorf("unknown workspace operation")
 	}
 
-	fd, err := unix.Openat(parent, leaf, flags, 0o644)
+	mode := uint32(0o644)
+	if kind == openLock {
+		mode = 0o600
+	}
+	fd, err := unix.Openat(parent, leaf, flags, mode)
+	// First-use concurrent creators can briefly receive ENOENT from O_CREAT
+	// on supported filesystems. Retry only against this same checked parent.
+	for attempt := 0; kind == openLock && errors.Is(err, unix.ENOENT) && attempt < 31; attempt++ {
+		time.Sleep(time.Millisecond)
+		fd, err = unix.Openat(parent, leaf, flags, mode)
+	}
 	if err != nil {
 		if checkRootIdentity != nil && isWorkspaceNotExist(err) {
 			if parentErr := verifyOpenedUnixParent(root, rel, parent, checkRootIdentity); parentErr != nil {
@@ -142,12 +159,21 @@ func openDir(root, path string) (*os.File, error) {
 	return f, nil
 }
 
-func securePrivateDirectoryAndFiles(root string, parts []string) error {
+func securePrivateDirectoryAndFiles(root string, parts []string, checkRootIdentity RootIdentityCheck) error {
 	current, err := openUnixRoot(root)
 	if err != nil {
 		return fmt.Errorf("open workspace directory: %w", err)
 	}
 	defer func() { _ = unix.Close(current) }()
+	if checkRootIdentity != nil {
+		identity, err := workspaceRootIdentityForFD(current)
+		if err != nil {
+			return fmt.Errorf("identify private storage workspace root: %w", err)
+		}
+		if err := checkRootIdentity(identity); err != nil {
+			return err
+		}
+	}
 	for index, part := range parts {
 		child, err := unix.Openat(current, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 		if err != nil {
