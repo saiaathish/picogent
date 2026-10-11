@@ -15,6 +15,19 @@ class OneShotEvents:
         return iter(self._events)
 
 
+class TrackedEvent(dict):
+    live_count = 0
+    peak_live_count = 0
+
+    def __init__(self, category, amount):
+        super().__init__(category=category, amount=amount)
+        type(self).live_count += 1
+        type(self).peak_live_count = max(type(self).peak_live_count, type(self).live_count)
+
+    def __del__(self):
+        type(self).live_count -= 1
+
+
 class SummarizeTests(unittest.TestCase):
     def test_one_pass_preserves_order_and_zero_total(self):
         rows = [
@@ -39,6 +52,18 @@ class SummarizeTests(unittest.TestCase):
         summarize(rows)
 
         self.assertEqual(rows, before)
+
+    def test_does_not_materialize_the_event_stream(self):
+        TrackedEvent.live_count = 0
+        TrackedEvent.peak_live_count = 0
+
+        def stream():
+            for index in range(256):
+                yield TrackedEvent("docs", 1 if index % 2 == 0 else -1)
+
+        summarize(OneShotEvents(stream()))
+
+        self.assertLessEqual(TrackedEvent.peak_live_count, 4)
 
 
 if __name__ == "__main__":

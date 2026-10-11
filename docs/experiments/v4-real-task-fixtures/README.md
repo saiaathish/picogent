@@ -6,14 +6,14 @@ No provider is called by this fixture package. In particular, preparing workspac
 
 ## Isolation and reproduction
 
-Each task's `workspace/` is the entire candidate project tree. The task prompt and allowed paths are in `manifest.json`. The tree digest covers every regular file by relative path and exact bytes; symlinks are rejected. `fixture.py verify` checks all three committed pristine trees. `fixture.py prepare` copies one verified tree into a new, task-specific directory under the operating system's temporary directory; it refuses to overwrite an existing run directory. Do not use the repository, Desktop, or a user's project as a candidate workspace.
+Each task's `workspace/` is the entire candidate project tree. The task prompt and allowed paths are in `manifest.json`. The tree digest covers every regular file by relative path and exact bytes; symlinks are rejected. `fixture.py verify` checks all three committed pristine trees without consulting the system temp directory. `fixture.py prepare` copies one verified tree into a fresh, unpredictable directory under the operating system's temporary directory on every invocation. The run ID is included in the directory name for tracking, not used as a shared path. POSIX creates it with mode `0700`; Windows inherits access controls from the configured temp directory. Do not use the repository, Desktop, or a user's project as a candidate workspace.
 
 ```sh
 python3 docs/experiments/v4-real-task-fixtures/fixture.py verify
 python3 docs/experiments/v4-real-task-fixtures/fixture.py prepare go-deadline --run-id fixture-smoke-01
 ```
 
-`prepare` prints the absolute candidate workspace path. Run the task's acceptance command from that directory. Give every variant/repetition a distinct run ID so it gets byte-identical pristine input; never reuse a modified candidate tree. Preserve each run until its result is scored, then remove only the exact run directory created for that run. The helper never deletes candidate data.
+`prepare` prints the absolute candidate workspace path. Run the task's acceptance command from that directory. Give every variant/repetition a distinct run ID for result tracking; every invocation also gets a new directory, so a repeated label cannot reuse or overwrite a candidate tree. Preserve each run until its result is scored, then remove only the exact run directory created for that run. The helper never deletes candidate data.
 
 ## Tasks
 
@@ -43,7 +43,7 @@ Start the disposable page from the fixture workspace:
 python3 -m http.server 0 --bind 127.0.0.1
 ```
 
-Use the ephemeral port printed by the server and BrowserOS neo (a real browser) at `http://127.0.0.1:<port>/` for the acceptance journey. Each run must use its own ephemeral port so browser storage is isolated by origin; record the selected port with that run:
+Use the ephemeral port printed by the server and BrowserOS neo (a real browser) at `http://<run-id>.localhost:<port>/` for the acceptance journey. The unique run ID hostname (under the reserved `.localhost` domain) plus the ephemeral port isolates browser storage by origin even if the operating system later reuses a port. Record both with that run:
 
 1. Fill **Display name** with `  Mira Chen  ` and submit **Save**.
 2. Confirm the status says `Saved Mira Chen.` and the field is normalized to `Mira Chen`.

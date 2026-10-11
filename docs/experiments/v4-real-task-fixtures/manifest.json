@@ -32,7 +32,7 @@
       "acceptance": {
         "kind": "real-browser",
         "server_command": "python3 -m http.server 0 --bind 127.0.0.1",
-        "url": "http://127.0.0.1:<ephemeral-port>/",
+        "url": "http://<run-id>.localhost:<ephemeral-port>/",
         "isolate_browser_storage_with_unique_origin_per_run": true,
         "steps": [
           "Fill Display name with two leading and trailing spaces around Mira Chen; submit Save.",
@@ -48,7 +48,7 @@
       "id": "python-ledger",
       "title": "Python modernization: single-pass event summary",
       "workspace": "python-ledger/workspace",
-      "initial_tree_sha256": "7f7d229c131561cf02c9295006f692f5c2ff1d0f807a83b4e7608cd94b2ea306",
+      "initial_tree_sha256": "aad18483923a2bc74c83a005ca110868e86f64f421ece45f9d9d01b3e8c739cb",
       "prompt": "Modernize ledger.summarize to aggregate events in one pass without materializing or mutating the input. Preserve first-seen category order and keep categories whose final total is zero. Change only ledger.py and run the tests.",
       "allowed_paths": ["ledger.py"],
       "acceptance": {
