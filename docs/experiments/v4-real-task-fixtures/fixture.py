@@ -90,7 +90,10 @@ def prepare(manifest: dict, task_id: str, run_id: str) -> Path:
     temp_root = Path(tempfile.gettempdir()).resolve(strict=True)
     if RUNS_ROOT.is_symlink():
         raise ValueError(f"temporary fixture root must not be a symlink: {RUNS_ROOT}")
-    resolved_runs_root = RUNS_ROOT.resolve(strict=False)
+    RUNS_ROOT.mkdir(mode=0o700, exist_ok=True)
+    if RUNS_ROOT.is_symlink() or not RUNS_ROOT.is_dir():
+        raise ValueError(f"temporary fixture root must be a real directory: {RUNS_ROOT}")
+    resolved_runs_root = RUNS_ROOT.resolve(strict=True)
     if not resolved_runs_root.is_relative_to(temp_root) or resolved_runs_root == temp_root:
         raise ValueError(f"temporary fixture root escapes the system temp directory: {RUNS_ROOT}")
     run_root = RUNS_ROOT / run_id
