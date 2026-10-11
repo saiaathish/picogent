@@ -30,9 +30,32 @@ func TestReadUndoWorkspaceFileRefusesReplacedLeafAfterLock(t *testing.T) {
 		if err := os.WriteFile(path, []byte("new\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}
-	})
+	}, nil)
 	if !errors.Is(err, securefile.ErrReadChanged) || data != nil {
 		t.Fatalf("stale locked read = %q, %v", data, err)
+	}
+}
+
+func TestReadUndoWorkspaceFileRefusesReplacementDuringRead(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "marker")
+	if err := os.WriteFile(path, []byte("old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := workspace.DirectoryIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := readUndoWorkspaceFileWithHooks(root, path, identity, maxUndoWorkspaceMarkerBytes, nil, func() {
+		if err := os.Rename(path, filepath.Join(root, "old-marker")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("new\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if !errors.Is(err, securefile.ErrReadChanged) || data != nil {
+		t.Fatalf("read concurrent replacement = %q, %v", data, err)
 	}
 }
 

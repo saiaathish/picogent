@@ -165,10 +165,10 @@ func ensureUndoWorkspaceInstanceWithHooks(workspacePath string, hooks undoWorksp
 // readUndoWorkspaceFile never creates or changes permissions. Root identity is
 // checked on the native directory handle used to reach the regular file.
 func readUndoWorkspaceFile(root, path string, expected workspace.Identity, maxBytes int) ([]byte, error) {
-	return readUndoWorkspaceFileWithHooks(root, path, expected, maxBytes, nil)
+	return readUndoWorkspaceFileWithHooks(root, path, expected, maxBytes, nil, nil)
 }
 
-func readUndoWorkspaceFileWithHooks(root, path string, expected workspace.Identity, maxBytes int, afterLock func()) ([]byte, error) {
+func readUndoWorkspaceFileWithHooks(root, path string, expected workspace.Identity, maxBytes int, afterLock, afterNameCheck func()) ([]byte, error) {
 	file, err := workspace.OpenReadWithRootIdentity(root, path, expected)
 	if err != nil {
 		return nil, err
@@ -182,29 +182,40 @@ func readUndoWorkspaceFileWithHooks(root, path string, expected workspace.Identi
 	}
 	// Lock acquisition can wait while a writer replaces the named inode.
 	// Reopen through the same expected root and refuse a stale descriptor.
-	openedInfo, statErr := file.Stat()
-	if statErr != nil {
-		return nil, errors.Join(statErr, unlock(), file.Close())
+	if err := verifyUndoWorkspaceFileName(root, path, expected, file); err != nil {
+		return nil, errors.Join(err, unlock(), file.Close())
 	}
-	named, nameErr := workspace.OpenReadWithRootIdentity(root, path, expected)
-	if nameErr != nil {
-		return nil, errors.Join(nameErr, unlock(), file.Close())
-	}
-	namedInfo, statErr := named.Stat()
-	closeErr := named.Close()
-	if statErr == nil && !os.SameFile(openedInfo, namedInfo) {
-		statErr = securefile.ErrReadChanged
-	}
-	if statErr != nil || closeErr != nil {
-		return nil, errors.Join(statErr, closeErr, unlock(), file.Close())
+	if afterNameCheck != nil {
+		afterNameCheck()
 	}
 	data, readErr := io.ReadAll(io.LimitReader(file, int64(maxBytes)+1))
 	if len(data) > maxBytes {
 		data = nil
 		readErr = securefile.ErrReadLimit
 	}
+	if err := verifyUndoWorkspaceFileName(root, path, expected, file); err != nil {
+		data = nil
+		readErr = errors.Join(readErr, err)
+	}
 	err = errors.Join(readErr, unlock(), file.Close())
 	return data, err
+}
+
+func verifyUndoWorkspaceFileName(root, path string, expected workspace.Identity, opened *os.File) error {
+	openedInfo, err := opened.Stat()
+	if err != nil {
+		return err
+	}
+	named, err := workspace.OpenReadWithRootIdentity(root, path, expected)
+	if err != nil {
+		return errors.Join(securefile.ErrReadChanged, err)
+	}
+	namedInfo, statErr := named.Stat()
+	closeErr := named.Close()
+	if statErr == nil && !os.SameFile(openedInfo, namedInfo) {
+		statErr = securefile.ErrReadChanged
+	}
+	return errors.Join(statErr, closeErr)
 }
 
 func newUndoWorkspaceToken() (string, error) {
