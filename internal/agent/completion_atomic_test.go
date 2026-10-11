@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +11,21 @@ import (
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/workspace"
 )
+
+type cancelDuringProofContext struct {
+	context.Context
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (c *cancelDuringProofContext) Err() error {
+	c.calls++
+	if c.calls == 2 {
+		c.cancel()
+		return nil
+	}
+	return c.Context.Err()
+}
 
 func completionCandidate(t *testing.T) (*Agent, string, uint64) {
 	t.Helper()
@@ -131,5 +147,34 @@ func TestAtomicCompletionRechecksLatestProofOnSameTurnCASReplay(t *testing.T) {
 	task, projection, goalDone, closed, superseded, err := finishCompletionCandidate(a, root, sequence)
 	if err != nil || !closed || !goalDone || !projection.Ready || superseded || task.Status != taskstate.StatusDone {
 		t.Fatalf("fresh candidate proof rejected: task=%#v projection=%#v goal=%v closed=%v superseded=%v err=%v", task, projection, goalDone, closed, superseded, err)
+	}
+}
+
+func TestAtomicCompletionCancellationDuringProofRefreshLeavesTurnRecoverable(t *testing.T) {
+	a, root, sequence := completionCandidate(t)
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &cancelDuringProofContext{Context: base, cancel: cancel}
+	task, projection, goalDone, closed, _, err := a.finishAndCloseDurableTurn(ctx, root, sequence, "Goal complete: fixed", "", TaskAgent, "verify PASS", []string{"fixed.txt"}, true, "fix the file", "", 1, 1, nil)
+	if !errors.Is(err, context.Canceled) || goalDone || closed || projection.Ready {
+		t.Fatalf("canceled proof refresh = task=%#v projection=%#v goal=%v closed=%v err=%v", task, projection, goalDone, closed, err)
+	}
+	persisted, err := a.TaskStore.Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status == taskstate.StatusDone || persisted.LastTurn() == nil || persisted.LastTurn().State != taskstate.TurnActive {
+		t.Fatalf("proof refresh committed despite cancellation: %#v", persisted)
+	}
+	interrupted, err := a.closeDurableTurn(sequence, true, taskstate.TurnRouteRecover, "canceled during proof refresh", "", taskstate.StopCanceled, 1, 1, nil)
+	if err != nil || !interrupted {
+		t.Fatalf("close canceled owned turn: interrupted=%v err=%v", interrupted, err)
+	}
+	persisted, err = a.TaskStore.Load(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.Status == taskstate.StatusDone || persisted.LastTurn() == nil || persisted.LastTurn().State != taskstate.TurnInterrupted || persisted.LastTurn().StopReason != taskstate.StopCanceled {
+		t.Fatalf("canceled proof refresh did not remain recoverable: %#v", persisted)
 	}
 }

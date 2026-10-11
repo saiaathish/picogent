@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -15,12 +16,22 @@ var errReplacedGoalConflict = errors.New("a newer workspace goal conflicts with 
 // After retirement, acknowledging the exact marker makes later goals independent
 // of this historical replacement. Any failure stops admission before the provider.
 func (a *Agent) reconcileReplacedWorkspaceGoal(workspace, admittedGoal string, admittedRevision uint64) (string, uint64, error) {
+	return a.reconcileReplacedWorkspaceGoalWithRetirer(workspace, admittedGoal, admittedRevision, a.retireWorkspaceGoal)
+}
+
+func (a *Agent) reconcileReplacedWorkspaceGoalForRun(ctx context.Context, workspace, admittedGoal string, admittedRevision uint64) (string, uint64, error) {
+	return a.reconcileReplacedWorkspaceGoalWithRetirer(workspace, admittedGoal, admittedRevision, func(workspace string, expected taskstate.GoalRetirement) error {
+		return a.retireWorkspaceGoalForRun(ctx, workspace, expected)
+	})
+}
+
+func (a *Agent) reconcileReplacedWorkspaceGoalWithRetirer(workspace, admittedGoal string, admittedRevision uint64, retire func(string, taskstate.GoalRetirement) error) (string, uint64, error) {
 	task := a.TaskSnapshot()
 	if task == nil || task.ReplacedWorkspaceGoal == nil {
 		return admittedGoal, admittedRevision, nil
 	}
 	expected := *task.ReplacedWorkspaceGoal
-	if err := a.retireWorkspaceGoal(workspace, expected); err != nil {
+	if err := retire(workspace, expected); err != nil {
 		return admittedGoal, admittedRevision, err
 	}
 	_, err := a.mutateTaskResult(func(candidate *taskstate.Task) error {
@@ -42,6 +53,49 @@ func (a *Agent) reconcileReplacedWorkspaceGoal(workspace, admittedGoal string, a
 func (a *Agent) retireWorkspaceGoal(workspace string, expected taskstate.GoalRetirement) error {
 	a.stateMu.Lock()
 	defer a.stateMu.Unlock()
+	return a.retireWorkspaceGoalLocked(workspace, expected)
+}
+
+// Hold the task authority read lock across the persistent goal clear. A store
+// rebind that wins first is rejected; one that arrives during the clear waits
+// until the old run's retirement has completed, so the two operations cannot
+// interleave.
+func (a *Agent) retireWorkspaceGoalForRun(ctx context.Context, workspace string, expected taskstate.GoalRetirement) error {
+	return a.retireWorkspaceGoalForRunWithHook(ctx, workspace, expected, nil)
+}
+
+func (a *Agent) retireWorkspaceGoalForRunWithHook(ctx context.Context, workspace string, expected taskstate.GoalRetirement, beforeClear func()) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	a.taskMu.RLock()
+	defer a.taskMu.RUnlock()
+	if a.taskSessionSwitching {
+		return errTaskSessionSwitchInProgress
+	}
+	if a.taskRunBinding == nil {
+		return errTaskOwnershipChanged
+	}
+	if err := a.checkTaskBindingLocked(*a.taskRunBinding); err != nil {
+		return err
+	}
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	if beforeClear != nil {
+		beforeClear()
+	}
+	a.stateMu.Lock()
+	defer a.stateMu.Unlock()
+	return a.retireWorkspaceGoalLocked(workspace, expected)
+}
+
+// Caller must hold stateMu.
+func (a *Agent) retireWorkspaceGoalLocked(workspace string, expected taskstate.GoalRetirement) error {
 	if a.Goal != "" && (a.Goal != expected.Text || a.GoalRevision != expected.Revision) {
 		return errReplacedGoalConflict
 	}

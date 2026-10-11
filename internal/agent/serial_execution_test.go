@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -118,7 +119,7 @@ func TestUndoWaitsForActiveRunToReleaseProjectLock(t *testing.T) {
 	}
 }
 
-func TestTaskSessionChangeWaitsForActiveRunToReleaseProjectLock(t *testing.T) {
+func TestTaskSessionChangeCancelsActiveRunBeforeSwitch(t *testing.T) {
 	workspace := t.TempDir()
 	client := newBlockingChatClient()
 	cfg := config.Default()
@@ -137,17 +138,20 @@ func TestTaskSessionChangeWaitsForActiveRunToReleaseProjectLock(t *testing.T) {
 	sessionDone := make(chan error, 1)
 	go func() { sessionDone <- a.SetTaskSession("new-session") }()
 	select {
+	case err := <-runDone:
+		if err == nil || !errors.Is(err, context.Canceled) {
+			t.Fatalf("active run after session change = %v, want cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session change did not cancel the blocked provider")
+	}
+	select {
 	case err := <-sessionDone:
-		t.Fatalf("session change completed before active run released: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	close(client.release)
-	if err := <-runDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-sessionDone; err != nil {
-		t.Fatal(err)
+		if err != nil {
+			t.Fatalf("session change after canceled run = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session change did not complete after the run released its lock")
 	}
 	if session, _ := a.taskSessionSnapshot(); session != "new-session" {
 		t.Fatalf("task session = %q, want new-session", session)

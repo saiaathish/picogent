@@ -96,3 +96,64 @@ func TestRunWithOptionsHoldsProjectLockForEntireTurn(t *testing.T) {
 		t.Fatal("project lock was not released after the turn")
 	}
 }
+
+func TestRunsWithDifferentTaskStoresSerializeByWorkspace(t *testing.T) {
+	workspace := t.TempDir()
+	firstClient := &blockingChatClient{entered: make(chan struct{}), continueCh: make(chan struct{})}
+	secondClient := &blockingChatClient{entered: make(chan struct{}), continueCh: make(chan struct{})}
+	defer firstClient.unblock()
+	defer secondClient.unblock()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	cfg.Provider = config.ProviderOllama
+	first := agent.New(cfg, firstClient, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	first.SetTaskStore(taskstate.NewStore(t.TempDir()))
+	second := agent.New(cfg, secondClient, tools.NewRegistry(tools.Context{Workspace: workspace}), perm.New(config.ModeFast, workspace, nil))
+	second.SetTaskStore(taskstate.NewStore(t.TempDir()))
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, _, err := first.Run(context.Background(), nil, llm.Message{Role: "user", Content: "first project turn"}, allowAll{})
+		firstDone <- err
+	}()
+	select {
+	case <-firstClient.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first agent run did not reach the model")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		_, _, err := second.Run(context.Background(), nil, llm.Message{Role: "user", Content: "second project turn"}, allowAll{})
+		secondDone <- err
+	}()
+	select {
+	case <-secondClient.entered:
+		t.Fatal("agent with a different task store entered the same workspace concurrently")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	firstClient.unblock()
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first agent run did not finish after release")
+	}
+	select {
+	case <-secondClient.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("second agent did not enter after the first workspace run completed")
+	}
+	secondClient.unblock()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("second agent run did not finish after release")
+	}
+}

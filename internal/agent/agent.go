@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/saiaathish/picogent/internal/config"
@@ -104,28 +106,34 @@ type Result struct {
 }
 
 type Agent struct {
-	CFG                   config.Config
-	LLM                   llm.Client
-	Tools                 *tools.Registry
-	Gate                  *perm.Gate
-	ProjectRules          string
-	SkillRules            string
-	Memory                evolve.Store // learned habits/playbooks; injected per-turn with a hard byte budget
-	TaskMode              TaskMode
-	Goal                  string
-	GoalRevision          uint64
-	Trace                 *trace.Log
-	TaskStore             *taskstate.Store
-	TaskSession           string
-	taskSessionGeneration uint64
-	stateMu               sync.RWMutex
-	taskMu                sync.RWMutex
-	task                  *taskstate.Task
-	taskLoadErr           error
-	undoMu                sync.Mutex
-	latestUndo            *turnUndo
-	undoLoadErr           error
-	runTool               func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
+	CFG                     config.Config
+	LLM                     llm.Client
+	Tools                   *tools.Registry
+	Gate                    *perm.Gate
+	ProjectRules            string
+	SkillRules              string
+	Memory                  evolve.Store // learned habits/playbooks; injected per-turn with a hard byte budget
+	TaskMode                TaskMode
+	Goal                    string
+	GoalRevision            uint64
+	Trace                   *trace.Log
+	TaskStore               *taskstate.Store
+	TaskSession             string
+	taskSessionGeneration   uint64
+	taskStoreGeneration     uint64
+	taskRunBinding          *nativeTaskBinding
+	pendingAdmissionRefresh *taskAdmissionRefresh
+	taskRunCancel           context.CancelFunc
+	taskSessionSwitching    bool
+	stateMu                 sync.RWMutex
+	taskMu                  sync.RWMutex
+	task                    *taskstate.Task
+	taskLoadErr             error
+	undoMu                  sync.Mutex
+	latestUndo              *turnUndo
+	undoLoadErr             error
+	undoReattachRequired    bool
+	runTool                 func(context.Context, llm.ToolCall, tools.Tool, tools.Context) (string, error)
 }
 
 // RuntimeState is an immutable-at-the-call-boundary view of the settings that
@@ -231,10 +239,29 @@ func (a *Agent) SetSkillRules(rules string) {
 }
 
 func (a *Agent) SetTaskStore(store *taskstate.Store) {
+	// Undo holds this lock across workspace restore and durable task/journal
+	// finalization. Keep a store replacement from interleaving with that
+	// authority-sensitive sequence. Lock order matches SetTaskSession.
+	a.undoMu.Lock()
+	defer a.undoMu.Unlock()
 	a.taskMu.Lock()
+	if a.taskStoreGeneration == ^uint64(0) {
+		a.taskLoadErr = errors.New("task store authority generation exhausted")
+		a.taskMu.Unlock()
+		return
+	}
+	a.taskStoreGeneration++
 	a.TaskStore = store
+	a.pendingAdmissionRefresh = nil
 	a.taskLoadErr = nil
+	if strings.TrimSpace(a.TaskSession) != "" {
+		a.undoReattachRequired = true
+	}
+	cancelRun := a.taskRunCancel
 	a.taskMu.Unlock()
+	if cancelRun != nil {
+		cancelRun()
+	}
 }
 
 func (a *Agent) TaskStoreSnapshot() *taskstate.Store {
@@ -247,6 +274,11 @@ func (a *Agent) UpdateConfig(update func(*config.Config)) {
 	if update == nil {
 		return
 	}
+	// Config updates can rebind the workspace. Undo holds undoMu across restore
+	// and journal finalization, so serialize config changes with that authority
+	// window using the same undoMu -> stateMu lock order.
+	a.undoMu.Lock()
+	defer a.undoMu.Unlock()
 	a.stateMu.Lock()
 	update(&a.CFG)
 	cfg := a.CFG
@@ -375,6 +407,9 @@ func systemPromptFor(state RuntimeState, userHint, taskSuffix, scopeBoundary str
 // settings. A nil TaskMode leaves the agent's configured mode unchanged.
 type RunOptions struct {
 	beforeProjectRunLock func() // deterministic stale-admission regression seam
+	afterProjectRunLock  func() // deterministic lock/authority regression seam
+	beforeTaskRunClaim   func() // deterministic authority-rebind regression seam
+	afterTaskRunClaim    func() // deterministic claimed-run regression seam
 	TaskMode             *TaskMode
 	TracePrompt          string
 	DurablePrompt        string
@@ -392,25 +427,51 @@ func (a *Agent) Run(ctx context.Context, history []llm.Message, user llm.Message
 	return a.RunWithOptions(ctx, history, user, ev, RunOptions{})
 }
 
-func (a *Agent) acquireProjectRunLockForWorkspace(workspace string) (func() error, error) {
-	store := a.TaskStoreSnapshot()
+func (a *Agent) acquireProjectRunLockForWorkspace(workspace string, binding nativeTaskBinding) (func() error, error) {
+	store := binding.store
 	var storeErr error
+	var releaseStore func() error
 	if store != nil {
 		release, err := store.AcquireRunLock()
 		if err == nil {
-			return release, nil
+			releaseStore = release
+		} else {
+			storeErr = err
 		}
-		storeErr = err
 	}
 	if strings.TrimSpace(workspace) != "" {
-		release, err := taskstate.WorkspaceStore(workspace).AcquireRunLock()
+		identity, err := undoWorkspaceIdentity(workspace)
+		if err != nil {
+			if releaseStore != nil {
+				err = errors.Join(err, releaseStore())
+			}
+			return nil, fmt.Errorf("resolve project workspace lock: %w", err)
+		}
+		// A custom task store may live outside the workspace and have its own
+		// run lock. Keep that lock for store-wide coordination, and also lock
+		// inside the canonical workspace so agents using different task stores
+		// cannot interleave workspace writes and undo-journal recovery.
+		workspaceStore := taskstate.NewStore(filepath.Join(identity, ".picogent", "project-run"))
+		releaseWorkspace, err := workspaceStore.AcquireRunLock()
 		if err == nil {
-			return release, nil
+			return func() error {
+				workspaceErr := releaseWorkspace()
+				if releaseStore == nil {
+					return workspaceErr
+				}
+				return errors.Join(workspaceErr, releaseStore())
+			}, nil
+		}
+		if releaseStore != nil {
+			err = errors.Join(err, releaseStore())
 		}
 		if storeErr != nil {
-			return nil, fmt.Errorf("task store lock: %v; workspace lock: %w", storeErr, err)
+			return nil, fmt.Errorf("task store lock: %v; workspace run lock: %w", storeErr, err)
 		}
-		return nil, err
+		return nil, fmt.Errorf("workspace run lock: %w", err)
+	}
+	if releaseStore != nil {
+		return releaseStore, nil
 	}
 	if storeErr != nil {
 		return nil, storeErr
@@ -420,15 +481,16 @@ func (a *Agent) acquireProjectRunLockForWorkspace(workspace string) (func() erro
 
 // RunWithOptions runs one isolated turn. Scope preflight callers use this to
 // apply a temporary Plan/Ask boundary without mutating the next turn's mode.
-func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user llm.Message, ev EventHandler, opts RunOptions) ([]llm.Message, Result, error) {
+func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user llm.Message, ev EventHandler, opts RunOptions) (returnedHistory []llm.Message, returnedResult Result, returnedErr error) {
 	if ev == nil {
 		ev = NopHandler{}
 	}
 	state := a.RuntimeSnapshot()
+	lockOwner := a.nativeTaskBinding()
 	if opts.beforeProjectRunLock != nil {
 		opts.beforeProjectRunLock()
 	}
-	releaseRun, err := a.acquireProjectRunLockForWorkspace(state.CFG.Workspace)
+	releaseRun, err := a.acquireProjectRunLockForWorkspace(state.CFG.Workspace, lockOwner)
 	if err != nil {
 		wrapped := fmt.Errorf("project run is unavailable: %w", err)
 		ev.OnError(wrapped)
@@ -439,6 +501,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			ev.OnError(fmt.Errorf("project run lock release failed: %w", err))
 		}
 	}()
+	if opts.afterProjectRunLock != nil {
+		opts.afterProjectRunLock()
+	}
+	if err := a.checkTaskLockBinding(lockOwner); err != nil {
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
+	}
 	// An admission can wait behind another turn that replaces or retires its
 	// goal. Reject that captured identity rather than dispatching stale context
 	// or silently injecting the newer tuple into this request.
@@ -487,9 +556,56 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	if durablePrompt == "" {
 		durablePrompt = userText
 	}
-	// Finish a previous save-before-retire crash window before task admission
-	// can recreate a terminal task or otherwise lose its pending retirement.
-	admittedGoal, admittedRevision, err := a.reconcileReplacedWorkspaceGoal(cfg.Workspace, state.Goal, state.GoalRevision)
+	if err := a.refreshPendingAdmissionForNewRun(lockOwner, cfg.Workspace); err != nil {
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
+	}
+	nativeOwner := lockOwner
+	// Freeze the locked substrate, but admit task progress only after waiting:
+	// an earlier cooperative turn may have closed while this request queued.
+	nativeOwner.owner = nil
+	nativeOwner = nativeOwner.withAdmittedTask(a.TaskSnapshot())
+	if opts.beforeTaskRunClaim != nil {
+		opts.beforeTaskRunClaim()
+	}
+	runCtx, err := a.claimTaskRun(ctx, nativeOwner)
+	if err != nil {
+		return history, Result{Task: a.TaskSnapshot()}, err
+	}
+	ctx = runCtx
+	var textDelivered atomic.Bool
+	defer func() {
+		if err := a.checkTaskRun(ctx); err != nil {
+			returnedErr = errors.Join(returnedErr, err)
+			ev.OnError(err)
+			returnedResult.GoalDone = false
+			returnedResult.Completion.Ready = false
+			returnedResult.Completion.Reason = "turn authority changed before return"
+			returnedResult.Text = ""
+			returnedHistory = history // never persist this revoked turn's narration
+			if textDelivered.Load() {
+				if finalizer, ok := ev.(FinalTextHandler); ok {
+					finalizer.OnTextFinal("")
+				} else {
+					ev.OnText("")
+				}
+			}
+		}
+		snapshot, err := a.releaseTaskRun()
+		if snapshot != nil {
+			returnedResult.Task = snapshot
+		}
+		if err != nil {
+			returnedErr = errors.Join(returnedErr, err)
+			ev.OnError(err)
+		}
+	}()
+	if opts.afterTaskRunClaim != nil {
+		opts.afterTaskRunClaim()
+	}
+	// Finish a previous save-before-retire crash window only after this run has
+	// claimed task authority. The goal clear is fenced against task-store rebinding.
+	admittedGoal, admittedRevision, err := a.reconcileReplacedWorkspaceGoalForRun(ctx, cfg.Workspace, state.Goal, state.GoalRevision)
 	if errors.Is(err, errReplacedGoalConflict) {
 		// Only a validated explicit replacement may rebind the contract that
 		// conflicts with this goal. Ordinary retries retain the conflict marker
@@ -505,13 +621,21 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		return history, Result{Task: a.TaskSnapshot()}, err
 	}
 	state.Goal, state.GoalRevision = admittedGoal, admittedRevision
-	if failed, taskErr := a.beginDurableTaskInState(durablePrompt, ev, false, state); failed {
+	admission := &nativeAdmissionEvents{EventHandler: ev}
+	if failed, taskErr := a.beginDurableTaskInState(durablePrompt, admission, false, state); failed {
 		if taskErr == nil {
 			taskErr = errors.New("durable task state is unavailable")
 		}
 		return history, Result{Task: a.TaskSnapshot()}, taskErr
 	}
-	admittedGoal, admittedRevision, err = a.reconcileReplacedWorkspaceGoal(cfg.Workspace, state.Goal, state.GoalRevision)
+	if admission.snapshot != nil {
+		nativeOwner = nativeOwner.withAdmittedTask(admission.snapshot)
+	}
+	if err := a.checkNativeTaskBinding(ctx, nativeOwner); err != nil {
+		ev.OnError(err)
+		return history, Result{Task: a.TaskSnapshot()}, err
+	}
+	admittedGoal, admittedRevision, err = a.reconcileReplacedWorkspaceGoalForRun(ctx, cfg.Workspace, state.Goal, state.GoalRevision)
 	if err != nil {
 		ev.OnError(err)
 		return history, Result{Task: a.TaskSnapshot()}, err
@@ -520,9 +644,14 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	var turnSequence uint64
 	if task := a.TaskSnapshot(); task != nil {
 		var started bool
-		turnSequence, started = a.beginDurableTurn(durableTurnStartRoute(task, taskMode), ev)
+		turnSequence, started = a.beginDurableTurn(durableTurnStartRoute(task, taskMode), admission)
 		if !started {
 			return history, Result{Task: a.TaskSnapshot()}, errors.New("durable turn could not be started")
+		}
+		nativeOwner = nativeOwner.withAdmittedTask(admission.snapshot)
+		if err := a.checkNativeTaskBinding(ctx, nativeOwner); err != nil {
+			ev.OnError(err)
+			return history, Result{Task: a.TaskSnapshot()}, err
 		}
 	}
 
@@ -530,20 +659,36 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	changed := map[string]struct{}{}
 	sessionID, sessionGeneration := a.taskSessionSnapshot()
 	turnUndo := newTurnUndo(regCtx.Workspace, sessionID, sessionGeneration)
+	turnUndo.bindTaskStore(nativeOwner.store, nativeOwner.storeGeneration)
 	turnUndo.turnSequence = turnSequence
+	if turnSequence != 0 {
+		if err := turnUndo.bindDurableTurn(admission.snapshot, turnSequence); err != nil {
+			ev.OnError(err)
+			return history, Result{Task: a.TaskSnapshot()}, err
+		}
+	}
 	turnClosed := turnSequence == 0
-	// Every native write needs its expected fingerprint before publication,
-	// including process-only undo. Recovery journal eligibility is separate.
-	regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+	regCtx.BeforeWorkspaceMutation = func(string) error {
+		if err := a.checkTaskRun(ctx); err != nil {
+			return err
+		}
 		// Informational prompts do not eagerly create tasks. Once an approved
-		// native write is about to publish, admit its durable ownership before
-		// journaling/rename, not after a successful tool result can be lost.
+		// native write reaches its first side-effect boundary, persist ownership
+		// before even creating a parent directory or staging a temporary file.
 		if turnSequence == 0 && a.TaskStoreSnapshot() != nil && sessionID != "" {
+			admission := &nativeAdmissionEvents{EventHandler: ev}
 			if a.TaskSnapshot() == nil {
-				if failed, err := a.beginDurableTaskInState(durablePrompt, ev, true, state); failed {
+				if failed, err := a.beginDurableTaskInState(durablePrompt, admission, true, state); failed {
 					if err == nil {
 						err = errors.New("durable task state is unavailable")
 					}
+					return err
+				}
+				if admission.snapshot == nil {
+					return errors.New("native mutation requires a saved task admission")
+				}
+				nativeOwner = nativeOwner.withAdmittedTask(admission.snapshot)
+				if err := a.checkNativeTaskBinding(ctx, nativeOwner); err != nil {
 					return err
 				}
 			}
@@ -551,13 +696,30 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			if task == nil {
 				return errors.New("native publication requires a durable task")
 			}
-			sequence, started := a.beginDurableTurn(durableTurnStartRoute(task, taskMode), ev)
+			sequence, started := a.beginDurableTurn(durableTurnStartRoute(task, taskMode), admission)
 			if !started || sequence == 0 {
 				return errors.New("native publication requires a durable turn")
 			}
 			turnSequence = sequence
 			turnUndo.turnSequence = sequence
+			if err := turnUndo.bindDurableTurn(admission.snapshot, sequence); err != nil {
+				return err
+			}
 			turnClosed = false
+			// Retain the original store/session generation while adopting only
+			// the exact saved turn, not a callback's replacement identity.
+			nativeOwner = nativeOwner.withAdmittedTask(admission.snapshot)
+		}
+		if err := turnUndo.bindWorkspaceInstance(); err != nil {
+			return fmt.Errorf("bind durable undo workspace: %w", err)
+		}
+		return a.checkTaskRun(ctx)
+	}
+	// Every native write needs its expected fingerprint before publication,
+	// including process-only undo. Recovery journal eligibility is separate.
+	regCtx.BeforeWorkspacePublish = func(path string, data []byte, mode os.FileMode) error {
+		if err := a.checkTaskRun(ctx); err != nil {
+			return err
 		}
 		return turnUndo.preparePublish(path, data, mode)
 	}
@@ -572,6 +734,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	// may replace this with one fresh, bounded health observation; all other
 	// turns keep the explicit unknown-health boundary.
 	nextOutcomeFocus := outcomeFocusForTask(a.TaskSnapshot())
+	if err := a.checkTaskRun(ctx); err != nil {
+		res.Task = a.TaskSnapshot()
+		return history, res, err
+	}
 	healthAdmission := a.admitProjectHealth(ctx, userText, taskMode, opts.ScopeBoundary, state, regCtx, gate)
 	if healthAdmission.attempted {
 		nextOutcomeFocus = healthAdmission.focus
@@ -582,6 +748,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	closeTurn := func(interrupted bool, route taskstate.TurnRoute, hypothesis, evidence string, stop taskstate.StopReason, toolRounds int) {
 		if turnSequence == 0 || turnClosed || turnCloseErr != nil {
 			return
+		}
+		// Closing an owned turn is cleanup: user cancellation should mark it
+		// interrupted below, while the durable authority check still prevents
+		// closing a replacement owner's turn.
+		if err := a.checkTaskRun(nil); err != nil {
+			turnCloseErr = err
+			return // cleanup may interrupt only the original saved authority
 		}
 		if ctx.Err() != nil {
 			interrupted = true
@@ -633,12 +806,20 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	}
 	msgs = append(msgs, user)
 	budget := ctxmgr.BudgetForModel(cfg.Model)
+	if err := a.checkTaskRun(ctx); err != nil {
+		res.Task = a.TaskSnapshot()
+		return msgs, res, err
+	}
 	compactMsgs, ctxStats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 	msgs = compactMsgs
 
 	res.Context = ctxStats
 
 	for round := 0; round < cfg.MaxToolRounds; round++ {
+		if err := a.checkTaskRun(ctx); err != nil {
+			res.Task = a.TaskSnapshot()
+			return msgs, res, err
+		}
 		if r, ok := state.LLM.(*llm.Router); ok {
 			r.SetUserPrompt(userText)
 		}
@@ -662,7 +843,8 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		if healthAdmissionAttempted {
 			toolSpecs = withoutProjectHealth(toolSpecs)
 		}
-		out, err := state.LLM.Chat(ctx, llm.ChatRequest{
+		providerCtx, cancelProvider := context.WithCancel(ctx)
+		out, err := state.LLM.Chat(providerCtx, llm.ChatRequest{
 			Model:        cfg.Model,
 			Messages:     requestMessages,
 			Tools:        toolSpecs,
@@ -675,11 +857,30 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				if delta == "" {
 					return
 				}
+				if err := a.checkTaskRunMemory(); err != nil {
+					cancelProvider()
+					return
+				}
 				streamed = true
+				textDelivered.Store(true)
 				ev.OnTextDelta(delta)
+				if err := a.checkTaskRunMemory(); err != nil {
+					cancelProvider()
+				}
 			},
 		})
+		cancelProvider()
 		pendingVisualParts = nil
+		if authorityErr := a.checkTaskRun(nil); authorityErr != nil {
+			res.FilesChanged = sortedChanged(changed)
+			res.Task = a.TaskSnapshot()
+			return msgs, res, errors.Join(err, authorityErr)
+		}
+		// Cancellation is not an authority change: route it through the normal
+		// failed-call path so the still-owned durable turn can close as canceled.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = errors.Join(err, ctxErr)
+		}
 		if err != nil {
 			wrapped := userErr("the model call failed", err)
 			ev.OnError(wrapped)
@@ -730,6 +931,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			}
 			res.FilesChanged = sortedChanged(changed)
 			autoEvidence := a.maybeVerify(ctx, ev, userText, res.FilesChanged, verificationCurrent, completionEvidenceRequired, state, gate)
+			if err := a.checkTaskRun(ctx); err != nil {
+				res.Task = a.TaskSnapshot()
+				return msgs, res, errors.Join(autoEvidence.err, err)
+			}
 			if autoEvidence.output != "" {
 				if a.TaskSnapshot() != nil || completionEvidenceRequired {
 					autoEvidence = normalizeVerificationEvidence(autoEvidence)
@@ -751,6 +956,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 					lastVerification = refreshed
 					res.Verified = refreshed
 				}
+			}
+			if err := a.checkTaskRun(ctx); err != nil {
+				res.Task = a.TaskSnapshot()
+				return msgs, res, err
 			}
 			a.finishTurnUndo(&res, turnUndo, nativeWriteRan)
 			undoAvailable, undoError := res.UndoAvailable, res.UndoError
@@ -808,6 +1017,13 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				res.Completion = completionProjection(res.Task, state.Goal, completionMarker, verificationStatus(lastVerification) == "PASS", len(res.FilesChanged), opts.ScopeBoundary)
 				res.GoalDone = completionMarker && res.Completion.Ready
 			}
+			if err := a.checkTaskRun(ctx); err != nil {
+				res.Task = a.TaskSnapshot()
+				return msgs, res, err
+			}
+			if !supersededTurn && text != "" {
+				textDelivered.Store(true)
+			}
 			if supersededTurn {
 				// The assistant response belongs to the stale turn and must not
 				// reach a surface or the next persisted transcript. Streaming may
@@ -847,6 +1063,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			res.Task = a.TaskSnapshot()
 			_ = traceLog.Append("turn_end", "", text, trace.Bool(true), 0)
 			msgs = stripDurableInternal(msgs)
+			if err := a.checkTaskRun(ctx); err != nil {
+				res.Task = a.TaskSnapshot()
+				return msgs, res, err
+			}
 			final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 			res.Context = stats
 			return final, res, nil
@@ -870,6 +1090,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		var pending []executed
 
 		for _, call := range msg.ToolCalls {
+			if err := a.checkTaskRun(ctx); err != nil {
+				res.Task = a.TaskSnapshot()
+				return msgs, res, err
+			}
 			if call.Name == "project_health" && healthAdmissionAttempted {
 				// A provider may still emit a tool call that was not advertised. Keep
 				// the conversation structurally valid without running a second
@@ -903,6 +1127,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			req := tool.Permission(call.Arguments, regCtx)
 			req.Hint = perm.EnrichHint(req, call.Arguments)
 			dec, prompted, err := gate.CheckWithProvenance(ctx, req)
+			if authorityErr := a.checkTaskRun(ctx); authorityErr != nil {
+				res.Task = a.TaskSnapshot()
+				return msgs, res, errors.Join(err, authorityErr)
+			}
 			if err != nil {
 				ev.OnToolEnd(call, "", err)
 				res.FilesChanged = sortedChanged(changed)
@@ -948,6 +1176,11 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 		}
 
 		for i := range pending {
+			if err := a.checkTaskRun(ctx); err != nil {
+				res.FilesChanged = sortedChanged(changed)
+				res.Task = a.TaskSnapshot()
+				return msgs, res, err
+			}
 			if pending[i].text != "" {
 				continue
 			}
@@ -998,7 +1231,20 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 				pending[i].observationUsable = verification.observationUsable
 				pending[i].observationReason = verification.observationReason
 			}
+			// Report completed effects even if the notification revokes this run.
+			// This is local result accounting, not authority to mutate a task.
+			if toolWriteSucceeded(call.Name, pending[i].req.Path, outText, runErr) {
+				if path := strings.TrimSpace(pending[i].req.Path); path != "" {
+					changed[path] = struct{}{}
+					res.FilesChanged = sortedChanged(changed)
+				}
+			}
 			ev.OnToolEnd(call, outText, runErr)
+			if authorityErr := a.checkTaskRun(ctx); authorityErr != nil {
+				res.FilesChanged = sortedChanged(changed)
+				res.Task = a.TaskSnapshot()
+				return msgs, res, errors.Join(runErr, authorityErr)
+			}
 			ok := runErr == nil
 			_ = traceLog.Append("tool_end", call.Name, outText, &ok, 0)
 		}
@@ -1082,6 +1328,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			msgs = append(msgs, llm.Message{Role: "tool", ToolCallID: ex.call.ID, Name: ex.call.Name, Content: content})
 		}
 		for _, path := range contentConflictPaths {
+			if err := a.checkTaskRun(ctx); err != nil {
+				res.Task = a.TaskSnapshot()
+				return msgs, res, err
+			}
 			if err := turnUndo.dropContentConflict(path); err != nil {
 				res.UndoError = fmt.Errorf("cannot discard conflicted undo path %s: %w", path, err).Error()
 			}
@@ -1106,6 +1356,11 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			lastToolKind = classifyToolKind(pending[len(pending)-1].call.Name)
 		}
 		// TokenTamer every round — don't wait for message count / budget critical.
+		if err := a.checkTaskRun(ctx); err != nil {
+			res.FilesChanged = sortedChanged(changed)
+			res.Task = a.TaskSnapshot()
+			return msgs, res, err
+		}
 		compactMsgs, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 		msgs = compactMsgs
 		res.Context = stats
@@ -1120,6 +1375,10 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 	err = turnCloseFailure(err)
 	ev.OnError(err)
 	msgs = stripDurableInternal(msgs)
+	if authorityErr := a.checkTaskRun(ctx); authorityErr != nil {
+		res.Task = a.TaskSnapshot()
+		return msgs, res, errors.Join(err, authorityErr)
+	}
 	final, stats, _ := ctxmgr.Manage(ctx, state.LLM, cfg.Model, msgs, budget)
 	res.Context = stats
 	return final, res, err
@@ -1159,6 +1418,9 @@ func (a *Agent) maybeVerify(ctx context.Context, ev EventHandler, userHint strin
 	dec, prompted, err := gate.CheckWithProvenance(ctx, req)
 	if prompted && err == nil {
 		a.noteTaskPermission(req, dec, ev)
+	}
+	if authorityErr := a.checkTaskRun(ctx); authorityErr != nil {
+		return verificationEvidence{err: errors.Join(err, authorityErr), observationReason: "turn authority changed before verification"}
 	}
 	if err != nil || dec == perm.Deny {
 		msg := "verify skipped"

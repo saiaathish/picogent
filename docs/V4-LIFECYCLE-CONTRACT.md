@@ -33,7 +33,7 @@ failure cannot be presented as verified completion.
 | `gui-shutdown-active-turn` | GUI | server context shutdown during an active turn | no new admission; turn finishes durably or is interrupted before cleanup returns | no completion from shutdown alone | none | required, local macOS pass; hosted Windows console-control pass in [PR #386](https://github.com/saiaathish/picogent/pull/386) |
 | `gui-process-kill-active-turn` | GUI | GUI process is killed during an active turn | fresh process recovers the durably admitted turn as interrupted/recover | no marker; not ready; fail-closed | none | required, local macOS pass; Windows `UNVERIFIED` |
 | `gui-reconnect-active-turn` | GUI | SSE reconnect while a turn is active | current session/turn remains authoritative; stale transcript is not grafted | projection follows current durable task only | none | not required, local deterministic pass |
-| `gui-task-save-failure` | GUI | terminal durable-task save fails | prior checkpoint remains working/active and recoverable | no marker; not ready; fail-closed | task persistence | not required, local deterministic pass |
+| `gui-task-save-failure` | GUI | terminal durable-task save fails | prior checkpoint remains working/active and recoverable | no marker; not ready; fail-closed | task persistence | not required, `UNVERIFIED`; earlier fixture revoked the store rather than failing I/O |
 | `gui-session-save-failure` | GUI | session save fails during reset/follow-up | current durable task is retained; session error is visible | no marker; not ready; fail-closed | session persistence | not required, local deterministic pass |
 
 The matrix is intentionally explicit about what is not yet proven. A green
@@ -50,15 +50,18 @@ the new process's task store. The TUI harness canonicalizes the temporary
 workspace before saving config so macOS `/var` and `/private/var` spellings do
 not create different project-store hashes.
 
-The headless and TUI save-failure tests separately prove that a failed durable
-or session save stays fail-closed and leaves a resumable task. These are local
-deterministic integration tests, not proof of every provider or UI runtime.
+The TUI session-save test proves fail-closed session persistence. Earlier
+headless/GUI task-save fixtures instead rebound the store from a callback.
+They now explicitly prove authority revocation, original-turn interruption,
+and refusal of continuation, not actual terminal I/O-save failure. The two
+task-save matrix rows remain unverified. Local deterministic integration
+tests are not proof of every provider or UI runtime.
 
 The GUI lifecycle tests add the same evidence at the HTTP server boundary. A
 fresh GUI process reaches a loopback provider barrier, receives SIGINT, and
 leaves an interrupted/recovery turn in the task store. Reconnect adopts the
-current session/task generation and rejects stale callbacks. Durable task and
-session save failures emit persistence errors while retaining a fail-closed,
+current session/task generation and rejects stale callbacks. Session save
+failures emit persistence errors while retaining a fail-closed,
 recoverable task. These tests exercise the GUI server and event handler
 directly; they do not claim rendered-browser behavior. The exact-head GUI
 process-kill fixture adds the native owner-death boundary and fresh

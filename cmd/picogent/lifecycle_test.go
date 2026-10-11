@@ -357,7 +357,10 @@ func TestHeadlessFreshProcessSignalRetainsInterruptedTurn(t *testing.T) {
 	}
 }
 
-func TestHeadlessTaskSaveFailureMatchesLifecycleScenario(t *testing.T) {
+// A callback's store rebind is authority revocation, not an I/O save failure.
+// Keep this proof separate from the still-unverified fresh-process save-failure
+// scenario; the original store is healthy and must recover its exited turn.
+func TestHeadlessStoreRevocationStopsAndRecoversOriginal(t *testing.T) {
 	workspace := t.TempDir()
 	goodStore := taskstate.NewStore(t.TempDir())
 	badRoot := filepath.Join(t.TempDir(), "not-a-directory")
@@ -394,8 +397,8 @@ func TestHeadlessTaskSaveFailureMatchesLifecycleScenario(t *testing.T) {
 		badStore:     taskstate.NewStore(badRoot),
 	}
 	_, result, runErr := a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "finish the requested change"}, h, agent.RunOptions{SuppressUndo: true})
-	if runErr == nil || !strings.Contains(strings.ToLower(runErr.Error()), "durable task state") {
-		t.Fatalf("headless task save failure = %v, want durable-state error", runErr)
+	if runErr == nil || !strings.Contains(runErr.Error(), "ownership changed") {
+		t.Fatalf("headless store revocation = %v, want authority refusal", runErr)
 	}
 	if !h.switched || result.GoalDone {
 		t.Fatalf("headless save failure switched=%v goalDone=%v result=%#v", h.switched, result.GoalDone, result)
@@ -404,13 +407,11 @@ func TestHeadlessTaskSaveFailureMatchesLifecycleScenario(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	scenario := headlessLifecycleScenario(t, "headless-task-save-failure")
-	observation := lifecycle.Observe(
-		scenario.ID, scenario.Surface, scenario.Trigger, task,
-		lifecycle.CompletionProjection{Required: true}, runErr,
-	)
-	if violations := scenario.Check(observation); len(violations) != 0 {
-		t.Fatalf("headless save-failure observation violations = %v", violations)
+	if task.Status != taskstate.StatusWorking || task.LastTurn() == nil || task.LastTurn().State != taskstate.TurnInterrupted {
+		t.Fatalf("headless original turn was not recovered: %+v", task)
+	}
+	if eventErr := h.EventError(); len(client.Calls) != 1 || result.Completion.Ready || eventErr == nil || !strings.Contains(eventErr.Error(), "ownership changed") || strings.Contains(stdout.String(), "Goal complete:") {
+		t.Fatalf("revoked headless run continued or hid refusal: calls=%d stdout=%q stderr=%q result=%+v", len(client.Calls), stdout.String(), stderr.String(), result)
 	}
 }
 
