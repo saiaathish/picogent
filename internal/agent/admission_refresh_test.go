@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
+	"github.com/saiaathish/picogent/internal/checkpoint"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/taskstate"
 )
@@ -92,6 +95,90 @@ func TestFreshAdmissionCASRefusalRefreshesOnlyOnNewRun(t *testing.T) {
 	got := a.TaskSnapshot()
 	if got == nil || got.ID != raced.ID || got.Goal != raced.Goal || got.Attempts <= raced.Attempts || a.pendingAdmissionRefresh != nil {
 		t.Fatalf("retry did not continue from refreshed authoritative task: got=%+v raced=%+v pending=%v", got, raced, a.pendingAdmissionRefresh != nil)
+	}
+}
+
+func TestAdmissionRefreshAllowsLegacyV2PendingUndo(t *testing.T) {
+	const session = "legacy-v2-admission-refresh"
+	root := t.TempDir()
+	store := taskstate.NewStore(t.TempDir())
+	client := &llm.Scripted{Responses: []llm.ChatResponse{{Message: llm.Message{Role: "assistant", Content: "done"}}}}
+	a := newAdmissionRefreshAgent(t, root, session, store, client)
+
+	path := filepath.Join(root, "note.txt")
+	if err := os.WriteFile(path, []byte("before\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cp, err := checkpoint.Capture(root, []string{"note.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cp.PrepareExpected(path, []byte("after\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("after\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.Seal(); err != nil {
+		t.Fatal(err)
+	}
+	checkpointRecord, err := cp.Export()
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceIdentity, err := undoWorkspaceIdentity(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var raced *taskstate.Task
+	var legacyPath string
+	var legacyBytes []byte
+	first := RunOptions{beforeProjectRunLock: func() {
+		raced = saveAdmissionRefreshTask(t, store, session, "fix the backend bug")
+		journal := undoJournal{
+			Version: undoJournalTaskOwnerVersion, State: undoJournalPending, Workspace: workspaceIdentity,
+			SessionID: session, TurnSequence: 1, TaskID: raced.ID, Checkpoint: checkpointRecord,
+		}
+		data, err := json.Marshal(journal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			t.Fatal(err)
+		}
+		delete(fields, "workspace_instance")
+		legacyBytes, err = json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, legacyPath, err = undoJournalPaths(root, session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(legacyPath, legacyBytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	_, _, err = a.RunWithOptions(context.Background(), nil, llm.Message{Role: "user", Content: "document the API"}, &intermediateOwnershipEvents{}, first)
+	if err == nil || len(client.Calls) != 0 || a.pendingAdmissionRefresh == nil {
+		t.Fatalf("initial fresh conflict was not refused: calls=%d pending=%v err=%v", len(client.Calls), a.pendingAdmissionRefresh != nil, err)
+	}
+
+	_, _, err = a.Run(context.Background(), nil, llm.Message{Role: "user", Content: "document the API"}, &intermediateOwnershipEvents{})
+	if err != nil || len(client.Calls) != 1 {
+		t.Fatalf("retry was blocked by the legacy v2 undo journal: calls=%d err=%v", len(client.Calls), err)
+	}
+	got := a.TaskSnapshot()
+	if got == nil || raced == nil || got.ID != raced.ID || got.Attempts <= raced.Attempts || a.pendingAdmissionRefresh != nil {
+		t.Fatalf("retry did not continue from the refreshed owner: got=%+v raced=%+v pending=%v", got, raced, a.pendingAdmissionRefresh != nil)
+	}
+	if after, err := os.ReadFile(legacyPath); err != nil || !reflect.DeepEqual(after, legacyBytes) {
+		t.Fatalf("legacy undo journal was restored, removed, or rewritten: err=%v unchanged=%v", err, reflect.DeepEqual(after, legacyBytes))
 	}
 }
 
