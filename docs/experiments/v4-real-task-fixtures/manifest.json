@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "provider_calls": "none during fixture preparation and deterministic local checks",
+  "digest_algorithm": "SHA-256 over sorted regular files: 8-byte big-endian relative-path byte length, UTF-8 POSIX relative path, 8-byte big-endian file length, then exact file bytes; symlinks are rejected",
+  "blind_scoring": {
+    "candidate_labels": ["A", "B"],
+    "randomize_candidate_order_per_task_and_repetition": true,
+    "hide_variant_identity_until_scores_recorded": true,
+    "dimensions": ["correctness", "unnecessary edits", "unnecessary questions", "repairs", "verification"]
+  },
+  "tasks": [
+    {
+      "id": "go-deadline",
+      "title": "Go debugging: inclusive deadline boundary",
+      "workspace": "go-deadline/workspace",
+      "initial_tree_sha256": "c6a04427cc4995a60f0bed382aff1ccf1263ca116b647eef5944e6474a7c9747",
+      "prompt": "Fix due.IsDue so an item is due at its exact deadline as well as after it. An item before the deadline must remain not due. Keep the exported function signature and change only due/due.go. Run the existing tests.",
+      "allowed_paths": ["due/due.go"],
+      "acceptance": {
+        "kind": "command",
+        "command": "env GOMAXPROCS=1 GOMEMLIMIT=1GiB GOFLAGS=-p=1 GOTOOLCHAIN=local GOPROXY=off go test ./... -count=1",
+        "near_miss": "The equality case must pass without making the before-deadline case due."
+      }
+    },
+    {
+      "id": "frontend-profile",
+      "title": "Frontend journey: persist a display name safely",
+      "workspace": "frontend-profile/workspace",
+      "initial_tree_sha256": "ce1889fbe4cede28db46012c3ac2df0b21ec8bd1a3842c1a3a35cc196005bb7c",
+      "prompt": "Make the display-name form save a trimmed, non-empty name and restore it after reload. A whitespace-only submission must show an error and leave the last saved name unchanged. Keep the existing page and change only app.js; use browser storage, not a server or new dependency.",
+      "allowed_paths": ["app.js"],
+      "acceptance": {
+        "kind": "real-browser",
+        "server_command": "python3 -m http.server 0 --bind 127.0.0.1",
+        "url": "http://127.0.0.1:<ephemeral-port>/",
+        "isolate_browser_storage_with_unique_origin_per_run": true,
+        "steps": [
+          "Fill Display name with two leading and trailing spaces around Mira Chen; submit Save.",
+          "Confirm status Saved Mira Chen. and the field value Mira Chen.",
+          "Reload; confirm the field value Mira Chen.",
+          "Submit three spaces; confirm Display name cannot be blank.",
+          "Reload; confirm the previously saved Mira Chen remains."
+        ],
+        "near_miss": "Raw whitespace is not normalized, and a blank submission must not replace the previous saved value."
+      }
+    },
+    {
+      "id": "python-ledger",
+      "title": "Python modernization: single-pass event summary",
+      "workspace": "python-ledger/workspace",
+      "initial_tree_sha256": "7f7d229c131561cf02c9295006f692f5c2ff1d0f807a83b4e7608cd94b2ea306",
+      "prompt": "Modernize ledger.summarize to aggregate events in one pass without materializing or mutating the input. Preserve first-seen category order and keep categories whose final total is zero. Change only ledger.py and run the tests.",
+      "allowed_paths": ["ledger.py"],
+      "acceptance": {
+        "kind": "command",
+        "command": "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_ledger.py",
+        "near_miss": "A one-shot iterable rejects a second traversal, and a zero-total category must remain in the result."
+      }
+    }
+  ]
+}
