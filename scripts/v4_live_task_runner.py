@@ -1105,6 +1105,15 @@ def overall_verdict(results: list[dict[str, object]]) -> str:
     return "UNVERIFIED" if required_unverified else "PASS"
 
 
+def candidate_source_mapping(order: list[tuple[str, str]]) -> dict[str, dict[str, str]]:
+    if len(order) != 2 or dict(order) != {"v3": V3_SHA, "v4": V4_SHA}:
+        raise RunnerError("candidate order must contain the exact pinned v3 and v4 sources")
+    return {
+        candidate: {"variant": variant, "source_sha": sha}
+        for candidate, (variant, sha) in zip(("A", "B"), order)
+    }
+
+
 def worktree_remove(
     repo: pathlib.Path,
     worktree: pathlib.Path,
@@ -1216,6 +1225,7 @@ def main(argv: list[str] | None = None) -> int:
     top_root, marker = make_temp_root(parent)
     worktrees: dict[str, pathlib.Path] = {}
     results: list[dict[str, object]] = []
+    candidate_source_map: dict[str, dict[str, object]] = {}
     try:
         for label, sha in (("v3", V3_SHA), ("v4", V4_SHA)):
             check = subprocess.run(
@@ -1245,7 +1255,15 @@ def main(argv: list[str] | None = None) -> int:
             for repetition in range(1, args.repetitions + 1):
                 order = variant_pairs.copy()
                 rng.shuffle(order)
-                candidate_by_variant = {variant: candidate for candidate, (variant, _) in zip(("A", "B"), order)}
+                candidate_sources = candidate_source_mapping(order)
+                candidate_by_variant = {
+                    str(source["variant"]): candidate for candidate, source in candidate_sources.items()
+                }
+                candidate_source_map[f"{task_id}:r{repetition}"] = {
+                    "task_id": task_id,
+                    "repetition": repetition,
+                    "candidates": candidate_sources,
+                }
                 for variant, sha in order:
                     remaining_runs = planned_runs - len(results)
                     run_auth_validity = (
@@ -1310,7 +1328,8 @@ def main(argv: list[str] | None = None) -> int:
         "source_shas": {"v3": V3_SHA, "v4": V4_SHA},
         "budgets": budgets,
         "repetitions": args.repetitions,
-        "blind_order": "candidate order randomized per task/repetition; source identity withheld in per-candidate results",
+        "blind_order": "candidate order randomized per task/repetition; source identity withheld in per-candidate results and disclosed only in this post-run map",
+        "candidate_source_map": candidate_source_map,
         "subjective_scores": {
             "status": "UNVERIFIED",
             "reason": "raw model output is not retained, so questions and repair quality are not scored",

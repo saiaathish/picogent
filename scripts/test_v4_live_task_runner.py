@@ -92,6 +92,25 @@ class FixtureLoadingTests(unittest.TestCase):
         self.assertEqual(fixture.MANIFEST_PATH, runner.FIXTURE_DIR / "manifest.json")
 
 
+class CandidateSourceMappingTests(unittest.TestCase):
+    def test_randomized_candidate_order_maps_to_exact_variant_shas(self) -> None:
+        v3_sha = runner.V3_SHA
+        v4_sha = runner.V4_SHA
+        forward = runner.candidate_source_mapping([("v3", v3_sha), ("v4", v4_sha)])
+        reverse = runner.candidate_source_mapping([("v4", v4_sha), ("v3", v3_sha)])
+
+        self.assertEqual(forward["A"], {"variant": "v3", "source_sha": v3_sha})
+        self.assertEqual(forward["B"], {"variant": "v4", "source_sha": v4_sha})
+        self.assertEqual(reverse["A"], {"variant": "v4", "source_sha": v4_sha})
+        self.assertEqual(reverse["B"], {"variant": "v3", "source_sha": v3_sha})
+
+    def test_candidate_source_mapping_rejects_incomplete_or_duplicate_variants(self) -> None:
+        with self.assertRaises(runner.RunnerError):
+            runner.candidate_source_mapping([("v3", runner.V3_SHA), ("v3", runner.V3_SHA)])
+        with self.assertRaises(runner.RunnerError):
+            runner.candidate_source_mapping([("v3", "a" * 40), ("v4", runner.V4_SHA)])
+
+
 class ChildObservationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="picogent-runner-child-")
