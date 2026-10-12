@@ -947,6 +947,10 @@ def evaluate_command(
     return {"kind": "command", "status": status, "exit_code": observed["exit_code"], "latency_ms": observed["latency_ms"]}
 
 
+def should_run_acceptance(kind: str, agent_status: str) -> bool:
+    return kind == "command" or (kind == "real-browser" and agent_status == "PASS")
+
+
 def browser_result_from_input(stdin: TextIO, stdout: TextIO, *, timeout_seconds: int) -> str:
     if not stdin.isatty():
         return "UNVERIFIED"
@@ -1270,32 +1274,36 @@ def run_one(
     paths_status = "PASS" if not outside_allowlist else "FAIL"
     status = "PASS" if observed["exit_code"] == 0 and observed["stop_reason"] is None else "FAIL"
     acceptance_spec = task["acceptance"]
-    if status == "PASS" and acceptance_spec["kind"] == "command":
-        acceptance = evaluate_command(
-            str(acceptance_spec["command"]),
-            workspace=workspace,
-            shell_wrapper=wrapper,
-            env=env,
-            timeout_seconds=budgets["acceptance_timeout_seconds"],
-        )
-    elif status == "PASS" and acceptance_spec["kind"] == "real-browser":
-        acceptance = evaluate_browser(
-            acceptance_spec,
-            candidate=candidate,
-            task_id=str(task["id"]),
-            repetition=repetition,
-            workspace=workspace,
-            run_root=run_root,
-            env=env,
-            stdin=stdin,
-            stdout=stdout,
-            timeout_seconds=budgets["acceptance_timeout_seconds"],
-            sandbox_exec=sandbox_exec,
-            denied_reads=(auth_source.parent.resolve(strict=True), auth_copy.parent.resolve(strict=True)),
-            denied_writes=(auth_source.parent.resolve(strict=True), auth_copy.parent.resolve(strict=True)),
-        )
-    else:
+    acceptance_kind = str(acceptance_spec["kind"])
+    if should_run_acceptance(acceptance_kind, str(status)):
+        if acceptance_kind == "command":
+            acceptance = evaluate_command(
+                str(acceptance_spec["command"]),
+                workspace=workspace,
+                shell_wrapper=wrapper,
+                env=env,
+                timeout_seconds=budgets["acceptance_timeout_seconds"],
+            )
+        else:
+            acceptance = evaluate_browser(
+                acceptance_spec,
+                candidate=candidate,
+                task_id=str(task["id"]),
+                repetition=repetition,
+                workspace=workspace,
+                run_root=run_root,
+                env=env,
+                stdin=stdin,
+                stdout=stdout,
+                timeout_seconds=budgets["acceptance_timeout_seconds"],
+                sandbox_exec=sandbox_exec,
+                denied_reads=(auth_source.parent.resolve(strict=True), auth_copy.parent.resolve(strict=True)),
+                denied_writes=(auth_source.parent.resolve(strict=True), auth_copy.parent.resolve(strict=True)),
+            )
+    elif acceptance_spec["kind"] == "real-browser":
         acceptance = {"kind": str(acceptance_spec["kind"]), "status": "UNVERIFIED", "reason": "agent_run_not_successful"}
+    else:
+        acceptance = {"kind": str(acceptance_spec["kind"]), "status": "UNVERIFIED", "reason": "unsupported_acceptance_kind"}
     rounds = latest_agent_rounds(picogent_home)
     result = {
         "run_id": run_tag,

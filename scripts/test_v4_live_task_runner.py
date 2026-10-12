@@ -165,6 +165,18 @@ class ChildObservationTests(unittest.TestCase):
         self.assertEqual(runner.classify_agent_error(b""), "no_diagnostic")
 
 
+class AcceptanceExecutionPolicyTests(unittest.TestCase):
+    def test_command_oracle_runs_even_when_agent_fails(self) -> None:
+        self.assertTrue(runner.should_run_acceptance("command", "FAIL"))
+
+    def test_browser_oracle_requires_agent_success(self) -> None:
+        self.assertFalse(runner.should_run_acceptance("real-browser", "FAIL"))
+        self.assertTrue(runner.should_run_acceptance("real-browser", "PASS"))
+
+    def test_unknown_acceptance_kind_is_not_run(self) -> None:
+        self.assertFalse(runner.should_run_acceptance("other", "PASS"))
+
+
 class AgentStateObservationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="picogent-runner-task-state-")
