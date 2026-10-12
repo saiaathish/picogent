@@ -16,12 +16,8 @@ from unittest import mock
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import v4_live_task_runner as runner
 
-SECURE_FD_WALK = (
-    hasattr(os, "fwalk")
-    and os.open in getattr(os, "supports_dir_fd", set())
-    and os.stat in getattr(os, "supports_dir_fd", set())
-)
-EXPECTED_GIT_STATUS_LIMIT = 1024 * 1024
+SECURE_FD_WALK = runner.SECURE_FD_WALK_AVAILABLE
+EXPECTED_GIT_STATUS_LIMIT = runner.MAX_GIT_STATUS_BYTES
 
 
 def fake_jwt(expires_at: int) -> str:
@@ -121,6 +117,41 @@ class CandidateSourceMappingTests(unittest.TestCase):
             runner.candidate_source_mapping([("v3", runner.V3_SHA), ("v3", runner.V3_SHA)])
         with self.assertRaises(runner.RunnerError):
             runner.candidate_source_mapping([("v3", "a" * 40), ("v4", runner.V4_SHA)])
+
+
+class WorktreeCleanupTests(unittest.TestCase):
+    def test_cleanup_status_is_bounded_and_fails_closed_on_overflow(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="picogent-worktree-cleanup-") as temporary:
+            parent = pathlib.Path(temporary)
+            repo = parent / "repo"
+            worktree = parent / "source-v3"
+            repo.mkdir()
+            worktree.mkdir()
+            oversized_status = {
+                "exit_code": 0,
+                "stdout_bytes": EXPECTED_GIT_STATUS_LIMIT + 1,
+                "stderr_bytes": 0,
+                "stop_reason": "output_limit_exceeded",
+            }
+            with (
+                mock.patch.object(
+                    runner,
+                    "source_state",
+                    return_value={"head_matches": True, "clean": True},
+                ),
+                mock.patch.object(runner, "observe_child", return_value=oversized_status) as observe,
+                mock.patch.object(runner.subprocess, "run") as unbounded_run,
+                self.assertRaisesRegex(runner.RunnerError, "non-clean task worktree"),
+            ):
+                runner.worktree_remove(
+                    repo,
+                    worktree,
+                    parent=parent,
+                    expected_sha="a" * 40,
+                )
+
+            self.assertEqual(observe.call_args.kwargs["max_output_bytes"], EXPECTED_GIT_STATUS_LIMIT)
+            self.assertFalse(unbounded_run.called)
 
 
 class ArtifactArgumentTests(unittest.TestCase):
@@ -688,6 +719,29 @@ class WorkspaceChangeTests(unittest.TestCase):
         after = runner.file_digests(self.root)
 
         self.assertEqual(runner.changed_paths(before, after), ["main.go"])
+
+    @unittest.skipUnless(SECURE_FD_WALK, "secure descriptor traversal is unavailable")
+    def test_file_mode_change_between_stat_and_open_is_rejected(self) -> None:
+        path = self.root / "main.go"
+        path.write_text("package main\n", encoding="utf-8")
+        path.chmod(0o600)
+        original_open = runner.os.open
+        changed = False
+
+        def open_after_chmod(name, flags, *args, **kwargs):
+            nonlocal changed
+            if name == "main.go" and kwargs.get("dir_fd") is not None and not changed:
+                path.chmod(0o700)
+                changed = True
+            return original_open(name, flags, *args, **kwargs)
+
+        with (
+            mock.patch.object(runner.os, "open", side_effect=open_after_chmod),
+            self.assertRaisesRegex(runner.RunnerError, "changed while its tree was being inspected"),
+        ):
+            runner.file_digests(self.root)
+
+        self.assertTrue(changed)
 
     def test_empty_directory_creation_and_mode_change_are_detected(self) -> None:
         before = runner.file_digests(self.root)

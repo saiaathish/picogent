@@ -49,6 +49,11 @@ MAX_WORKSPACE_FILE_BYTES = 32 * 1024 * 1024
 MAX_WORKSPACE_TOTAL_BYTES = 256 * 1024 * 1024
 WORKSPACE_HASH_CHUNK_BYTES = 1024 * 1024
 MAX_PROVENANCE_FILE_BYTES = 2 * 1024 * 1024
+SECURE_FD_WALK_AVAILABLE = (
+    hasattr(os, "fwalk")
+    and os.open in getattr(os, "supports_dir_fd", set())
+    and os.stat in getattr(os, "supports_dir_fd", set())
+)
 TASK_STATUS_VALUES = frozenset({"planning", "working", "verifying", "blocked", "done"})
 TASK_STOP_REASON_VALUES = frozenset(
     {
@@ -387,11 +392,7 @@ def file_digests(root: pathlib.Path) -> dict[str, str]:
     if root.is_symlink():
         raise RunnerError("workspace root became a symlink")
     root = root.resolve(strict=True)
-    if not (
-        hasattr(os, "fwalk")
-        and os.open in getattr(os, "supports_dir_fd", set())
-        and os.stat in getattr(os, "supports_dir_fd", set())
-    ):
+    if not SECURE_FD_WALK_AVAILABLE:
         raise RunnerError("secure workspace traversal is unavailable on this platform")
 
     result: dict[str, str] = {}
@@ -480,6 +481,7 @@ def file_digests(root: pathlib.Path) -> dict[str, str]:
                         or opened.st_nlink != 1
                         or opened.st_dev != info.st_dev
                         or opened.st_ino != info.st_ino
+                        or stat.S_IMODE(opened.st_mode) != stat.S_IMODE(info.st_mode)
                     ):
                         raise RunnerError("workspace changed while its tree was being inspected")
                     digest = hashlib.sha256()
@@ -1952,13 +1954,19 @@ def worktree_remove(
     exact = source_state(worktree, expected_sha)
     if exact["head_matches"] is not True or exact["clean"] is not True:
         raise RunnerError("refusing to remove a worktree whose exact source state changed")
-    state = subprocess.run(
+    state = observe_child(
         ["git", "-C", str(worktree), "status", "--porcelain=v1", "--untracked-files=all"],
-        capture_output=True,
-        check=False,
-        timeout=10,
+        cwd=worktree,
+        env=os.environ.copy(),
+        timeout_seconds=10,
+        max_output_bytes=MAX_GIT_STATUS_BYTES,
     )
-    if state.returncode != 0 or state.stdout != b"":
+    if (
+        state["exit_code"] != 0
+        or state["stop_reason"] is not None
+        or state["stdout_bytes"] != 0
+        or state["stderr_bytes"] != 0
+    ):
         raise RunnerError("refusing to remove a non-clean task worktree")
     result = subprocess.run(
         ["git", "-C", str(repo), "worktree", "remove", str(worktree)],
