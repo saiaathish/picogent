@@ -88,3 +88,19 @@ The frontend baseline was served from a prepared temporary copy and exercised in
 ## Fixture integrity
 
 `manifest.json` binds each task to its pristine tree digest, fixed prompt, allowed paths, and oracle. Recompute the digests after any intentional fixture edit and review that edit as a task-definition change; do not silently update a digest to make verification green. A modified candidate's digest is expected to differ from the pristine digest and must not be reused for another variant or repetition.
+
+## Live v3/v4 runner (#812)
+
+Run from a terminal on macOS so the browser lane can pause for a real BrowserOS check:
+
+```sh
+python3 scripts/v4_live_task_runner.py --live --repetitions 2
+```
+
+Use `--task go-deadline` (repeatable) to bound a run to selected fixtures. The runner builds the exact pinned source worktrees serially with one Go build worker, one `GOMAXPROCS`, and a 1 GiB runtime memory limit. Before any provider request it verifies the fixture digests, source availability, existing Codex access-token expiry for the full configured run budget, and macOS sandbox canaries.
+
+Authentication uses the existing ChatGPT Codex login only. The temporary private `PICOGENT_CODEX_HOME/auth.json` contains only the current access token and account ID; the refresh token and ID token are never copied. The model process can read that per-run auth copy, cannot read the host `~/.codex` directory, and cannot write either credential directory. Shell children can neither read nor write either Codex directory. Shell commands run through a nested sandbox that also denies network access and restricts persistent writes to the task-owned temporary root (with `/dev/null` allowed for ordinary redirection). The model process alone receives outbound network and a single `com.apple.trustd.agent` lookup required by Go's macOS TLS verification. No API key or paid API endpoint is used.
+
+The artifact keeps hashes, paths, exit/acceptance status, observed latency, tool-start markers, and a coarse error category only; raw model/provider output and auth data are not retained. Picogent's exact known runtime metadata paths under `.picogent/` are listed separately from candidate file changes; any other out-of-allowlist path remains a failure. Provider HTTP request counts, actual served model, and token totals are `UNVERIFIED` because the CLI does not persist those per-run values. The tool-start threshold is a reactive stop signal—not a hard pre-dispatch call cap—so that dimension also remains `UNVERIFIED`; do not report an overall `PASS` from this runner. Subjective question/repair scoring is not implemented and remains `UNVERIFIED` rather than being reported as complete.
+
+The browser lane uses a unique `<run-id>.localhost` origin and requires the exact real-browser journey above. Entering anything other than `PASS`/`FAIL`, running without an interactive terminal, or timing out leaves that lane `UNVERIFIED`; no DOM mock or alternate browser is accepted. An optional `--output <new-path>` writes only the sanitized JSON artifact with mode `0600` and refuses to overwrite an existing file.
