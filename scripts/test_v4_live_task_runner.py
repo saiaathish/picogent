@@ -276,6 +276,14 @@ class SandboxProfileTests(unittest.TestCase):
         )
         wrapper_directory = self.root / "tool-bins"
         wrapper_directory.mkdir()
+        for name, target in runner.path_executables(os.environ.get("PATH", "")).items():
+            if name in {"git", "go", "python3", "rg"}:
+                runner.write_sandboxed_command_wrapper(
+                    wrapper_directory / name,
+                    target,
+                    sandbox_exec="/usr/bin/sandbox-exec",
+                    profile_path=profile,
+                )
         env = {"HOME": str(self.root), "PATH": str(wrapper_directory)}
 
         self.assertTrue(

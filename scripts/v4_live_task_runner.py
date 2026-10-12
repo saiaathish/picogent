@@ -554,6 +554,32 @@ def probe_direct_tool_sandbox(
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise RunnerError("direct-tool macOS sandbox probe could not complete") from error
+        for name, arguments in (
+            ("git", ["--version"]),
+            ("go", ["version"]),
+            ("python3", ["--version"]),
+            ("rg", ["--version"]),
+        ):
+            command = wrapper_directory / name
+            if name == "rg" and not command.is_file():
+                continue
+            if not command.is_file() or command.is_symlink():
+                raise RunnerError("required direct-tool sandbox wrapper is unavailable")
+            try:
+                checked = subprocess.run(
+                    [str(command), *arguments],
+                    cwd=write_root,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=10,
+                )
+            except (OSError, subprocess.TimeoutExpired) as error:
+                raise RunnerError("direct-tool executable wrapper probe could not complete") from error
+            if checked.returncode != 0:
+                raise RunnerError("direct-tool executable wrapper probe failed")
         network_allowed = network_marker.exists() or network_marker.is_symlink()
         try:
             connection, _ = listener.accept()
