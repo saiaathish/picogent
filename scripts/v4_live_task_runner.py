@@ -42,6 +42,19 @@ ROOT_MARKER = ".picogent-live-task-root"
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 MAX_LINE_BYTES = 64 * 1024
 MAX_ERROR_CLASSIFICATION_BYTES = 8 * 1024
+TASK_STATUS_VALUES = frozenset({"planning", "working", "verifying", "blocked", "done"})
+TASK_STOP_REASON_VALUES = frozenset(
+    {
+        "goal_complete",
+        "permission_needed",
+        "user_choice_required",
+        "verification_repeatedly_failed",
+        "resource_unavailable",
+        "budget_exhausted",
+        "canceled",
+        "process_restart",
+    }
+)
 
 
 class RunnerError(RuntimeError):
@@ -723,6 +736,12 @@ def classify_agent_error(stderr: bytes) -> str:
     text = stderr[:MAX_ERROR_CLASSIFICATION_BYTES].decode("utf-8", errors="ignore").lower()
     if not text.strip():
         return "no_diagnostic"
+    if "problem: headless run is blocked" in text:
+        return "picogent_task_blocked"
+    if "problem: headless task is not verified" in text:
+        return "picogent_task_unverified"
+    if "problem: permission denied" in text:
+        return "picogent_permission_denied"
     if "http 429" in text or "rate limit" in text or "usage limit" in text:
         return "provider_rate_limited"
     if "http 401" in text or "unauthorized" in text or "invalid_token" in text:
@@ -840,7 +859,7 @@ def observe_child(
 
 
 def latest_agent_rounds(picogent_home: pathlib.Path) -> dict[str, object]:
-    found: list[tuple[float, int, str]] = []
+    found: list[tuple[float, int, str, object, object, object]] = []
     for path in (picogent_home / "tasks").rglob("*.json") if (picogent_home / "tasks").exists() else ():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -852,12 +871,41 @@ def latest_agent_rounds(picogent_home: pathlib.Path) -> dict[str, object]:
         last = turns[-1]
         if not isinstance(last, dict) or not isinstance(last.get("tool_rounds"), int):
             continue
-        finished = last.get("finished_at")
-        found.append((path.stat().st_mtime, last["tool_rounds"], str(last.get("state", "unknown"))))
+        found.append(
+            (
+                path.stat().st_mtime,
+                last["tool_rounds"],
+                str(last.get("state", "unknown")),
+                payload.get("status"),
+                payload.get("stop_reason"),
+                last.get("stop_reason"),
+            )
+        )
+
+    def enum_observation(value: object, allowed: frozenset[str], source: str) -> dict[str, object]:
+        if isinstance(value, str) and value in allowed:
+            return {"value": value, "status": "OBSERVED", "source": source}
+        return {"value": None, "status": "UNVERIFIED", "source": source}
+
     if not found:
-        return {"value": None, "status": "UNVERIFIED", "source": "taskstate"}
-    _, count, state = max(found)
-    return {"value": count, "status": "OBSERVED", "source": "taskstate.tool_rounds", "turn_state": state}
+        return {
+            "value": None,
+            "status": "UNVERIFIED",
+            "source": "taskstate.tool_rounds",
+            "task_status": enum_observation(None, TASK_STATUS_VALUES, "taskstate.status"),
+            "task_stop_reason": enum_observation(None, TASK_STOP_REASON_VALUES, "taskstate.stop_reason"),
+            "turn_stop_reason": enum_observation(None, TASK_STOP_REASON_VALUES, "taskstate.turn.stop_reason"),
+        }
+    _, count, state, task_status, task_stop_reason, turn_stop_reason = max(found, key=lambda item: item[0])
+    return {
+        "value": count,
+        "status": "OBSERVED",
+        "source": "taskstate.tool_rounds",
+        "turn_state": state,
+        "task_status": enum_observation(task_status, TASK_STATUS_VALUES, "taskstate.status"),
+        "task_stop_reason": enum_observation(task_stop_reason, TASK_STOP_REASON_VALUES, "taskstate.stop_reason"),
+        "turn_stop_reason": enum_observation(turn_stop_reason, TASK_STOP_REASON_VALUES, "taskstate.turn.stop_reason"),
+    }
 
 
 def task_input_digest(

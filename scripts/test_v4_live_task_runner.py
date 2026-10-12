@@ -158,7 +158,60 @@ class ChildObservationTests(unittest.TestCase):
         self.assertEqual(runner.classify_agent_error(b"codex http 401: unauthorized"), "provider_unauthorized")
         self.assertEqual(runner.classify_agent_error(b"HTTP 429 rate limit"), "provider_rate_limited")
         self.assertEqual(runner.classify_agent_error(b"connection refused"), "provider_transport_failure")
+        self.assertEqual(
+            runner.classify_agent_error(b"Problem: headless run is blocked.\nCause: task budget exhausted."),
+            "picogent_task_blocked",
+        )
         self.assertEqual(runner.classify_agent_error(b""), "no_diagnostic")
+
+
+class AgentStateObservationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="picogent-runner-task-state-")
+        self.home = pathlib.Path(self.temp.name)
+        (self.home / "tasks").mkdir()
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def test_task_and_turn_stop_reasons_are_allowlisted_without_free_text(self) -> None:
+        payload = {
+            "status": "blocked",
+            "stop_reason": "user_choice_required",
+            "blocked_by": "private free-form blocker text",
+            "turns": [
+                {
+                    "state": "completed",
+                    "tool_rounds": 6,
+                    "stop_reason": "budget_exhausted",
+                }
+            ],
+        }
+        (self.home / "tasks" / "task.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        observed = runner.latest_agent_rounds(self.home)
+
+        self.assertEqual(observed["value"], 6)
+        self.assertEqual(observed["task_status"]["value"], "blocked")
+        self.assertEqual(observed["task_stop_reason"]["value"], "user_choice_required")
+        self.assertEqual(observed["turn_stop_reason"]["value"], "budget_exhausted")
+        self.assertNotIn("private free-form blocker text", json.dumps(observed))
+
+    def test_unknown_task_state_values_are_not_persisted(self) -> None:
+        payload = {
+            "status": "private-status",
+            "stop_reason": "private-task-reason",
+            "turns": [{"state": "completed", "tool_rounds": 1, "stop_reason": "private-turn-reason"}],
+        }
+        (self.home / "tasks" / "task.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        observed = runner.latest_agent_rounds(self.home)
+
+        for key in ("task_status", "task_stop_reason", "turn_stop_reason"):
+            self.assertIsNone(observed[key]["value"])
+            self.assertEqual(observed[key]["status"], "UNVERIFIED")
+        for private_value in ("private-status", "private-task-reason", "private-turn-reason"):
+            self.assertNotIn(private_value, json.dumps(observed))
 
 
 class RuntimeMetadataTests(unittest.TestCase):
