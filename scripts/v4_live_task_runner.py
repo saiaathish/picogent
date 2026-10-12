@@ -131,11 +131,18 @@ def file_digests(root: pathlib.Path) -> dict[str, str]:
     root = root.resolve(strict=True)
     result: dict[str, str] = {}
     for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
-        if path.is_symlink():
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
             raise RunnerError("workspace contains a symlink")
-        if path.is_file():
-            result[path.relative_to(root).as_posix()] = sha256_bytes(path.read_bytes())
-        elif not path.is_dir():
+        relative = path.relative_to(root).as_posix()
+        mode = stat.S_IMODE(info.st_mode)
+        if stat.S_ISREG(info.st_mode):
+            result[relative] = canonical_digest(
+                {"kind": "file", "mode": mode, "sha256": sha256_bytes(path.read_bytes())}
+            )
+        elif stat.S_ISDIR(info.st_mode):
+            result[relative] = canonical_digest({"kind": "directory", "mode": mode})
+        else:
             raise RunnerError("workspace contains an unsupported filesystem entry")
     return result
 
@@ -146,6 +153,9 @@ def changed_paths(before: dict[str, str], after: dict[str, str]) -> list[str]:
 
 def is_runtime_metadata_path(path: str) -> bool:
     exact = {
+        ".picogent",
+        ".picogent/project-run",
+        ".picogent/undo",
         ".picogent/project-run/.run.lock",
         ".picogent/workspace-instance",
         ".picogent/workspace-instance.lock",
@@ -310,7 +320,7 @@ def probe_sandbox(
     inside.parent.mkdir(mode=0o700)
     if outside.exists() or outside.is_symlink():
         raise RunnerError("sandbox probe target unexpectedly exists")
-    command = f'touch "{inside}" && touch "{outside}"'
+    command = f'/usr/bin/touch "{inside}" && /usr/bin/touch "{outside}"'
     result = subprocess.run(
         [sandbox_exec, "-p", profile, "/bin/sh", "-c", command],
         env=env,
@@ -381,6 +391,193 @@ def write_shell_wrapper(
     with wrapper.open("x", encoding="utf-8") as output:
         output.write(script)
     os.chmod(wrapper, 0o700)
+
+
+def path_executables(path_value: str) -> dict[str, pathlib.Path]:
+    """Resolve PATH commands in precedence order for nested sandbox wrappers."""
+    found: dict[str, pathlib.Path] = {}
+    for raw_directory in path_value.split(os.pathsep):
+        if not raw_directory:
+            continue
+        directory = pathlib.Path(raw_directory)
+        if not directory.is_absolute():
+            continue
+        try:
+            with os.scandir(directory) as entries:
+                for entry in sorted(entries, key=lambda item: item.name):
+                    if entry.name in found:
+                        continue
+                    try:
+                        if not entry.is_file(follow_symlinks=True) or not os.access(entry.path, os.X_OK):
+                            continue
+                        resolved = pathlib.Path(entry.path).resolve(strict=True)
+                        if resolved.is_file() and os.access(resolved, os.X_OK):
+                            # Keep the original PATH entry so symlink-based
+                            # command aliases retain their argv[0] behavior.
+                            found[entry.name] = pathlib.Path(entry.path)
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+    return found
+
+
+def write_sandboxed_command_wrapper(
+    wrapper: pathlib.Path,
+    target: pathlib.Path,
+    *,
+    sandbox_exec: str,
+    profile_path: pathlib.Path,
+) -> None:
+    """Make one PATH-resolved tool enter the strict nested sandbox before exec."""
+    if wrapper.exists() or wrapper.is_symlink():
+        raise RunnerError("direct-tool sandbox wrapper target unexpectedly exists")
+    try:
+        target_path = pathlib.Path(target)
+        if not target_path.is_absolute():
+            target_path = target_path.resolve(strict=True)
+        resolved = target_path.resolve(strict=True)
+    except OSError as error:
+        raise RunnerError("direct-tool executable could not be resolved") from error
+    if not resolved.is_file() or not os.access(resolved, os.X_OK):
+        raise RunnerError("direct-tool executable is not a regular executable file")
+    script = (
+        "#!/bin/sh\n"
+        f"exec {shlex.quote(sandbox_exec)} -f {shlex.quote(str(profile_path))} "
+        f"{shlex.quote(str(target_path))} \"$@\"\n"
+    )
+    wrapper.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with wrapper.open("x", encoding="utf-8") as output:
+        output.write(script)
+    os.chmod(wrapper, 0o700)
+
+
+def write_sandboxed_path_wrappers(
+    wrapper_directory: pathlib.Path,
+    *,
+    path_value: str,
+    sandbox_exec: str,
+    profile_path: pathlib.Path,
+) -> None:
+    """Replace runtime PATH lookup with wrappers around every host PATH executable."""
+    wrapper_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    commands = path_executables(path_value)
+    for name, target in commands.items():
+        if name == "bash":
+            continue
+        write_sandboxed_command_wrapper(
+            wrapper_directory / name,
+            target,
+            sandbox_exec=sandbox_exec,
+            profile_path=profile_path,
+        )
+
+
+def probe_direct_tool_sandbox(
+    write_root: pathlib.Path,
+    *,
+    wrapper_directory: pathlib.Path,
+    sandbox_exec: str,
+    profile_path: pathlib.Path,
+    env: dict[str, str],
+    auth_paths: tuple[pathlib.Path, ...],
+) -> bool:
+    """Prove PATH-resolved tools cannot read credentials or access the network."""
+    inside = write_root / f".tool-probe-inside-{secrets.token_hex(5)}"
+    outside = write_root.parent / f"{write_root.name}-tool-probe-{secrets.token_hex(5)}"
+    read_markers = [write_root / f".tool-probe-read-{secrets.token_hex(5)}" for _ in auth_paths]
+    network_marker = write_root / f".tool-probe-network-{secrets.token_hex(5)}"
+    private_auth_dir = auth_paths[-1].parent.resolve(strict=True) if auth_paths else None
+    if private_auth_dir is None or not private_auth_dir.is_relative_to(write_root.resolve(strict=True)):
+        raise RunnerError("direct-tool sandbox probe lacks a task-owned credential directory")
+    auth_write_canary = private_auth_dir / f".tool-probe-write-{secrets.token_hex(5)}"
+    if outside.exists() or outside.is_symlink() or auth_write_canary.exists() or auth_write_canary.is_symlink():
+        raise RunnerError("direct-tool sandbox probe target unexpectedly exists")
+    if any(not path.is_file() or path.is_symlink() for path in auth_paths):
+        raise RunnerError("direct-tool sandbox probe lacks a regular auth file")
+
+    listener = socket.socket()
+    try:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.setblocking(False)
+        port = listener.getsockname()[1]
+        probe = wrapper_directory / f".direct-tool-probe-{secrets.token_hex(5)}"
+        write_sandboxed_command_wrapper(
+            probe,
+            pathlib.Path(sys.executable),
+            sandbox_exec=sandbox_exec,
+            profile_path=profile_path,
+        )
+        auth_markers = json.dumps([str(path) for path in auth_paths])
+        read_marker_values = json.dumps([str(path) for path in read_markers])
+        program = "\n".join(
+            (
+                "from pathlib import Path",
+                "import socket",
+                f"Path({json.dumps(str(inside))}).write_text('inside', encoding='utf-8')",
+                f"for auth, marker in zip({auth_markers}, {read_marker_values}):",
+                "    try:",
+                "        Path(auth).read_bytes()",
+                "    except OSError:",
+                "        continue",
+                "    Path(marker).touch()",
+                "try:",
+                f"    Path({json.dumps(str(auth_write_canary))}).write_text('blocked', encoding='utf-8')",
+                "except OSError:",
+                "    pass",
+                "s = socket.socket()",
+                "try:",
+                "    s.settimeout(1)",
+                f"    s.connect(('127.0.0.1', {port}))",
+                f"    Path({json.dumps(str(network_marker))}).touch()",
+                "except OSError:",
+                "    pass",
+                "finally:",
+                "    s.close()",
+                "try:",
+                f"    Path({json.dumps(str(outside))}).write_text('blocked', encoding='utf-8')",
+                "except OSError:",
+                "    pass",
+            )
+        )
+        try:
+            result = subprocess.run(
+                [str(probe), "-c", program],
+                cwd=write_root,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            raise RunnerError("direct-tool macOS sandbox probe could not complete") from error
+        network_allowed = network_marker.exists() or network_marker.is_symlink()
+        try:
+            connection, _ = listener.accept()
+            connection.close()
+            network_allowed = True
+        except BlockingIOError:
+            pass
+        checks = {
+            "tool_started": result.returncode == 0,
+            "inside_write": inside.is_file(),
+            "outside_write_denied": not outside.exists() and not outside.is_symlink(),
+            "auth_reads_denied": not any(path.exists() or path.is_symlink() for path in read_markers),
+            "auth_writes_denied": not auth_write_canary.exists() and not auth_write_canary.is_symlink(),
+            "network_denied": not network_allowed,
+        }
+        failed = [name for name, passed in checks.items() if not passed]
+        if failed:
+            raise RunnerError("direct-tool sandbox probe failed checks: " + ",".join(failed))
+        return True
+    finally:
+        listener.close()
+        for path in (inside, *read_markers, network_marker, auth_write_canary, outside):
+            if path.exists() and path.is_file() and not path.is_symlink():
+                path.unlink()
 
 
 def probe_shell_sandbox(
@@ -649,6 +846,7 @@ def task_input_digest(
             "task_id": task["id"],
             "prompt": task["prompt"],
             "allowed_paths": safe_relative_paths(task["allowed_paths"]),
+            "acceptance": task["acceptance"],
             "model": model,
             "provider": "codex",
             "budgets": budgets,
@@ -922,14 +1120,22 @@ def run_one(
     with tool_profile_path.open("x", encoding="utf-8") as output:
         output.write(tool_profile)
     os.chmod(tool_profile_path, 0o600)
-    wrapper = top_root / "tool-bins" / run_tag / "bash"
+    wrapper_directory = top_root / "tool-bins" / run_tag
+    write_sandboxed_path_wrappers(
+        wrapper_directory,
+        path_value=env.get("PATH", "/usr/bin:/bin"),
+        sandbox_exec=sandbox_exec,
+        profile_path=tool_profile_path,
+    )
+    wrapper = wrapper_directory / "bash"
     write_shell_wrapper(
         wrapper,
         sandbox_exec=sandbox_exec,
         profile_path=tool_profile_path,
         env=env,
     )
-    env["PATH"] = str(wrapper.parent) + os.pathsep + env.get("PATH", "/usr/bin:/bin")
+    # Every PATH-resolved subprocess enters the nested no-network/no-auth policy.
+    env["PATH"] = str(wrapper_directory)
     sandbox_ok = probe_sandbox(
         run_root,
         env=env,
@@ -940,6 +1146,14 @@ def run_one(
     shell_sandbox_ok = probe_shell_sandbox(
         run_root,
         wrapper=wrapper,
+        env=env,
+        auth_paths=(auth_source.resolve(strict=True), auth_copy.resolve(strict=True)),
+    )
+    direct_tool_sandbox_ok = probe_direct_tool_sandbox(
+        run_root,
+        wrapper_directory=wrapper_directory,
+        sandbox_exec=sandbox_exec,
+        profile_path=tool_profile_path,
         env=env,
         auth_paths=(auth_source.resolve(strict=True), auth_copy.resolve(strict=True)),
     )
@@ -1030,6 +1244,7 @@ def run_one(
         "budgets": budgets,
         "sandbox_write_probe": "PASS" if sandbox_ok else "FAIL",
         "shell_sandbox_probe": "PASS" if shell_sandbox_ok else "FAIL",
+        "direct_tool_sandbox_probe": "PASS" if direct_tool_sandbox_ok else "FAIL",
         "agent": {
             "status": status,
             "exit_code": observed["exit_code"],
@@ -1084,6 +1299,12 @@ def validate_run_root(root: pathlib.Path, parent: pathlib.Path, marker_value: st
 
 def overall_verdict(results: list[dict[str, object]]) -> str:
     for result in results:
+        if (
+            result.get("sandbox_write_probe") != "PASS"
+            or result.get("shell_sandbox_probe") != "PASS"
+            or result.get("direct_tool_sandbox_probe") != "PASS"
+        ):
+            return "FAIL"
         if result["agent"]["status"] == "FAIL":
             return "FAIL"
         if result["workspace"]["allowed_paths_status"] == "FAIL":
@@ -1173,11 +1394,24 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--run-timeout-seconds", type=int, default=240)
     parser.add_argument("--acceptance-timeout-seconds", type=int, default=90)
     parser.add_argument("--output", type=pathlib.Path)
+    parser.add_argument(
+        "--source-map-output",
+        type=pathlib.Path,
+        help="separate private output for unblinding only after scoring the result artifact",
+    )
     args = parser.parse_args(argv)
     if not args.live:
         parser.error("live comparisons require --live; no provider call is made without it")
     if not 1 <= args.repetitions <= 3:
         parser.error("--repetitions must be between 1 and 3")
+    if args.source_map_output and not args.output:
+        parser.error("--source-map-output requires --output")
+    if (
+        args.output
+        and args.source_map_output
+        and args.output.expanduser().resolve(strict=False) == args.source_map_output.expanduser().resolve(strict=False)
+    ):
+        parser.error("--output and --source-map-output must be different paths")
     if not 1 <= args.max_tool_rounds <= 8 or not 1 <= args.tool_start_stop_threshold <= 24:
         parser.error("tool budgets exceed the runner's safe bounds")
     if not 10 <= args.request_timeout_seconds <= 120:
@@ -1319,7 +1553,7 @@ def main(argv: list[str] | None = None) -> int:
     # Results are recorded by candidate label before source identity is revealed.
     verdict = overall_verdict(results)
     artifact = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": verdict,
         "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "provider": "codex",
@@ -1328,23 +1562,43 @@ def main(argv: list[str] | None = None) -> int:
         "source_shas": {"v3": V3_SHA, "v4": V4_SHA},
         "budgets": budgets,
         "repetitions": args.repetitions,
-        "blind_order": "candidate order randomized per task/repetition; source identity withheld in per-candidate results and disclosed only in this post-run map",
-        "candidate_source_map": candidate_source_map,
+        "blind_order": "candidate order randomized per task/repetition; this result artifact remains blinded and the optional source map is written separately after all runs",
         "subjective_scores": {
             "status": "UNVERIFIED",
-            "reason": "raw model output is not retained, so questions and repair quality are not scored",
+            "reason": "raw output, diffs, per-oracle output, question counts, and repair counts are not retained, so rubric scores are unavailable",
         },
         "unverified_dimensions": [
             "actual served model and provider HTTP request count are not exposed by the runtime",
             "token usage aggregate is not persisted by the runtime",
             "tool-start observation is reactive and is not a pre-dispatch hard call cap",
-            "subjective questions, repairs, and in-scope edit quality are not scored",
+            "manual rubric scores are unavailable because diffs, per-oracle output, question counts, and repair counts are not retained",
         ],
         "results": results,
     }
     if args.output:
         write_artifact(args.output, artifact)
-    print(json.dumps({"status": verdict, "runs": len(results), "output": str(args.output) if args.output else None}, sort_keys=True))
+    if args.source_map_output:
+        write_artifact(
+            args.source_map_output,
+            {
+                "schema_version": 1,
+                "kind": "picogent.v4.candidate-source-map.v1",
+                "observed_at_utc": artifact["observed_at_utc"],
+                "source_shas": artifact["source_shas"],
+                "candidate_source_map": candidate_source_map,
+            },
+        )
+    print(
+        json.dumps(
+            {
+                "status": verdict,
+                "runs": len(results),
+                "output": str(args.output) if args.output else None,
+                "source_map": str(args.source_map_output) if args.source_map_output else None,
+            },
+            sort_keys=True,
+        )
+    )
     return {"PASS": 0, "FAIL": 1, "UNVERIFIED": 2}[verdict]
 
 

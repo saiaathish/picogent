@@ -1,4 +1,6 @@
 import base64
+import contextlib
+import io
 import json
 import os
 import pathlib
@@ -111,6 +113,25 @@ class CandidateSourceMappingTests(unittest.TestCase):
             runner.candidate_source_mapping([("v3", "a" * 40), ("v4", runner.V4_SHA)])
 
 
+class ArtifactArgumentTests(unittest.TestCase):
+    def test_source_map_requires_a_distinct_result_artifact(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="picogent-runner-args-") as temporary:
+            result_path = pathlib.Path(temporary) / "results.json"
+            map_path = pathlib.Path(temporary) / "source-map.json"
+            valid = runner.parse_args(
+                ["--live", "--output", str(result_path), "--source-map-output", str(map_path)]
+            )
+            self.assertEqual(valid.output, result_path)
+            self.assertEqual(valid.source_map_output, map_path)
+
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                runner.parse_args(["--live", "--source-map-output", str(map_path)])
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                runner.parse_args(
+                    ["--live", "--output", str(result_path), "--source-map-output", str(result_path)]
+                )
+
+
 class ChildObservationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="picogent-runner-child-")
@@ -143,6 +164,9 @@ class ChildObservationTests(unittest.TestCase):
 class RuntimeMetadataTests(unittest.TestCase):
     def test_only_known_picogent_runtime_paths_are_excluded_from_candidate_changes(self) -> None:
         known = (
+            ".picogent",
+            ".picogent/project-run",
+            ".picogent/undo",
             ".picogent/project-run/.run.lock",
             ".picogent/workspace-instance",
             ".picogent/workspace-instance.lock",
@@ -151,7 +175,12 @@ class RuntimeMetadataTests(unittest.TestCase):
         for path in known:
             with self.subTest(path=path):
                 self.assertTrue(runner.is_runtime_metadata_path(path))
-        for path in (".picogent/notes.txt", ".picogent/undo/user.json", "due/due.go"):
+        for path in (
+            ".picogent/notes.txt",
+            ".picogent/project-run/unexpected.txt",
+            ".picogent/undo/user.json",
+            "due/due.go",
+        ):
             with self.subTest(path=path):
                 self.assertFalse(runner.is_runtime_metadata_path(path))
 
@@ -208,8 +237,65 @@ class SandboxProfileTests(unittest.TestCase):
         self.assertNotIn("OPENAI_API_KEY", child)
         self.assertNotIn("PICOGENT_PROVIDER", child)
 
+    def test_path_executables_ignores_relative_entries_and_preserves_precedence(self) -> None:
+        first = self.root / "first-bin"
+        second = self.root / "second-bin"
+        first.mkdir()
+        second.mkdir()
+        first_tool = first / "rg"
+        second_tool = second / "rg"
+        first_tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        second_tool.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        first_tool.chmod(0o700)
+        second_tool.chmod(0o700)
+
+        resolved = runner.path_executables(f"{first}{os.pathsep}{second}{os.pathsep}.")
+
+        self.assertEqual(resolved["rg"], first_tool.absolute())
+
+    def test_direct_tool_wrapper_denies_auth_network_and_outside_writes(self) -> None:
+        if sys.platform != "darwin" or not pathlib.Path("/usr/bin/sandbox-exec").is_file():
+            self.skipTest("macOS sandbox required")
+        source_auth = self.root / "host" / ".codex" / "auth.json"
+        source_auth.parent.mkdir(parents=True)
+        copied_auth = self.run_root / "codex-home" / "auth.json"
+        copied_auth.parent.mkdir()
+        for path in (source_auth, copied_auth):
+            path.write_text('{"tokens":{"access_token":"probe"}}', encoding="utf-8")
+            os.chmod(path, 0o600)
+        profile = self.root / "profiles" / "direct-tool.sbpl"
+        profile.parent.mkdir()
+        profile.write_text(
+            runner.sandbox_profile(
+                self.run_root,
+                denied_reads=(source_auth.parent, copied_auth.parent),
+                denied_writes=(source_auth.parent, copied_auth.parent),
+                allow_network=False,
+            ),
+            encoding="utf-8",
+        )
+        wrapper_directory = self.root / "tool-bins"
+        wrapper_directory.mkdir()
+        env = {"HOME": str(self.root), "PATH": str(wrapper_directory)}
+
+        self.assertTrue(
+            runner.probe_direct_tool_sandbox(
+                self.run_root,
+                wrapper_directory=wrapper_directory,
+                sandbox_exec="/usr/bin/sandbox-exec",
+                profile_path=profile,
+                env=env,
+                auth_paths=(source_auth, copied_auth),
+            )
+        )
+
     def test_input_digest_binds_prompt_model_budget_and_fixture(self) -> None:
-        task = {"id": "sample", "prompt": "do work", "allowed_paths": ["main.go"]}
+        task = {
+            "id": "sample",
+            "prompt": "do work",
+            "allowed_paths": ["main.go"],
+            "acceptance": {"kind": "command", "command": "go test ./..."},
+        }
         budgets = {"max_tool_rounds": 3}
         base = runner.task_input_digest(
             task,
@@ -244,6 +330,18 @@ class SandboxProfileTests(unittest.TestCase):
                 initial_tree_sha256="tree-b",
             ),
         )
+        changed_oracle = dict(task)
+        changed_oracle["acceptance"] = {"kind": "command", "command": "go test ./... -count=1"}
+        self.assertNotEqual(
+            base,
+            runner.task_input_digest(
+                changed_oracle,
+                "model",
+                budgets,
+                initial_tree_sha256="tree-a",
+            ),
+        )
+
 
     @unittest.skipUnless(sys.platform == "darwin" and pathlib.Path("/usr/bin/sandbox-exec").is_file(), "macOS sandbox required")
     def test_nested_shell_canary_denies_auth_network_and_outside_writes(self) -> None:
@@ -286,6 +384,38 @@ class SandboxProfileTests(unittest.TestCase):
                 auth_paths=(source_auth, copied_auth),
             )
         )
+
+
+class WorkspaceChangeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="picogent-runner-files-")
+        self.root = pathlib.Path(self.temp.name) / "workspace"
+        self.root.mkdir()
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def test_file_mode_only_change_is_detected(self) -> None:
+        path = self.root / "main.go"
+        path.write_text("package main\n", encoding="utf-8")
+        path.chmod(0o600)
+        before = runner.file_digests(self.root)
+
+        path.chmod(0o700)
+        after = runner.file_digests(self.root)
+
+        self.assertEqual(runner.changed_paths(before, after), ["main.go"])
+
+    def test_empty_directory_creation_and_mode_change_are_detected(self) -> None:
+        before = runner.file_digests(self.root)
+        directory = self.root / "unexpected"
+        directory.mkdir(mode=0o700)
+        created = runner.file_digests(self.root)
+        self.assertEqual(runner.changed_paths(before, created), ["unexpected"])
+
+        directory.chmod(0o500)
+        changed = runner.file_digests(self.root)
+        self.assertEqual(runner.changed_paths(created, changed), ["unexpected"])
 
 
 if __name__ == "__main__":
