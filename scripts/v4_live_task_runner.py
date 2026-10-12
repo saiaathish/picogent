@@ -41,6 +41,7 @@ DEFAULT_MODEL = "gpt-5.6-luna"
 TEMP_PREFIX = "picogent-v4-live-task-"
 ROOT_MARKER = ".picogent-live-task-root"
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+MAX_GIT_STATUS_BYTES = 1024 * 1024
 MAX_LINE_BYTES = 64 * 1024
 MAX_ERROR_CLASSIFICATION_BYTES = 8 * 1024
 MAX_WORKSPACE_ENTRIES = 20_000
@@ -137,20 +138,25 @@ def build_provenance() -> dict[str, object]:
         check=False,
         timeout=10,
     )
-    status = subprocess.run(
+    status = observe_child(
         ["git", "-C", str(REPO_ROOT), "status", "--porcelain=v1", "--untracked-files=normal"],
-        capture_output=True,
-        check=False,
-        timeout=10,
+        cwd=REPO_ROOT,
+        env=os.environ.copy(),
+        timeout_seconds=10,
+        max_output_bytes=MAX_GIT_STATUS_BYTES,
     )
-    git_observed = head.returncode == 0 and status.returncode == 0
+    git_observed = (
+        head.returncode == 0
+        and status["exit_code"] == 0
+        and status["stop_reason"] is None
+    )
     fixture_files = file_digests(FIXTURE_DIR)
     return {
         "runner": {
             "path": "scripts/v4_live_task_runner.py",
             "sha256": sha256_file(runner_path),
             "git_head": head.stdout.decode("ascii", errors="replace").strip() if head.returncode == 0 else None,
-            "worktree_clean": status.stdout == b"" if git_observed else None,
+            "worktree_clean": status["stdout_bytes"] == 0 if git_observed else None,
             "git_status": "OBSERVED" if git_observed else "UNVERIFIED",
         },
         "fixture": {
@@ -381,77 +387,143 @@ def file_digests(root: pathlib.Path) -> dict[str, str]:
     if root.is_symlink():
         raise RunnerError("workspace root became a symlink")
     root = root.resolve(strict=True)
+    if not (
+        hasattr(os, "fwalk")
+        and os.open in getattr(os, "supports_dir_fd", set())
+        and os.stat in getattr(os, "supports_dir_fd", set())
+    ):
+        raise RunnerError("secure workspace traversal is unavailable on this platform")
+
     result: dict[str, str] = {}
-    directories = [root]
+    expected_directories: dict[str, tuple[int, int, int]] = {}
     entry_count = 0
     total_bytes = 0
-    while directories:
-        directory = directories.pop()
-        try:
-            with os.scandir(directory) as entries:
-                for entry in entries:
-                    entry_count += 1
-                    if entry_count > MAX_WORKSPACE_ENTRIES:
-                        raise RunnerError("workspace exceeds the file-count safety limit")
-                    path = pathlib.Path(entry.path)
-                    info = entry.stat(follow_symlinks=False)
-                    if stat.S_ISLNK(info.st_mode):
-                        raise RunnerError("workspace contains a symlink")
-                    relative = path.relative_to(root).as_posix()
-                    mode = stat.S_IMODE(info.st_mode)
-                    if stat.S_ISDIR(info.st_mode):
-                        result[relative] = canonical_digest({"kind": "directory", "mode": mode})
-                        directories.append(path)
-                        continue
-                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-                        raise RunnerError("workspace contains an unsupported filesystem entry")
-                    if info.st_size > MAX_WORKSPACE_FILE_BYTES:
-                        raise RunnerError("workspace contains a file above the size safety limit")
-                    if total_bytes + info.st_size > MAX_WORKSPACE_TOTAL_BYTES:
-                        raise RunnerError("workspace exceeds the total size safety limit")
+    root_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        root_descriptor = os.open(root, root_flags)
+    except OSError as error:
+        raise RunnerError("workspace root could not be opened safely") from error
 
-                    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-                    try:
-                        descriptor = os.open(path, flags)
-                    except OSError as error:
-                        raise RunnerError("workspace changed while its tree was being inspected") from error
-                    try:
-                        opened = os.fstat(descriptor)
-                        if (
-                            not stat.S_ISREG(opened.st_mode)
-                            or opened.st_nlink != 1
-                            or opened.st_dev != info.st_dev
-                            or opened.st_ino != info.st_ino
-                        ):
-                            raise RunnerError("workspace changed while its tree was being inspected")
-                        digest = hashlib.sha256()
-                        file_bytes = 0
-                        while True:
-                            chunk = os.read(descriptor, WORKSPACE_HASH_CHUNK_BYTES)
-                            if not chunk:
-                                break
-                            file_bytes += len(chunk)
-                            if file_bytes > MAX_WORKSPACE_FILE_BYTES:
-                                raise RunnerError("workspace contains a file above the size safety limit")
-                            if total_bytes + file_bytes > MAX_WORKSPACE_TOTAL_BYTES:
-                                raise RunnerError("workspace exceeds the total size safety limit")
-                            digest.update(chunk)
-                        after = os.fstat(descriptor)
-                        if (
-                            file_bytes != opened.st_size
-                            or after.st_size != opened.st_size
-                            or after.st_mtime_ns != opened.st_mtime_ns
-                            or after.st_ctime_ns != opened.st_ctime_ns
-                        ):
-                            raise RunnerError("workspace changed while its tree was being inspected")
-                    finally:
-                        os.close(descriptor)
-                    total_bytes += file_bytes
-                    result[relative] = canonical_digest(
-                        {"kind": "file", "mode": mode, "sha256": digest.hexdigest()}
-                    )
-        except OSError as error:
-            raise RunnerError("workspace could not be inspected safely") from error
+    def fail_walk(error: OSError) -> None:
+        raise RunnerError("workspace changed while its tree was being inspected") from error
+
+    try:
+        root_info = os.fstat(root_descriptor)
+        if not stat.S_ISDIR(root_info.st_mode):
+            raise RunnerError("workspace root is not a directory")
+        root_identity = (root_info.st_dev, root_info.st_ino, stat.S_IMODE(root_info.st_mode))
+        for directory, dirnames, filenames, directory_descriptor in os.fwalk(
+            ".",
+            topdown=True,
+            onerror=fail_walk,
+            follow_symlinks=False,
+            dir_fd=root_descriptor,
+        ):
+            directory_path = pathlib.PurePosixPath(directory)
+            relative_directory = "" if directory_path == pathlib.PurePosixPath(".") else directory_path.as_posix()
+            opened_directory = os.fstat(directory_descriptor)
+            opened_identity = (
+                opened_directory.st_dev,
+                opened_directory.st_ino,
+                stat.S_IMODE(opened_directory.st_mode),
+            )
+            if relative_directory:
+                expected_identity = expected_directories.pop(relative_directory, None)
+                if expected_identity is None or opened_identity != expected_identity:
+                    raise RunnerError("workspace directory changed while its tree was being inspected")
+            elif opened_identity != root_identity:
+                raise RunnerError("workspace root changed while its tree was being inspected")
+
+            before_directory = opened_directory
+            for name in dirnames:
+                entry_count += 1
+                if entry_count > MAX_WORKSPACE_ENTRIES:
+                    raise RunnerError("workspace exceeds the file-count safety limit")
+                info = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode):
+                    raise RunnerError("workspace contains a symlink")
+                if not stat.S_ISDIR(info.st_mode):
+                    raise RunnerError("workspace changed while its tree was being inspected")
+                relative = (directory_path / name).as_posix()
+                mode = stat.S_IMODE(info.st_mode)
+                result[relative] = canonical_digest({"kind": "directory", "mode": mode})
+                expected_directories[relative] = (info.st_dev, info.st_ino, mode)
+
+            for name in filenames:
+                entry_count += 1
+                if entry_count > MAX_WORKSPACE_ENTRIES:
+                    raise RunnerError("workspace exceeds the file-count safety limit")
+                info = os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode):
+                    raise RunnerError("workspace contains a symlink")
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise RunnerError("workspace contains an unsupported filesystem entry")
+                if info.st_size > MAX_WORKSPACE_FILE_BYTES:
+                    raise RunnerError("workspace contains a file above the size safety limit")
+                if total_bytes + info.st_size > MAX_WORKSPACE_TOTAL_BYTES:
+                    raise RunnerError("workspace exceeds the total size safety limit")
+
+                flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+                try:
+                    descriptor = os.open(name, flags, dir_fd=directory_descriptor)
+                except OSError as error:
+                    raise RunnerError("workspace changed while its tree was being inspected") from error
+                try:
+                    opened = os.fstat(descriptor)
+                    if (
+                        not stat.S_ISREG(opened.st_mode)
+                        or opened.st_nlink != 1
+                        or opened.st_dev != info.st_dev
+                        or opened.st_ino != info.st_ino
+                    ):
+                        raise RunnerError("workspace changed while its tree was being inspected")
+                    digest = hashlib.sha256()
+                    file_bytes = 0
+                    while True:
+                        chunk = os.read(descriptor, WORKSPACE_HASH_CHUNK_BYTES)
+                        if not chunk:
+                            break
+                        file_bytes += len(chunk)
+                        if file_bytes > MAX_WORKSPACE_FILE_BYTES:
+                            raise RunnerError("workspace contains a file above the size safety limit")
+                        if total_bytes + file_bytes > MAX_WORKSPACE_TOTAL_BYTES:
+                            raise RunnerError("workspace exceeds the total size safety limit")
+                        digest.update(chunk)
+                    after = os.fstat(descriptor)
+                    if (
+                        file_bytes != opened.st_size
+                        or after.st_size != opened.st_size
+                        or after.st_mtime_ns != opened.st_mtime_ns
+                        or after.st_ctime_ns != opened.st_ctime_ns
+                    ):
+                        raise RunnerError("workspace changed while its tree was being inspected")
+                finally:
+                    os.close(descriptor)
+                total_bytes += file_bytes
+                relative = (directory_path / name).as_posix()
+                result[relative] = canonical_digest(
+                    {"kind": "file", "mode": stat.S_IMODE(info.st_mode), "sha256": digest.hexdigest()}
+                )
+
+            after_directory = os.fstat(directory_descriptor)
+            if (
+                after_directory.st_dev != before_directory.st_dev
+                or after_directory.st_ino != before_directory.st_ino
+                or after_directory.st_mtime_ns != before_directory.st_mtime_ns
+                or after_directory.st_ctime_ns != before_directory.st_ctime_ns
+            ):
+                raise RunnerError("workspace directory changed while its tree was being inspected")
+        if expected_directories:
+            raise RunnerError("workspace directory changed while its tree was being inspected")
+    except OSError as error:
+        raise RunnerError("workspace could not be inspected safely") from error
+    finally:
+        os.close(root_descriptor)
     return result
 
 
@@ -478,16 +550,21 @@ def source_state(repo: pathlib.Path, expected_sha: str) -> dict[str, object]:
         check=False,
         timeout=10,
     )
-    status = subprocess.run(
+    status = observe_child(
         ["git", "-C", str(repo), "status", "--porcelain=v1", "--untracked-files=all"],
-        capture_output=True,
-        check=False,
-        timeout=10,
+        cwd=repo,
+        env=os.environ.copy(),
+        timeout_seconds=10,
+        max_output_bytes=MAX_GIT_STATUS_BYTES,
     )
-    if head.returncode != 0 or status.returncode != 0:
+    if (
+        head.returncode != 0
+        or status["exit_code"] != 0
+        or status["stop_reason"] is not None
+    ):
         raise RunnerError("could not verify a pinned source worktree")
     actual = head.stdout.decode("ascii", errors="replace").strip()
-    clean = status.stdout == b""
+    clean = status["stdout_bytes"] == 0
     return {"expected_sha": expected_sha, "head": actual, "head_matches": actual == expected_sha, "clean": clean}
 
 
@@ -1102,11 +1179,19 @@ def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
             os.killpg(process_group, 0)
         except ProcessLookupError:
             break
+        except PermissionError:
+            # Some macOS sandbox profiles deny signal-0 probes even after
+            # allowing the initial TERM; try a final best-effort hard stop.
+            try:
+                os.killpg(process_group, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
+            break
         time.sleep(0.05)
     else:
         try:
             os.killpg(process_group, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
 
     try:
@@ -1114,7 +1199,7 @@ def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process_group, signal.SIGKILL)
-        except ProcessLookupError:
+        except (ProcessLookupError, PermissionError):
             pass
         process.wait(timeout=2)
 
@@ -1151,6 +1236,7 @@ def observe_child(
     env: dict[str, str],
     timeout_seconds: int,
     observed_tool_start_stop_threshold: int | None = None,
+    max_output_bytes: int = MAX_OUTPUT_BYTES,
 ) -> dict[str, object]:
     started = time.monotonic()
     process = subprocess.Popen(
@@ -1173,6 +1259,19 @@ def observe_child(
     tool_starts = 0
     reason = ""
     deadline = started + timeout_seconds
+    termination_requested = False
+
+    def terminate_once() -> None:
+        nonlocal termination_requested
+        if termination_requested:
+            return
+        termination_requested = True
+        terminate_process_group(process)
+
+    def close_output_streams() -> None:
+        for key in list(selector.get_map().values()):
+            selector.unregister(key.fileobj)
+            key.fileobj.close()
 
     def count_lines(stream_name: str, chunk: bytes, *, final: bool = False) -> None:
         nonlocal tool_starts, reason
@@ -1199,11 +1298,15 @@ def observe_child(
     try:
         while selector.get_map():
             if reason:
-                terminate_process_group(process)
+                terminate_once()
+                close_output_streams()
+                break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                reason = "process_timeout"
-                terminate_process_group(process)
+                reason = reason or "process_timeout"
+                terminate_once()
+                close_output_streams()
+                break
             events = selector.select(min(max(remaining, 0.05), 0.2))
             for key, _ in events:
                 stream_name = str(key.data)
@@ -1220,20 +1323,29 @@ def observe_child(
                 if stream_name == "stderr" and len(stderr_diagnostic) < MAX_ERROR_CLASSIFICATION_BYTES:
                     remaining_diagnostic = MAX_ERROR_CLASSIFICATION_BYTES - len(stderr_diagnostic)
                     stderr_diagnostic.extend(chunk[:remaining_diagnostic])
-                if counts["stdout"] + counts["stderr"] > MAX_OUTPUT_BYTES:
-                    reason = "output_limit_exceeded"
-                    terminate_process_group(process)
+                if counts["stdout"] + counts["stderr"] > max_output_bytes:
+                    reason = reason or "output_limit_exceeded"
                 count_lines(stream_name, chunk)
                 if reason:
-                    terminate_process_group(process)
-            if process.poll() is not None and selector.get_map():
-                continue
+                    terminate_once()
+                    close_output_streams()
+                    break
     except BaseException:
-        terminate_process_group(process)
+        terminate_once()
         raise
     finally:
         selector.close()
-    returncode = process.wait()
+
+    if not termination_requested:
+        try:
+            returncode = process.wait(timeout=max(0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            reason = reason or "process_timeout"
+            terminate_once()
+            returncode = process.wait()
+        terminate_once()
+    else:
+        returncode = process.wait()
     return {
         "exit_code": returncode,
         "latency_ms": round((time.monotonic() - started) * 1000),

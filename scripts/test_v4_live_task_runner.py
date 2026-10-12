@@ -10,10 +10,18 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import v4_live_task_runner as runner
+
+SECURE_FD_WALK = (
+    hasattr(os, "fwalk")
+    and os.open in getattr(os, "supports_dir_fd", set())
+    and os.stat in getattr(os, "supports_dir_fd", set())
+)
+EXPECTED_GIT_STATUS_LIMIT = 1024 * 1024
 
 
 def fake_jwt(expires_at: int) -> str:
@@ -135,6 +143,7 @@ class ArtifactArgumentTests(unittest.TestCase):
 
 
 class ProvenanceTests(unittest.TestCase):
+    @unittest.skipUnless(SECURE_FD_WALK, "secure descriptor traversal is unavailable")
     def test_runner_and_fixture_content_are_hashed_into_provenance(self) -> None:
         provenance = runner.build_provenance()
         self.assertEqual(
@@ -147,6 +156,37 @@ class ProvenanceTests(unittest.TestCase):
         )
         self.assertGreater(provenance["fixture"]["file_count"], 0)
         self.assertNotIn("/Users/", json.dumps(provenance))
+
+    @unittest.skipUnless(SECURE_FD_WALK, "secure descriptor traversal is unavailable")
+    def test_oversized_git_status_is_unverified(self) -> None:
+        oversized_status = {
+            "exit_code": 0,
+            "stdout_bytes": EXPECTED_GIT_STATUS_LIMIT + 1,
+            "stop_reason": "output_limit_exceeded",
+        }
+        with mock.patch.object(runner, "observe_child", return_value=oversized_status) as observe:
+            provenance = runner.build_provenance()
+
+        self.assertEqual(provenance["runner"]["git_status"], "UNVERIFIED")
+        self.assertIsNone(provenance["runner"]["worktree_clean"])
+        self.assertEqual(observe.call_args.kwargs["max_output_bytes"], EXPECTED_GIT_STATUS_LIMIT)
+
+    def test_source_state_fails_closed_on_oversized_git_status(self) -> None:
+        expected_sha = "a" * 40
+        oversized_status = {
+            "exit_code": 0,
+            "stdout_bytes": EXPECTED_GIT_STATUS_LIMIT + 1,
+            "stop_reason": "output_limit_exceeded",
+        }
+        head_result = subprocess.CompletedProcess([], 0, stdout=f"{expected_sha}\n".encode("ascii"))
+        with (
+            mock.patch.object(runner.subprocess, "run", return_value=head_result),
+            mock.patch.object(runner, "observe_child", return_value=oversized_status) as observe,
+            self.assertRaisesRegex(runner.RunnerError, "verify a pinned source worktree"),
+        ):
+            runner.source_state(pathlib.Path("unused"), expected_sha)
+
+        self.assertEqual(observe.call_args.kwargs["max_output_bytes"], EXPECTED_GIT_STATUS_LIMIT)
 
 
 class ChildObservationTests(unittest.TestCase):
@@ -170,6 +210,42 @@ class ChildObservationTests(unittest.TestCase):
         )
         self.assertEqual(observed["tool_starts_observed"], 1)
         self.assertIsNone(observed["stop_reason"])
+
+    @unittest.skipIf(os.name == "nt", "POSIX process groups required")
+    def test_observe_child_kills_redirected_descendant_after_successful_exit(self) -> None:
+        marker = self.root / "descendant-survived"
+        child_code = (
+            "import pathlib,time; time.sleep(0.25); "
+            f"pathlib.Path({str(marker)!r}).write_text('alive')"
+        )
+        leader_code = (
+            "import subprocess,sys; "
+            "subprocess.Popen([sys.executable, '-c', sys.argv[1]], "
+            "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)"
+        )
+        observed = runner.observe_child(
+            [sys.executable, "-c", leader_code, child_code],
+            cwd=self.root,
+            env=os.environ.copy(),
+            timeout_seconds=5,
+        )
+
+        time.sleep(0.4)
+        self.assertEqual(observed["exit_code"], 0)
+        self.assertFalse(marker.exists(), "a same-group child changed the workspace after success")
+
+    def test_observe_child_enforces_configured_output_limit(self) -> None:
+        code = "import sys; sys.stdout.write('x' * 1048576)"
+        observed = runner.observe_child(
+            [sys.executable, "-c", code],
+            cwd=self.root,
+            env=os.environ.copy(),
+            timeout_seconds=5,
+            max_output_bytes=32,
+        )
+
+        self.assertEqual(observed["stop_reason"], "output_limit_exceeded")
+        self.assertLessEqual(observed["stdout_bytes"], 32 + 64 * 1024)
 
     @unittest.skipIf(os.name == "nt", "POSIX process groups required")
     def test_termination_kills_descendants_after_group_leader_exits(self) -> None:
@@ -654,6 +730,39 @@ class WorkspaceChangeTests(unittest.TestCase):
                 runner.file_digests(self.root)
         finally:
             runner.MAX_WORKSPACE_ENTRIES = previous_limit
+
+    @unittest.skipUnless(SECURE_FD_WALK, "secure descriptor traversal is unavailable")
+    def test_directory_replaced_by_symlink_during_walk_is_rejected(self) -> None:
+        queued = self.root / "queued"
+        queued.mkdir()
+        outside_temp = tempfile.TemporaryDirectory(dir=self.root.parent)
+        self.addCleanup(outside_temp.cleanup)
+        outside = pathlib.Path(outside_temp.name)
+        (outside / "secret.txt").write_text("outside workspace", encoding="utf-8")
+        original_fwalk = runner.os.fwalk
+        replaced = False
+
+        def replace_directory() -> None:
+            nonlocal replaced
+            if replaced:
+                return
+            queued.rmdir()
+            queued.symlink_to(outside, target_is_directory=True)
+            replaced = True
+
+        def fwalk_with_swap(*args, **kwargs):
+            for entry in original_fwalk(*args, **kwargs):
+                yield entry
+                if entry[0] == ".":
+                    replace_directory()
+
+        with (
+            mock.patch.object(runner.os, "fwalk", side_effect=fwalk_with_swap),
+            self.assertRaisesRegex(runner.RunnerError, "symlink|changed|inspected"),
+        ):
+            runner.file_digests(self.root)
+
+        self.assertTrue(replaced)
 
 
 if __name__ == "__main__":
