@@ -12,6 +12,19 @@ import (
 	"github.com/saiaathish/picogent/internal/mcpbridge"
 )
 
+func TestRegistryCanDisableExternalTools(t *testing.T) {
+	r := NewRegistry(Context{DisableExternalTools: true})
+	defer r.Close()
+	for _, name := range []string{"web_fetch", "mcp_manage"} {
+		if _, ok := r.Get(name); ok {
+			t.Fatalf("external tool %q remained registered", name)
+		}
+	}
+	if _, ok := r.Get("grep"); !ok {
+		t.Fatal("disabling external tools removed a local workspace tool")
+	}
+}
+
 func TestAttachMCPKeepsManage(t *testing.T) {
 	r := NewRegistry(Context{})
 	defer r.Close()

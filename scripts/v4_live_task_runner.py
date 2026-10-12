@@ -16,6 +16,7 @@ import importlib.util
 import json
 import os
 import pathlib
+import platform
 import re
 import secrets
 import select
@@ -42,6 +43,11 @@ ROOT_MARKER = ".picogent-live-task-root"
 MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 MAX_LINE_BYTES = 64 * 1024
 MAX_ERROR_CLASSIFICATION_BYTES = 8 * 1024
+MAX_WORKSPACE_ENTRIES = 20_000
+MAX_WORKSPACE_FILE_BYTES = 32 * 1024 * 1024
+MAX_WORKSPACE_TOTAL_BYTES = 256 * 1024 * 1024
+WORKSPACE_HASH_CHUNK_BYTES = 1024 * 1024
+MAX_PROVENANCE_FILE_BYTES = 2 * 1024 * 1024
 TASK_STATUS_VALUES = frozenset({"planning", "working", "verifying", "blocked", "done"})
 TASK_STOP_REASON_VALUES = frozenset(
     {
@@ -77,6 +83,93 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def sha256_file(path: pathlib.Path) -> str:
+    path = pathlib.Path(path)
+    try:
+        before = path.lstat()
+        if not stat.S_ISREG(before.st_mode) or path.is_symlink() or before.st_nlink != 1:
+            raise RunnerError("provenance input is not a private regular file")
+        if before.st_size > MAX_PROVENANCE_FILE_BYTES:
+            raise RunnerError("provenance input exceeds the size safety limit")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise RunnerError("provenance input could not be read safely") from error
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_dev != before.st_dev
+            or opened.st_ino != before.st_ino
+        ):
+            raise RunnerError("provenance input changed while it was being inspected")
+        digest = hashlib.sha256()
+        count = 0
+        while True:
+            chunk = os.read(descriptor, WORKSPACE_HASH_CHUNK_BYTES)
+            if not chunk:
+                break
+            count += len(chunk)
+            if count > MAX_PROVENANCE_FILE_BYTES:
+                raise RunnerError("provenance input exceeds the size safety limit")
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (
+            count != opened.st_size
+            or after.st_size != opened.st_size
+            or after.st_mtime_ns != opened.st_mtime_ns
+            or after.st_ctime_ns != opened.st_ctime_ns
+        ):
+            raise RunnerError("provenance input changed while it was being inspected")
+        return digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def build_provenance() -> dict[str, object]:
+    runner_path = REPO_ROOT / "scripts" / "v4_live_task_runner.py"
+    fixture_manifest = FIXTURE_DIR / "manifest.json"
+    fixture_helper = FIXTURE_DIR / "fixture.py"
+    head = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    status = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "status", "--porcelain=v1", "--untracked-files=normal"],
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    git_observed = head.returncode == 0 and status.returncode == 0
+    fixture_files = file_digests(FIXTURE_DIR)
+    return {
+        "runner": {
+            "path": "scripts/v4_live_task_runner.py",
+            "sha256": sha256_file(runner_path),
+            "git_head": head.stdout.decode("ascii", errors="replace").strip() if head.returncode == 0 else None,
+            "worktree_clean": status.stdout == b"" if git_observed else None,
+            "git_status": "OBSERVED" if git_observed else "UNVERIFIED",
+        },
+        "fixture": {
+            "path": "docs/experiments/v4-real-task-fixtures",
+            "tree_sha256": canonical_digest(fixture_files),
+            "manifest_sha256": sha256_file(fixture_manifest),
+            "helper_sha256": sha256_file(fixture_helper),
+            "file_count": len(fixture_files),
+        },
+        "runtime": {
+            "platform": sys.platform,
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+            "python": platform.python_version(),
+        },
+    }
+
+
 def canonical_digest(value: object) -> str:
     raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     return sha256_bytes(raw)
@@ -89,6 +182,7 @@ def sbpl_quote(value: str) -> str:
 def sandbox_profile(
     write_root: pathlib.Path,
     *,
+    read_roots: tuple[pathlib.Path, ...] | list[pathlib.Path] = (),
     denied_reads: tuple[pathlib.Path, ...] | list[pathlib.Path] = (),
     denied_writes: tuple[pathlib.Path, ...] | list[pathlib.Path] = (),
     allow_network: bool = True,
@@ -99,15 +193,21 @@ def sandbox_profile(
         raise RunnerError("sandbox write root is not a real directory")
     if allow_macos_trust and not allow_network:
         raise RunnerError("macOS trust lookup requires network access")
-    rules = ["(version 1)", "(deny default)"]
+    rules = ["(version 1)", '(import "system.sb")', "(deny default)"]
+    readable = {root, *(pathlib.Path(item).resolve(strict=False) for item in read_roots)}
+    for path in sorted(readable, key=str):
+        if not path.is_dir():
+            raise RunnerError("sandbox read roots must be directories")
+        rules.append(f"(allow file-read-metadata (path-ancestors {sbpl_quote(str(path))}))")
+        rules.append(f"(allow file-read* (subpath {sbpl_quote(str(path))}))")
+        rules.append(f"(allow file-map-executable (subpath {sbpl_quote(str(path))}))")
+    # Narrow read denials follow the root grants so credentials nested under
+    # the task-owned run tree cannot inherit its broader read permission.
     for path in sorted({pathlib.Path(item).resolve(strict=False) for item in denied_reads}):
-        # SBPL uses first-match semantics: sensitive-file denies must precede
-        # the broad read allowance needed by the local toolchain.
         selector = "subpath" if path.is_dir() else "literal"
         rules.append(f"(deny file-read* ({selector} {sbpl_quote(str(path))}))")
     rules.extend(
         (
-            "(allow file-read*)",
             f"(allow file-write* (literal {sbpl_quote('/dev/null')}))",
             f"(allow file-write* (subpath {sbpl_quote(str(root))}))",
             "(allow process*)",
@@ -137,26 +237,221 @@ def safe_relative_paths(paths: list[str]) -> list[str]:
     return normalized
 
 
+def safe_host_path() -> str:
+    """Expose only system and known tool directories, never executables in $HOME."""
+    home = pathlib.Path.home().resolve(strict=True)
+    directories: list[str] = []
+    discovered_git_directory: str | None = None
+    xcrun = shutil.which("xcrun", path=os.environ.get("PATH", ""))
+    if xcrun:
+        try:
+            discovered_git = subprocess.run(
+                [xcrun, "--find", "git"],
+                capture_output=True,
+                check=False,
+                timeout=10,
+            )
+            if discovered_git.returncode == 0:
+                git_binary = pathlib.Path(
+                    discovered_git.stdout.decode("utf-8", errors="strict").strip()
+                ).resolve(strict=True)
+                if git_binary.is_file() and not git_binary.is_relative_to(home):
+                    discovered_git_directory = str(git_binary.parent)
+        except (OSError, UnicodeError, subprocess.TimeoutExpired):
+            pass
+    for command in ("go", "python3", "rg", "node", "npm", "make", "clang"):
+        located = shutil.which(command, path=os.environ.get("PATH", ""))
+        if not located:
+            continue
+        alias = pathlib.Path(located)
+        try:
+            resolved = alias.resolve(strict=True)
+            alias_parent = alias.parent.resolve(strict=True)
+        except OSError:
+            continue
+        if resolved.is_relative_to(home) or alias_parent.is_relative_to(home):
+            continue
+        directories.extend((str(alias.parent), str(resolved.parent)))
+    if discovered_git_directory is not None:
+        directories.append(discovered_git_directory)
+    else:
+        located_git = shutil.which("git", path=os.environ.get("PATH", ""))
+        if located_git:
+            alias_git = pathlib.Path(located_git)
+            try:
+                resolved_git = alias_git.resolve(strict=True)
+                alias_parent = alias_git.parent.resolve(strict=True)
+            except OSError:
+                resolved_git = pathlib.Path()
+                alias_parent = pathlib.Path(home)
+            if not resolved_git.is_relative_to(home) and not alias_parent.is_relative_to(home):
+                directories.extend((str(alias_git.parent), str(resolved_git.parent)))
+    directories.extend(("/usr/bin", "/bin", "/usr/sbin", "/sbin"))
+    return os.pathsep.join(dict.fromkeys(directory for directory in directories if pathlib.Path(directory).is_dir()))
+
+
+def sandbox_read_roots(
+    env: dict[str, str],
+    *,
+    host_home: pathlib.Path,
+    run_root: pathlib.Path,
+    wrapper_directory: pathlib.Path,
+    profile_directory: pathlib.Path,
+    binary_directory: pathlib.Path | None = None,
+) -> list[pathlib.Path]:
+    """Allow only the run tree, system/toolchain files, and private wrappers."""
+    forbidden_home = host_home.resolve(strict=True)
+    candidates = [
+        pathlib.Path(path)
+        for path in ("/System", "/usr", "/bin", "/sbin", "/etc", "/private/etc", "/dev")
+        if pathlib.Path(path).exists()
+    ]
+    candidates.extend((run_root, wrapper_directory, profile_directory))
+    if binary_directory is not None:
+        candidates.append(binary_directory)
+    for runtime_root in (pathlib.Path(sys.prefix), pathlib.Path(sys.base_prefix)):
+        if runtime_root.exists():
+            candidates.append(runtime_root)
+    for raw_directory in env.get("PATH", "").split(os.pathsep):
+        if not raw_directory:
+            continue
+        try:
+            resolved = pathlib.Path(raw_directory).resolve(strict=True)
+        except OSError:
+            continue
+        if resolved.is_relative_to(forbidden_home):
+            raise RunnerError("sandbox PATH directory resolves inside the host home directory")
+        candidates.append(resolved)
+    path_tools = path_executables(env.get("PATH", ""))
+    tool_names = {"git", "go", "python3", "rg", "node", "npm", "make", "clang", "xcrun", "xcode-select"}
+    for name, executable in path_tools.items():
+        try:
+            resolved = executable.resolve(strict=True)
+        except OSError:
+            continue
+        if resolved.is_relative_to(forbidden_home):
+            raise RunnerError("sandbox tool path resolves inside the host home directory")
+        if name in tool_names:
+            candidates.append(resolved.parent)
+    go_root = subprocess.run(
+        ["go", "env", "GOROOT"],
+        cwd=run_root,
+        env=env,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    if go_root.returncode != 0:
+        raise RunnerError("could not identify the local Go toolchain for sandbox access")
+    resolved_go_root = pathlib.Path(go_root.stdout.decode("utf-8", errors="strict").strip()).resolve(strict=True)
+    if resolved_go_root.is_relative_to(forbidden_home):
+        raise RunnerError("Go toolchain resolves inside the host home directory")
+    candidates.append(resolved_go_root)
+
+    if shutil.which("git", path=env.get("PATH", "")):
+        developer_dir = subprocess.run(
+            ["xcode-select", "-p"],
+            cwd=run_root,
+            env=env,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        if developer_dir.returncode != 0:
+            raise RunnerError("could not identify the active Apple developer toolchain for sandbox access")
+        resolved_developer_dir = pathlib.Path(
+            developer_dir.stdout.decode("utf-8", errors="strict").strip()
+        ).resolve(strict=True)
+        if not resolved_developer_dir.is_dir() or resolved_developer_dir.is_relative_to(forbidden_home):
+            raise RunnerError("Apple developer toolchain resolves outside the allowed system roots")
+        candidates.append(resolved_developer_dir)
+        candidates.append(resolved_developer_dir.parent)
+
+    roots: set[pathlib.Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve(strict=True)
+        if not resolved.is_dir() or resolved.is_relative_to(forbidden_home):
+            raise RunnerError("sandbox read root is invalid or inside the host home directory")
+        roots.add(resolved)
+    return sorted(roots, key=str)
+
+
 def file_digests(root: pathlib.Path) -> dict[str, str]:
     root = pathlib.Path(root)
     if root.is_symlink():
         raise RunnerError("workspace root became a symlink")
     root = root.resolve(strict=True)
     result: dict[str, str] = {}
-    for path in sorted(root.rglob("*"), key=lambda item: item.relative_to(root).as_posix()):
-        info = path.lstat()
-        if stat.S_ISLNK(info.st_mode):
-            raise RunnerError("workspace contains a symlink")
-        relative = path.relative_to(root).as_posix()
-        mode = stat.S_IMODE(info.st_mode)
-        if stat.S_ISREG(info.st_mode):
-            result[relative] = canonical_digest(
-                {"kind": "file", "mode": mode, "sha256": sha256_bytes(path.read_bytes())}
-            )
-        elif stat.S_ISDIR(info.st_mode):
-            result[relative] = canonical_digest({"kind": "directory", "mode": mode})
-        else:
-            raise RunnerError("workspace contains an unsupported filesystem entry")
+    directories = [root]
+    entry_count = 0
+    total_bytes = 0
+    while directories:
+        directory = directories.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    entry_count += 1
+                    if entry_count > MAX_WORKSPACE_ENTRIES:
+                        raise RunnerError("workspace exceeds the file-count safety limit")
+                    path = pathlib.Path(entry.path)
+                    info = entry.stat(follow_symlinks=False)
+                    if stat.S_ISLNK(info.st_mode):
+                        raise RunnerError("workspace contains a symlink")
+                    relative = path.relative_to(root).as_posix()
+                    mode = stat.S_IMODE(info.st_mode)
+                    if stat.S_ISDIR(info.st_mode):
+                        result[relative] = canonical_digest({"kind": "directory", "mode": mode})
+                        directories.append(path)
+                        continue
+                    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                        raise RunnerError("workspace contains an unsupported filesystem entry")
+                    if info.st_size > MAX_WORKSPACE_FILE_BYTES:
+                        raise RunnerError("workspace contains a file above the size safety limit")
+                    if total_bytes + info.st_size > MAX_WORKSPACE_TOTAL_BYTES:
+                        raise RunnerError("workspace exceeds the total size safety limit")
+
+                    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+                    try:
+                        descriptor = os.open(path, flags)
+                    except OSError as error:
+                        raise RunnerError("workspace changed while its tree was being inspected") from error
+                    try:
+                        opened = os.fstat(descriptor)
+                        if (
+                            not stat.S_ISREG(opened.st_mode)
+                            or opened.st_nlink != 1
+                            or opened.st_dev != info.st_dev
+                            or opened.st_ino != info.st_ino
+                        ):
+                            raise RunnerError("workspace changed while its tree was being inspected")
+                        digest = hashlib.sha256()
+                        file_bytes = 0
+                        while True:
+                            chunk = os.read(descriptor, WORKSPACE_HASH_CHUNK_BYTES)
+                            if not chunk:
+                                break
+                            file_bytes += len(chunk)
+                            if file_bytes > MAX_WORKSPACE_FILE_BYTES:
+                                raise RunnerError("workspace contains a file above the size safety limit")
+                            if total_bytes + file_bytes > MAX_WORKSPACE_TOTAL_BYTES:
+                                raise RunnerError("workspace exceeds the total size safety limit")
+                            digest.update(chunk)
+                        after = os.fstat(descriptor)
+                        if (
+                            file_bytes != opened.st_size
+                            or after.st_size != opened.st_size
+                            or after.st_mtime_ns != opened.st_mtime_ns
+                            or after.st_ctime_ns != opened.st_ctime_ns
+                        ):
+                            raise RunnerError("workspace changed while its tree was being inspected")
+                    finally:
+                        os.close(descriptor)
+                    total_bytes += file_bytes
+                    result[relative] = canonical_digest(
+                        {"kind": "file", "mode": mode, "sha256": digest.hexdigest()}
+                    )
+        except OSError as error:
+            raise RunnerError("workspace could not be inspected safely") from error
     return result
 
 
@@ -218,10 +513,10 @@ def limited_go_env(root: pathlib.Path, module_cache: pathlib.Path) -> dict[str, 
     home = root / "home"
     tmp = root / "tmp"
     cache = root / "go-cache"
-    for directory in (home, tmp, cache):
+    for directory in (home, tmp, cache, module_cache):
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     env = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "PATH": safe_host_path(),
         "HOME": str(home),
         "TMPDIR": str(tmp),
         "LANG": "C.UTF-8",
@@ -233,8 +528,21 @@ def limited_go_env(root: pathlib.Path, module_cache: pathlib.Path) -> dict[str, 
         "GOSUMDB": "off",
         "GOCACHE": str(cache),
         "GOMODCACHE": str(module_cache),
+        "xcrun_nocache": "1",
         "PYTHONDONTWRITEBYTECODE": "1",
     }
+    xcode_select = shutil.which("xcode-select", path=env["PATH"])
+    if xcode_select:
+        developer_dir = subprocess.run(
+            [xcode_select, "-p"],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+        if developer_dir.returncode == 0:
+            env["DEVELOPER_DIR"] = developer_dir.stdout.decode("utf-8", errors="strict").strip()
     return env
 
 
@@ -247,6 +555,7 @@ def run_env(root: pathlib.Path, model: str, module_cache: pathlib.Path) -> dict[
             "PICOGENT_PROVIDER": "codex",
             "PICOGENT_MODEL": model,
             "PICOGENT_ROUTER": "off",
+            "PICOGENT_DISABLE_EXTERNAL_TOOLS": "1",
         }
     )
     # Deliberately do not pass CODEX_HOME or any provider API-key variable.
@@ -324,18 +633,40 @@ def probe_sandbox(
     *,
     env: dict[str, str],
     sandbox_exec: str,
+    read_roots: tuple[pathlib.Path, ...] | list[pathlib.Path] = (),
     denied_reads: tuple[pathlib.Path, ...] | list[pathlib.Path] = (),
     denied_writes: tuple[pathlib.Path, ...] | list[pathlib.Path] = (),
+    read_canary: pathlib.Path | None = None,
+    allow_network: bool = True,
+    allow_macos_trust: bool = False,
 ) -> bool:
-    profile = sandbox_profile(write_root, denied_reads=denied_reads, denied_writes=denied_writes)
+    profile = sandbox_profile(
+        write_root,
+        read_roots=read_roots,
+        denied_reads=denied_reads,
+        denied_writes=denied_writes,
+        allow_network=allow_network,
+        allow_macos_trust=allow_macos_trust,
+    )
     inside = write_root / ".containment-probe" / "allowed"
     outside = write_root.parent / f"{write_root.name}-outside-probe-{secrets.token_hex(5)}"
+    read_marker = write_root / f".read-denial-probe-{secrets.token_hex(5)}"
     inside.parent.mkdir(mode=0o700)
     if outside.exists() or outside.is_symlink():
         raise RunnerError("sandbox probe target unexpectedly exists")
-    command = f'/usr/bin/touch "{inside}" && /usr/bin/touch "{outside}"'
+    if read_canary is not None and (not read_canary.is_file() or read_canary.is_symlink()):
+        raise RunnerError("sandbox read canary is not a regular file")
+    command_parts = []
+    if read_canary is not None:
+        command_parts.append(
+            f"if /bin/cat {shlex.quote(str(read_canary))} >/dev/null 2>&1; "
+            f"then /usr/bin/touch {shlex.quote(str(read_marker))}; fi"
+        )
+    command_parts.append(f"/usr/bin/touch {shlex.quote(str(inside))} && /usr/bin/touch {shlex.quote(str(outside))}")
+    command = "; ".join(command_parts)
     result = subprocess.run(
         [sandbox_exec, "-p", profile, "/bin/sh", "-c", command],
+        cwd=write_root,
         env=env,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -345,11 +676,17 @@ def probe_sandbox(
     )
     allowed = inside.is_file()
     denied = outside.exists() or outside.is_symlink()
+    read_denied = read_canary is None or (not read_marker.exists() and not read_marker.is_symlink())
     if allowed:
         inside.unlink()
         inside.parent.rmdir()
-    if not (allowed and not denied and result.returncode != 0):
-        raise RunnerError("macOS sandbox did not prove the exact write boundary")
+    if read_marker.exists() and read_marker.is_file() and not read_marker.is_symlink():
+        read_marker.unlink()
+    if not (allowed and not denied and read_denied and result.returncode != 0):
+        raise RunnerError(
+            "macOS sandbox did not prove the exact read/write boundary "
+            f"(inside={allowed}, outside={denied}, read_denied={read_denied}, exit={result.returncode})"
+        )
     return True
 
 
@@ -369,16 +706,13 @@ def shell_tool_env(env: dict[str, str]) -> dict[str, str]:
             "GOSUMDB",
             "GOCACHE",
             "GOMODCACHE",
+            "DEVELOPER_DIR",
+            "xcrun_nocache",
             "PYTHONDONTWRITEBYTECODE",
         )
         if key in env
     }
-    path_dirs = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
-    for command in ("go", "git", "python3", "rg", "node", "npm", "make", "clang"):
-        located = shutil.which(command)
-        if located:
-            path_dirs.extend((str(pathlib.Path(located).parent), str(pathlib.Path(located).resolve().parent)))
-    child["PATH"] = os.pathsep.join(dict.fromkeys(path_dirs))
+    child["PATH"] = env.get("PATH", safe_host_path())
     return child
 
 
@@ -454,10 +788,13 @@ def write_sandboxed_command_wrapper(
         raise RunnerError("direct-tool executable could not be resolved") from error
     if not resolved.is_file() or not os.access(resolved, os.X_OK):
         raise RunnerError("direct-tool executable is not a regular executable file")
+    # Execute the resolved binary rather than a PATH symlink. This avoids
+    # sandbox path traversal through an alias while preserving the command name
+    # as the wrapper itself on PATH.
     script = (
         "#!/bin/sh\n"
         f"exec {shlex.quote(sandbox_exec)} -f {shlex.quote(str(profile_path))} "
-        f"{shlex.quote(str(target_path))} \"$@\"\n"
+        f"{shlex.quote(str(resolved))} \"$@\"\n"
     )
     wrapper.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with wrapper.open("x", encoding="utf-8") as output:
@@ -494,7 +831,7 @@ def probe_direct_tool_sandbox(
     profile_path: pathlib.Path,
     env: dict[str, str],
     auth_paths: tuple[pathlib.Path, ...],
-) -> bool:
+) -> dict[str, object]:
     """Prove PATH-resolved tools cannot read credentials or access the network."""
     inside = write_root / f".tool-probe-inside-{secrets.token_hex(5)}"
     outside = write_root.parent / f"{write_root.name}-tool-probe-{secrets.token_hex(5)}"
@@ -567,6 +904,7 @@ def probe_direct_tool_sandbox(
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             raise RunnerError("direct-tool macOS sandbox probe could not complete") from error
+        command_status: dict[str, dict[str, str]] = {}
         for name, arguments in (
             ("git", ["--version"]),
             ("go", ["version"]),
@@ -577,6 +915,9 @@ def probe_direct_tool_sandbox(
             if name == "rg" and not command.is_file():
                 continue
             if not command.is_file() or command.is_symlink():
+                if name == "git":
+                    command_status[name] = {"status": "UNVERIFIED", "reason": "git_binary_unavailable"}
+                    continue
                 raise RunnerError("required direct-tool sandbox wrapper is unavailable")
             try:
                 checked = subprocess.run(
@@ -585,14 +926,25 @@ def probe_direct_tool_sandbox(
                     env=env,
                     stdin=subprocess.DEVNULL,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
                     check=False,
                     timeout=10,
                 )
             except (OSError, subprocess.TimeoutExpired) as error:
                 raise RunnerError("direct-tool executable wrapper probe could not complete") from error
             if checked.returncode != 0:
-                raise RunnerError("direct-tool executable wrapper probe failed")
+                diagnostic = checked.stderr.decode("utf-8", errors="replace")[:300]
+                if name == "git" and xcode_git_environment_failure(diagnostic):
+                    command_status[name] = {
+                        "status": "UNVERIFIED",
+                        "reason": "host_xcode_git_unavailable_inside_sandbox",
+                    }
+                    continue
+                raise RunnerError(
+                    f"direct-tool executable wrapper probe failed: {name} "
+                    f"exit={checked.returncode}, diagnostic={diagnostic!r}"
+                )
+            command_status[name] = {"status": "PASS", "reason": "version_command_succeeded"}
         network_allowed = network_marker.exists() or network_marker.is_symlink()
         try:
             connection, _ = listener.accept()
@@ -611,12 +963,26 @@ def probe_direct_tool_sandbox(
         failed = [name for name, passed in checks.items() if not passed]
         if failed:
             raise RunnerError("direct-tool sandbox probe failed checks: " + ",".join(failed))
-        return True
+        return {"status": "PASS", "commands": command_status}
     finally:
         listener.close()
         for path in (inside, *read_markers, network_marker, auth_write_canary, outside):
             if path.exists() and path.is_file() and not path.is_symlink():
                 path.unlink()
+
+
+def xcode_git_environment_failure(diagnostic: str) -> bool:
+    text = diagnostic.lower()
+    return any(
+        marker in text
+        for marker in (
+            "xcode license agreements",
+            "no developer tools were found",
+            "xcrun_db",
+            "couldn't stat xcode's info.plist",
+            "dvtsystemprerequisites",
+        )
+    )
 
 
 def probe_shell_sandbox(
@@ -681,7 +1047,7 @@ def probe_shell_sandbox(
                 env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 check=False,
                 timeout=10,
             )
@@ -694,7 +1060,10 @@ def probe_shell_sandbox(
             network_allowed = True
         except BlockingIOError:
             pass
-        readable = any(marker.exists() or marker.is_symlink() for marker in read_markers)
+        readable = [
+            index for index, marker in enumerate(read_markers)
+            if marker.exists() or marker.is_symlink()
+        ]
         checks = {
             "shell_started": result.returncode == 0,
             "inside_write": inside.is_file(),
@@ -706,7 +1075,12 @@ def probe_shell_sandbox(
         }
         failed = [name for name, passed in checks.items() if not passed]
         if failed:
-            raise RunnerError("nested shell sandbox probe failed checks: " + ",".join(failed))
+            if readable:
+                failed.extend(f"auth_read_{index}" for index in readable)
+            raise RunnerError(
+                "nested shell sandbox probe failed checks: " + ",".join(failed)
+                + f" (exit={result.returncode})"
+            )
         return True
     finally:
         listener.close()
@@ -716,17 +1090,30 @@ def probe_shell_sandbox(
 
 
 def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is not None:
-        return
+    process_group = process.pid
     try:
-        os.killpg(process.pid, signal.SIGTERM)
+        os.killpg(process_group, signal.SIGTERM)
     except ProcessLookupError:
         pass
+
+    deadline = time.monotonic() + 1.5
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        try:
+            os.killpg(process_group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
     try:
-        process.wait(timeout=1.5)
+        process.wait(timeout=2)
     except subprocess.TimeoutExpired:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
+            os.killpg(process_group, signal.SIGKILL)
         except ProcessLookupError:
             pass
         process.wait(timeout=2)
@@ -1185,20 +1572,31 @@ def run_one(
         rounds=budgets["max_tool_rounds"],
         request_timeout=budgets["request_timeout_seconds"],
     )
-    env = run_env(run_root, model, module_cache)
+    env = run_env(run_root, model, run_root / "go-mod-cache")
+    host_home = auth_source.parent.parent.resolve(strict=True)
     profile_dir = top_root / "tool-profiles"
     profile_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     tool_profile_path = profile_dir / f"{run_tag}.sbpl"
+    wrapper_directory = top_root / "tool-bins" / run_tag
+    wrapper_directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    read_roots = sandbox_read_roots(
+        env,
+        host_home=host_home,
+        run_root=run_root,
+        wrapper_directory=wrapper_directory,
+        profile_directory=profile_dir,
+        binary_directory=binary.parent,
+    )
     tool_profile = sandbox_profile(
         run_root,
-        denied_reads=(auth_source.parent.resolve(strict=True), auth_copy.parent.resolve(strict=True)),
-        denied_writes=(auth_source.parent.resolve(strict=True), auth_copy.parent.resolve(strict=True)),
+        read_roots=read_roots,
+        denied_reads=(host_home, auth_copy.parent.resolve(strict=True)),
+        denied_writes=(host_home, auth_copy.parent.resolve(strict=True)),
         allow_network=False,
     )
     with tool_profile_path.open("x", encoding="utf-8") as output:
         output.write(tool_profile)
     os.chmod(tool_profile_path, 0o600)
-    wrapper_directory = top_root / "tool-bins" / run_tag
     write_sandboxed_path_wrappers(
         wrapper_directory,
         path_value=env.get("PATH", "/usr/bin:/bin"),
@@ -1218,8 +1616,12 @@ def run_one(
         run_root,
         env=env,
         sandbox_exec=sandbox_exec,
-        denied_reads=(auth_source.parent.resolve(strict=True),),
-        denied_writes=(auth_source.parent.resolve(strict=True), auth_copy.parent.resolve(strict=True)),
+        read_roots=read_roots,
+        denied_reads=(host_home,),
+        denied_writes=(host_home, auth_copy.parent.resolve(strict=True)),
+        read_canary=auth_source,
+        allow_network=True,
+        allow_macos_trust=True,
     )
     shell_sandbox_ok = probe_shell_sandbox(
         run_root,
@@ -1227,7 +1629,7 @@ def run_one(
         env=env,
         auth_paths=(auth_source.resolve(strict=True), auth_copy.resolve(strict=True)),
     )
-    direct_tool_sandbox_ok = probe_direct_tool_sandbox(
+    direct_tool_probe = probe_direct_tool_sandbox(
         run_root,
         wrapper_directory=wrapper_directory,
         sandbox_exec=sandbox_exec,
@@ -1235,13 +1637,15 @@ def run_one(
         env=env,
         auth_paths=(auth_source.resolve(strict=True), auth_copy.resolve(strict=True)),
     )
+    direct_tool_sandbox_ok = direct_tool_probe["status"] == "PASS"
     before = source_state(source, expected_sha)
     if before["head_matches"] is not True or before["clean"] is not True:
         raise RunnerError(f"{variant} source was not exact and clean before the run")
     profile = sandbox_profile(
         run_root,
-        denied_reads=(auth_source.parent.resolve(strict=True),),
-        denied_writes=(auth_source.parent.resolve(strict=True), auth_copy.parent.resolve(strict=True)),
+        read_roots=read_roots,
+        denied_reads=(host_home,),
+        denied_writes=(host_home, auth_copy.parent.resolve(strict=True)),
         allow_macos_trust=True,
     )
     observed = observe_child(
@@ -1327,6 +1731,7 @@ def run_one(
         "sandbox_write_probe": "PASS" if sandbox_ok else "FAIL",
         "shell_sandbox_probe": "PASS" if shell_sandbox_ok else "FAIL",
         "direct_tool_sandbox_probe": "PASS" if direct_tool_sandbox_ok else "FAIL",
+        "direct_tool_commands": direct_tool_probe["commands"],
         "agent": {
             "status": status,
             "exit_code": observed["exit_code"],
@@ -1403,6 +1808,10 @@ def overall_verdict(results: list[dict[str, object]]) -> str:
         or result["agent"]["tool_call_budget_enforcement"]["status"] == "UNVERIFIED"
         or result["agent"]["agent_tool_rounds"]["status"] == "UNVERIFIED"
         or result["acceptance"]["status"] == "UNVERIFIED"
+        or any(
+            command.get("status") == "UNVERIFIED"
+            for command in result.get("direct_tool_commands", {}).values()
+        )
         for result in results
     )
     return "UNVERIFIED" if required_unverified else "PASS"
@@ -1515,6 +1924,7 @@ def main(argv: list[str] | None = None) -> int:
     manifest = fixture.load_manifest()
     if not fixture.verify(manifest):
         raise RunnerError("committed task fixture verification failed")
+    provenance = build_provenance()
     all_tasks = {str(task["id"]): task for task in manifest["tasks"]}
     selected = args.task or list(all_tasks)
     if not selected or len(selected) != len(set(selected)) or any(task_id not in all_tasks for task_id in selected):
@@ -1635,13 +2045,14 @@ def main(argv: list[str] | None = None) -> int:
     # Results are recorded by candidate label before source identity is revealed.
     verdict = overall_verdict(results)
     artifact = {
-        "schema_version": 2,
+        "schema_version": 3,
         "status": verdict,
         "observed_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "provider": "codex",
         "requested_model": DEFAULT_MODEL,
         "auth_mode": "existing Codex login; access-token-only private run copy; refresh token not copied",
         "source_shas": {"v3": V3_SHA, "v4": V4_SHA},
+        "provenance": provenance,
         "budgets": budgets,
         "repetitions": args.repetitions,
         "blind_order": "candidate order randomized per task/repetition; this result artifact remains blinded and the optional source map is written separately after all runs",

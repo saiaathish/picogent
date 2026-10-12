@@ -4,7 +4,9 @@ import io
 import json
 import os
 import pathlib
+import signal
 import sys
+import subprocess
 import tempfile
 import time
 import unittest
@@ -132,6 +134,21 @@ class ArtifactArgumentTests(unittest.TestCase):
                 )
 
 
+class ProvenanceTests(unittest.TestCase):
+    def test_runner_and_fixture_content_are_hashed_into_provenance(self) -> None:
+        provenance = runner.build_provenance()
+        self.assertEqual(
+            provenance["runner"]["sha256"],
+            runner.sha256_file(runner.REPO_ROOT / "scripts" / "v4_live_task_runner.py"),
+        )
+        self.assertEqual(
+            provenance["fixture"]["tree_sha256"],
+            runner.canonical_digest(runner.file_digests(runner.FIXTURE_DIR)),
+        )
+        self.assertGreater(provenance["fixture"]["file_count"], 0)
+        self.assertNotIn("/Users/", json.dumps(provenance))
+
+
 class ChildObservationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="picogent-runner-child-")
@@ -154,6 +171,33 @@ class ChildObservationTests(unittest.TestCase):
         self.assertEqual(observed["tool_starts_observed"], 1)
         self.assertIsNone(observed["stop_reason"])
 
+    @unittest.skipIf(os.name == "nt", "POSIX process groups required")
+    def test_termination_kills_descendants_after_group_leader_exits(self) -> None:
+        child_code = "import time; time.sleep(30)"
+        leader_code = "import subprocess,sys; subprocess.Popen([sys.executable, '-c', sys.argv[1]])"
+        process = subprocess.Popen(
+            [sys.executable, "-c", leader_code, child_code],
+            cwd=self.root,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            self.assertEqual(process.wait(timeout=2), 0)
+            started = time.monotonic()
+            runner.terminate_process_group(process)
+            stdout, stderr = process.communicate(timeout=1)
+            self.assertEqual(stdout, b"")
+            self.assertEqual(stderr, b"")
+            self.assertLess(time.monotonic() - started, 2)
+        finally:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait(timeout=2)
+
     def test_provider_error_artifact_uses_only_a_category(self) -> None:
         self.assertEqual(runner.classify_agent_error(b"codex http 401: unauthorized"), "provider_unauthorized")
         self.assertEqual(runner.classify_agent_error(b"HTTP 429 rate limit"), "provider_rate_limited")
@@ -175,6 +219,49 @@ class AcceptanceExecutionPolicyTests(unittest.TestCase):
 
     def test_unknown_acceptance_kind_is_not_run(self) -> None:
         self.assertFalse(runner.should_run_acceptance("other", "PASS"))
+
+    def test_passing_oracle_does_not_override_agent_failure(self) -> None:
+        result = {
+            "sandbox_write_probe": "PASS",
+            "shell_sandbox_probe": "PASS",
+            "direct_tool_sandbox_probe": "PASS",
+            "agent": {"status": "FAIL"},
+            "workspace": {"allowed_paths_status": "PASS"},
+            "acceptance": {"status": "PASS"},
+            "source": {"verified_before": True, "verified_after": True},
+        }
+        self.assertEqual(runner.overall_verdict([result]), "FAIL")
+
+    def test_unavailable_sandboxed_git_prevents_a_pass_verdict(self) -> None:
+        result = {
+            "sandbox_write_probe": "PASS",
+            "shell_sandbox_probe": "PASS",
+            "direct_tool_sandbox_probe": "PASS",
+            "direct_tool_commands": {"git": {"status": "UNVERIFIED"}},
+            "agent": {
+                "status": "PASS",
+                "provider_http_requests": {"status": "OBSERVED"},
+                "token_usage": {"status": "OBSERVED"},
+                "model_calls": {"status": "OBSERVED"},
+                "tool_call_budget_enforcement": {"status": "OBSERVED"},
+                "agent_tool_rounds": {"status": "OBSERVED"},
+            },
+            "workspace": {"allowed_paths_status": "PASS"},
+            "acceptance": {"status": "PASS"},
+            "served_model": {"status": "OBSERVED"},
+            "source": {"verified_before": True, "verified_after": True},
+        }
+        self.assertEqual(runner.overall_verdict([result]), "UNVERIFIED")
+
+
+class DirectToolEnvironmentTests(unittest.TestCase):
+    def test_xcode_git_license_and_cache_failures_are_not_misreported_as_sandbox_passes(self) -> None:
+        self.assertTrue(
+            runner.xcode_git_environment_failure(
+                "You have not agreed to the Xcode license agreements; xcrun_db cache unavailable"
+            )
+        )
+        self.assertFalse(runner.xcode_git_environment_failure("permission denied reading auth.json"))
 
 
 class AgentStateObservationTests(unittest.TestCase):
@@ -253,23 +340,29 @@ class RuntimeMetadataTests(unittest.TestCase):
 class SandboxProfileTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="picogent-runner-sandbox-")
-        self.root = pathlib.Path(self.temp.name)
+        self.root = pathlib.Path(self.temp.name).resolve(strict=True)
         self.run_root = self.root / "run-root"
         self.run_root.mkdir(mode=0o700)
 
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def test_sensitive_directory_deny_precedes_broad_read_allow(self) -> None:
+    def test_sensitive_directory_deny_overrides_explicit_read_roots(self) -> None:
         denied = self.root / ".codex"
         denied.mkdir()
+        toolchain = self.root / "toolchain"
+        toolchain.mkdir()
         profile = runner.sandbox_profile(
             self.run_root,
+            read_roots=(toolchain,),
             denied_reads=(denied,),
             denied_writes=(denied,),
             allow_network=False,
         )
-        self.assertLess(profile.index("(deny file-read*"), profile.index("(allow file-read*)"))
+        allowed_read_root = f'(allow file-read* (subpath "{toolchain.resolve()}"))'
+        denied_read_root = f'(deny file-read* (subpath "{denied.resolve()}"))'
+        self.assertLess(profile.index(allowed_read_root), profile.index(denied_read_root))
+        self.assertNotIn("(allow file-read*)\n", profile)
         allowed_run_root = f'(allow file-write* (subpath "{self.run_root.resolve()}"))'
         self.assertLess(profile.index(allowed_run_root), profile.index("(deny file-write*"))
         self.assertIn(f'(deny file-read* (subpath "{denied.resolve()}"))', profile)
@@ -302,6 +395,14 @@ class SandboxProfileTests(unittest.TestCase):
         self.assertNotIn("OPENAI_API_KEY", child)
         self.assertNotIn("PICOGENT_PROVIDER", child)
 
+    def test_live_run_environment_uses_private_module_cache_and_disables_external_tools(self) -> None:
+        env = runner.run_env(self.run_root, "model", self.run_root / "go-mod-cache")
+        module_cache = pathlib.Path(env["GOMODCACHE"]).resolve()
+        self.assertEqual(module_cache, (self.run_root / "go-mod-cache").resolve())
+        self.assertTrue(module_cache.is_relative_to(self.run_root.resolve()))
+        self.assertEqual(env["PICOGENT_DISABLE_EXTERNAL_TOOLS"], "1")
+        self.assertEqual(env["xcrun_nocache"], "1")
+
     def test_path_executables_ignores_relative_entries_and_preserves_precedence(self) -> None:
         first = self.root / "first-bin"
         second = self.root / "second-bin"
@@ -328,20 +429,31 @@ class SandboxProfileTests(unittest.TestCase):
         for path in (source_auth, copied_auth):
             path.write_text('{"tokens":{"access_token":"probe"}}', encoding="utf-8")
             os.chmod(path, 0o600)
-        profile = self.root / "profiles" / "direct-tool.sbpl"
-        profile.parent.mkdir()
+        host_home = self.root / "host"
+        profile_directory = self.root / "profiles"
+        profile = profile_directory / "direct-tool.sbpl"
+        wrapper_directory = self.root / "tool-bins"
+        wrapper_directory.mkdir()
+        profile_directory.mkdir()
+        env = runner.run_env(self.run_root, "model", self.run_root / "go-mod-cache")
+        read_roots = runner.sandbox_read_roots(
+            env,
+            host_home=host_home,
+            run_root=self.run_root,
+            wrapper_directory=wrapper_directory,
+            profile_directory=profile_directory,
+        )
         profile.write_text(
             runner.sandbox_profile(
                 self.run_root,
-                denied_reads=(source_auth.parent, copied_auth.parent),
-                denied_writes=(source_auth.parent, copied_auth.parent),
+                read_roots=read_roots,
+                denied_reads=(host_home, copied_auth.parent),
+                denied_writes=(host_home, copied_auth.parent),
                 allow_network=False,
             ),
             encoding="utf-8",
         )
-        wrapper_directory = self.root / "tool-bins"
-        wrapper_directory.mkdir()
-        for name, target in runner.path_executables(os.environ.get("PATH", "")).items():
+        for name, target in runner.path_executables(env["PATH"]).items():
             if name in {"git", "go", "python3", "rg"}:
                 runner.write_sandboxed_command_wrapper(
                     wrapper_directory / name,
@@ -349,18 +461,31 @@ class SandboxProfileTests(unittest.TestCase):
                     sandbox_exec="/usr/bin/sandbox-exec",
                     profile_path=profile,
                 )
-        env = {"HOME": str(self.root), "PATH": str(wrapper_directory)}
+        env["PATH"] = str(wrapper_directory)
 
         self.assertTrue(
-            runner.probe_direct_tool_sandbox(
+            runner.probe_sandbox(
                 self.run_root,
-                wrapper_directory=wrapper_directory,
-                sandbox_exec="/usr/bin/sandbox-exec",
-                profile_path=profile,
                 env=env,
-                auth_paths=(source_auth, copied_auth),
+                sandbox_exec="/usr/bin/sandbox-exec",
+                read_roots=read_roots,
+                denied_reads=(host_home,),
+                denied_writes=(host_home, copied_auth.parent),
+                read_canary=source_auth,
+                allow_network=False,
             )
         )
+
+        direct_probe = runner.probe_direct_tool_sandbox(
+            self.run_root,
+            wrapper_directory=wrapper_directory,
+            sandbox_exec="/usr/bin/sandbox-exec",
+            profile_path=profile,
+            env=env,
+            auth_paths=(source_auth, copied_auth),
+        )
+        self.assertEqual(direct_probe["status"], "PASS")
+        self.assertIn(direct_probe["commands"]["git"]["status"], {"PASS", "UNVERIFIED"})
 
     def test_input_digest_binds_prompt_model_budget_and_fixture(self) -> None:
         task = {
@@ -426,23 +551,32 @@ class SandboxProfileTests(unittest.TestCase):
             path.write_text('{"tokens":{"access_token":"probe"}}', encoding="utf-8")
             os.chmod(path, 0o600)
 
-        home = self.run_root / "home"
-        tmp = self.run_root / "tmp"
-        home.mkdir()
-        tmp.mkdir()
-        env = {"HOME": str(home), "TMPDIR": str(tmp), "GOMODCACHE": str(self.root / "module-cache")}
-        profile = self.root / "profiles" / "shell.sbpl"
-        profile.parent.mkdir()
+        host_home = self.root / "host"
+        host_home.mkdir(exist_ok=True)
+        wrapper_directory = self.root / "tool-bin"
+        wrapper_directory.mkdir()
+        profile_directory = self.root / "profiles"
+        profile_directory.mkdir()
+        env = runner.run_env(self.run_root, "model", self.run_root / "go-mod-cache")
+        read_roots = runner.sandbox_read_roots(
+            env,
+            host_home=host_home,
+            run_root=self.run_root,
+            wrapper_directory=wrapper_directory,
+            profile_directory=profile_directory,
+        )
+        profile = profile_directory / "shell.sbpl"
         profile.write_text(
             runner.sandbox_profile(
                 self.run_root,
-                denied_reads=(source_auth.parent, copied_auth.parent),
+                read_roots=read_roots,
+                denied_reads=(host_home, copied_auth.parent),
                 denied_writes=(source_auth.parent, copied_auth.parent),
                 allow_network=False,
             ),
             encoding="utf-8",
         )
-        wrapper = self.root / "tool-bin" / "bash"
+        wrapper = wrapper_directory / "bash"
         runner.write_shell_wrapper(
             wrapper,
             sandbox_exec="/usr/bin/sandbox-exec",
@@ -489,6 +623,37 @@ class WorkspaceChangeTests(unittest.TestCase):
         directory.chmod(0o500)
         changed = runner.file_digests(self.root)
         self.assertEqual(runner.changed_paths(created, changed), ["unexpected"])
+
+    def test_file_digest_enforces_file_and_total_byte_limits(self) -> None:
+        first = self.root / "first.bin"
+        second = self.root / "second.bin"
+        first.write_bytes(b"123456")
+        second.write_bytes(b"abcdef")
+        previous_file_limit = runner.MAX_WORKSPACE_FILE_BYTES
+        previous_total_limit = runner.MAX_WORKSPACE_TOTAL_BYTES
+        try:
+            runner.MAX_WORKSPACE_FILE_BYTES = 5
+            with self.assertRaisesRegex(runner.RunnerError, "file above the size safety limit"):
+                runner.file_digests(self.root)
+
+            runner.MAX_WORKSPACE_FILE_BYTES = 10
+            runner.MAX_WORKSPACE_TOTAL_BYTES = 10
+            with self.assertRaisesRegex(runner.RunnerError, "total size safety limit"):
+                runner.file_digests(self.root)
+        finally:
+            runner.MAX_WORKSPACE_FILE_BYTES = previous_file_limit
+            runner.MAX_WORKSPACE_TOTAL_BYTES = previous_total_limit
+
+    def test_file_digest_enforces_entry_count_limit(self) -> None:
+        (self.root / "one.txt").write_text("1", encoding="utf-8")
+        (self.root / "two.txt").write_text("2", encoding="utf-8")
+        previous_limit = runner.MAX_WORKSPACE_ENTRIES
+        try:
+            runner.MAX_WORKSPACE_ENTRIES = 1
+            with self.assertRaisesRegex(runner.RunnerError, "file-count safety limit"):
+                runner.file_digests(self.root)
+        finally:
+            runner.MAX_WORKSPACE_ENTRIES = previous_limit
 
 
 if __name__ == "__main__":
