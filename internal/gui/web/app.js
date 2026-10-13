@@ -639,7 +639,7 @@ function renderProjects() {
         del.setAttribute("aria-label", "Delete chat: " + (s.title || "New chat"));
         del.title = "Delete chat";
         del.textContent = "×";
-        del.onclick = () => deleteThread(s.id);
+        del.onclick = () => confirmDeleteThread(s.id, s.title || "New chat", del);
         chatRow.appendChild(del);
       }
       list.appendChild(chatRow);
@@ -1180,12 +1180,50 @@ async function newChat() {
   promptEl.focus();
 }
 
+let pendingDeleteThread = "";
+let deleteReturnFocus = null;
+const deleteChatDialog = $("delete-chat-dialog");
+function confirmDeleteThread(id, title, trigger) {
+  pendingDeleteThread = id;
+  deleteReturnFocus = trigger;
+  $("delete-chat-name").textContent = title;
+  $("delete-chat-error").hidden = true;
+  $("confirm-delete-chat").disabled = false;
+  deleteChatDialog.showModal();
+  $("cancel-delete-chat").focus();
+}
+$("cancel-delete-chat")?.addEventListener("click", () => deleteChatDialog.close());
+deleteChatDialog?.addEventListener("close", () => {
+  pendingDeleteThread = "";
+  if (deleteReturnFocus?.isConnected) deleteReturnFocus.focus();
+  deleteReturnFocus = null;
+});
+$("confirm-delete-chat")?.addEventListener("click", async () => {
+  const id = pendingDeleteThread;
+  if (!id) return;
+  const button = $("confirm-delete-chat");
+  const error = $("delete-chat-error");
+  button.disabled = true;
+  error.hidden = true;
+  try {
+    const wasCurrent = id === sessionId;
+    await deleteThread(id);
+    deleteChatDialog.close();
+    if (wasCurrent) $("new-chat").focus();
+  } catch (err) {
+    error.textContent = err.message || "Could not delete chat.";
+    error.hidden = false;
+    button.disabled = false;
+  }
+});
+
 async function deleteThread(id) {
-  await fetch("/api/sessions", {
+  const res = await fetch("/api/sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action: "delete", id }),
   });
+  if (!res.ok) throw new Error((await res.text()).trim() || "Could not delete chat.");
   if (id === sessionId) await newChat();
   else await loadThreads();
 }
@@ -2384,7 +2422,57 @@ syncEmpty();
 refresh().then(() => {
   loadHeroPrompts(false);
 });
+checkForUpdate();
+setInterval(checkForUpdate, 60 * 60 * 1000);
 loadSideChat();
+
+let offeredUpdate = null;
+async function checkForUpdate() {
+  try {
+    const res = await fetch("/api/update");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.available) return;
+    offeredUpdate = data;
+    $("update-available").hidden = false;
+  } catch (_) { /* Offline release checks never interrupt the app. */ }
+}
+
+$("update-available")?.addEventListener("click", () => {
+  if (!offeredUpdate) return;
+  $("update-description").textContent = `${offeredUpdate.tag} is available (you have ${offeredUpdate.current}).`;
+  $("update-status").hidden = true;
+  $("start-update").disabled = false;
+  $("update-dialog").showModal();
+});
+$("cancel-update")?.addEventListener("click", () => $("update-dialog").close());
+$("start-update")?.addEventListener("click", async () => {
+  const button = $("start-update");
+  const status = $("update-status");
+  button.disabled = true;
+  status.hidden = false;
+  status.textContent = "Opening Terminal…";
+  try {
+    const res = await fetch("/api/update", { method: "POST" });
+    if (!res.ok) throw new Error((await res.text()).trim());
+    status.textContent = "Follow progress in Terminal. This page will reload when Picogent restarts.";
+    let wentAway = false;
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - started > 180000) { clearInterval(timer); return; }
+      try {
+        const probe = await fetch("/api/instance", { cache: "no-store" });
+        if (probe.ok && (wentAway || probe.headers.get("X-Picogent-Version") === offeredUpdate.tag.slice(1))) {
+          clearInterval(timer);
+          location.reload();
+        }
+      } catch (_) { wentAway = true; }
+    }, 1000);
+  } catch (err) {
+    status.textContent = err.message || "Could not start update.";
+    button.disabled = false;
+  }
+});
 
 /* ─── PicoChat Companion + AI prompt recommendations ─── */
 function setSideBusyUI(on) {

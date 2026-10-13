@@ -422,8 +422,10 @@ func (s *server) Handler() http.Handler {
 	api("/api/instance", []string{http.MethodGet}, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Picogent-Instance", "1")
 		w.Header().Set("X-Picogent-Profile", profileID)
+		w.Header().Set("X-Picogent-Version", Version)
 		w.WriteHeader(http.StatusNoContent)
 	})
+	api("/api/update", []string{http.MethodGet, http.MethodPost}, s.updateAPI)
 	api("/api/setup", []string{http.MethodGet}, s.setupStatus)
 	api("/api/setup/install", []string{http.MethodPost}, s.setupInstall)
 	api("/api/setup/login", []string{http.MethodPost}, s.setupLogin)

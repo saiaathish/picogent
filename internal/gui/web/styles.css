@@ -159,6 +159,16 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 
 .top-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.update-pill { border: 1px solid var(--accent); background: var(--card); color: var(--accent); border-radius: 10px; padding: 8px 11px; font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.update-pill:hover { background: var(--paper); }
+.update-pill[hidden] { display: none; }
+@media (max-width: 700px) {
+  .update-pill { width: 36px; height: 36px; padding: 0; font-size: 0; }
+  .update-pill::before { content: "↑"; font-size: 18px; }
+}
+.update-dialog { max-width: 420px; }
+.update-dialog h2 { margin: 0 0 12px; }
+.update-dialog p { line-height: 1.5; }
 
 .icon, .ghost-btn {
   border: 1px solid var(--line);
@@ -971,7 +981,13 @@ button, input, textarea { font: inherit; color: inherit; }
   background: transparent;
   color: var(--mute);
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .14s ease, background .14s ease, color .14s ease;
 }
+.project-chat-row:hover .project-chat-delete,
+.project-chat-row:focus-within .project-chat-delete { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .project-chat-delete { opacity: 1; pointer-events: auto; } }
 .project-chat-delete:hover { background: var(--paper); color: var(--danger); }
 .project-empty { margin: 2px 12px 8px; color: var(--mute); font-size: 12px; }
 .project-dialog {
@@ -1010,6 +1026,13 @@ button, input, textarea { font: inherit; color: inherit; }
 .project-form-actions button[type="submit"] { border-color: var(--ink); background: var(--ink); color: var(--card); }
 .project-form-actions button:disabled { opacity: .5; cursor: wait; }
 .project-dialog .project-form-error { color: var(--danger); margin: 0; }
+.delete-dialog { max-width: 400px; }
+.delete-dialog h2 { margin-bottom: 10px; }
+.delete-dialog .delete-chat-name { padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
+.delete-dialog #confirm-delete-chat { border-color: var(--danger); background: var(--danger); color: white; }
+.delete-dialog #confirm-delete-chat:hover { filter: brightness(.93); }
+.update-dialog #update-status { color: var(--mute); }
+.update-dialog #start-update { border-color: var(--ink); background: var(--ink); color: var(--card); }
 
 .drawer-head {
   display: flex;

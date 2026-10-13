@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -30,6 +31,7 @@ import (
 	"github.com/saiaathish/picogent/internal/setup"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tui"
+	"github.com/saiaathish/picogent/internal/update"
 	"github.com/saiaathish/picogent/internal/verify"
 )
 
@@ -120,6 +122,7 @@ func run(args []string) error {
 }
 
 func runContext(ctx context.Context, args []string) error {
+	gui.Version = version
 	if len(args) == 0 {
 		return gui.Run()
 	}
@@ -141,6 +144,15 @@ func runContext(ctx context.Context, args []string) error {
 	case "version", "-v", "--version":
 		fmt.Println("picogent", version)
 		return nil
+	case "_apply-update":
+		if len(args) != 4 {
+			return fmt.Errorf("invalid update invocation")
+		}
+		pid, err := strconv.Atoi(args[2])
+		if err != nil || pid <= 0 || args[3] != version {
+			return fmt.Errorf("invalid update process or version")
+		}
+		return update.Apply(ctx, args[1], version, pid)
 	case "help", "-h", "--help":
 		printHelp()
 		return nil
