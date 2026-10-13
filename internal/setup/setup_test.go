@@ -3,6 +3,7 @@ package setup_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/config"
@@ -37,21 +38,34 @@ func TestNeedsSetupThenApply(t *testing.T) {
 	}
 }
 
-func TestSnapshotListsCores(t *testing.T) {
+func TestSnapshotListsOnlySelectedProvider(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
-	st := setup.Snapshot(config.Default())
-	ids := map[string]bool{}
-	for _, c := range st.Components {
-		ids[c.ID] = true
-	}
-	for _, want := range []string{"home", "git", "codex-cli", "claude-cli"} {
-		if !ids[want] {
-			t.Fatalf("missing %s", want)
+	for _, tc := range []struct {
+		provider   config.Provider
+		cli, login string
+	}{
+		{config.ProviderCodex, "codex-cli", "codex"},
+		{config.ProviderQuadCode, "claude-cli", "claude"},
+		{config.ProviderOpenCode, "opencode-cli", "opencode"},
+		{config.ProviderAntigravity, "agy-cli", "antigravity"},
+	} {
+		st := setup.Snapshot(config.Default(), tc.provider)
+		ids := map[string]bool{}
+		for _, c := range st.Components {
+			ids[c.ID] = true
 		}
-	}
-	if len(st.Logins) < 1 || st.Logins[0].ID != "codex" {
-		t.Fatalf("logins %+v", st.Logins)
+		if len(st.Components) != 3 || !ids["home"] || !ids["git"] || !ids[tc.cli] {
+			t.Fatalf("%s components %+v", tc.provider, st.Components)
+		}
+		if len(st.Logins) != 1 || st.Logins[0].ID != tc.login {
+			t.Fatalf("%s logins %+v", tc.provider, st.Logins)
+		}
+		for _, option := range st.ModelOptions {
+			if option.Value == "" {
+				t.Fatalf("%s empty model option", tc.provider)
+			}
+		}
 	}
 }
 
@@ -68,7 +82,7 @@ func TestInstallCoresCreatesHome(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", home)
 	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())
 	t.Setenv("PICOGENT_SETUP_SKIP_CLIS", "1")
-	log, err := setup.InstallCores()
+	log, err := setup.InstallCores(config.ProviderCodex)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,5 +91,34 @@ func TestInstallCoresCreatesHome(t *testing.T) {
 	}
 	if log == "" {
 		t.Fatal("expected log")
+	}
+}
+
+func TestInstallCoresOnlyTouchesSelectedCLI(t *testing.T) {
+	t.Setenv("PICOGENT_SETUP_SKIP_CLIS", "1")
+	for _, tc := range []struct {
+		provider config.Provider
+		name     string
+	}{
+		{config.ProviderCodex, "codex cli"},
+		{config.ProviderQuadCode, "claude cli"},
+		{config.ProviderOpenCode, "opencode cli"},
+		{config.ProviderAntigravity, "agy cli"},
+	} {
+		t.Run(string(tc.provider), func(t *testing.T) {
+			t.Setenv("PICOGENT_HOME", t.TempDir())
+			log, err := setup.InstallCores(tc.provider)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(log, tc.name) {
+				t.Fatalf("missing chosen CLI in log: %s", log)
+			}
+			for _, other := range []string{"codex cli", "claude cli", "opencode cli", "agy cli"} {
+				if other != tc.name && strings.Contains(log, other) {
+					t.Fatalf("unselected CLI %q in log: %s", other, log)
+				}
+			}
+		})
 	}
 }

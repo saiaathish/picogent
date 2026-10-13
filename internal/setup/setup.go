@@ -37,26 +37,27 @@ type LoginTarget struct {
 }
 
 type Status struct {
-	Ready      bool          `json:"ready"`
-	Busy       bool          `json:"busy"`
-	Log        string        `json:"log"`
-	Components []Component   `json:"components"`
-	Logins     []LoginTarget `json:"logins"`
-	Workspace  string        `json:"workspace"`
-	Mode       string        `json:"mode"`
-	ActiveMode string        `json:"active_mode"`
-	ModeOverridden bool      `json:"mode_overridden"`
-	Model        string            `json:"model"`
-	Provider     string            `json:"provider"`
-	ModelOptions []llm.ModelChoice `json:"model_options"`
-	LoggedIn     bool              `json:"logged_in"`
-	SetupDone  bool          `json:"setup_done"`
+	Ready          bool              `json:"ready"`
+	Busy           bool              `json:"busy"`
+	Log            string            `json:"log"`
+	Components     []Component       `json:"components"`
+	Logins         []LoginTarget     `json:"logins"`
+	Workspace      string            `json:"workspace"`
+	Mode           string            `json:"mode"`
+	ActiveMode     string            `json:"active_mode"`
+	ModeOverridden bool              `json:"mode_overridden"`
+	Model          string            `json:"model"`
+	Provider       string            `json:"provider"`
+	ModelOptions   []llm.ModelChoice `json:"model_options"`
+	LoggedIn       bool              `json:"logged_in"`
+	SetupDone      bool              `json:"setup_done"`
 }
 
 var (
-	mu      sync.Mutex
-	busy    bool
-	lastLog string
+	mu           sync.Mutex
+	busy         bool
+	lastLog      string
+	lastProvider config.Provider
 )
 
 func Busy() bool {
@@ -65,43 +66,84 @@ func Busy() bool {
 	return busy
 }
 
-func LastLog() string {
+func LastLog(provider config.Provider) string {
 	mu.Lock()
 	defer mu.Unlock()
+	if provider != lastProvider {
+		return ""
+	}
 	return lastLog
 }
 
-func Snapshot(cfg config.Config) Status {
-	comps := []Component{homeComponent(), gitComponent(), codexCLIComponent(), claudeCLIComponent(), openCodeCLIComponent(), agyCLIComponent()}
-	logins := []LoginTarget{codexLogin(), claudeLogin(), openCodeLogin(), antigravityLogin()}
+func Provider(value string) (config.Provider, error) {
+	switch config.Provider(strings.ToLower(strings.TrimSpace(value))) {
+	case config.ProviderCodex, config.ProviderQuadCode, config.ProviderOpenCode, config.ProviderAntigravity:
+		return config.Provider(strings.ToLower(strings.TrimSpace(value))), nil
+	default:
+		return "", fmt.Errorf("choose Codex, Claude Code, OpenCode, or Antigravity")
+	}
+}
+
+func Snapshot(cfg config.Config, provider config.Provider) Status {
+	comps := []Component{homeComponent(), gitComponent()}
+	var login LoginTarget
+	switch provider {
+	case config.ProviderQuadCode:
+		comps = append(comps, claudeCLIComponent())
+		login = claudeLogin()
+	case config.ProviderOpenCode:
+		comps = append(comps, openCodeCLIComponent())
+		login = openCodeLogin()
+	case config.ProviderAntigravity:
+		comps = append(comps, agyCLIComponent())
+		login = antigravityLogin()
+	default:
+		provider = config.ProviderCodex
+		comps = append(comps, codexCLIComponent())
+		login = codexLogin()
+	}
 	ready := true
 	for _, c := range comps {
-		if !c.OK && (c.ID == "home" || c.ID == "git") {
+		if !c.OK {
 			ready = false
 		}
 	}
-	if !codexauth.LoggedIn() {
-		ready = false
+	previousProvider := cfg.Provider
+	cfg.Provider = provider
+	choices := llm.ModelChoices(llm.EcosystemForProvider(string(provider)), cfg.FableAllowed())
+	model := cfg.DisplayModel()
+	if len(choices) > 0 && previousProvider != provider {
+		model = choices[0].Value
+	}
+	validModel := false
+	for _, choice := range choices {
+		if choice.Value == model {
+			validModel = true
+			break
+		}
+	}
+	if !validModel && len(choices) > 0 {
+		model = choices[0].Value
 	}
 	ws := cfg.Workspace
 	if ws == "" || ws == "." {
 		ws, _ = os.Getwd()
 	}
 	return Status{
-		Ready:        ready,
-		Busy:         Busy(),
-		Log:          LastLog(),
-		Components:   comps,
-		Logins:       logins,
-		Workspace:    ws,
-		Mode:         string(cfg.PersistentMode()),
-		ActiveMode:   string(cfg.Mode),
+		Ready:          ready,
+		Busy:           Busy(),
+		Log:            LastLog(provider),
+		Components:     comps,
+		Logins:         []LoginTarget{login},
+		Workspace:      ws,
+		Mode:           string(cfg.PersistentMode()),
+		ActiveMode:     string(cfg.Mode),
 		ModeOverridden: cfg.ModeOverridden(),
-		Model:        cfg.DisplayModel(),
-		Provider:     string(cfg.Provider),
-		ModelOptions: llm.ModelChoices(llm.EcoCodex, false),
-		LoggedIn:     codexauth.LoggedIn(),
-		SetupDone:    cfg.SetupComplete,
+		Model:          model,
+		Provider:       string(provider),
+		ModelOptions:   choices,
+		LoggedIn:       login.OK,
+		SetupDone:      cfg.SetupComplete,
 	}
 }
 
@@ -132,21 +174,21 @@ func codexCLIComponent() Component {
 }
 
 func claudeCLIComponent() Component {
-	if p := look("claude"); p != "" {
+	if p := lookWithFallback("claude", ".local", "bin", "claude"); p != "" {
 		return Component{ID: "claude-cli", Name: "Claude Code CLI", OK: true, Detail: p}
 	}
 	return Component{ID: "claude-cli", Name: "Claude Code CLI", CanFix: true, Detail: "not installed", FixHint: "Will run npm for you."}
 }
 
 func openCodeCLIComponent() Component {
-	if p := look("opencode"); p != "" {
+	if p := lookWithFallback("opencode", ".opencode", "bin", "opencode"); p != "" {
 		return Component{ID: "opencode-cli", Name: "OpenCode CLI", OK: true, Detail: p}
 	}
 	return Component{ID: "opencode-cli", Name: "OpenCode CLI", CanFix: true, Detail: "not installed", FixHint: "Will install OpenCode for you."}
 }
 
 func agyCLIComponent() Component {
-	if p := look("agy"); p != "" {
+	if p := lookWithFallback("agy", ".local", "bin", "agy"); p != "" {
 		return Component{ID: "agy-cli", Name: "Antigravity CLI", OK: true, Detail: p}
 	}
 	return Component{ID: "agy-cli", Name: "Antigravity CLI", CanFix: true, Detail: "not installed", FixHint: "Will run the official install script."}
@@ -163,7 +205,7 @@ func claudeLogin() LoginTarget {
 	if ClaudeLoggedIn() {
 		return LoginTarget{ID: "claude", Name: "Claude Code", OK: true, Detail: "connected via Claude Code CLI", Button: "Connected"}
 	}
-	okCLI := look("claude") != ""
+	okCLI := lookWithFallback("claude", ".local", "bin", "claude") != ""
 	return LoginTarget{ID: "claude", Name: "Claude Code", Detail: "uses your Claude subscription (same as `claude` CLI)", Button: "Log in to Claude", NeedOAuth: okCLI}
 }
 
@@ -179,7 +221,7 @@ func openCodeLogin() LoginTarget {
 		}
 		return LoginTarget{ID: "opencode", Name: "OpenCode (Zen/Go)", OK: true, Detail: detail, Button: "Connected"}
 	}
-	okCLI := look("opencode") != ""
+	okCLI := lookWithFallback("opencode", ".opencode", "bin", "opencode") != ""
 	return LoginTarget{ID: "opencode", Name: "OpenCode (Zen/Go)", Detail: "uses OpenCode Zen or Go API key (`opencode auth login`)", Button: "Log in to OpenCode", NeedOAuth: okCLI}
 }
 
@@ -191,7 +233,7 @@ func antigravityLogin() LoginTarget {
 		}
 		return LoginTarget{ID: "antigravity", Name: "Antigravity", OK: true, Detail: detail, Button: "Connected"}
 	}
-	okCLI := look("agy") != ""
+	okCLI := lookWithFallback("agy", ".local", "bin", "agy") != ""
 	return LoginTarget{ID: "antigravity", Name: "Antigravity", Detail: "uses Google Antigravity CLI (`agy`) or GEMINI_API_KEY", Button: "Log in to Antigravity", NeedOAuth: okCLI}
 }
 
@@ -207,13 +249,33 @@ func look(name string) string {
 	return p
 }
 
-func InstallCores() (string, error) {
+func lookWithFallback(name string, parts ...string) string {
+	if p := look(name); p != "" {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(append([]string{home}, parts...)...)
+	if st, err := os.Stat(path); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
+		return path
+	}
+	return ""
+}
+
+func InstallCores(provider config.Provider) (string, error) {
+	if _, err := Provider(string(provider)); err != nil {
+		return "", err
+	}
 	mu.Lock()
 	if busy {
 		mu.Unlock()
 		return "", fmt.Errorf("setup is already running")
 	}
 	busy = true
+	lastProvider = provider
+	lastLog = ""
 	mu.Unlock()
 	defer func() {
 		mu.Lock()
@@ -264,62 +326,69 @@ func InstallCores() (string, error) {
 		say("ok  git")
 	}
 
-	if look("codex") == "" {
-		if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
-			say("skip  codex cli (test)")
-		} else if err := installNPM("Codex CLI", "@openai/codex", "codex", say); err != nil {
-			if brew := look("brew"); brew != "" {
-				say("trying Homebrew for Codex…")
-				out, e := runTimed(4*time.Minute, brew, "install", "codex")
-				if e != nil {
-					say("miss codex  " + e.Error() + "\n" + strings.TrimSpace(out))
-				} else if look("codex") != "" {
-					say("ok  codex cli")
+	switch provider {
+	case config.ProviderCodex:
+		if look("codex") == "" {
+			if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
+				say("skip  codex cli (test)")
+			} else if err := installNPM("Codex CLI", "@openai/codex", "codex", say); err != nil {
+				if brew := look("brew"); brew != "" {
+					say("trying Homebrew for Codex…")
+					out, e := runTimed(4*time.Minute, brew, "install", "codex")
+					if e != nil {
+						say("miss codex  " + e.Error() + "\n" + strings.TrimSpace(out))
+					} else if look("codex") != "" {
+						say("ok  codex cli")
+					} else {
+						say("miss codex  still not on PATH")
+					}
 				} else {
-					say("miss codex  still not on PATH")
+					say("miss codex  " + err.Error())
 				}
-			} else {
-				say("miss codex  " + err.Error())
 			}
+		} else {
+			say("ok  codex cli")
 		}
-	} else {
-		say("ok  codex cli")
+
+	case config.ProviderQuadCode:
+		if lookWithFallback("claude", ".local", "bin", "claude") == "" {
+			if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
+				say("skip  claude cli (test)")
+			} else if err := installNPM("Claude Code CLI", "@anthropic-ai/claude-code", "claude", say); err != nil {
+				say("miss claude  " + err.Error())
+			}
+		} else {
+			say("ok  claude cli")
+		}
+
+	case config.ProviderOpenCode:
+		if lookWithFallback("opencode", ".opencode", "bin", "opencode") == "" {
+			if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
+				say("skip  opencode cli (test)")
+			} else if err := installOpenCode(say); err != nil {
+				say("miss opencode  " + err.Error())
+			}
+		} else {
+			say("ok  opencode cli")
+		}
+
+	case config.ProviderAntigravity:
+		if lookWithFallback("agy", ".local", "bin", "agy") == "" {
+			if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
+				say("skip  agy cli (test)")
+			} else if err := installAgy(say); err != nil {
+				say("miss agy  " + err.Error())
+			}
+		} else {
+			say("ok  agy cli")
+		}
+
 	}
 
-	if look("claude") == "" {
-		if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
-			say("skip  claude cli (test)")
-		} else if err := installNPM("Claude Code CLI", "@anthropic-ai/claude-code", "claude", say); err != nil {
-			say("miss claude  " + err.Error())
-		}
+	if ProviderConnected(provider) {
+		say("ok  provider login")
 	} else {
-		say("ok  claude cli")
-	}
-
-	if look("opencode") == "" {
-		if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
-			say("skip  opencode cli (test)")
-		} else if err := installOpenCode(say); err != nil {
-			say("miss opencode  " + err.Error())
-		}
-	} else {
-		say("ok  opencode cli")
-	}
-
-	if look("agy") == "" {
-		if os.Getenv("PICOGENT_SETUP_SKIP_CLIS") != "" {
-			say("skip  agy cli (test)")
-		} else if err := installAgy(say); err != nil {
-			say("miss agy  " + err.Error())
-		}
-	} else {
-		say("ok  agy cli")
-	}
-
-	if codexauth.LoggedIn() {
-		say("ok  chatgpt codex login")
-	} else {
-		say("next  tap Log in to ChatGPT Codex")
+		say("next  log in to the selected provider")
 	}
 
 	mu.Lock()
@@ -369,39 +438,20 @@ func StartClaudeLogin() error {
 	if ClaudeLoggedIn() {
 		return nil
 	}
-	if look("claude") == "" {
-		say := func(string) {}
-		if err := installNPM("Claude Code CLI", "@anthropic-ai/claude-code", "claude", say); err != nil {
-			return fmt.Errorf("Claude Code is not installed and auto-install failed: %w", err)
-		}
-	}
-	bin := look("claude")
+	bin := lookWithFallback("claude", ".local", "bin", "claude")
 	if bin == "" {
-		return fmt.Errorf("Claude Code is not installed yet")
+		return fmt.Errorf("Claude Code is not installed; use Install missing pieces first")
 	}
-	return OpenInteractive(bin + " auth login")
+	return OpenInteractive(shellQuote(bin) + " auth login")
 }
 
 func StartOpenCodeLogin() error {
 	if opencodeauth.LoggedIn() {
 		return nil
 	}
-	if look("opencode") == "" {
-		say := func(string) {}
-		if err := installOpenCode(say); err != nil {
-			return fmt.Errorf("OpenCode is not installed and auto-install failed: %w", err)
-		}
-	}
-	bin := look("opencode")
+	bin := lookWithFallback("opencode", ".opencode", "bin", "opencode")
 	if bin == "" {
-		home, _ := os.UserHomeDir()
-		cand := filepath.Join(home, ".opencode", "bin", "opencode")
-		if st, e := os.Stat(cand); e == nil && !st.IsDir() {
-			bin = cand
-		}
-	}
-	if bin == "" {
-		return fmt.Errorf("OpenCode is not installed yet")
+		return fmt.Errorf("OpenCode is not installed; use Install missing pieces first")
 	}
 	return OpenInteractive(shellQuote(bin) + " auth login")
 }
@@ -410,22 +460,9 @@ func StartAntigravityLogin() error {
 	if agyauth.LoggedIn() {
 		return nil
 	}
-	if look("agy") == "" {
-		say := func(string) {}
-		if err := installAgy(say); err != nil {
-			return fmt.Errorf("Antigravity CLI is not installed and auto-install failed: %w", err)
-		}
-	}
-	bin := look("agy")
+	bin := lookWithFallback("agy", ".local", "bin", "agy")
 	if bin == "" {
-		home, _ := os.UserHomeDir()
-		cand := filepath.Join(home, ".local", "bin", "agy")
-		if st, e := os.Stat(cand); e == nil && !st.IsDir() {
-			bin = cand
-		}
-	}
-	if bin == "" {
-		return fmt.Errorf("Antigravity CLI (`agy`) is not installed yet")
+		return fmt.Errorf("Antigravity CLI is not installed; use Install missing pieces first")
 	}
 	return OpenInteractive(shellQuote(bin))
 }
@@ -436,10 +473,7 @@ func StartCodexCLILogin() error {
 		return nil
 	}
 	if look("codex") == "" {
-		say := func(string) {}
-		if err := installNPM("Codex CLI", "@openai/codex", "codex", say); err != nil {
-			return fmt.Errorf("Codex CLI is not installed and auto-install failed: %w", err)
-		}
+		return fmt.Errorf("Codex CLI is not installed; use Install missing pieces first")
 	}
 	bin := look("codex")
 	if bin == "" {
@@ -492,7 +526,11 @@ func installAgy(say func(string)) error {
 	return nil
 }
 
-func Apply(cfg config.Config, workspace, mode, model string) (config.Config, error) {
+func Prepare(cfg config.Config, provider config.Provider, workspace, mode, model string) (config.Config, error) {
+	if _, err := Provider(string(provider)); err != nil {
+		return cfg, err
+	}
+	status := Snapshot(cfg, provider)
 	workspace = strings.TrimSpace(workspace)
 	if workspace == "" {
 		return cfg, fmt.Errorf("pick a folder")
@@ -511,26 +549,70 @@ func Apply(cfg config.Config, workspace, mode, model string) (config.Config, err
 	}
 	cfg.Workspace = abs
 	cfg.SetUserMode(m)
-	prov := cfg.Provider
-	if prov == "" {
-		prov = config.ProviderCodex
+	cfg.Provider = provider
+	model = strings.TrimSpace(model)
+	if model == "" {
+		model = status.Model
 	}
-	supportsAuto := prov == config.ProviderCodex || prov == config.ProviderQuadCode
-	if strings.TrimSpace(model) != "" && model != config.ModelAuto {
-		cfg.Model = strings.TrimSpace(model)
+	validModel := false
+	for _, choice := range status.ModelOptions {
+		if choice.Value == model {
+			validModel = true
+			break
+		}
+	}
+	if !validModel {
+		return cfg, fmt.Errorf("choose a model available for the selected provider")
+	}
+	supportsAuto := provider == config.ProviderCodex || provider == config.ProviderQuadCode
+	if model != config.ModelAuto {
+		cfg.Model = model
 		cfg.Router.Enabled = false
 	} else if supportsAuto {
 		cfg.Model = config.ModelAuto
 		cfg.Router.Enabled = true
 	} else {
-		cfg.Model = ""
-		cfg.Model = cfg.BackendModel()
-		cfg.Router.Enabled = false
-	}
-	if cfg.Provider == "" {
-		cfg.Provider = config.ProviderCodex
+		return cfg, fmt.Errorf("auto model is unavailable for the selected provider")
 	}
 	cfg.SetupComplete = true
+	return cfg, nil
+}
+
+func Apply(cfg config.Config, workspace, mode, model string) (config.Config, error) {
+	provider := cfg.Provider
+	if provider == "" {
+		provider = config.ProviderCodex
+	}
+	if _, err := Provider(string(provider)); err != nil {
+		workspace = strings.TrimSpace(workspace)
+		abs, pathErr := filepath.Abs(workspace)
+		if pathErr != nil {
+			return cfg, pathErr
+		}
+		st, statErr := os.Stat(abs)
+		if workspace == "" || statErr != nil || !st.IsDir() {
+			return cfg, fmt.Errorf("folder does not exist: %s", abs)
+		}
+		cfg.Workspace = abs
+		modeValue := config.Mode(mode)
+		if !modeValue.Valid() {
+			modeValue = config.ModeSafe
+		}
+		cfg.SetUserMode(modeValue)
+		if strings.TrimSpace(model) != "" {
+			cfg.Model = strings.TrimSpace(model)
+		}
+		cfg.SetupComplete = true
+		if err := config.Save(cfg); err != nil {
+			return cfg, err
+		}
+		return cfg, nil
+	}
+	var err error
+	cfg, err = Prepare(cfg, provider, workspace, mode, model)
+	if err != nil {
+		return cfg, err
+	}
 	if err := config.Save(cfg); err != nil {
 		return cfg, err
 	}

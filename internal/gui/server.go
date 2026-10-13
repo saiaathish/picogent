@@ -816,12 +816,24 @@ func mcpToolCount(a *agent.Agent) int {
 	return len(mcp.Tools())
 }
 
-func (s *server) setupStatus(w http.ResponseWriter, _ *http.Request) {
+func (s *server) setupStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	cfg := s.cfg
 	s.mu.Unlock()
+	provider := cfg.Provider
+	if provider == "" {
+		provider = config.ProviderCodex
+	}
+	if selected := r.URL.Query().Get("provider"); selected != "" {
+		var err error
+		provider, err = setup.Provider(selected)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(setup.Snapshot(cfg))
+	_ = json.NewEncoder(w).Encode(setup.Snapshot(cfg, provider))
 }
 
 func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
@@ -829,10 +841,19 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", 405)
 		return
 	}
-	log, err := setup.InstallCores()
-	// Model discovery may invoke installed CLIs and public catalogs, so keep it
-	// on the explicit install action rather than the setup-status GET path.
-	llm.RefreshCLIModels(true)
+	var in struct {
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	provider, err := setup.Provider(in.Provider)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	log, err := setup.InstallCores(provider)
 	w.Header().Set("Content-Type", "application/json")
 	out := map[string]any{"log": log, "ok": err == nil}
 	if err != nil {
@@ -840,7 +861,7 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 	}
 	s.mu.Lock()
-	st := setup.Snapshot(s.cfg)
+	st := setup.Snapshot(s.cfg, provider)
 	s.mu.Unlock()
 	out["status"] = st
 	_ = json.NewEncoder(w).Encode(out)
@@ -853,11 +874,25 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Target   string `json:"target"`
+		Provider string `json:"provider"`
 		ReturnTo string `json:"return_to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
+	}
+	if in.Provider != "" {
+		provider, err := setup.Provider(in.Provider)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		target := strings.ToLower(in.Target)
+		if (provider == config.ProviderQuadCode && target != "claude") ||
+			(provider != config.ProviderQuadCode && target != string(provider)) {
+			http.Error(w, "login target does not match the selected provider", 400)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	switch strings.ToLower(in.Target) {
@@ -897,7 +932,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 			"ok":   true,
 			"hint": "A Terminal window opened for Codex login. Finish there, then come back.",
 		})
-	default:
+	case "codex":
 		if in.ReturnTo == "" {
 			in.ReturnTo = "http://127.0.0.1:7420/"
 		}
@@ -915,6 +950,8 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": authURL})
+	default:
+		http.Error(w, "unknown login target", 400)
 	}
 }
 
@@ -924,6 +961,7 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		Provider  string `json:"provider"`
 		Workspace string `json:"workspace"`
 		Mode      string `json:"mode"`
 		Model     string `json:"model"`
@@ -932,16 +970,61 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	s.mu.Lock()
 	cfg := s.cfg
 	s.mu.Unlock()
-	next, err := setup.Apply(cfg, in.Workspace, in.Mode, in.Model)
+	// Existing configurations can still reopen setup with their current
+	// provider. The first-run picker only offers the four CLI providers.
+	if in.Provider == "" && cfg.Provider != config.ProviderCodex && cfg.Provider != config.ProviderQuadCode &&
+		cfg.Provider != config.ProviderOpenCode && cfg.Provider != config.ProviderAntigravity {
+		next, err := setup.Apply(cfg, in.Workspace, in.Mode, in.Model)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		a, err := app.Build(next)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		s.mu.Lock()
+		s.abortTurnLocked()
+		s.cfg = next
+		s.ag = a
+		a.SetTaskSession(s.sessionID)
+		s.hist = nil
+		s.mu.Unlock()
+		s.attachRouterHook()
+		w.WriteHeader(204)
+		return
+	}
+	selected := in.Provider
+	if selected == "" {
+		selected = string(cfg.Provider)
+	}
+	provider, err := setup.Provider(selected)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	status := setup.Snapshot(cfg, provider)
+	if !status.Ready || !status.LoggedIn {
+		http.Error(w, "finish the selected provider's tools and login first", 400)
+		return
+	}
+	next, err := setup.Prepare(cfg, provider, in.Workspace, in.Mode, in.Model)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
 	a, err := app.Build(next)
 	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := config.Save(next); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}

@@ -11,28 +11,35 @@
     <header class="setup-header">
       <div class="setup-logo" aria-hidden="true">P</div>
       <h1>Picogent</h1>
-      <p>First-time setup · about two minutes</p>
+        <p>First-time setup · choose your coding agent</p>
     </header>
 
     <main class="setup-body">
       <p id="stage-err" class="setup-status is-error" hidden></p>
 
       <section class="setup-stage" data-stage="0">
-        <h2>Welcome</h2>
-        <p>Install CLIs, log in with ChatGPT, then pick a folder.</p>
+        <h2>Which agent do you use?</h2>
+        <p>Choose one. Picogent will check its tools and guide you through login.</p>
+        <div class="provider-grid" id="providers" role="radiogroup" aria-label="Coding agent">
+          <label class="provider-card"><input type="radio" name="provider" value="codex"><span><strong>Codex</strong><small>Use your ChatGPT Codex login</small></span></label>
+          <label class="provider-card"><input type="radio" name="provider" value="quadcode"><span><strong>Claude Code</strong><small>Use your Claude Code login</small></span></label>
+          <label class="provider-card"><input type="radio" name="provider" value="opencode"><span><strong>OpenCode</strong><small>Use OpenCode Zen or Go</small></span></label>
+          <label class="provider-card"><input type="radio" name="provider" value="antigravity"><span><strong>Antigravity</strong><small>Use your Antigravity login</small></span></label>
+        </div>
       </section>
 
       <section class="setup-stage" data-stage="1" hidden>
-        <h2>Core tools</h2>
-        <p>Picogent installs missing command-line tools for you. Git must already be on your system.</p>
+        <h2>Check your tools</h2>
+        <p>Picogent checks Git and your selected agent. Install missing pieces only if you choose to.</p>
         <ul id="comps" class="setup-checklist comps"></ul>
         <pre id="install-log" class="install-log" hidden></pre>
         <button type="button" id="install" class="setup-nav-btn primary stage-action">Install missing pieces</button>
+        <button type="button" id="recheck" class="setup-nav-btn stage-action">Check again</button>
       </section>
 
       <section class="setup-stage" data-stage="2" hidden>
         <h2>Log in</h2>
-        <p>Connect ChatGPT so Picogent can use Codex. You'll be redirected and come back here.</p>
+        <p id="login-intro">Connect your chosen agent, then return here.</p>
         <div id="logins" class="login-stack"></div>
       </section>
 

@@ -1,8 +1,14 @@
-const STAGES = ["Welcome", "Core tools", "Log in", "Your agent"];
+const STAGES = ["Agent", "Tools", "Log in", "Project"];
 const TOTAL = STAGES.length;
 
 let current = 0;
 let status = {};
+const providerInputs = [...document.querySelectorAll('input[name="provider"]')];
+const knownProviders = ["codex", "quadcode", "opencode", "antigravity"];
+let selectedProvider = sessionStorage.getItem("picogent-setup-provider");
+if (!knownProviders.includes(selectedProvider)) selectedProvider = "codex";
+let refreshNumber = 0;
+let loginPoll;
 
 const compsEl = document.getElementById("comps");
 const loginsEl = document.getElementById("logins");
@@ -29,20 +35,11 @@ const dots = [...document.querySelectorAll(".step-dot")];
 const panels = [...document.querySelectorAll(".setup-stage")];
 
 function toolsReady(st) {
-  const required = (st.components || []).filter(
-    (c) => c.id === "home" || c.id === "git" || c.id === "codex-cli" || c.id === "claude-cli"
-  );
-  return required.every((c) => c.ok);
-}
-
-function firstIncomplete(st) {
-  if (!toolsReady(st)) return 1;
-  if (!st.logged_in) return 2;
-  return 0;
+  return (st.components || []).length > 0 && st.components.every((c) => c.ok);
 }
 
 function canAdvance(st, stage) {
-  if (stage === 0) return true;
+  if (stage === 0) return knownProviders.includes(selectedProvider);
   if (stage === 1) return toolsReady(st);
   if (stage === 2) return !!st.logged_in;
   return true;
@@ -63,9 +60,6 @@ function showStage(n) {
   const onLast = current === TOTAL - 1;
   nextBtn.textContent = onLast ? "Start chatting" : "Next";
   nextBtn.disabled = !canAdvance(status, current);
-  if (current === 1 && !toolsReady(status)) {
-    autoInstallIfNeeded();
-  }
 }
 
 let modelOptionsCache = [];
@@ -79,11 +73,24 @@ function updateSetupModelDesc() {
 
 function paint(st) {
   status = st;
+  providerInputs.forEach((input) => {
+    input.checked = input.value === selectedProvider;
+    input.disabled = !!st.busy;
+  });
   compsEl.innerHTML = "";
   (st.components || []).forEach((c) => {
     const li = document.createElement("li");
     li.className = c.ok ? "is-done" : status.busy && !c.ok ? "is-running" : "";
-    li.innerHTML = `<span class="setup-check-icon">${c.ok ? "✓" : "·"}</span><span><strong>${c.name}</strong><br><small>${c.ok ? "ready" : c.detail}</small></span>`;
+    const icon = document.createElement("span");
+    icon.className = "setup-check-icon";
+    icon.textContent = c.ok ? "✓" : "·";
+    const details = document.createElement("span");
+    const name = document.createElement("strong");
+    name.textContent = c.name;
+    const hint = document.createElement("small");
+    hint.textContent = c.ok ? "ready" : c.detail;
+    details.append(name, document.createElement("br"), hint);
+    li.append(icon, details);
     compsEl.appendChild(li);
   });
 
@@ -92,7 +99,12 @@ function paint(st) {
     const card = document.createElement("div");
     card.className = "login-card" + (l.ok ? " on" : "");
     const p = document.createElement("p");
-    p.innerHTML = `<strong>${l.name}</strong><br><span class="login-detail">${l.detail}</span>`;
+    const name = document.createElement("strong");
+    name.textContent = l.name;
+    const detail = document.createElement("span");
+    detail.className = "login-detail";
+    detail.textContent = l.detail;
+    p.append(name, document.createElement("br"), detail);
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = l.ok ? "Connected" : l.button;
@@ -102,6 +114,7 @@ function paint(st) {
     card.appendChild(btn);
     loginsEl.appendChild(card);
   });
+  document.getElementById("login-intro").textContent = `Connect ${st.logins?.[0]?.name || "your agent"}, then return here.`;
 
   if (st.workspace) document.getElementById("workspace").value = st.workspace;
   if (st.mode) document.getElementById("mode").value = st.mode;
@@ -128,43 +141,42 @@ function paint(st) {
     modelSel.value = modelSel.options[0].value;
   }
   updateSetupModelDesc();
-  if (st.log) {
+  if (st.log && st.provider === selectedProvider) {
     logEl.hidden = false;
     logEl.textContent = st.log;
   }
 
-  installBtn.disabled = st.busy || toolsReady(st);
+  installBtn.disabled = st.busy || toolsReady(st) || !(st.components || []).some((c) => !c.ok && c.can_fix);
   installBtn.textContent = toolsReady(st) ? "All tools ready" : st.busy ? "Installing…" : "Install missing pieces";
+  document.getElementById("recheck").disabled = !!st.busy;
 
   showStage(current);
 }
 
 async function refresh() {
-  const st = await (await fetch("/api/setup")).json();
+  const requestNumber = ++refreshNumber;
+  const st = await (await fetch(`/api/setup?provider=${encodeURIComponent(selectedProvider)}`)).json();
+  if (requestNumber !== refreshNumber) return status;
   paint(st);
   return st;
 }
 
-let installStarted = false;
-
-async function autoInstallIfNeeded() {
-  if (installStarted || toolsReady(status)) return;
-  const missing = (status.components || []).some((c) => !c.ok && c.can_fix);
-  if (missing) await install();
-}
-
 async function install() {
-  installStarted = true;
+  const provider = selectedProvider;
   installBtn.disabled = true;
   installBtn.textContent = "Installing…";
   logEl.hidden = false;
   logEl.textContent = "Running install commands…";
-  const res = await fetch("/api/setup/install", { method: "POST" });
+  const res = await fetch("/api/setup/install", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ provider }),
+  });
   const data = await res.json();
   logEl.textContent = data.log || data.error || "";
-  if (data.status) paint(data.status);
+  if (data.status && provider === selectedProvider) paint(data.status);
   else await refresh();
-  installStarted = false;
+  if (!res.ok) showError(data.error || "Install failed. Check the log above.");
 }
 
 function canReach(st, n) {
@@ -177,11 +189,12 @@ function canReach(st, n) {
 
 async function login(target) {
   clearError();
+  if (loginPoll) clearInterval(loginPoll);
   const returnTo = location.origin + "/setup.html";
   const res = await fetch("/api/setup/login", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ target, return_to: returnTo }),
+    body: JSON.stringify({ target, provider: selectedProvider, return_to: returnTo }),
   });
   const text = await res.text();
   let data = {};
@@ -199,11 +212,12 @@ async function login(target) {
     return;
   }
   showError(data.hint || "Finish login in the window that opened, then return here.");
-  const tick = setInterval(async () => {
+  loginPoll = setInterval(async () => {
     const st = await refresh();
     const hit = (st.logins || []).find((l) => l.id === target);
     if (hit && hit.ok) {
-      clearInterval(tick);
+      clearInterval(loginPoll);
+      loginPoll = undefined;
       showStage(current);
     }
   }, 2000);
@@ -218,6 +232,7 @@ async function finish() {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       workspace: document.getElementById("workspace").value,
+      provider: selectedProvider,
       mode: document.getElementById("mode").value,
       model: document.getElementById("model").value,
     }),
@@ -250,6 +265,18 @@ dots.forEach((dot) => {
 });
 
 installBtn.onclick = install;
+document.getElementById("recheck").onclick = refresh;
+providerInputs.forEach((input) => {
+  input.onchange = async () => {
+    if (loginPoll) clearInterval(loginPoll);
+    loginPoll = undefined;
+    selectedProvider = input.value;
+    sessionStorage.setItem("picogent-setup-provider", selectedProvider);
+    clearError();
+    logEl.hidden = true;
+    await refresh();
+  };
+});
 document.getElementById("model").onchange = updateSetupModelDesc;
 
 document.getElementById("workspace-pick").onclick = async () => {
@@ -284,6 +311,6 @@ refresh().then((st) => {
   if (params.get("login") === "ok") {
     showStage(st.logged_in ? 3 : 2);
   } else {
-    showStage(firstIncomplete(st));
+    showStage(0);
   }
 });
