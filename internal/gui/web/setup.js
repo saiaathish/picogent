@@ -51,10 +51,15 @@ function showStage(n) {
     p.hidden = i !== current;
   });
   dots.forEach((d, i) => {
-    d.classList.toggle("is-active", i === current);
-    d.classList.toggle("active", i === current);
-    d.classList.toggle("is-done", i < current || (i === 1 && toolsReady(status)) || (i === 2 && canAdvance(status, 2)));
-    d.classList.toggle("done", i < current || (i === 1 && toolsReady(status)) || (i === 2 && canAdvance(status, 2)));
+    const active = i === current;
+    const done = i < current;
+    d.classList.toggle("is-active", active);
+    d.classList.toggle("active", active);
+    d.classList.toggle("is-done", done);
+    d.classList.toggle("done", done);
+    d.disabled = !canReach(status, i);
+    if (active) d.setAttribute("aria-current", "step");
+    else d.removeAttribute("aria-current");
   });
   backBtn.disabled = current === 0;
   const onLast = current === TOTAL - 1;
