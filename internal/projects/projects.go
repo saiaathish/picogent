@@ -3,6 +3,7 @@ package projects
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -186,6 +187,35 @@ func Add(name, path string) (Project, error) {
 	reg.Current = id
 	if err := Save(reg); err != nil {
 		return Project{}, err
+	}
+	return p, nil
+}
+
+// Create makes one new child folder and registers it as the current project.
+// Existing paths are never adopted by this operation; use Add for those.
+func Create(parent, name string) (Project, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, `/\`) || strings.ContainsRune(name, 0) {
+		return Project{}, fmt.Errorf("enter a single folder name without slashes")
+	}
+	parentPath, err := normalizePath(parent)
+	if err != nil {
+		return Project{}, fmt.Errorf("choose a parent folder: %w", err)
+	}
+	info, err := os.Stat(parentPath)
+	if err != nil {
+		return Project{}, fmt.Errorf("parent folder: %w", err)
+	}
+	if !info.IsDir() {
+		return Project{}, fmt.Errorf("parent path is not a folder")
+	}
+	path := filepath.Join(parentPath, name)
+	if err := os.Mkdir(path, 0o755); err != nil {
+		return Project{}, fmt.Errorf("create project folder: %w", err)
+	}
+	p, err := Add(name, path)
+	if err != nil {
+		return Project{}, fmt.Errorf("folder created at %s, but registration failed: %w", path, err)
 	}
 	return p, nil
 }

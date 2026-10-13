@@ -33,7 +33,7 @@ import (
 	"github.com/saiaathish/picogent/internal/verify"
 )
 
-var version = "1.0.0"
+var version = "1.1.0-dev"
 
 // errHeadlessPermissionDenied is intentionally distinguishable from provider
 // and tool failures. CI callers can treat exit code 2 as "blocked pending
@@ -121,10 +121,7 @@ func run(args []string) error {
 
 func runContext(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		if config.NeedsSetup() {
-			return gui.Run()
-		}
-		return tui.Run()
+		return gui.Run()
 	}
 	switch args[0] {
 	case "gui":
@@ -160,7 +157,7 @@ func printHelp() {
 	fmt.Print(`picogent — tiny coding agent
 
 Usage:
-  picogent              first run: install cores + browser setup; later: TUI
+  picogent              open the browser app and project hub
   picogent gui          browser chat (setup first if needed)
   picogent setup        open the browser setup again
   picogent tui          terminal UI

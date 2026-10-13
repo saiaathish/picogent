@@ -2,7 +2,7 @@
 
 A tiny coding agent for people who find Claude Code and Codex too much.
 
-Two modes. Uses your **ChatGPT Codex subscription** by default (same `~/.codex/auth.json` as Codex CLI, OpenClaw, and kestrel). It edits the folder you are in and tells you what it did.
+Two modes. Uses your **ChatGPT Codex subscription** by default (same `~/.codex/auth.json` as Codex CLI, OpenClaw, and kestrel). The browser app lets you choose a project folder and keeps that selection when you launch it from another terminal folder.
 
 This is **not** [MiniCode](https://github.com/LiuMengxuan04/MiniCode) (a Claude Code clone for learning internals). Picogent is a daily-driver pocket agent: 80% of the useful loop, 20% of the machinery.
 
@@ -31,7 +31,7 @@ brew install --build-from-source ./contrib/homebrew/picogent.rb
 ## First run
 
 ```bash
-./picogent
+picogent
 ```
 
 If this is a new machine, Picogent opens a **browser setup page**. It installs missing Codex / Claude Code CLIs itself, then you tap **Log in to ChatGPT Codex** (and optionally **Log in to Claude**). OAuth opens in the browser, then you bounce back to setup.
@@ -39,9 +39,17 @@ If this is a new machine, Picogent opens a **browser setup page**. It installs m
 Already set up:
 
 ```bash
-picogent          # TUI
-picogent gui      # browser chat
+picogent          # browser app with projects and chats
+picogent tui      # terminal UI
 picogent setup    # open setup again
+```
+
+Use **Open folder** to add an existing project. Use **New project** to choose a parent folder and create a new child folder. Chats appear beneath their projects in the sidebar. Picogent remembers the selected project between launches.
+
+If your shell says `command not found` after `go install`, run this in the current terminal and add the same line to `~/.zshrc` for future terminals:
+
+```bash
+export PATH="$(go env GOPATH)/bin:$PATH"
 ```
 
 **Claude Code subscription** (no Anthropic API key — same login as the `claude` CLI):
@@ -74,8 +82,9 @@ In **Safe** mode (default) it will ask before writing. Press `y` or the giant Ye
 ## Commands
 
 ```bash
-picogent                  # TUI
+picogent                  # browser app and project hub
 picogent gui              # local window in your browser (127.0.0.1)
+picogent tui              # terminal UI
 picogent login            # Codex CLI login → ~/.codex/auth.json
 picogent login claude     # Claude Code CLI login (subscription)
 picogent run --yes "create hello.txt that says picogent"

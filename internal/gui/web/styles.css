@@ -939,6 +939,78 @@ button, input, textarea { font: inherit; color: inherit; }
 .app.review-open .drawer-right,
 .app.side-open .drawer-side { transform: none; }
 
+@media (min-width: 901px) {
+  .app { padding-left: var(--drawer); }
+  .drawer-left { transform: none; transition: none; }
+  #toggle-rail { display: none; }
+}
+
+.hub-new-chat, .hub-create {
+  margin: 12px 10px 4px;
+  padding: 10px 12px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  font-weight: 600;
+  cursor: pointer;
+}
+.hub-new-chat:hover, .hub-create:hover, .project-item:hover { background: var(--paper); }
+.hub-create { margin-top: 0; color: var(--accent); font-size: 13px; }
+.project-group { margin-bottom: 8px; }
+.project-chats { padding-left: 22px; }
+.project-chat-row { display: flex; align-items: center; }
+.project-chats .thread-item { min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-chat-delete {
+  flex: 0 0 auto;
+  margin-right: 4px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mute);
+  cursor: pointer;
+}
+.project-chat-delete:hover { background: var(--paper); color: var(--danger); }
+.project-empty { margin: 2px 12px 8px; color: var(--mute); font-size: 12px; }
+.project-dialog {
+  width: min(460px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 18px 60px color-mix(in srgb, var(--ink) 25%, transparent);
+}
+.project-dialog::backdrop { background: color-mix(in srgb, var(--ink) 50%, transparent); }
+.project-dialog form { display: grid; gap: 10px; }
+.project-dialog h2 { margin: 0; font-size: 22px; }
+.project-dialog p { margin: 0 0 8px; color: var(--mute); font-size: 13px; }
+.project-dialog label { font-size: 13px; font-weight: 650; }
+.project-dialog input {
+  min-width: 0;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+}
+.project-parent-row { display: flex; gap: 8px; }
+.project-parent-row button, .project-form-actions button {
+  padding: 9px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--paper);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.project-form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.project-form-actions button[type="submit"] { border-color: var(--ink); background: var(--ink); color: var(--card); }
+.project-form-actions button:disabled { opacity: .5; cursor: wait; }
+.project-dialog .project-form-error { color: var(--danger); margin: 0; }
+
 .drawer-head {
   display: flex;
   align-items: center;
@@ -1812,7 +1884,8 @@ button, input, textarea { font: inherit; color: inherit; }
   background: var(--line);
 }
 .project-list {
-  max-height: 140px;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   padding: 0 8px 8px;
 }

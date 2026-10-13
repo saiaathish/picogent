@@ -13,28 +13,42 @@
     <div class="scrim" id="scrim" hidden></div>
 
     <aside class="drawer drawer-left" id="rail-left" aria-label="Chats">
+      <button type="button" class="hub-new-chat" id="new-chat">＋ New chat</button>
       <div class="drawer-head">
         <p class="drawer-kicker">Projects</p>
-        <button type="button" class="ghost-btn" id="add-project">Select folder</button>
+        <button type="button" class="ghost-btn" id="add-project">Open folder</button>
       </div>
-      <nav class="project-list" id="project-list" aria-label="Projects"></nav>
-      <div class="drawer-divider"></div>
-      <div class="drawer-head">
-        <p class="drawer-kicker">Chats</p>
-        <button type="button" class="ghost-btn" id="new-chat">New</button>
-      </div>
-      <p class="drawer-sub" id="active-project"></p>
+      <button type="button" class="hub-create" id="create-project">＋ New project</button>
       <label class="search-wrap">
         <span class="sr-only">Search chats</span>
         <input id="thread-search" type="search" placeholder="Search" autocomplete="off" />
       </label>
-      <nav class="thread-list" id="thread-list" aria-label="Chat history"></nav>
+      <nav class="project-list" id="project-list" aria-label="Projects and chats"></nav>
       <div class="drawer-foot">
         <a href="/settings.html">Settings</a>
         <a href="/settings.html#extensions">Extensions</a>
         <a href="/setup.html">Setup</a>
       </div>
     </aside>
+
+    <dialog class="project-dialog" id="new-project-dialog" aria-labelledby="new-project-title">
+      <form id="new-project-form">
+        <h2 id="new-project-title">New project</h2>
+        <p>Create a folder and open it in Picogent.</p>
+        <label for="new-project-name">Folder name</label>
+        <input id="new-project-name" name="name" required autocomplete="off" placeholder="my-project" />
+        <label for="new-project-parent">Create inside</label>
+        <div class="project-parent-row">
+          <input id="new-project-parent" name="parent" required autocomplete="off" />
+          <button type="button" id="choose-project-parent">Browse…</button>
+        </div>
+        <p class="project-form-error" id="new-project-error" role="alert" hidden></p>
+        <div class="project-form-actions">
+          <button type="button" id="cancel-project">Cancel</button>
+          <button type="submit" id="submit-project">Create project</button>
+        </div>
+      </form>
+    </dialog>
 
     <div class="stage">
       <header class="top">

@@ -20,6 +20,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/projects"
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/tools"
@@ -53,6 +54,48 @@ func TestGUIOnlyAcceptsLoopbackListenAddresses(t *testing.T) {
 		if got := loopbackListenAddress(tc.addr); got != tc.want {
 			t.Errorf("loopbackListenAddress(%q) = %v, want %v", tc.addr, got, tc.want)
 		}
+	}
+}
+
+func TestStartupWorkspaceFollowsSelectedProjectAcrossFolders(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	selected := t.TempDir()
+	other := t.TempDir()
+	p, err := projects.Add("selected", selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(other)
+	if got := startupWorkspace(); got != p.Path {
+		t.Fatalf("startup workspace=%q, want %q", got, p.Path)
+	}
+	if err := os.RemoveAll(selected); err != nil {
+		t.Fatal(err)
+	}
+	if got := startupWorkspace(); got != "" {
+		t.Fatalf("missing selected folder should fall back to saved workspace, got %q", got)
+	}
+}
+
+func TestExistingGUIReusesOnlyThisProfile(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	s := &server{}
+	running := httptest.NewServer(s.Handler())
+	defer running.Close()
+	addr := strings.TrimPrefix(running.URL, "http://")
+	if got := existingGUIURL(addr); got != running.URL+"/setup.html" {
+		t.Fatalf("existing GUI URL=%q", got)
+	}
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	if got := existingGUIURL(addr); got != "" {
+		t.Fatalf("different profile reused GUI %q", got)
+	}
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer other.Close()
+	if got := existingGUIURL(strings.TrimPrefix(other.URL, "http://")); got != "" {
+		t.Fatalf("unmarked service reused as GUI %q", got)
 	}
 }
 

@@ -35,7 +35,7 @@ func LoadContext(ctx context.Context, dir string) (config.Config, *agent.Agent, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	cfg, err := config.Load()
+	cfg, err := config.LoadWorkspace(dir)
 	if err != nil {
 		return cfg, nil, err
 	}

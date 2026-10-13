@@ -2,6 +2,8 @@ package gui
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -152,7 +154,21 @@ type server struct {
 }
 
 func Run() error {
-	cfg, a, err := app.Load(".")
+	addr := "127.0.0.1:7420"
+	if v := os.Getenv("PICOGENT_GUI_ADDR"); v != "" {
+		if !loopbackListenAddress(v) {
+			return fmt.Errorf("PICOGENT_GUI_ADDR must bind to loopback (127.0.0.1, ::1, or localhost); refusing %q", v)
+		}
+		addr = v
+	}
+	if url := existingGUIURL(addr); url != "" {
+		fmt.Println("picogent gui", url)
+		if os.Getenv("PICOGENT_NO_BROWSER") == "" {
+			openBrowser(url)
+		}
+		return nil
+	}
+	cfg, a, err := app.Load(startupWorkspace())
 	if err != nil {
 		return err
 	}
@@ -168,15 +184,15 @@ func Run() error {
 	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
 	s.ensureProject()
-	addr := "127.0.0.1:7420"
-	if v := os.Getenv("PICOGENT_GUI_ADDR"); v != "" {
-		if !loopbackListenAddress(v) {
-			return fmt.Errorf("PICOGENT_GUI_ADDR must bind to loopback (127.0.0.1, ::1, or localhost); refusing %q", v)
-		}
-		addr = v
-	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
+		if url := existingGUIURL(addr); url != "" {
+			fmt.Println("picogent gui", url)
+			if os.Getenv("PICOGENT_NO_BROWSER") == "" {
+				openBrowser(url)
+			}
+			return nil
+		}
 		ln, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return err
@@ -192,6 +208,64 @@ func Run() error {
 		go openBrowser(url)
 	}
 	return http.Serve(ln, s.Handler())
+}
+
+// Reuse the server started by an earlier `picogent` invocation. The marker
+// prevents an unrelated service on the default port from being opened as us.
+func existingGUIURL(addr string) string {
+	profileID := guiProfileID()
+	if !loopbackListenAddress(addr) || strings.HasSuffix(addr, ":0") || profileID == "" {
+		return ""
+	}
+	root := "http://" + addr
+	client := http.Client{
+		Timeout:       400 * time.Millisecond,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Get(root + "/api/instance")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent || resp.Header.Get("X-Picogent-Instance") != "1" ||
+		resp.Header.Get("X-Picogent-Profile") != profileID {
+		return ""
+	}
+	if config.NeedsSetup() {
+		return root + "/setup.html"
+	}
+	return root + "/"
+}
+
+func guiProfileID() string {
+	dir, err := config.Dir()
+	if err != nil {
+		return ""
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(abs))
+	return hex.EncodeToString(hash[:])
+}
+
+// The project selected in the hub follows the user between terminal folders.
+// A missing project falls back to the saved workspace, then the launch folder.
+func startupWorkspace() string {
+	list, current, err := projects.List()
+	if err != nil {
+		return ""
+	}
+	for _, p := range list {
+		if p.ID == current {
+			if st, err := os.Stat(p.Path); err == nil && st.IsDir() {
+				return p.Path
+			}
+			break
+		}
+	}
+	return ""
 }
 
 func loopbackListenAddress(addr string) bool {
@@ -343,7 +417,13 @@ func (s *server) Handler() http.Handler {
 	api := func(path string, methods []string, handler http.HandlerFunc) {
 		mux.Handle(path, s.apiRoute(methods, handler))
 	}
+	profileID := guiProfileID()
 	api("/api/state", []string{http.MethodGet}, s.state)
+	api("/api/instance", []string{http.MethodGet}, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Picogent-Instance", "1")
+		w.Header().Set("X-Picogent-Profile", profileID)
+		w.WriteHeader(http.StatusNoContent)
+	})
 	api("/api/setup", []string{http.MethodGet}, s.setupStatus)
 	api("/api/setup/install", []string{http.MethodPost}, s.setupInstall)
 	api("/api/setup/login", []string{http.MethodPost}, s.setupLogin)
