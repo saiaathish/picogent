@@ -4,7 +4,7 @@ const TOTAL = STAGES.length;
 let current = 0;
 let status = {};
 const providerInputs = [...document.querySelectorAll('input[name="provider"]')];
-const knownProviders = ["codex", "quadcode", "opencode", "antigravity"];
+const knownProviders = ["codex", "quadcode", "opencode", "antigravity", "openai"];
 let selectedProvider = sessionStorage.getItem("picogent-setup-provider");
 if (!knownProviders.includes(selectedProvider)) selectedProvider = "codex";
 let refreshNumber = 0;
@@ -41,7 +41,7 @@ function toolsReady(st) {
 function canAdvance(st, stage) {
   if (stage === 0) return knownProviders.includes(selectedProvider);
   if (stage === 1) return toolsReady(st);
-  if (stage === 2) return !!st.logged_in;
+  if (stage === 2) return !!st.logged_in || (selectedProvider === "openai" && !!document.getElementById("openai-key").value.trim());
   return true;
 }
 
@@ -53,8 +53,8 @@ function showStage(n) {
   dots.forEach((d, i) => {
     d.classList.toggle("is-active", i === current);
     d.classList.toggle("active", i === current);
-    d.classList.toggle("is-done", i < current || (i === 1 && toolsReady(status)) || (i === 2 && status.logged_in));
-    d.classList.toggle("done", i < current || (i === 1 && toolsReady(status)) || (i === 2 && status.logged_in));
+    d.classList.toggle("is-done", i < current || (i === 1 && toolsReady(status)) || (i === 2 && canAdvance(status, 2)));
+    d.classList.toggle("done", i < current || (i === 1 && toolsReady(status)) || (i === 2 && canAdvance(status, 2)));
   });
   backBtn.disabled = current === 0;
   const onLast = current === TOTAL - 1;
@@ -95,7 +95,8 @@ function paint(st) {
   });
 
   loginsEl.innerHTML = "";
-  (st.logins || []).forEach((l) => {
+  document.getElementById("openai-key-block").hidden = selectedProvider !== "openai";
+  (selectedProvider === "openai" ? [] : st.logins || []).forEach((l) => {
     const card = document.createElement("div");
     card.className = "login-card" + (l.ok ? " on" : "");
     const p = document.createElement("p");
@@ -114,7 +115,9 @@ function paint(st) {
     card.appendChild(btn);
     loginsEl.appendChild(card);
   });
-  document.getElementById("login-intro").textContent = `Connect ${st.logins?.[0]?.name || "your agent"}, then return here.`;
+  document.getElementById("login-intro").textContent = selectedProvider === "openai"
+    ? (st.logged_in ? "An API key is already configured. Enter a new one only to replace it." : "Enter your OpenAI API key to continue.")
+    : `Connect ${st.logins?.[0]?.name || "your agent"}, then return here.`;
 
   if (st.workspace) document.getElementById("workspace").value = st.workspace;
   if (st.mode) document.getElementById("mode").value = st.mode;
@@ -126,6 +129,14 @@ function paint(st) {
     }
   }
   const modelSel = document.getElementById("model");
+  const openaiModel = document.getElementById("openai-model");
+  modelSel.hidden = selectedProvider === "openai";
+  openaiModel.hidden = selectedProvider !== "openai";
+  document.getElementById("model-label").htmlFor = selectedProvider === "openai" ? "openai-model" : "model";
+  if (selectedProvider === "openai") {
+    if (!openaiModel.value) openaiModel.value = st.model || "gpt-4.1-mini";
+    document.getElementById("model-desc").textContent = "Enter a model ID supported by OpenAI Chat Completions.";
+  }
   if (st.model_options && st.model_options.length) {
     modelOptionsCache = st.model_options;
     modelSel.innerHTML = "";
@@ -140,7 +151,7 @@ function paint(st) {
   if (![...modelSel.options].some((o) => o.value === modelSel.value) && modelSel.options.length) {
     modelSel.value = modelSel.options[0].value;
   }
-  updateSetupModelDesc();
+  if (selectedProvider !== "openai") updateSetupModelDesc();
   if (st.log && st.provider === selectedProvider) {
     logEl.hidden = false;
     logEl.textContent = st.log;
@@ -183,7 +194,7 @@ function canReach(st, n) {
   if (n <= current) return true;
   if (n === 1) return true;
   if (n === 2) return toolsReady(st);
-  if (n === 3) return toolsReady(st) && st.logged_in;
+  if (n === 3) return toolsReady(st) && canAdvance(st, 2);
   return false;
 }
 
@@ -234,7 +245,8 @@ async function finish() {
       workspace: document.getElementById("workspace").value,
       provider: selectedProvider,
       mode: document.getElementById("mode").value,
-      model: document.getElementById("model").value,
+      model: selectedProvider === "openai" ? document.getElementById("openai-model").value.trim() : document.getElementById("model").value,
+      api_key: selectedProvider === "openai" ? document.getElementById("openai-key").value.trim() : "",
     }),
   });
   if (!res.ok) {
@@ -278,6 +290,7 @@ providerInputs.forEach((input) => {
   };
 });
 document.getElementById("model").onchange = updateSetupModelDesc;
+document.getElementById("openai-key").oninput = () => showStage(current);
 
 document.getElementById("workspace-pick").onclick = async () => {
   clearError();

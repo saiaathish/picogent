@@ -62,11 +62,13 @@ func DefaultModel() string {
 	if err == nil {
 		if m := regexp.MustCompile(`(?m)^\s*model\s*=\s*"([^"]+)"`).FindSubmatch(b); len(m) == 2 {
 			id := string(m[1])
-			if strings.EqualFold(id, "auto") {
-				return defaultModel
+			if !strings.EqualFold(id, "auto") {
+				return id
 			}
-			return id
 		}
+	}
+	if id := LatestFamily("luna"); id != "" {
+		return id
 	}
 	return defaultModel
 }

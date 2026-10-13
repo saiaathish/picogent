@@ -25,6 +25,7 @@
           <label class="provider-card"><input type="radio" name="provider" value="quadcode"><span><strong>Claude Code</strong><small>Use your Claude Code login</small></span></label>
           <label class="provider-card"><input type="radio" name="provider" value="opencode"><span><strong>OpenCode</strong><small>Use OpenCode Zen or Go</small></span></label>
           <label class="provider-card"><input type="radio" name="provider" value="antigravity"><span><strong>Antigravity</strong><small>Use your Antigravity login</small></span></label>
+          <label class="provider-card"><input type="radio" name="provider" value="openai"><span><strong>OpenAI API</strong><small>Chat Completions · API usage is billed</small></span></label>
         </div>
       </section>
 
@@ -41,6 +42,11 @@
         <h2>Log in</h2>
         <p id="login-intro">Connect your chosen agent, then return here.</p>
         <div id="logins" class="login-stack"></div>
+        <div class="setup-field" id="openai-key-block" hidden>
+          <label for="openai-key">OpenAI API key</label>
+          <input id="openai-key" type="password" autocomplete="new-password" placeholder="Enter your API key" />
+          <p class="model-desc">OpenAI bills usage when you send prompts. The key stays on this computer.</p>
+        </div>
       </section>
 
       <section class="setup-stage" data-stage="3" hidden>
@@ -63,10 +69,11 @@
             <p class="model-desc" id="mode-override-hint" hidden></p>
           </div>
           <div class="setup-field model-field">
-            <label for="model">Model</label>
+            <label for="model" id="model-label">Model</label>
             <select id="model" class="picker">
               <option value="auto">Auto</option>
             </select>
+            <input id="openai-model" type="text" autocomplete="off" spellcheck="false" placeholder="gpt-4.1-mini" hidden />
             <p class="model-desc" id="model-desc" aria-live="polite"></p>
           </div>
         </div>

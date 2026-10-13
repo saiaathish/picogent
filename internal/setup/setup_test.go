@@ -38,6 +38,32 @@ func TestNeedsSetupThenApply(t *testing.T) {
 	}
 }
 
+func TestOpenAIChatCompletionsSetup(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("PICOGENT_API_KEY", "")
+	workspace := t.TempDir()
+	cfg := config.Default()
+	status := setup.Snapshot(cfg, config.ProviderOpenAI)
+	if status.LoggedIn || status.Model != "gpt-4.1-mini" || len(status.ModelOptions) != 0 {
+		t.Fatalf("OpenAI first-run status = %+v", status)
+	}
+	if _, err := setup.Prepare(cfg, config.ProviderOpenAI, workspace, "safe", "gpt-4.1-mini"); err == nil {
+		t.Fatal("missing API key accepted")
+	}
+	cfg.APIKey = "disposable-test-key"
+	got, err := setup.Prepare(cfg, config.ProviderOpenAI, workspace, "safe", "gpt-4.1-mini")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Provider != config.ProviderOpenAI || got.BaseURL != "https://api.openai.com/v1" || got.Model != "gpt-4.1-mini" || got.Router.Enabled || !got.SetupComplete {
+		t.Fatalf("OpenAI setup = %+v", got)
+	}
+	if _, err := setup.Prepare(cfg, config.ProviderOpenAI, workspace, "safe", "bad model"); err == nil {
+		t.Fatal("invalid model ID accepted")
+	}
+}
+
 func TestSnapshotListsOnlySelectedProvider(t *testing.T) {
 	t.Setenv("PICOGENT_HOME", t.TempDir())
 	t.Setenv("PICOGENT_CODEX_HOME", t.TempDir())

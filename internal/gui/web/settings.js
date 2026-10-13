@@ -71,7 +71,17 @@ function renderModeOverride(s) {
 function syncProviderUI() {
   const provider = document.getElementById("provider").value;
   const isClaude = provider === "quadcode";
+  const isOpenAI = provider === "openai";
   document.getElementById("anthropic-block").hidden = !isClaude;
+  document.getElementById("openai-block").hidden = !isOpenAI;
+  document.getElementById("model").hidden = isOpenAI;
+  document.getElementById("openai-model").hidden = !isOpenAI;
+  document.getElementById("model-label").htmlFor = isOpenAI ? "openai-model" : "model";
+  if (isOpenAI) document.getElementById("model-desc").textContent = "Enter a model ID supported by OpenAI Chat Completions.";
+  else updateModelDesc();
+  document.getElementById("openai-key-hint").textContent = state.has_api_key
+    ? "A key is configured. Leave blank to keep it. OpenAI bills usage when you send prompts."
+    : "OpenAI bills usage when you send prompts.";
   const hint = document.getElementById("claude-cli-hint");
   if (hint) {
     hint.hidden = !(isClaude && state?.claude_cli);
@@ -91,11 +101,16 @@ function providerLoggedIn(provider, s = state) {
   if (provider === "quadcode") return !!(s.claude_cli || s.has_anthropic_key);
   if (provider === "opencode") return !!s.opencode_cli;
   if (provider === "antigravity") return !!s.antigravity_cli;
+  if (provider === "openai") return !!s.has_api_key;
   return false;
 }
 
 function applyProviderAuthUI(provider) {
   if (providerLoggedIn(provider)) {
+    renderProviderAuth(null);
+    return;
+  }
+  if (provider === "openai") {
     renderProviderAuth(null);
     return;
   }
@@ -135,14 +150,16 @@ function renderLast(router) {
 async function load() {
   const s = await (await fetch("/api/settings")).json();
   state = s;
+  document.getElementById("openai-key").value = "";
   document.getElementById("workspace").value = s.workspace || "";
   document.getElementById("mode").value = s.mode || "safe";
   renderModeOverride(s);
-  document.getElementById("provider").value = ["quadcode", "opencode", "antigravity"].includes(s.provider)
+  document.getElementById("provider").value = ["quadcode", "opencode", "antigravity", "openai"].includes(s.provider)
     ? s.provider
     : "codex";
   const provider = document.getElementById("provider").value;
   fillModelSelect(modelOptionsForProvider(s, provider), s.model || "auto");
+  document.getElementById("openai-model").value = provider === "openai" ? (s.model && s.model !== "auto" ? s.model : "gpt-4.1-mini") : "gpt-4.1-mini";
   syncProviderUI();
   renderLast(s.router);
   // Prefer live CLI checks over saved-provider auth so switching providers
@@ -152,6 +169,8 @@ async function load() {
   const conn = document.getElementById("connection");
   if (providerLoggedIn(provider)) {
     conn.innerHTML = 'Connected. <a href="/setup.html">Setup</a>';
+  } else if (provider === "openai") {
+    conn.textContent = "Enter an OpenAI API key above, then Save.";
   } else {
     conn.innerHTML = "Not connected — use <strong>Log in</strong> above (no Terminal typing needed).";
   }
@@ -233,12 +252,16 @@ document.getElementById("provider").onchange = async () => {
   const preferAuto = p === "codex" || p === "quadcode";
   const pick = preferAuto ? "auto" : opts[0]?.value || "";
   fillModelSelect(opts, pick);
+  if (p === "openai" && !document.getElementById("openai-model").value.trim()) {
+    document.getElementById("openai-model").value = "gpt-4.1-mini";
+  }
+  syncProviderUI();
   await refreshCLIAuthFlags();
   applyProviderAuthUI(p);
   const conn = document.getElementById("connection");
-  conn.innerHTML = providerLoggedIn(p)
-    ? 'Connected. <a href="/setup.html">Setup</a>'
-    : "Not connected — use <strong>Log in</strong> above (no Terminal typing needed).";
+  if (providerLoggedIn(p)) conn.innerHTML = 'Connected. <a href="/setup.html">Setup</a>';
+  else if (p === "openai") conn.textContent = "Enter an OpenAI API key above, then Save.";
+  else conn.innerHTML = "Not connected — use <strong>Log in</strong> above (no Terminal typing needed).";
 };
 
 document.getElementById("model").onchange = () => {
@@ -273,10 +296,14 @@ document.getElementById("form").onsubmit = async (e) => {
     workspace: document.getElementById("workspace").value,
     mode: document.getElementById("mode").value,
     provider: document.getElementById("provider").value,
-    model: document.getElementById("model").value,
+    model: document.getElementById("provider").value === "openai"
+      ? document.getElementById("openai-model").value.trim()
+      : document.getElementById("model").value,
   };
   const key = document.getElementById("anthropic-key").value.trim();
   if (key) body.anthropic_api_key = key;
+  const openaiKey = document.getElementById("openai-key").value.trim();
+  if (body.provider === "openai" && openaiKey) body.api_key = openaiKey;
   const res = await fetch("/api/settings", {
     method: "POST",
     headers: { "content-type": "application/json" },

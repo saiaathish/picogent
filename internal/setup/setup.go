@@ -77,10 +77,10 @@ func LastLog(provider config.Provider) string {
 
 func Provider(value string) (config.Provider, error) {
 	switch config.Provider(strings.ToLower(strings.TrimSpace(value))) {
-	case config.ProviderCodex, config.ProviderQuadCode, config.ProviderOpenCode, config.ProviderAntigravity:
+	case config.ProviderCodex, config.ProviderQuadCode, config.ProviderOpenCode, config.ProviderAntigravity, config.ProviderOpenAI:
 		return config.Provider(strings.ToLower(strings.TrimSpace(value))), nil
 	default:
-		return "", fmt.Errorf("choose Codex, Claude Code, OpenCode, or Antigravity")
+		return "", fmt.Errorf("choose Codex, Claude Code, OpenCode, Antigravity, or OpenAI API")
 	}
 }
 
@@ -97,6 +97,9 @@ func Snapshot(cfg config.Config, provider config.Provider) Status {
 	case config.ProviderAntigravity:
 		comps = append(comps, agyCLIComponent())
 		login = antigravityLogin()
+	case config.ProviderOpenAI:
+		login = LoginTarget{ID: "openai", Name: "OpenAI API key", OK: cfg.APIKeyResolved() != "",
+			Detail: "Usage is billed by OpenAI when you send prompts."}
 	default:
 		provider = config.ProviderCodex
 		comps = append(comps, codexCLIComponent())
@@ -110,8 +113,14 @@ func Snapshot(cfg config.Config, provider config.Provider) Status {
 	}
 	previousProvider := cfg.Provider
 	cfg.Provider = provider
-	choices := llm.ModelChoices(llm.EcosystemForProvider(string(provider)), cfg.FableAllowed())
+	var choices []llm.ModelChoice
+	if provider != config.ProviderOpenAI {
+		choices = llm.ModelChoices(llm.EcosystemForProvider(string(provider)), cfg.FableAllowed())
+	}
 	model := cfg.DisplayModel()
+	if provider == config.ProviderOpenAI && (previousProvider != provider || model == "" || model == config.ModelAuto) {
+		model = "gpt-4.1-mini"
+	}
 	if len(choices) > 0 && previousProvider != provider {
 		model = choices[0].Value
 	}
@@ -382,6 +391,8 @@ func InstallCores(provider config.Provider) (string, error) {
 		} else {
 			say("ok  agy cli")
 		}
+	case config.ProviderOpenAI:
+		say("ok  no provider CLI needed for OpenAI Chat Completions")
 
 	}
 
@@ -553,6 +564,19 @@ func Prepare(cfg config.Config, provider config.Provider, workspace, mode, model
 	model = strings.TrimSpace(model)
 	if model == "" {
 		model = status.Model
+	}
+	if provider == config.ProviderOpenAI {
+		if cfg.APIKeyResolved() == "" {
+			return cfg, fmt.Errorf("enter an OpenAI API key or set OPENAI_API_KEY")
+		}
+		if len(model) > 128 || strings.ContainsAny(model, "\r\n\t ") || model == config.ModelAuto {
+			return cfg, fmt.Errorf("enter a Chat Completions model ID")
+		}
+		cfg.BaseURL = "https://api.openai.com/v1"
+		cfg.Model = model
+		cfg.Router.Enabled = false
+		cfg.SetupComplete = true
+		return cfg, nil
 	}
 	validModel := false
 	for _, choice := range status.ModelOptions {

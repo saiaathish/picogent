@@ -965,6 +965,7 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 		Workspace string `json:"workspace"`
 		Mode      string `json:"mode"`
 		Model     string `json:"model"`
+		APIKey    string `json:"api_key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -976,9 +977,9 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cfg
 	s.mu.Unlock()
 	// Existing configurations can still reopen setup with their current
-	// provider. The first-run picker only offers the four CLI providers.
+	// provider. The first-run picker offers CLI providers and OpenAI API.
 	if in.Provider == "" && cfg.Provider != config.ProviderCodex && cfg.Provider != config.ProviderQuadCode &&
-		cfg.Provider != config.ProviderOpenCode && cfg.Provider != config.ProviderAntigravity {
+		cfg.Provider != config.ProviderOpenCode && cfg.Provider != config.ProviderAntigravity && cfg.Provider != config.ProviderOpenAI {
 		next, err := setup.Apply(cfg, in.Workspace, in.Mode, in.Model)
 		if err != nil {
 			http.Error(w, err.Error(), 400)
@@ -1008,6 +1009,14 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return
+	}
+	if provider == config.ProviderOpenAI && strings.TrimSpace(in.APIKey) != "" {
+		key := strings.TrimSpace(in.APIKey)
+		if len(key) > 4096 || strings.ContainsAny(key, "\r\n") {
+			http.Error(w, "invalid API key format", 400)
+			return
+		}
+		cfg.APIKey = key
 	}
 	status := setup.Snapshot(cfg, provider)
 	if !status.Ready || !status.LoggedIn {
@@ -2694,6 +2703,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			Mode           string `json:"mode"`
 			Model          string `json:"model"`
 			Provider       string `json:"provider"`
+			APIKey         string `json:"api_key"`
 			AnthropicKey   string `json:"anthropic_api_key"`
 			MaxToolRounds  int    `json:"max_tool_rounds"`
 			LLMTimeoutSec  int    `json:"llm_timeout_sec"`
@@ -2748,6 +2758,26 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		if cfg.Provider == config.ProviderOpenAI {
+			if strings.TrimSpace(in.APIKey) != "" {
+				key := strings.TrimSpace(in.APIKey)
+				if len(key) > 4096 || strings.ContainsAny(key, "\r\n") {
+					http.Error(w, "invalid API key format", 400)
+					return
+				}
+				cfg.APIKey = key
+			}
+			if cfg.APIKeyResolved() == "" {
+				http.Error(w, "enter an OpenAI API key or set OPENAI_API_KEY", 400)
+				return
+			}
+			if cfg.Model == "" || cfg.Model == config.ModelAuto || len(cfg.Model) > 128 || strings.ContainsAny(cfg.Model, "\r\n\t ") {
+				http.Error(w, "enter a Chat Completions model ID", 400)
+				return
+			}
+			cfg.BaseURL = "https://api.openai.com/v1"
+			cfg.Router.Enabled = false
+		}
 		if in.AnthropicKey != "" {
 			cfg.AnthropicKey = in.AnthropicKey
 		}
@@ -2776,7 +2806,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		if in.BashTimeoutSec > 0 {
 			cfg.BashTimeoutSec = in.BashTimeoutSec
 		}
-		rebuildAgent := workspaceChanged || in.Provider != "" || in.RouterEnabled != nil || in.UseLLMAdvisor != nil || in.AllowFable != nil || in.FableConfirmed != nil || in.AnthropicKey != ""
+		rebuildAgent := workspaceChanged || in.Provider != "" || in.Model != "" || in.RouterEnabled != nil || in.UseLLMAdvisor != nil || in.AllowFable != nil || in.FableConfirmed != nil || in.AnthropicKey != "" || in.APIKey != ""
 		var nextAgent *agent.Agent
 		var nextSession string
 		var nextHistory []llm.Message

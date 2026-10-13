@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"github.com/saiaathish/picogent/internal/codexauth"
 	"github.com/saiaathish/picogent/internal/config"
 	"github.com/saiaathish/picogent/internal/opencodeauth"
 )
@@ -54,6 +55,15 @@ func ModelChoices(eco Ecosystem, includeFable bool) []ModelChoice {
 			Description: m.Description,
 			Gated:       m.Gated,
 		})
+	}
+	if eco == EcoCodex {
+		if models := codexauth.AvailableModels(); len(models) > 0 {
+			for _, m := range models {
+				add(ModelEntry{ID: m.Slug, Display: m.DisplayName, Ecosystem: EcoCodex,
+					Description: "Available in your Codex CLI"})
+			}
+			return out
+		}
 	}
 
 	includeZen := eco == EcoOpenCode && (opencodeauth.ZenLoggedIn() || !opencodeauth.LoggedIn())
