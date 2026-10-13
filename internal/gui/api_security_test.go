@@ -172,7 +172,7 @@ func TestGUIAPIRejectsMethodMismatches(t *testing.T) {
 		"/api/reset", "/api/sessions", "/api/file", "/api/settings", "/api/router", "/api/projects",
 		"/api/folder/pick", "/api/files/pick", "/api/overview", "/api/evolve",
 		"/api/diff", "/api/extensions", "/api/trace", "/api/help", "/api/sidechat",
-		"/api/prompts", "/api/events", "/api/update",
+		"/api/prompts", "/api/events", "/api/update", "/api/usage",
 	}
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {

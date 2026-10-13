@@ -72,6 +72,21 @@
       </div>
     </dialog>
 
+    <dialog class="project-dialog usage-dialog" id="usage-dialog" aria-labelledby="usage-title" aria-describedby="usage-note">
+      <div class="usage-heading">
+        <div><h2 id="usage-title">Usage limits</h2><p id="usage-plan"></p></div>
+        <button type="button" class="icon" id="close-usage" aria-label="Close usage limits">×</button>
+      </div>
+      <p id="usage-message" role="status">Loading usage limits…</p>
+      <div id="usage-groups"></div>
+      <p class="usage-note" id="usage-note">Codex limits are shared across your account, including other apps and chats.</p>
+      <div class="usage-footer">
+        <span id="usage-updated"></span>
+        <button type="button" class="ghost-btn" id="refresh-usage">Refresh</button>
+      </div>
+      <a class="usage-dashboard" href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noopener noreferrer">Open Codex usage dashboard ↗</a>
+    </dialog>
+
     <div class="stage">
       <header class="top">
         <button type="button" class="icon" id="toggle-rail" aria-label="Open chats" title="Chats">
@@ -108,6 +123,7 @@
           </div>
         </div>
         <div class="top-right">
+          <button type="button" class="usage-pill" id="open-usage" aria-haspopup="dialog" aria-controls="usage-dialog">Usage<span id="usage-summary"></span></button>
           <button type="button" class="update-pill" id="update-available" aria-label="Update available" title="Update available" hidden>Update available</button>
           <div class="mode" id="mode-seg" role="group" aria-label="Permission mode">
             <button type="button" data-mode="safe">Safe</button>
@@ -284,6 +300,7 @@
   </div>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
   <script src="/render.js"></script>
+  <script src="/usage.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

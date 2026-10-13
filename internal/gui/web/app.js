@@ -1233,6 +1233,7 @@ async function refresh() {
   const s = await (await fetch("/api/state")).json();
   if (epoch !== viewEpoch) return;
   renderTopContext(s);
+  window.PicogentUsage?.setProvider(s.provider);
   sessionId = s.session_id || sessionId;
   currentMode = s.mode || "safe";
   currentTaskMode = s.task_mode || "agent";

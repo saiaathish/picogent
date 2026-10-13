@@ -426,6 +426,7 @@ func (s *server) Handler() http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	api("/api/update", []string{http.MethodGet, http.MethodPost}, s.updateAPI)
+	api("/api/usage", []string{http.MethodGet}, s.usageAPI)
 	api("/api/setup", []string{http.MethodGet}, s.setupStatus)
 	api("/api/setup/install", []string{http.MethodPost}, s.setupInstall)
 	api("/api/setup/login", []string{http.MethodPost}, s.setupLogin)
