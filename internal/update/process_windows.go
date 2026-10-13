@@ -9,7 +9,8 @@ import (
 	"time"
 )
 
-func detach(cmd *exec.Cmd) {}
+func detach(cmd *exec.Cmd)        {}
+func scheduleTerminalClose() bool { return false }
 
 func stopParent(pid int) error {
 	if pid == os.Getpid() {

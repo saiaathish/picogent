@@ -247,7 +247,11 @@ built:
 		return fmt.Errorf("restart failed; previous build restored: %w (previous build restart: %v)", err, restart(target))
 	}
 	fmt.Println("Installed", tag, "(previous build:", backup+")")
-	fmt.Println("Picogent reopened. You can close this terminal.")
+	if scheduleTerminalClose() {
+		fmt.Println("Picogent reopened. This update tab will close.")
+	} else {
+		fmt.Println("Picogent reopened.")
+	}
 	return nil
 }
 
