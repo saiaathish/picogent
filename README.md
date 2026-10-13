@@ -34,6 +34,8 @@ brew install --build-from-source ./contrib/homebrew/picogent.rb
 picogent
 ```
 
+If you used the source build above, run `./picogent` from that directory instead.
+
 If this is a new machine, Picogent opens a **browser setup page**. It installs missing Codex / Claude Code CLIs itself, then you tap **Log in to ChatGPT Codex** (and optionally **Log in to Claude**). OAuth opens in the browser, then you bounce back to setup.
 
 Already set up:
