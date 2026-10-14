@@ -504,6 +504,40 @@ button, input, textarea { font: inherit; color: inherit; }
   background: color-mix(in srgb, var(--ink) 6%, var(--paper));
 }
 .turn-assistant .content.md pre code { padding: 0; background: none; }
+.turn-change-card {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--ink) 3%, var(--card));
+  overflow: hidden;
+}
+.change-card-header { display: flex; align-items: center; gap: 14px; padding: 18px; }
+.change-card-icon { display: grid; place-items: center; width: 44px; height: 48px; flex-shrink: 0; border-radius: 10px; color: var(--mute); background: var(--paper); }
+.change-card-copy { min-width: 0; flex: 1; }
+.change-card-copy h3 { margin: 0; font-size: 15px; font-weight: 550; line-height: 1.4; overflow-wrap: anywhere; }
+.change-card-stats { margin: 4px 0 0; font-size: 13px; color: var(--mute); font-variant-numeric: tabular-nums; }
+.change-card-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+.change-card-actions button { font: inherit; font-size: 12px; font-weight: 500; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.change-card-undo { border: 0; color: var(--mute); background: transparent; }
+.change-card-undo:hover:not(:disabled) { color: var(--ink); background: var(--paper); }
+.change-card-undo:disabled { opacity: .45; cursor: not-allowed; }
+.change-card-view { color: var(--ink); border: 1px solid var(--line); background: transparent; }
+.change-card-view:hover { background: var(--paper); }
+.change-card-files { border-top: 1px solid var(--line); padding: 4px 10px; }
+.change-card-file { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; width: 100%; text-align: left; padding: 9px 8px; border: 0; border-radius: 6px; background: transparent; cursor: pointer; font-size: 12px; }
+.change-card-file > :first-child { min-width: 0; overflow-wrap: anywhere; }
+.change-card-file > :last-child { color: var(--mute); font-size: 11px; flex-shrink: 0; }
+.change-card-file:hover { background: var(--paper); }
+.change-card-details { padding: 8px 18px 12px; color: var(--mute); font-size: 11px; }
+.turn-change-card summary { cursor: pointer; padding-block: 4px; font-size: 11px; color: var(--mute); }
+.change-card-details p { white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; }
+.turn-change-card button:focus-visible, .turn-change-card summary:focus-visible { outline: 2px solid var(--mute); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .change-card-header { flex-wrap: wrap; gap: 10px; padding: 14px; }
+  .change-card-actions { width: 100%; justify-content: flex-end; }
+  .change-card-copy h3 { font-size: 14px; }
+  .change-card-file { flex-wrap: wrap; gap: 4px; }
+}
 .turn-assistant .content.md .katex-display { margin: 0.6em 0; overflow-x: auto; }
 .code-ref {
   font-family: var(--mono);
