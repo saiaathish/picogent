@@ -125,6 +125,7 @@ function setThinking(on) {
   } else {
     reasoningEl.hidden = reasoningEl.children.length === 0;
   }
+  syncUndoControl();
   if (on) $("chat-scroll").scrollTop = $("chat-scroll").scrollHeight;
 }
 
@@ -490,40 +491,49 @@ function renderOverview(ov) {
   overviewBar.style.width = pct + "%";
 }
 
-function renderChangesPanel() {
-  changesList.innerHTML = "";
-  if (!turnChanges.length) {
-    changesList.innerHTML = '<p class="review-empty">File edits appear here with line counts. Click a file to review.</p>';
-    changesSummary.textContent = "";
+function changeTotals(changes) {
+  const known = changes.length > 0 && changes.every(c => Number.isFinite(c.added) && c.added >= 0 && Number.isFinite(c.removed) && c.removed >= 0);
+  return known ? { added: changes.reduce((n, c) => n + c.added, 0), removed: changes.reduce((n, c) => n + c.removed, 0) } : null;
+}
+
+function appendChangeTotals(host, changes) {
+  const totals = changeTotals(changes);
+  if (!totals) {
+    host.textContent = "Line totals unavailable";
     return;
   }
-	changesSummary.replaceChildren();
-	changesSummary.appendChild(document.createTextNode(turnStats.edits + " files · "));
-	const added = document.createElement("span");
-	added.className = "diff-add";
-	added.textContent = "+" + turnStats.added;
-	const removed = document.createElement("span");
-	removed.className = "diff-del";
-	removed.textContent = " −" + turnStats.removed;
-	changesSummary.append(added, removed);
-  for (const c of turnChanges) {
+  const added = document.createElement("span");
+  added.className = "diff-add";
+  added.textContent = "+" + totals.added;
+  const removed = document.createElement("span");
+  removed.className = "diff-del";
+  removed.textContent = " −" + totals.removed;
+  host.append(added, removed);
+  host.title = "Line totals across recorded edits";
+}
+
+function renderChangesPanel(changes = turnChanges) {
+  changesList.replaceChildren();
+  changesSummary.replaceChildren();
+  if (!changes.length) {
+    changesList.innerHTML = '<p class="review-empty">File edits appear here with line counts. Click a file to review.</p>';
+    return;
+  }
+  changesSummary.appendChild(document.createTextNode(changes.length + (changes.length === 1 ? " file · " : " files · ")));
+  const totals = document.createElement("span");
+  appendChangeTotals(totals, changes);
+  changesSummary.append(totals);
+  for (const c of changes) {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "change-row";
     const path = document.createElement("span");
     path.className = "change-path";
     path.textContent = c.path;
-		const stats = document.createElement("span");
-		stats.className = "change-stats";
-		const added = document.createElement("span");
-		added.className = "diff-add";
-		added.textContent = "+" + (c.added || 0);
-		const removed = document.createElement("span");
-		removed.className = "diff-del";
-		removed.textContent = " −" + (c.removed || 0);
-		stats.append(added, removed);
-    row.appendChild(path);
-    row.appendChild(stats);
+    const stats = document.createElement("span");
+    stats.className = "change-stats";
+    appendChangeTotals(stats, [c]);
+    row.append(path, stats);
     row.onclick = () => openReview(c.path, 0, 0, "Changed this turn");
     changesList.appendChild(row);
   }
@@ -779,6 +789,7 @@ function setUndoAvailable(available) {
 
 function syncUndoControl() {
   if (undoTurnBtn) undoTurnBtn.disabled = !undoAvailable || undoInFlight || busy;
+  syncChangeCardUndo();
 }
 
 async function undoLastChange() {
@@ -804,6 +815,7 @@ async function undoLastChange() {
     undoTurnBtn.textContent = "Undo last change";
     if (turnRecoveryTextEl) turnRecoveryTextEl.textContent = "Undo could not start. Try again.";
     add("error", err?.message || "Could not undo the last change.");
+    syncUndoControl();
   }
 }
 
@@ -963,6 +975,7 @@ function typeAssistantFull(text) {
   const s = ensureStreamBubble();
   s.live = false;
   s.target = text;
+  s.changes = turnChanges.map(c => ({ ...c }));
   s.shown = Math.min(s.shown, text.length);
   s.finishing = true;
   thinkingEl.classList.remove("is-on");
@@ -975,16 +988,163 @@ function finalizeStream() {
   const text = stream.target;
   const content = stream.content;
   const wrap = stream.wrap;
+  const changes = stream.changes || turnChanges.map(c => ({ ...c }));
   stream = null;
   if (!text) {
     wrap.remove();
     syncEmpty();
     return;
   }
-  linkifyRefs(text, content);
+  renderAssistantReply(text, content, wrap, changes);
   applyRefsFromText(text);
   wrap.classList.remove("is-streaming");
   scrollChat();
+}
+
+// Convert only the final three-field completion footer, outside fenced code.
+// Historical filenames are reported data; line counts come only from edit events.
+function splitChangeFooter(text) {
+  const match = /(?:^|\n)[ \t]*Changed:[ \t]*(.+)\r?\n[ \t]*Run:[ \t]*(.*)\r?\n[ \t]*Undo:[ \t]*(.*)\s*$/.exec(text);
+  if (!match) return null;
+  const body = text.slice(0, match.index).trimEnd();
+  let fence = null;
+  for (const line of body.split("\n")) {
+    const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+    if (!marker) continue;
+    if (!fence) fence = marker;
+    else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+  }
+  if (fence) return null;
+  const parts = [];
+  let part = "", quoted = false;
+  for (const char of match[1]) {
+    if (char === "`") quoted = !quoted;
+    if (char === "," && !quoted) { parts.push(part); part = ""; }
+    else part += char;
+  }
+  if (quoted) return null;
+  parts.push(part);
+  const paths = [...new Set(parts.map(p => p.trim().replace(/^`([^`]+)`$/, "$1")).filter(Boolean))];
+  if (!paths.length || paths.length > 64 || paths.some(p => /^(?:none|n\/a|no changes)$/i.test(p))) return null;
+  return { body, paths, rawPaths: match[1].trim(), run: match[2].trim(), undo: match[3].trim() };
+}
+
+function syncChangeCardUndo() {
+  const cards = [...logEl.querySelectorAll(".turn-change-card")];
+  const latest = cards[cards.length - 1];
+  for (const card of cards) {
+    const button = card.querySelector(".change-card-undo");
+    const eligible = card === latest && card.changeRecord.canUndo && undoAvailable;
+    button.disabled = !eligible || busy || undoInFlight;
+    button.textContent = eligible && undoInFlight ? "Undoing…" : "Undo ↶";
+    button.title = eligible ? "Restore the latest file-changing turn" : "No active checkpoint for these changes";
+  }
+  // Keep the existing recovery control as a fallback when there is no matching card.
+  if (turnRecoveryEl) turnRecoveryEl.hidden = !undoAvailable || !!(latest?.changeRecord.canUndo);
+}
+
+function renderAssistantReply(text, content, wrap, recordedChanges = []) {
+  const footer = splitChangeFooter(text);
+  wrap.querySelector(".turn-change-card")?.remove();
+  content.hidden = false;
+  if (!footer) {
+    linkifyRefs(text, content);
+    return;
+  }
+  linkifyRefs(footer.body, content);
+  content.hidden = !footer.body;
+  const recordedPaths = recordedChanges.map(c => c.path).sort();
+  if (recordedPaths.length && recordedPaths.join(", ") === footer.rawPaths) footer.paths = recordedPaths;
+  const changes = footer.paths.map(path => {
+    const recorded = recordedChanges.find(c => c.path === path);
+    return { path, added: recorded?.added ?? null, removed: recorded?.removed ?? null };
+  });
+  const card = document.createElement("section");
+  card.className = "turn-change-card";
+  card.setAttribute("aria-label", "Changed files");
+  card.changeRecord = { changes, canUndo: footer.undo === "/undo" };
+  const header = document.createElement("div");
+  header.className = "change-card-header";
+  const icon = document.createElement("span");
+  icon.className = "change-card-icon";
+  icon.setAttribute("aria-hidden", "true");
+  icon.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="3"/><path d="M9 10h6m-3-3v6m-3 4h6"/></svg>';
+  const copy = document.createElement("div");
+  copy.className = "change-card-copy";
+  const heading = document.createElement("h3");
+  const verb = changeTotals(changes) ? "Edited " : "Changed ";
+  heading.textContent = changes.length === 1 ? verb + changes[0].path : verb + changes.length + " files";
+  const stats = document.createElement("p");
+  stats.className = "change-card-stats";
+  appendChangeTotals(stats, changes);
+  copy.append(heading, stats);
+  const actions = document.createElement("div");
+  actions.className = "change-card-actions";
+  const undo = document.createElement("button");
+  undo.type = "button";
+  undo.className = "change-card-undo";
+  undo.disabled = true;
+  undo.textContent = "Undo ↶";
+  undo.onclick = () => {
+    if (undo.disabled) return;
+    undoLastChange();
+    syncUndoControl();
+  };
+  const view = document.createElement("button");
+  view.type = "button";
+  view.className = "change-card-view";
+  view.textContent = "View changes";
+  view.onclick = () => {
+    reviewReturnFocus = view;
+    renderChangesPanel(changes);
+    showReviewTab("changes");
+    setReviewOpen(true);
+  };
+  actions.append(undo, view);
+  header.append(icon, copy, actions);
+  card.append(header);
+  if (changes.length > 1) {
+    const list = document.createElement("div");
+    list.className = "change-card-files";
+    const fileRow = (change) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "change-card-file";
+      const path = document.createElement("span");
+      path.textContent = change.path;
+      const totals = document.createElement("span");
+      appendChangeTotals(totals, [change]);
+      row.append(path, totals);
+      row.onclick = () => {
+        reviewReturnFocus = row;
+        openReview(change.path, 0, 0, "Reported by this reply");
+      };
+      return row;
+    };
+    changes.slice(0, 3).forEach(c => list.append(fileRow(c)));
+    if (changes.length > 3) {
+      const more = document.createElement("details");
+      const label = document.createElement("summary");
+      label.textContent = "Show " + (changes.length - 3) + " more files";
+      more.append(label);
+      changes.slice(3).forEach(c => more.append(fileRow(c)));
+      list.append(more);
+    }
+    card.append(list);
+  }
+  // Preserve run/manual-undo notes as text, without executing model-written commands.
+  if (footer.run || (footer.undo && footer.undo !== "/undo")) {
+    const details = document.createElement("details");
+    details.className = "change-card-details";
+    const label = document.createElement("summary");
+    label.textContent = "Run & recovery details";
+    const note = document.createElement("p");
+    note.textContent = [footer.run && "Run: " + footer.run, footer.undo && footer.undo !== "/undo" && "Reported undo: " + footer.undo].filter(Boolean).join("\n");
+    details.append(label, note);
+    card.append(details);
+  }
+  wrap.append(card);
+  syncUndoControl();
 }
 
 function add(kind, text, attachmentMeta) {
@@ -1031,14 +1191,15 @@ function add(kind, text, attachmentMeta) {
   } else if (role === "assistant") {
     const c = document.createElement("div");
     c.className = "content md";
-    linkifyRefs(text, c);
     wrap.appendChild(c);
+    renderAssistantReply(text, c, wrap);
     applyRefsFromText(text);
   } else {
     wrap.textContent = text;
   }
 
   logEl.appendChild(wrap);
+  syncUndoControl();
   syncEmpty();
   scrollChat();
 }
@@ -2114,6 +2275,7 @@ function finishTurnUI() {
   sendBtn.disabled = !ready;
   syncUndoControl();
   if (stream) {
+    stream.changes = turnChanges.map(c => ({ ...c }));
     stream.finishing = true;
     stream.live = false;
     if (stream.shown >= stream.target.length) finalizeStream();
@@ -2226,6 +2388,7 @@ function connectEvents() {
     }
     if (e.type === "error" && undoInFlight) {
       undoInFlight = false;
+      syncUndoControl();
       if (undoTurnBtn) {
         undoTurnBtn.disabled = !undoAvailable;
         undoTurnBtn.textContent = "Undo last change";
@@ -2304,7 +2467,13 @@ function connectEvents() {
       return;
     }
     if (e.type === "change" && e.path) {
-      turnChanges.push({ path: e.path, added: e.added || 0, removed: e.removed || 0 });
+      const previous = turnChanges.find(c => c.path === e.path);
+      if (previous) {
+        previous.added += e.added || 0;
+        previous.removed += e.removed || 0;
+      } else {
+        turnChanges.push({ path: e.path, added: e.added || 0, removed: e.removed || 0 });
+      }
       turnStats.edits = turnChanges.length;
       turnStats.added = turnChanges.reduce((a, c) => a + (c.added || 0), 0);
       turnStats.removed = turnChanges.reduce((a, c) => a + (c.removed || 0), 0);

@@ -13,7 +13,8 @@
     <div class="scrim" id="scrim" hidden></div>
 
     <aside class="drawer drawer-left" id="rail-left" aria-label="Chats">
-      <button type="button" class="hub-new-chat" id="new-chat">＋ New chat</button>
+      <div class="hub-brand"><span class="mark" aria-hidden="true"></span><strong>Picogent</strong></div>
+      <button type="button" class="hub-new-chat" id="new-chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>New chat</button>
       <div class="drawer-head">
         <p class="drawer-kicker">Projects</p>
         <button type="button" class="ghost-btn" id="add-project">Open folder</button>
@@ -95,40 +96,14 @@
         <button type="button" class="icon" id="new-chat-top" aria-label="New chat" title="New">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>
         </button>
-        <div class="brand">
-          <span class="mark" aria-hidden="true"></span>
-          <strong>Picogent</strong>
-        </div>
         <div class="top-context" aria-label="Current project and runtime">
+          <svg class="project-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
           <span class="top-project" id="top-project">No folder</span>
           <span class="top-runtime" id="top-runtime">Safe · Auto</span>
-        </div>
-        <div class="context-meter" id="context-bar" hidden>
-          <button type="button" class="context-ring" id="context-ring" aria-label="Context window usage" aria-expanded="false" aria-controls="context-pop">
-            <svg class="context-svg" viewBox="0 0 36 36" aria-hidden="true">
-              <circle class="context-track" cx="18" cy="18" r="15" fill="none" pathLength="100" />
-              <circle class="context-fill" cx="18" cy="18" r="15" fill="none" pathLength="100" />
-            </svg>
-            <span class="context-caption">context window</span>
-          </button>
-          <div class="context-pop" id="context-pop" hidden role="dialog" aria-label="Context usage">
-            <div class="context-pop-top">
-              <div>
-                <p class="context-pop-title">Context usage</p>
-                <p class="context-pop-pct" id="context-pop-pct">0% full</p>
-              </div>
-              <p class="context-pop-tokens" id="context-pop-tokens">~0 / 0 tokens</p>
-            </div>
-            <p class="context-pop-note" id="context-pop-note">256k Codex ceiling — soft compaction keeps the live set small.</p>
-          </div>
         </div>
         <div class="top-right">
           <button type="button" class="usage-pill" id="open-usage" aria-haspopup="dialog" aria-controls="usage-dialog" hidden>Usage<span id="usage-summary"></span></button>
           <button type="button" class="update-pill" id="update-available" aria-label="Update available" title="Update available" hidden>Update available</button>
-          <div class="mode" id="mode-seg" role="group" aria-label="Permission mode">
-            <button type="button" data-mode="safe">Safe</button>
-            <button type="button" data-mode="fast">Fast</button>
-          </div>
           <a class="icon" href="/settings.html" aria-label="Settings" title="Settings">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="3"/>
@@ -137,6 +112,12 @@
           </a>
           <button type="button" class="icon" id="toggle-review" aria-label="Code review" title="Review">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+          </button>
+          <button type="button" class="icon" id="side-fab" aria-label="Open PicoChat" title="PicoChat Companion">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 12a8.5 8.5 0 0 1-8.5 8.5H7l-4 2.2V12A8.5 8.5 0 1 1 21 12z"/>
+              <path d="M8 11h.01M12 11h.01M16 11h.01"/>
+            </svg>
           </button>
         </div>
       </header>
@@ -226,12 +207,36 @@
           <span class="beam" aria-hidden="true"></span>
           <div id="slash-menu" class="slash-menu" hidden role="listbox" aria-label="Commands"></div>
           <div id="attach-tray" class="attach-tray" hidden></div>
+          <textarea id="prompt" rows="1" aria-label="Message Picogent" placeholder="Message Picogent" autocomplete="off"></textarea>
           <div class="composer-row">
             <button type="button" id="attach-btn" class="attach-btn" aria-label="Add files" title="Add files">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
             </button>
             <input type="file" id="file-input" hidden multiple accept="image/*,.pdf,.txt,.md,.csv,.json,.xml,.yaml,.yml,.go,.js,.ts,.tsx,.jsx,.py,.rs,.html,.css,.toml,.sql,.sh" />
-            <textarea id="prompt" rows="1" placeholder="Message Picogent" autocomplete="off"></textarea>
+            <div class="mode" id="mode-seg" role="group" aria-label="Permission mode">
+              <button type="button" data-mode="safe">Safe</button>
+              <button type="button" data-mode="fast">Fast</button>
+            </div>
+            <span class="composer-spacer" aria-hidden="true"></span>
+            <div class="context-meter" id="context-bar" hidden>
+              <button type="button" class="context-ring" id="context-ring" aria-label="Context window usage" aria-expanded="false" aria-controls="context-pop">
+                <svg class="context-svg" viewBox="0 0 36 36" aria-hidden="true">
+                  <circle class="context-track" cx="18" cy="18" r="15" fill="none" pathLength="100" />
+                  <circle class="context-fill" cx="18" cy="18" r="15" fill="none" pathLength="100" />
+                </svg>
+                <span class="context-caption">context window</span>
+              </button>
+              <div class="context-pop" id="context-pop" hidden role="dialog" aria-label="Context usage">
+                <div class="context-pop-top">
+                  <div>
+                    <p class="context-pop-title">Context usage</p>
+                    <p class="context-pop-pct" id="context-pop-pct">0% full</p>
+                  </div>
+                  <p class="context-pop-tokens" id="context-pop-tokens">~0 / 0 tokens</p>
+                </div>
+                <p class="context-pop-note" id="context-pop-note">256k Codex ceiling — soft compaction keeps the live set small.</p>
+              </div>
+            </div>
             <select id="model-pick" class="model-pick" aria-label="Model"></select>
             <button type="submit" id="send" aria-label="Send" disabled>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
@@ -291,12 +296,7 @@
       </div>
     </aside>
 
-    <button type="button" class="side-fab" id="side-fab" aria-label="Open PicoChat" title="PicoChat Companion">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M21 12a8.5 8.5 0 0 1-8.5 8.5H7l-4 2.2V12A8.5 8.5 0 1 1 21 12z"/>
-        <path d="M8 11h.01M12 11h.01M16 11h.01"/>
-      </svg>
-    </button>
+
   </div>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
   <script src="/render.js"></script>
