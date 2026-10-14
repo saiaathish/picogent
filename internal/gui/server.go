@@ -655,6 +655,7 @@ func (s *server) snapshot() map[string]any {
 		"model":               cfg.DisplayModel(),
 		"workspace":           cfg.Workspace,
 		"provider":            cfg.Provider,
+		"usage_supported":     supportsUsage(cfg),
 		"codex":               cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
 		"codex_cli":           codexauth.LoggedIn(),
 		"quadcode":            cfg.Provider == config.ProviderQuadCode && (cfg.AnthropicKeyResolved() != "" || claudeauth.LoggedIn()),

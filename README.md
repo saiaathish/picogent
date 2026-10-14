@@ -48,7 +48,7 @@ picogent setup    # open setup again
 
 Use **Open folder** to add an existing project. Use **New project** to choose a parent folder and create a new child folder. Chats appear beneath their projects in the sidebar. Picogent remembers the selected project between launches.
 
-Choose **Usage** near Settings to see your Codex account's remaining allowances and reset times, including any additional model limits the account reports. The read-only check uses your existing Codex login and refreshes while the app is open. Other providers show an unavailable message; these percentages describe account limits, while the context indicator describes the current chat.
+Choose **Usage** near Settings for Codex or Claude Code subscription limits, or Antigravity's per-model quotas. The panel shows reported remaining allowances and reset times using the selected CLI login, and refreshes while the app is open. Usage is hidden for OpenCode, OpenAI, Ollama, and API-key configurations. Missing provider data stays unavailable; the separate context indicator describes the current chat.
 
 Picogent checks GitHub for a newer published stable release when the browser app opens and about once an hour while it stays open. If one is available, choose **Update available → Update in Terminal**. The terminal shows the Go download and build progress, then Picogent restarts. This requires Go on `PATH` and a writable Picogent installation; the automatic terminal flow currently supports macOS and Linux. The running build stays in place if the download or build fails. Development builds are compared by version, so an older stable release is never offered as an update.
 

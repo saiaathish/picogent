@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/saiaathish/picogent/internal/usage"
 )
 
 var (
@@ -18,26 +20,9 @@ var (
 )
 
 // Usage is account-wide subscription quota, not the current chat's token count.
-type Usage struct {
-	Plan      string       `json:"plan,omitempty"`
-	Groups    []UsageGroup `json:"groups"`
-	UpdatedAt time.Time    `json:"updated_at"`
-}
-
-type UsageGroup struct {
-	ID           string        `json:"id"`
-	Name         string        `json:"name"`
-	Allowed      *bool         `json:"allowed,omitempty"`
-	LimitReached *bool         `json:"limit_reached,omitempty"`
-	Windows      []UsageWindow `json:"windows"`
-}
-
-type UsageWindow struct {
-	Name             string   `json:"name"`
-	RemainingPercent *float64 `json:"remaining_percent"`
-	WindowSeconds    *int64   `json:"window_seconds"`
-	ResetsAt         *int64   `json:"resets_at"`
-}
+type Usage = usage.Snapshot
+type UsageGroup = usage.Group
+type UsageWindow = usage.Window
 
 type quotaWindow struct {
 	UsedPercent *float64 `json:"used_percent"`

@@ -5,7 +5,14 @@
   const open = byId("open-usage");
   const groupsEl = byId("usage-groups");
   const refreshButton = byId("refresh-usage");
+  const providers = {
+    codex: { label: "Codex", summary: "codex", note: "Codex limits are shared across your account, including other apps and chats.", url: "https://chatgpt.com/codex/settings/usage", link: "Open Codex usage dashboard ↗" },
+    quadcode: { label: "Claude Code", summary: "claude", note: "Claude Code subscription limits are shared with your Claude account.", url: "https://claude.ai/settings/usage", link: "Open Claude usage settings ↗" },
+    antigravity: { label: "Antigravity", note: "Antigravity reports quota per model. These allowances are shared across your account.", url: "https://antigravity.google/docs/cli/commands/usage/", link: "Open Antigravity usage guide ↗" },
+  };
   let provider = "";
+  let enabled = false;
+  let selectedModel = "";
   let generation = 0;
   let pending = null;
   let snapshot = null;
@@ -39,8 +46,12 @@
     byId("usage-plan").textContent = "";
     byId("usage-updated").textContent = "";
     open.setAttribute("aria-label", "View usage limits");
-    byId("usage-note").hidden = provider !== "codex";
-    byId("usage-dialog").querySelector(".usage-dashboard").hidden = provider !== "codex";
+    const details = providers[provider];
+    byId("usage-note").hidden = !details;
+    byId("usage-note").textContent = details?.note || "";
+    const dashboard = dialog.querySelector(".usage-dashboard");
+    dashboard.hidden = !details;
+    if (details) { dashboard.href = details.url; dashboard.textContent = details.link; }
     const usage = data.usage;
     if (!data.available || !usage) {
       byId("usage-message").hidden = false;
@@ -49,13 +60,16 @@
       return;
     }
     const plan = String(usage.plan || "").replaceAll("_", " ");
-    byId("usage-plan").textContent = plan ? `Codex · ${plan.charAt(0).toUpperCase()}${plan.slice(1)}` : "Codex";
-    const mainWindows = (usage.groups || []).find(g => g.id === "codex")?.windows || [];
+    const label = details?.label || "Account";
+    byId("usage-plan").textContent = plan ? `${label} · ${plan.charAt(0).toUpperCase()}${plan.slice(1)}` : label;
+    const summaryID = data.summary_id || details?.summary || selectedModel;
+    const mainGroup = (usage.groups || []).find(g => g.id === summaryID);
+    const mainWindows = mainGroup?.windows || [];
     const mainRemaining = mainWindows.map(w => w.remaining_percent).filter(Number.isFinite);
     if (mainRemaining.length) {
       const lowest = Math.round(Math.min(...mainRemaining));
       byId("usage-summary").textContent = ` · ${lowest}% left`;
-      open.title = `Codex allowance: ${lowest}% remaining in the lowest reported window`;
+      open.title = `${mainGroup?.name || label} allowance: ${lowest}% remaining in the lowest reported window`;
       open.setAttribute("aria-label", `Usage limits. ${open.title}`);
     }
     let windowCount = 0;
@@ -111,7 +125,7 @@
   }
 
   async function refresh() {
-    if (pending) return;
+    if (!enabled || pending) return;
     const epoch = generation;
     const controller = new AbortController();
     pending = controller;
@@ -121,6 +135,7 @@
       if (!res.ok) throw new Error("unavailable");
       const data = await res.json();
       if (epoch !== generation || data.provider !== provider) return;
+      if (data.supported === false) { enabled = false; open.hidden = true; if (dialog.open) dialog.close(); }
       render(data);
     } catch (error) {
       if (epoch === generation && error.name !== "AbortError") render({ available: false, message: "Couldn't load usage limits. Try refreshing." });
@@ -133,27 +148,33 @@
   }
 
   open.addEventListener("click", () => {
+    if (!enabled) return;
     dialog.showModal();
     if (snapshot) render(snapshot); // Refresh the reset countdown when reopening.
     refresh();
   });
   byId("close-usage").addEventListener("click", () => dialog.close());
-  dialog.addEventListener("close", () => open.focus());
+  dialog.addEventListener("close", () => { if (!open.hidden) open.focus(); });
   dialog.addEventListener("click", (event) => { if (event.target === dialog) {
     const box = dialog.getBoundingClientRect();
     if (event.clientX < box.left || event.clientX > box.right || event.clientY < box.top || event.clientY > box.bottom) dialog.close();
   } });
   refreshButton.addEventListener("click", refresh);
   window.PicogentUsage = {
-    setProvider(next) {
-      if (provider === next) return;
+    setProvider(next, supported = false, model = "") {
+      const nextEnabled = supported && !!providers[next];
+      if (provider === next && enabled === nextEnabled && selectedModel === model) return;
       provider = next;
+      enabled = nextEnabled;
+      selectedModel = model;
       generation++;
       pending?.abort();
       pending = null;
+      open.hidden = !enabled;
+      if (!enabled && dialog.open) dialog.close();
       render({ available: false, message: "Loading usage limits…" });
       refresh();
     },
   };
-  setInterval(() => { if (!document.hidden && provider) refresh(); }, 5 * 60 * 1000);
+  setInterval(() => { if (!document.hidden && enabled) refresh(); }, 5 * 60 * 1000);
 })();
