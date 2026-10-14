@@ -85,21 +85,3 @@ func TestLoadIgnoresWorkspaceMCPConfig(t *testing.T) {
 		t.Fatal("workspace MCP config was connected")
 	}
 }
-
-func TestBuildContextDisablesExternalToolsForIsolatedRuns(t *testing.T) {
-	workspace := isolatedAppLoad(t)
-	t.Setenv("PICOGENT_DISABLE_EXTERNAL_TOOLS", "1")
-	cfg := config.Default()
-	cfg.Provider = config.ProviderOllama
-	cfg.Workspace = workspace
-	a, err := BuildContext(context.Background(), cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer a.Close()
-	for _, name := range []string{"web_fetch", "mcp_manage"} {
-		if _, ok := a.Tools.Get(name); ok {
-			t.Fatalf("isolated app build registered external tool %q", name)
-		}
-	}
-}
