@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/saiaathish/picogent/internal/codexauth"
 )
 
 // Ecosystem is a model family Picogent can auto-route within.
@@ -253,8 +255,12 @@ func (c Catalog) RefreshBestMatch(eco Ecosystem) Catalog {
 func (c Catalog) latestID(eco Ecosystem, tier Tier) string {
 	// Scan ~/.codex/config.toml and known config for newer model strings.
 	if eco == EcoCodex {
-		if home, err := os.UserHomeDir(); err == nil {
-			if b, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml")); err == nil {
+		family := map[Tier]string{TierLight: "luna", TierStandard: "terra", TierHeavy: "sol"}[tier]
+		if id := codexauth.LatestFamily(family); id != "" {
+			return id
+		}
+		if home := codexauth.HomeDir(); home != "" {
+			if b, err := os.ReadFile(filepath.Join(home, "config.toml")); err == nil {
 				re := regexp.MustCompile(`(?m)^\s*model\s*=\s*"([^"]+)"`)
 				if m := re.FindSubmatch(b); len(m) == 2 {
 					id := string(m[1])
@@ -342,14 +348,14 @@ func InitCatalog(refreshRemote bool) Catalog {
 	if cached, err := LoadCachedCatalog(); err == nil && len(cached.Models) > 0 {
 		c = mergeCatalog(c, cached)
 	}
-	c = c.RefreshBestMatch(EcoCodex)
-	c = c.RefreshBestMatch(EcoQuadCode)
 	if refreshRemote {
 		if remote, err := fetchRemoteCatalog(); err == nil {
 			c = mergeCatalog(c, remote)
 			_ = SaveCachedCatalog(c)
 		}
 	}
+	c = c.RefreshBestMatch(EcoCodex)
+	c = c.RefreshBestMatch(EcoQuadCode)
 	catalogMu.Lock()
 	catalog = c
 	catalogMu.Unlock()

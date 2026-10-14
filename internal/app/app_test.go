@@ -85,3 +85,26 @@ func TestLoadIgnoresWorkspaceMCPConfig(t *testing.T) {
 		t.Fatal("workspace MCP config was connected")
 	}
 }
+
+func TestLoadSelectedWorkspaceIgnoresLaunchFolderModel(t *testing.T) {
+	launch := isolatedAppLoad(t)
+	selected := t.TempDir()
+	user := config.Default()
+	user.Provider = config.ProviderOllama
+	if err := config.Save(user); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(launch, ".picogent.yaml"), []byte("model: launch-model\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(selected, ".picogent.yaml"), []byte("model: selected-model\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := Load(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Workspace != selected || cfg.Model != "selected-model" {
+		t.Fatalf("workspace=%q model=%q", cfg.Workspace, cfg.Model)
+	}
+}

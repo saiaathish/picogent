@@ -3,6 +3,7 @@
 package agyauth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -96,11 +97,15 @@ func (c Cred) Expired() bool {
 
 // Load reads Antigravity OAuth from the CLI token file or macOS Keychain.
 func Load() (Cred, error) {
+	return LoadContext(context.Background())
+}
+
+func LoadContext(ctx context.Context) (Cred, error) {
 	if c, err := loadFile(TokenPath()); err == nil && c.AccessToken != "" {
 		return c, nil
 	}
 	if runtime.GOOS == "darwin" {
-		if c, err := loadKeychain(); err == nil && c.AccessToken != "" {
+		if c, err := loadKeychain(ctx); err == nil && c.AccessToken != "" {
 			return c, nil
 		}
 	}
@@ -205,6 +210,10 @@ func loadFile(path string) (Cred, error) {
 	if err != nil {
 		return Cred{}, err
 	}
+	return parseCred(b)
+}
+
+func parseCred(b []byte) (Cred, error) {
 	var outer struct {
 		Token *struct {
 			AccessToken  string `json:"access_token"`
@@ -233,7 +242,7 @@ func loadFile(path string) (Cred, error) {
 		c.Expiry = parseExpiry(outer.Expiry)
 	}
 	if c.AccessToken == "" && c.RefreshToken == "" {
-		return Cred{}, errors.New("no Antigravity tokens in " + path)
+		return Cred{}, errors.New("no Antigravity tokens in credentials")
 	}
 	return c, nil
 }
@@ -255,11 +264,11 @@ func parseExpiry(s string) time.Time {
 	return time.Time{}
 }
 
-func loadKeychain() (Cred, error) {
-	out, err := exec.Command("security", "find-generic-password", "-s", keychainService, "-a", keychainAccount, "-w").Output()
+func loadKeychain(ctx context.Context) (Cred, error) {
+	out, err := exec.CommandContext(ctx, "security", "find-generic-password", "-s", keychainService, "-a", keychainAccount, "-w").Output()
 	if err != nil {
 		// Try service-only lookup.
-		out, err = exec.Command("security", "find-generic-password", "-s", keychainService, "-w").Output()
+		out, err = exec.CommandContext(ctx, "security", "find-generic-password", "-s", keychainService, "-w").Output()
 		if err != nil {
 			return Cred{}, err
 		}
@@ -267,10 +276,7 @@ func loadKeychain() (Cred, error) {
 	raw := strings.TrimSpace(string(out))
 	// Keychain may store raw JSON or a nested blob.
 	if strings.HasPrefix(raw, "{") {
-		tmp := filepath.Join(os.TempDir(), "agy-kc.json")
-		_ = os.WriteFile(tmp, []byte(raw), 0o600)
-		defer os.Remove(tmp)
-		return loadFile(tmp)
+		return parseCred([]byte(raw))
 	}
 	return Cred{}, errors.New("keychain item is not JSON")
 }

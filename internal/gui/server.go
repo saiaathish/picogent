@@ -2,6 +2,8 @@ package gui
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -152,7 +154,21 @@ type server struct {
 }
 
 func Run() error {
-	cfg, a, err := app.Load(".")
+	addr := "127.0.0.1:7420"
+	if v := os.Getenv("PICOGENT_GUI_ADDR"); v != "" {
+		if !loopbackListenAddress(v) {
+			return fmt.Errorf("PICOGENT_GUI_ADDR must bind to loopback (127.0.0.1, ::1, or localhost); refusing %q", v)
+		}
+		addr = v
+	}
+	if url := existingGUIURL(addr); url != "" {
+		fmt.Println("picogent gui", url)
+		if os.Getenv("PICOGENT_NO_BROWSER") == "" {
+			openBrowser(url)
+		}
+		return nil
+	}
+	cfg, a, err := app.Load(startupWorkspace())
 	if err != nil {
 		return err
 	}
@@ -168,15 +184,15 @@ func Run() error {
 	s := &server{cfg: cfg, ag: a, permCh: make(chan perm.Decision, 1), sessionID: sessID, hist: hist}
 	s.attachRouterHook()
 	s.ensureProject()
-	addr := "127.0.0.1:7420"
-	if v := os.Getenv("PICOGENT_GUI_ADDR"); v != "" {
-		if !loopbackListenAddress(v) {
-			return fmt.Errorf("PICOGENT_GUI_ADDR must bind to loopback (127.0.0.1, ::1, or localhost); refusing %q", v)
-		}
-		addr = v
-	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
+		if url := existingGUIURL(addr); url != "" {
+			fmt.Println("picogent gui", url)
+			if os.Getenv("PICOGENT_NO_BROWSER") == "" {
+				openBrowser(url)
+			}
+			return nil
+		}
 		ln, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return err
@@ -192,6 +208,64 @@ func Run() error {
 		go openBrowser(url)
 	}
 	return http.Serve(ln, s.Handler())
+}
+
+// Reuse the server started by an earlier `picogent` invocation. The marker
+// prevents an unrelated service on the default port from being opened as us.
+func existingGUIURL(addr string) string {
+	profileID := guiProfileID()
+	if !loopbackListenAddress(addr) || strings.HasSuffix(addr, ":0") || profileID == "" {
+		return ""
+	}
+	root := "http://" + addr
+	client := http.Client{
+		Timeout:       400 * time.Millisecond,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	resp, err := client.Get(root + "/api/instance")
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent || resp.Header.Get("X-Picogent-Instance") != "1" ||
+		resp.Header.Get("X-Picogent-Profile") != profileID {
+		return ""
+	}
+	if config.NeedsSetup() {
+		return root + "/setup.html"
+	}
+	return root + "/"
+}
+
+func guiProfileID() string {
+	dir, err := config.Dir()
+	if err != nil {
+		return ""
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(abs))
+	return hex.EncodeToString(hash[:])
+}
+
+// The project selected in the hub follows the user between terminal folders.
+// A missing project falls back to the saved workspace, then the launch folder.
+func startupWorkspace() string {
+	list, current, err := projects.List()
+	if err != nil {
+		return ""
+	}
+	for _, p := range list {
+		if p.ID == current {
+			if st, err := os.Stat(p.Path); err == nil && st.IsDir() {
+				return p.Path
+			}
+			break
+		}
+	}
+	return ""
 }
 
 func loopbackListenAddress(addr string) bool {
@@ -343,7 +417,16 @@ func (s *server) Handler() http.Handler {
 	api := func(path string, methods []string, handler http.HandlerFunc) {
 		mux.Handle(path, s.apiRoute(methods, handler))
 	}
+	profileID := guiProfileID()
 	api("/api/state", []string{http.MethodGet}, s.state)
+	api("/api/instance", []string{http.MethodGet}, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Picogent-Instance", "1")
+		w.Header().Set("X-Picogent-Profile", profileID)
+		w.Header().Set("X-Picogent-Version", Version)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	api("/api/update", []string{http.MethodGet, http.MethodPost}, s.updateAPI)
+	api("/api/usage", []string{http.MethodGet}, s.usageAPI)
 	api("/api/setup", []string{http.MethodGet}, s.setupStatus)
 	api("/api/setup/install", []string{http.MethodPost}, s.setupInstall)
 	api("/api/setup/login", []string{http.MethodPost}, s.setupLogin)
@@ -572,6 +655,7 @@ func (s *server) snapshot() map[string]any {
 		"model":               cfg.DisplayModel(),
 		"workspace":           cfg.Workspace,
 		"provider":            cfg.Provider,
+		"usage_supported":     supportsUsage(cfg),
 		"codex":               cfg.Provider == config.ProviderCodex && codexauth.LoggedIn(),
 		"codex_cli":           codexauth.LoggedIn(),
 		"quadcode":            cfg.Provider == config.ProviderQuadCode && (cfg.AnthropicKeyResolved() != "" || claudeauth.LoggedIn()),
@@ -734,12 +818,24 @@ func mcpToolCount(a *agent.Agent) int {
 	return len(mcp.Tools())
 }
 
-func (s *server) setupStatus(w http.ResponseWriter, _ *http.Request) {
+func (s *server) setupStatus(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	cfg := s.cfg
 	s.mu.Unlock()
+	provider := cfg.Provider
+	if provider == "" {
+		provider = config.ProviderCodex
+	}
+	if selected := r.URL.Query().Get("provider"); selected != "" {
+		var err error
+		provider, err = setup.Provider(selected)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(setup.Snapshot(cfg))
+	_ = json.NewEncoder(w).Encode(setup.Snapshot(cfg, provider))
 }
 
 func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
@@ -747,10 +843,19 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "POST only", 405)
 		return
 	}
-	log, err := setup.InstallCores()
-	// Model discovery may invoke installed CLIs and public catalogs, so keep it
-	// on the explicit install action rather than the setup-status GET path.
-	llm.RefreshCLIModels(true)
+	var in struct {
+		Provider string `json:"provider"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	provider, err := setup.Provider(in.Provider)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	log, err := setup.InstallCores(provider)
 	w.Header().Set("Content-Type", "application/json")
 	out := map[string]any{"log": log, "ok": err == nil}
 	if err != nil {
@@ -758,7 +863,7 @@ func (s *server) setupInstall(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 	}
 	s.mu.Lock()
-	st := setup.Snapshot(s.cfg)
+	st := setup.Snapshot(s.cfg, provider)
 	s.mu.Unlock()
 	out["status"] = st
 	_ = json.NewEncoder(w).Encode(out)
@@ -771,11 +876,25 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Target   string `json:"target"`
+		Provider string `json:"provider"`
 		ReturnTo string `json:"return_to"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
+	}
+	if in.Provider != "" {
+		provider, err := setup.Provider(in.Provider)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		target := strings.ToLower(in.Target)
+		if (provider == config.ProviderQuadCode && target != "claude") ||
+			(provider != config.ProviderQuadCode && target != string(provider)) {
+			http.Error(w, "login target does not match the selected provider", 400)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	switch strings.ToLower(in.Target) {
@@ -815,7 +934,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 			"ok":   true,
 			"hint": "A Terminal window opened for Codex login. Finish there, then come back.",
 		})
-	default:
+	case "codex":
 		if in.ReturnTo == "" {
 			in.ReturnTo = "http://127.0.0.1:7420/"
 		}
@@ -833,6 +952,8 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "url": authURL})
+	default:
+		http.Error(w, "unknown login target", 400)
 	}
 }
 
@@ -842,24 +963,79 @@ func (s *server) setupFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
+		Provider  string `json:"provider"`
 		Workspace string `json:"workspace"`
 		Mode      string `json:"mode"`
 		Model     string `json:"model"`
+		APIKey    string `json:"api_key"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
+	s.configTxMu.Lock()
+	defer s.configTxMu.Unlock()
 	s.mu.Lock()
 	cfg := s.cfg
 	s.mu.Unlock()
-	next, err := setup.Apply(cfg, in.Workspace, in.Mode, in.Model)
+	// Existing configurations can still reopen setup with their current
+	// provider. The first-run picker offers CLI providers and OpenAI API.
+	if in.Provider == "" && cfg.Provider != config.ProviderCodex && cfg.Provider != config.ProviderQuadCode &&
+		cfg.Provider != config.ProviderOpenCode && cfg.Provider != config.ProviderAntigravity && cfg.Provider != config.ProviderOpenAI {
+		next, err := setup.Apply(cfg, in.Workspace, in.Mode, in.Model)
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		a, err := app.Build(next)
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		s.mu.Lock()
+		s.abortTurnLocked()
+		s.cfg = next
+		s.ag = a
+		a.SetTaskSession(s.sessionID)
+		s.hist = nil
+		s.mu.Unlock()
+		s.attachRouterHook()
+		w.WriteHeader(204)
+		return
+	}
+	selected := in.Provider
+	if selected == "" {
+		selected = string(cfg.Provider)
+	}
+	provider, err := setup.Provider(selected)
+	if err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	if provider == config.ProviderOpenAI && strings.TrimSpace(in.APIKey) != "" {
+		key := strings.TrimSpace(in.APIKey)
+		if len(key) > 4096 || strings.ContainsAny(key, "\r\n") {
+			http.Error(w, "invalid API key format", 400)
+			return
+		}
+		cfg.APIKey = key
+	}
+	status := setup.Snapshot(cfg, provider)
+	if !status.Ready || !status.LoggedIn {
+		http.Error(w, "finish the selected provider's tools and login first", 400)
+		return
+	}
+	next, err := setup.Prepare(cfg, provider, in.Workspace, in.Mode, in.Model)
 	if err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
 	a, err := app.Build(next)
 	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	if err := config.Save(next); err != nil {
 		http.Error(w, err.Error(), 500)
 		return
 	}
@@ -2529,6 +2705,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 			Mode           string `json:"mode"`
 			Model          string `json:"model"`
 			Provider       string `json:"provider"`
+			APIKey         string `json:"api_key"`
 			AnthropicKey   string `json:"anthropic_api_key"`
 			MaxToolRounds  int    `json:"max_tool_rounds"`
 			LLMTimeoutSec  int    `json:"llm_timeout_sec"`
@@ -2583,6 +2760,26 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		if cfg.Provider == config.ProviderOpenAI {
+			if strings.TrimSpace(in.APIKey) != "" {
+				key := strings.TrimSpace(in.APIKey)
+				if len(key) > 4096 || strings.ContainsAny(key, "\r\n") {
+					http.Error(w, "invalid API key format", 400)
+					return
+				}
+				cfg.APIKey = key
+			}
+			if cfg.APIKeyResolved() == "" {
+				http.Error(w, "enter an OpenAI API key or set OPENAI_API_KEY", 400)
+				return
+			}
+			if cfg.Model == "" || cfg.Model == config.ModelAuto || len(cfg.Model) > 128 || strings.ContainsAny(cfg.Model, "\r\n\t ") {
+				http.Error(w, "enter a Chat Completions model ID", 400)
+				return
+			}
+			cfg.BaseURL = "https://api.openai.com/v1"
+			cfg.Router.Enabled = false
+		}
 		if in.AnthropicKey != "" {
 			cfg.AnthropicKey = in.AnthropicKey
 		}
@@ -2611,7 +2808,7 @@ func (s *server) settings(w http.ResponseWriter, r *http.Request) {
 		if in.BashTimeoutSec > 0 {
 			cfg.BashTimeoutSec = in.BashTimeoutSec
 		}
-		rebuildAgent := workspaceChanged || in.Provider != "" || in.RouterEnabled != nil || in.UseLLMAdvisor != nil || in.AllowFable != nil || in.FableConfirmed != nil || in.AnthropicKey != ""
+		rebuildAgent := workspaceChanged || in.Provider != "" || in.Model != "" || in.RouterEnabled != nil || in.UseLLMAdvisor != nil || in.AllowFable != nil || in.FableConfirmed != nil || in.AnthropicKey != "" || in.APIKey != ""
 		var nextAgent *agent.Agent
 		var nextSession string
 		var nextHistory []llm.Message

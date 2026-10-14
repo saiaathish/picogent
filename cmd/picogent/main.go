@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -30,10 +31,11 @@ import (
 	"github.com/saiaathish/picogent/internal/setup"
 	"github.com/saiaathish/picogent/internal/taskstate"
 	"github.com/saiaathish/picogent/internal/tui"
+	"github.com/saiaathish/picogent/internal/update"
 	"github.com/saiaathish/picogent/internal/verify"
 )
 
-var version = "1.0.0"
+var version = "1.1.0-dev"
 
 // errHeadlessPermissionDenied is intentionally distinguishable from provider
 // and tool failures. CI callers can treat exit code 2 as "blocked pending
@@ -120,11 +122,9 @@ func run(args []string) error {
 }
 
 func runContext(ctx context.Context, args []string) error {
+	gui.Version = version
 	if len(args) == 0 {
-		if config.NeedsSetup() {
-			return gui.Run()
-		}
-		return tui.Run()
+		return gui.Run()
 	}
 	switch args[0] {
 	case "gui":
@@ -144,6 +144,15 @@ func runContext(ctx context.Context, args []string) error {
 	case "version", "-v", "--version":
 		fmt.Println("picogent", version)
 		return nil
+	case "_apply-update":
+		if len(args) != 4 {
+			return fmt.Errorf("invalid update invocation")
+		}
+		pid, err := strconv.Atoi(args[2])
+		if err != nil || pid <= 0 || args[3] != version {
+			return fmt.Errorf("invalid update process or version")
+		}
+		return update.Apply(ctx, args[1], version, pid)
 	case "help", "-h", "--help":
 		printHelp()
 		return nil
@@ -160,7 +169,7 @@ func printHelp() {
 	fmt.Print(`picogent — tiny coding agent
 
 Usage:
-  picogent              first run: install cores + browser setup; later: TUI
+  picogent              open the browser app and project hub
   picogent gui          browser chat (setup first if needed)
   picogent setup        open the browser setup again
   picogent tui          terminal UI

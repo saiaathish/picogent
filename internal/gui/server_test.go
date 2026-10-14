@@ -20,6 +20,7 @@ import (
 	"github.com/saiaathish/picogent/internal/goal"
 	"github.com/saiaathish/picogent/internal/llm"
 	"github.com/saiaathish/picogent/internal/perm"
+	"github.com/saiaathish/picogent/internal/projects"
 	"github.com/saiaathish/picogent/internal/scope"
 	"github.com/saiaathish/picogent/internal/session"
 	"github.com/saiaathish/picogent/internal/tools"
@@ -38,6 +39,38 @@ func TestTaskProgressClearEventKeepsNullTaskEnvelope(t *testing.T) {
 	}
 }
 
+func TestOpenAISettingsSavesKeyWithoutReturningIt(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	t.Setenv("PICOGENT_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	workspace := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace = workspace
+	s := &server{cfg: cfg, permCh: make(chan perm.Decision, 1), sessionID: "test-session"}
+	key := "disposable-test-key"
+	body := fmt.Sprintf(`{"provider":"openai","model":"gpt-4.1-mini","api_key":%q}`, key)
+	post := httptest.NewRecorder()
+	s.settings(post, httptest.NewRequest(http.MethodPost, "/api/settings", strings.NewReader(body)))
+	if post.Code != http.StatusOK {
+		t.Fatalf("settings POST = %d: %s", post.Code, post.Body.String())
+	}
+	if strings.Contains(post.Body.String(), key) {
+		t.Fatal("settings POST exposed API key")
+	}
+	get := httptest.NewRecorder()
+	s.settings(get, httptest.NewRequest(http.MethodGet, "/api/settings", nil))
+	if get.Code != http.StatusOK || strings.Contains(get.Body.String(), key) || !strings.Contains(get.Body.String(), `"has_api_key":true`) {
+		t.Fatalf("settings GET exposed key or lost key status: %d %s", get.Code, get.Body.String())
+	}
+	loaded, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Provider != config.ProviderOpenAI || loaded.Model != "gpt-4.1-mini" || loaded.APIKey != key {
+		t.Fatalf("saved OpenAI settings not applied: provider=%q model=%q key_set=%v", loaded.Provider, loaded.Model, loaded.APIKey != "")
+	}
+}
+
 func TestGUIOnlyAcceptsLoopbackListenAddresses(t *testing.T) {
 	for _, tc := range []struct {
 		addr string
@@ -53,6 +86,48 @@ func TestGUIOnlyAcceptsLoopbackListenAddresses(t *testing.T) {
 		if got := loopbackListenAddress(tc.addr); got != tc.want {
 			t.Errorf("loopbackListenAddress(%q) = %v, want %v", tc.addr, got, tc.want)
 		}
+	}
+}
+
+func TestStartupWorkspaceFollowsSelectedProjectAcrossFolders(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	selected := t.TempDir()
+	other := t.TempDir()
+	p, err := projects.Add("selected", selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(other)
+	if got := startupWorkspace(); got != p.Path {
+		t.Fatalf("startup workspace=%q, want %q", got, p.Path)
+	}
+	if err := os.RemoveAll(selected); err != nil {
+		t.Fatal(err)
+	}
+	if got := startupWorkspace(); got != "" {
+		t.Fatalf("missing selected folder should fall back to saved workspace, got %q", got)
+	}
+}
+
+func TestExistingGUIReusesOnlyThisProfile(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	s := &server{}
+	running := httptest.NewServer(s.Handler())
+	defer running.Close()
+	addr := strings.TrimPrefix(running.URL, "http://")
+	if got := existingGUIURL(addr); got != running.URL+"/setup.html" {
+		t.Fatalf("existing GUI URL=%q", got)
+	}
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	if got := existingGUIURL(addr); got != "" {
+		t.Fatalf("different profile reused GUI %q", got)
+	}
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer other.Close()
+	if got := existingGUIURL(strings.TrimPrefix(other.URL, "http://")); got != "" {
+		t.Fatalf("unmarked service reused as GUI %q", got)
 	}
 }
 

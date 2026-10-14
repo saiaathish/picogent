@@ -37,3 +37,33 @@ func TestAddAndSwitch(t *testing.T) {
 		t.Fatalf("path=%q", p2.Path)
 	}
 }
+
+func TestCreateMakesOnlyOneNewFolderAndSelectsIt(t *testing.T) {
+	t.Setenv("PICOGENT_HOME", t.TempDir())
+	parent := t.TempDir()
+	p, err := projects.Create(parent, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Path != filepath.Join(parent, "demo") {
+		t.Fatalf("path=%q", p.Path)
+	}
+	if st, err := os.Stat(p.Path); err != nil || !st.IsDir() {
+		t.Fatalf("created folder: %v", err)
+	}
+	list, current, err := projects.List()
+	if err != nil || len(list) != 1 || current != p.ID {
+		t.Fatalf("list=%v current=%q err=%v", list, current, err)
+	}
+	if _, err := projects.Create(parent, "demo"); err == nil {
+		t.Fatal("existing folder was accepted")
+	}
+	for _, name := range []string{"", ".", "..", "../escape", "a/b", `a\b`} {
+		if _, err := projects.Create(parent, name); err == nil {
+			t.Fatalf("unsafe name %q was accepted", name)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(parent, "escape")); !os.IsNotExist(err) {
+		t.Fatalf("escaped parent: %v", err)
+	}
+}

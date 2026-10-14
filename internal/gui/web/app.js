@@ -24,7 +24,6 @@ const contextPop = $("context-pop");
 const contextPopPct = $("context-pop-pct");
 const contextPopTokens = $("context-pop-tokens");
 const contextPopNote = $("context-pop-note");
-const threadList = $("thread-list");
 const shell = $("shell");
 const reviewRail = $("rail-review");
 const sideRail = $("rail-side");
@@ -63,6 +62,7 @@ const taskActivityBtn = $("task-progress-activity");
 const taskAnnouncerEl = $("task-progress-announcer");
 const statusAnnouncerEl = $("status-announcer");
 let threadsCache = [];
+let projectData = { projects: [], chats: {}, current_id: "", suggested_parent: "" };
 let chatsOpen = false;
 let sideOpen = false;
 let sideBusy = false;
@@ -589,26 +589,69 @@ document.querySelectorAll(".review-tab").forEach((b) => {
 });
 
 async function loadProjects() {
-  const data = await (await fetch("/api/projects")).json();
-  projectList.innerHTML = "";
-  const active = (data.projects || []).find((p) => p.id === data.current_id);
-  const sub = $("active-project");
-  if (sub) {
-    sub.textContent = active ? active.name + " · " + (active.path.split("/").slice(-2).join("/") || "") : "";
-  }
-  for (const p of data.projects || []) {
+  const res = await fetch("/api/projects");
+  if (!res.ok) throw new Error(await res.text());
+  projectData = await res.json();
+  renderProjects();
+}
+
+function renderProjects() {
+  const q = (threadSearch.value || "").toLowerCase().trim();
+  projectList.replaceChildren();
+  for (const p of projectData.projects || []) {
+    const isActive = p.id === projectData.current_id;
+    const chats = isActive ? threadsCache : (projectData.chats?.[p.id] || []);
+    const projectMatches = p.name.toLowerCase().includes(q);
+    const visibleChats = chats.filter((s) => !q || projectMatches || (s.title || "").toLowerCase().includes(q));
+    if (q && !p.name.toLowerCase().includes(q) && !visibleChats.length) continue;
+    const group = document.createElement("div");
+    group.className = "project-group";
     const row = document.createElement("button");
     row.type = "button";
-    row.className = "project-item" + (p.id === data.current_id ? " is-active" : "");
+    row.className = "project-item" + (isActive ? " is-active" : "");
+    row.setAttribute("aria-current", isActive ? "true" : "false");
     const name = document.createElement("span");
     name.className = "project-name";
     name.textContent = p.name;
     const path = document.createElement("small");
     path.textContent = p.path.split("/").slice(-2).join("/");
+    row.title = p.path;
     row.appendChild(name);
     row.appendChild(path);
     row.onclick = () => switchProject(p.id);
-    projectList.appendChild(row);
+    group.appendChild(row);
+    const list = document.createElement("div");
+    list.className = "project-chats";
+    for (const s of visibleChats) {
+      const chatRow = document.createElement("div");
+      chatRow.className = "project-chat-row";
+      const chat = document.createElement("button");
+      chat.type = "button";
+      chat.className = "thread-item" + (isActive && s.id === sessionId ? " is-active" : "");
+      chat.textContent = s.title || "New chat";
+      chat.title = s.title || "New chat";
+      chat.onclick = () => isActive ? loadThread(s.id) : switchProject(p.id, s.id);
+      chatRow.appendChild(chat);
+      if (isActive) {
+        const del = document.createElement("button");
+        del.type = "button";
+        del.className = "project-chat-delete";
+        del.setAttribute("aria-label", "Delete chat: " + (s.title || "New chat"));
+        del.title = "Delete chat";
+        del.textContent = "×";
+        del.onclick = () => confirmDeleteThread(s.id, s.title || "New chat", del);
+        chatRow.appendChild(del);
+      }
+      list.appendChild(chatRow);
+    }
+    if (isActive && !chats.length && !q) {
+      const empty = document.createElement("p");
+      empty.className = "project-empty";
+      empty.textContent = "No chats yet";
+      list.appendChild(empty);
+    }
+    group.appendChild(list);
+    projectList.appendChild(group);
   }
 }
 
@@ -643,21 +686,76 @@ async function pickProjectFolder() {
   }
 }
 
-async function switchProject(id) {
+async function switchProject(id, chatId) {
   if (busy) return;
-  const res = await fetch("/api/projects", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ action: "switch", id }),
-  });
-  if (!res.ok) return;
-  await applyProjectSwitch(await res.json());
+  try {
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "switch", id }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    await applyProjectSwitch(await res.json());
+    if (chatId) await loadThread(chatId);
+  } catch (err) {
+    add("error", err.message || "Couldn't switch project");
+  }
 }
 
 $("add-project").onclick = pickProjectFolder;
 
+const projectDialog = $("new-project-dialog");
+const projectName = $("new-project-name");
+const projectParent = $("new-project-parent");
+const projectError = $("new-project-error");
+$("create-project").onclick = () => {
+  if (busy) return;
+  projectName.value = "";
+  projectParent.value = projectData.suggested_parent || "";
+  projectError.hidden = true;
+  projectDialog.showModal();
+  projectName.focus();
+};
+$("cancel-project").onclick = () => projectDialog.close();
+$("choose-project-parent").onclick = async () => {
+  try {
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "choose-parent" }),
+    });
+    if (res.status === 204) return;
+    if (!res.ok) throw new Error(await res.text());
+    projectParent.value = (await res.json()).path;
+  } catch (err) {
+    projectError.textContent = err.message || "Couldn't choose a folder";
+    projectError.hidden = false;
+  }
+};
+$("new-project-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const submit = $("submit-project");
+  submit.disabled = true;
+  projectError.hidden = true;
+  try {
+    const res = await fetch("/api/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "create", name: projectName.value.trim(), parent: projectParent.value.trim() }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    projectDialog.close();
+    await applyProjectSwitch(await res.json());
+  } catch (err) {
+    projectError.textContent = err.message || "Couldn't create project";
+    projectError.hidden = false;
+  } finally {
+    submit.disabled = false;
+  }
+};
+
 function syncScrim() {
-  const on = chatsOpen || reviewOpen || sideOpen;
+  const on = (chatsOpen && window.matchMedia("(max-width: 900px)").matches) || reviewOpen || sideOpen;
   scrim.hidden = !on;
 }
 
@@ -980,31 +1078,7 @@ async function loadThreads() {
 }
 
 function renderThreads() {
-  const q = (threadSearch.value || "").toLowerCase().trim();
-  threadList.innerHTML = "";
-  for (const s of threadsCache) {
-    if (q && !(s.title || "").toLowerCase().includes(q)) continue;
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "thread-item" + (s.id === sessionId ? " is-active" : "");
-    row.dataset.id = s.id;
-    const title = document.createElement("span");
-    title.className = "thread-title";
-    title.textContent = s.title || "New chat";
-    const del = document.createElement("button");
-    del.type = "button";
-    del.className = "thread-del";
-    del.textContent = "×";
-    del.title = "Delete";
-    del.onclick = (e) => {
-      e.stopPropagation();
-      deleteThread(s.id);
-    };
-    row.appendChild(title);
-    row.appendChild(del);
-    row.onclick = () => loadThread(s.id);
-    threadList.appendChild(row);
-  }
+  renderProjects();
 }
 
 function formatRecentDate(value) {
@@ -1049,7 +1123,7 @@ function renderRecentSessions() {
   recentSessionListEl.replaceChildren(...rows);
 }
 
-threadSearch.addEventListener("input", renderThreads);
+threadSearch.addEventListener("input", renderProjects);
 
 async function loadThread(id) {
   if (busy) return;
@@ -1106,12 +1180,50 @@ async function newChat() {
   promptEl.focus();
 }
 
+let pendingDeleteThread = "";
+let deleteReturnFocus = null;
+const deleteChatDialog = $("delete-chat-dialog");
+function confirmDeleteThread(id, title, trigger) {
+  pendingDeleteThread = id;
+  deleteReturnFocus = trigger;
+  $("delete-chat-name").textContent = title;
+  $("delete-chat-error").hidden = true;
+  $("confirm-delete-chat").disabled = false;
+  deleteChatDialog.showModal();
+  $("cancel-delete-chat").focus();
+}
+$("cancel-delete-chat")?.addEventListener("click", () => deleteChatDialog.close());
+deleteChatDialog?.addEventListener("close", () => {
+  pendingDeleteThread = "";
+  if (deleteReturnFocus?.isConnected) deleteReturnFocus.focus();
+  deleteReturnFocus = null;
+});
+$("confirm-delete-chat")?.addEventListener("click", async () => {
+  const id = pendingDeleteThread;
+  if (!id) return;
+  const button = $("confirm-delete-chat");
+  const error = $("delete-chat-error");
+  button.disabled = true;
+  error.hidden = true;
+  try {
+    const wasCurrent = id === sessionId;
+    await deleteThread(id);
+    deleteChatDialog.close();
+    if (wasCurrent) $("new-chat").focus();
+  } catch (err) {
+    error.textContent = err.message || "Could not delete chat.";
+    error.hidden = false;
+    button.disabled = false;
+  }
+});
+
 async function deleteThread(id) {
-  await fetch("/api/sessions", {
+  const res = await fetch("/api/sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ action: "delete", id }),
   });
+  if (!res.ok) throw new Error((await res.text()).trim() || "Could not delete chat.");
   if (id === sessionId) await newChat();
   else await loadThreads();
 }
@@ -1121,6 +1233,7 @@ async function refresh() {
   const s = await (await fetch("/api/state")).json();
   if (epoch !== viewEpoch) return;
   renderTopContext(s);
+  window.PicogentUsage?.setProvider(s.provider, s.usage_supported === true, s.model);
   sessionId = s.session_id || sessionId;
   currentMode = s.mode || "safe";
   currentTaskMode = s.task_mode || "agent";
@@ -2310,7 +2423,57 @@ syncEmpty();
 refresh().then(() => {
   loadHeroPrompts(false);
 });
+checkForUpdate();
+setInterval(checkForUpdate, 60 * 60 * 1000);
 loadSideChat();
+
+let offeredUpdate = null;
+async function checkForUpdate() {
+  try {
+    const res = await fetch("/api/update");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.available) return;
+    offeredUpdate = data;
+    $("update-available").hidden = false;
+  } catch (_) { /* Offline release checks never interrupt the app. */ }
+}
+
+$("update-available")?.addEventListener("click", () => {
+  if (!offeredUpdate) return;
+  $("update-description").textContent = `${offeredUpdate.tag} is available (you have ${offeredUpdate.current}).`;
+  $("update-status").hidden = true;
+  $("start-update").disabled = false;
+  $("update-dialog").showModal();
+});
+$("cancel-update")?.addEventListener("click", () => $("update-dialog").close());
+$("start-update")?.addEventListener("click", async () => {
+  const button = $("start-update");
+  const status = $("update-status");
+  button.disabled = true;
+  status.hidden = false;
+  status.textContent = "Opening Terminal…";
+  try {
+    const res = await fetch("/api/update", { method: "POST" });
+    if (!res.ok) throw new Error((await res.text()).trim());
+    status.textContent = "Follow progress in Terminal. This page will reload when Picogent restarts.";
+    let wentAway = false;
+    const started = Date.now();
+    const timer = setInterval(async () => {
+      if (Date.now() - started > 180000) { clearInterval(timer); return; }
+      try {
+        const probe = await fetch("/api/instance", { cache: "no-store" });
+        if (probe.ok && (wentAway || probe.headers.get("X-Picogent-Version") === offeredUpdate.tag.slice(1))) {
+          clearInterval(timer);
+          location.reload();
+        }
+      } catch (_) { wentAway = true; }
+    }, 1000);
+  } catch (err) {
+    status.textContent = err.message || "Could not start update.";
+    button.disabled = false;
+  }
+});
 
 /* ─── PicoChat Companion + AI prompt recommendations ─── */
 function setSideBusyUI(on) {

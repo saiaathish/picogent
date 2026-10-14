@@ -173,6 +173,16 @@ func Path() (string, error) {
 }
 
 func Load() (Config, error) {
+	return load(".")
+}
+
+// LoadWorkspace applies a project's optional model suggestion from the
+// selected workspace, even when the caller started in another directory.
+func LoadWorkspace(workspace string) (Config, error) {
+	return load(workspace)
+}
+
+func load(projectDir string) (Config, error) {
 	cfg := Default()
 	path, err := Path()
 	if err != nil {
@@ -181,7 +191,10 @@ func Load() (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return overlayEnv(preferCodex(normalizeModel(overlayProject(cfg)))), nil
+			if projectDir == "" {
+				projectDir = cfg.Workspace
+			}
+			return overlayEnv(preferCodex(normalizeModel(overlayProject(cfg, projectDir)))), nil
 		}
 		return cfg, err
 	}
@@ -200,7 +213,10 @@ func Load() (Config, error) {
 	if cfg.Provider == "" {
 		cfg.Provider = ProviderCodex
 	}
-	return overlayEnv(preferCodex(normalizeModel(overlayProject(cfg)))), nil
+	if projectDir == "" {
+		projectDir = cfg.Workspace
+	}
+	return overlayEnv(preferCodex(normalizeModel(overlayProject(cfg, projectDir)))), nil
 }
 
 func Save(cfg Config) error {
@@ -438,8 +454,8 @@ func overlayEnv(cfg Config) Config {
 	return cfg
 }
 
-func overlayProject(cfg Config) Config {
-	data, err := os.ReadFile(".picogent.yaml")
+func overlayProject(cfg Config, projectDir string) Config {
+	data, err := os.ReadFile(filepath.Join(projectDir, ".picogent.yaml"))
 	if err != nil {
 		return cfg
 	}

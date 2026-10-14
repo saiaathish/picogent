@@ -42,6 +42,7 @@
             <option value="quadcode">Claude Code</option>
             <option value="opencode">OpenCode (Zen/Go)</option>
             <option value="antigravity">Antigravity</option>
+            <option value="openai">OpenAI API</option>
           </select>
         </div>
 
@@ -54,9 +55,16 @@
         </div>
 
         <div class="field model-field">
-          <label for="model">Model</label>
+          <label for="model" id="model-label">Model</label>
           <select id="model" class="picker"></select>
+          <input id="openai-model" type="text" autocomplete="off" spellcheck="false" placeholder="gpt-4.1-mini" hidden />
           <p class="model-desc" id="model-desc" aria-live="polite"></p>
+        </div>
+
+        <div class="field" id="openai-block" hidden>
+          <label for="openai-key">OpenAI API key</label>
+          <input id="openai-key" type="password" autocomplete="new-password" placeholder="Enter a key to replace the current one" />
+          <p class="field-hint" id="openai-key-hint">OpenAI bills usage when you send prompts.</p>
         </div>
 
         <div class="field" id="anthropic-block" hidden>

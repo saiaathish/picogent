@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"github.com/saiaathish/picogent/internal/app"
 	"github.com/saiaathish/picogent/internal/config"
@@ -44,17 +45,34 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		ws := s.cfg.Workspace
 		s.mu.Unlock()
+		chats := make(map[string][]session.Meta, len(list))
+		for _, p := range list {
+			metas, err := session.ListMeta(p.Path)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			chats[p.ID] = metas
+		}
+		home, _ := os.UserHomeDir()
+		parent := home
+		if info, err := os.Stat(filepath.Join(home, "Documents")); err == nil && info.IsDir() {
+			parent = filepath.Join(home, "Documents")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"projects":   list,
-			"current_id": current,
-			"workspace":  ws,
+			"projects":         list,
+			"current_id":       current,
+			"workspace":        ws,
+			"chats":            chats,
+			"suggested_parent": parent,
 		})
 	case http.MethodPost:
 		var in struct {
 			Action string `json:"action"`
 			Name   string `json:"name"`
 			Path   string `json:"path"`
+			Parent string `json:"parent"`
 			ID     string `json:"id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -62,6 +80,30 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch in.Action {
+		case "choose-parent":
+			path, err := folderpick.Choose("Choose a parent folder for the new project")
+			if errors.Is(err, folderpick.ErrCancelled) {
+				w.WriteHeader(204)
+				return
+			}
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"path": path})
+		case "create":
+			p, err := projects.Create(in.Parent, in.Name)
+			if err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			res, err := s.switchWorkspace(p.Path)
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			s.writeProjectSwitch(w, p, res)
 		case "pick":
 			path, err := folderpick.Choose("Select a project folder")
 			if errors.Is(err, folderpick.ErrCancelled) {
@@ -114,7 +156,7 @@ func (s *server) projectsAPI(w http.ResponseWriter, r *http.Request) {
 			}
 			w.WriteHeader(204)
 		default:
-			http.Error(w, "action must be add, switch, or remove", 400)
+			http.Error(w, "action must be choose-parent, create, pick, add, switch, or remove", 400)
 		}
 	default:
 		http.Error(w, "GET or POST only", 405)

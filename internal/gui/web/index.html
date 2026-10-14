@@ -13,28 +13,79 @@
     <div class="scrim" id="scrim" hidden></div>
 
     <aside class="drawer drawer-left" id="rail-left" aria-label="Chats">
+      <button type="button" class="hub-new-chat" id="new-chat">＋ New chat</button>
       <div class="drawer-head">
         <p class="drawer-kicker">Projects</p>
-        <button type="button" class="ghost-btn" id="add-project">Select folder</button>
+        <button type="button" class="ghost-btn" id="add-project">Open folder</button>
       </div>
-      <nav class="project-list" id="project-list" aria-label="Projects"></nav>
-      <div class="drawer-divider"></div>
-      <div class="drawer-head">
-        <p class="drawer-kicker">Chats</p>
-        <button type="button" class="ghost-btn" id="new-chat">New</button>
-      </div>
-      <p class="drawer-sub" id="active-project"></p>
+      <button type="button" class="hub-create" id="create-project">＋ New project</button>
       <label class="search-wrap">
         <span class="sr-only">Search chats</span>
         <input id="thread-search" type="search" placeholder="Search" autocomplete="off" />
       </label>
-      <nav class="thread-list" id="thread-list" aria-label="Chat history"></nav>
+      <nav class="project-list" id="project-list" aria-label="Projects and chats"></nav>
       <div class="drawer-foot">
         <a href="/settings.html">Settings</a>
         <a href="/settings.html#extensions">Extensions</a>
         <a href="/setup.html">Setup</a>
       </div>
     </aside>
+
+    <dialog class="project-dialog" id="new-project-dialog" aria-labelledby="new-project-title">
+      <form id="new-project-form">
+        <h2 id="new-project-title">New project</h2>
+        <p>Create a folder and open it in Picogent.</p>
+        <label for="new-project-name">Folder name</label>
+        <input id="new-project-name" name="name" required autocomplete="off" placeholder="my-project" />
+        <label for="new-project-parent">Create inside</label>
+        <div class="project-parent-row">
+          <input id="new-project-parent" name="parent" required autocomplete="off" />
+          <button type="button" id="choose-project-parent">Browse…</button>
+        </div>
+        <p class="project-form-error" id="new-project-error" role="alert" hidden></p>
+        <div class="project-form-actions">
+          <button type="button" id="cancel-project">Cancel</button>
+          <button type="submit" id="submit-project">Create project</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog class="project-dialog delete-dialog" id="delete-chat-dialog" aria-labelledby="delete-chat-title" aria-describedby="delete-chat-description">
+      <h2 id="delete-chat-title">Delete chat?</h2>
+      <p id="delete-chat-description">Are you sure you want to delete this chat?</p>
+      <p class="delete-chat-name" id="delete-chat-name"></p>
+      <p class="project-form-error" id="delete-chat-error" role="alert" hidden></p>
+      <div class="project-form-actions">
+        <button type="button" id="cancel-delete-chat">No</button>
+        <button type="button" id="confirm-delete-chat">Yes, delete</button>
+      </div>
+    </dialog>
+
+    <dialog class="project-dialog update-dialog" id="update-dialog" aria-labelledby="update-title">
+      <h2 id="update-title">Picogent update</h2>
+      <p id="update-description">A newer release is available.</p>
+      <p>Updating opens Terminal so you can see the download and build progress. Picogent restarts after the new build is verified.</p>
+      <p class="project-form-error" id="update-status" role="status" hidden></p>
+      <div class="project-form-actions">
+        <button type="button" id="cancel-update">Not now</button>
+        <button type="button" id="start-update">Update in Terminal</button>
+      </div>
+    </dialog>
+
+    <dialog class="project-dialog usage-dialog" id="usage-dialog" aria-labelledby="usage-title" aria-describedby="usage-note">
+      <div class="usage-heading">
+        <div><h2 id="usage-title">Usage limits</h2><p id="usage-plan"></p></div>
+        <button type="button" class="icon" id="close-usage" aria-label="Close usage limits">×</button>
+      </div>
+      <p id="usage-message" role="status">Loading usage limits…</p>
+      <div id="usage-groups"></div>
+      <p class="usage-note" id="usage-note">Codex limits are shared across your account, including other apps and chats.</p>
+      <div class="usage-footer">
+        <span id="usage-updated"></span>
+        <button type="button" class="ghost-btn" id="refresh-usage">Refresh</button>
+      </div>
+      <a class="usage-dashboard" href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noopener noreferrer">Open Codex usage dashboard ↗</a>
+    </dialog>
 
     <div class="stage">
       <header class="top">
@@ -72,6 +123,8 @@
           </div>
         </div>
         <div class="top-right">
+          <button type="button" class="usage-pill" id="open-usage" aria-haspopup="dialog" aria-controls="usage-dialog" hidden>Usage<span id="usage-summary"></span></button>
+          <button type="button" class="update-pill" id="update-available" aria-label="Update available" title="Update available" hidden>Update available</button>
           <div class="mode" id="mode-seg" role="group" aria-label="Permission mode">
             <button type="button" data-mode="safe">Safe</button>
             <button type="button" data-mode="fast">Fast</button>
@@ -247,6 +300,7 @@
   </div>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
   <script src="/render.js"></script>
+  <script src="/usage.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

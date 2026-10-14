@@ -3,6 +3,7 @@
 package claudeauth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,12 +41,16 @@ func (c Cred) Expired() bool {
 
 // Load reads Claude Code OAuth from macOS Keychain or ~/.claude/.credentials.json.
 func Load() (Cred, error) {
+	return LoadContext(context.Background())
+}
+
+func LoadContext(ctx context.Context) (Cred, error) {
 	// Explicit config dir (tests / CLAUDE_CONFIG_DIR) always wins.
 	if os.Getenv("CLAUDE_CONFIG_DIR") != "" {
 		return loadFile()
 	}
 	if runtime.GOOS == "darwin" {
-		if c, err := loadKeychain(); err == nil && c.AccessToken != "" {
+		if c, err := loadKeychain(ctx); err == nil && c.AccessToken != "" {
 			return c, nil
 		}
 	}
@@ -67,8 +72,8 @@ func Token() (string, error) {
 	return c.AccessToken, nil
 }
 
-func loadKeychain() (Cred, error) {
-	out, err := exec.Command("security", "find-generic-password", "-s", keychainService, "-w").Output()
+func loadKeychain(ctx context.Context) (Cred, error) {
+	out, err := exec.CommandContext(ctx, "security", "find-generic-password", "-s", keychainService, "-w").Output()
 	if err != nil {
 		return Cred{}, err
 	}
