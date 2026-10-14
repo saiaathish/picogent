@@ -77,6 +77,7 @@ function updateSetupModelDesc() {
 }
 
 function paint(st) {
+  window.AntigravityCheck.setProvider(selectedProvider);
   status = st;
   providerInputs.forEach((input) => {
     input.checked = input.value === selectedProvider;
@@ -332,3 +333,5 @@ refresh().then((st) => {
     showStage(0);
   }
 });
+
+window.AntigravityCheck.afterCheck = refresh;

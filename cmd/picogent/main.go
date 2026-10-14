@@ -141,6 +141,8 @@ func runContext(ctx context.Context, args []string) error {
 		return runLogin(args[1:])
 	case "mcp":
 		return runMCP(args[1:])
+	case "check":
+		return runConnectionCheck(ctx, args[1:])
 	case "version", "-v", "--version":
 		fmt.Println("picogent", version)
 		return nil
@@ -178,6 +180,7 @@ Usage:
   picogent login claude connect Claude Code CLI (subscription, no API key)
   picogent login opencode connect OpenCode Zen/Go (opencode auth login)
   picogent login antigravity connect Antigravity CLI (agy)
+  picogent check antigravity  check login and model access (no generation)
   picogent mcp          list connected MCP tools
   picogent init         write ~/.picogent/config.yaml
   picogent version

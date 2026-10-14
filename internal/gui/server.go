@@ -432,6 +432,7 @@ func (s *server) Handler() http.Handler {
 	api("/api/setup", []string{http.MethodGet}, s.setupStatus)
 	api("/api/setup/install", []string{http.MethodPost}, s.setupInstall)
 	api("/api/setup/login", []string{http.MethodPost}, s.setupLogin)
+	api("/api/setup/check", []string{http.MethodPost}, s.setupCheck)
 	api("/api/setup/finish", []string{http.MethodPost}, s.setupFinish)
 	api("/api/chat", []string{http.MethodPost}, s.chat)
 	api("/api/permission", []string{http.MethodPost}, s.permission)

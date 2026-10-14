@@ -54,6 +54,16 @@
           <button type="button" id="provider-auth-btn">Log in</button>
         </div>
 
+
+        <div class="field" id="antigravity-check" hidden>
+          <button type="button" class="ghost-btn" id="antigravity-check-btn">Check connection</button>
+          <p class="field-hint" id="antigravity-check-status" role="status" aria-live="polite"></p>
+          <details id="antigravity-check-details" hidden>
+            <summary>Connection details</summary>
+            <ul id="antigravity-check-list"></ul>
+          </details>
+        </div>
+
         <div class="field model-field">
           <label for="model" id="model-label">Model</label>
           <select id="model" class="picker"></select>
@@ -112,6 +122,7 @@
 
     <p class="settings-foot" id="connection"></p>
   </div>
+  <script src="/connection-check.js"></script>
   <script src="/settings.js"></script>
 </body>
 </html>

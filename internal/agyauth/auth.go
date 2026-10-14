@@ -4,6 +4,7 @@ package agyauth
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
@@ -101,13 +102,22 @@ func Load() (Cred, error) {
 }
 
 func LoadContext(ctx context.Context) (Cred, error) {
-	if c, err := loadFile(TokenPath()); err == nil && c.AccessToken != "" {
-		return c, nil
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
+	file, fileErr := loadFile(TokenPath())
+	if fileErr == nil && file.AccessToken != "" && !file.Expired() {
+		return file, nil
 	}
-	if runtime.GOOS == "darwin" {
-		if c, err := loadKeychain(ctx); err == nil && c.AccessToken != "" {
-			return c, nil
+	// An explicit home is isolated: do not mix it with the host's Keychain login.
+	if runtime.GOOS == "darwin" && os.Getenv("PICOGENT_AGY_HOME") == "" {
+		if keychain, err := loadKeychain(ctx); err == nil && keychain.AccessToken != "" {
+			if !keychain.Expired() || file.AccessToken == "" {
+				return keychain, nil
+			}
 		}
+	}
+	if fileErr == nil && file.AccessToken != "" {
+		return file, nil
 	}
 	return Cred{}, errors.New("Antigravity is not logged in")
 }
@@ -274,6 +284,15 @@ func loadKeychain(ctx context.Context) (Cred, error) {
 		}
 	}
 	raw := strings.TrimSpace(string(out))
+	// github.com/zalando/go-keyring encodes macOS secret data with this prefix.
+	const prefix = "go-keyring-base64:"
+	if strings.HasPrefix(raw, prefix) {
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(raw, prefix))
+		if err != nil {
+			return Cred{}, errors.New("invalid Antigravity Keychain encoding")
+		}
+		raw = string(decoded)
+	}
 	// Keychain may store raw JSON or a nested blob.
 	if strings.HasPrefix(raw, "{") {
 		return parseCred([]byte(raw))
