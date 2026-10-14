@@ -2512,6 +2512,9 @@ function connectEvents() {
 		const countedPass = e.kind === "test" && Number.isInteger(e.count) && e.count > 0 && (e.added === undefined || e.added === 0);
 		const passed = !failed && e.status === "done" && (token === "PASS" || (!token && countedPass));
 		const noRunner = /no test runner found/i.test(evidence);
+		// A project without a runner has no check result to display. Keep the
+		// backend's inconclusive evidence, without adding a redundant chat card.
+		if (noRunner && token === "INCONCLUSIVE" && !failed) return;
 		const note = document.createElement("div");
 		note.className = "test-result" + (failed ? " is-fail" : passed ? " is-pass" : " is-unverified");
 		const title = document.createElement("strong");
