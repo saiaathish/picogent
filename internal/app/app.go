@@ -74,9 +74,11 @@ func BuildContext(ctx context.Context, cfg config.Config) (*agent.Agent, error) 
 	if err != nil {
 		return nil, err
 	}
+	disableExternalTools := os.Getenv("PICOGENT_DISABLE_EXTERNAL_TOOLS") == "1"
 	reg := tools.NewRegistry(tools.Context{
-		Workspace:   cfg.Workspace,
-		BashTimeout: time.Duration(cfg.BashTimeoutSec) * time.Second,
+		Workspace:            cfg.Workspace,
+		BashTimeout:          time.Duration(cfg.BashTimeoutSec) * time.Second,
+		DisableExternalTools: disableExternalTools,
 	})
 	ready := false
 	defer func() {
@@ -84,18 +86,20 @@ func BuildContext(ctx context.Context, cfg config.Config) (*agent.Agent, error) 
 			reg.Close()
 		}
 	}()
-	if servers, err := mcpbridge.LoadServers(cfg.Workspace); err != nil {
-		return nil, err
-	} else if len(servers) > 0 {
-		ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
-		mgr, warns := mcpbridge.ConnectBestEffort(ctx, servers)
-		cancel()
-		for _, w := range warns {
-			fmt.Fprintf(os.Stderr, "picogent: mcp: %s\n", w)
-		}
-		if err := reg.AttachMCP(mgr); err != nil {
-			mgr.Close()
+	if !disableExternalTools {
+		if servers, err := mcpbridge.LoadServers(cfg.Workspace); err != nil {
 			return nil, err
+		} else if len(servers) > 0 {
+			ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
+			mgr, warns := mcpbridge.ConnectBestEffort(ctx, servers)
+			cancel()
+			for _, w := range warns {
+				fmt.Fprintf(os.Stderr, "picogent: mcp: %s\n", w)
+			}
+			if err := reg.AttachMCP(mgr); err != nil {
+				mgr.Close()
+				return nil, err
+			}
 		}
 	}
 	gate := perm.New(cfg.Mode, cfg.Workspace, nil)

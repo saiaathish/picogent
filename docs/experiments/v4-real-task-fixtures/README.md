@@ -67,7 +67,9 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -v test_ledger.py
 
 The one-shot iterable makes a second traversal fail deterministically. The bounded near-miss is omitting a category whose positive and negative events cancel to zero; the tests also check ordering and input immutability.
 
-## Blind scoring rubric
+## Blind scoring rubric (deferred)
+
+This rubric is a target for a future evidence-collection step, not a score emitted by the current live runner. The runner intentionally does not retain raw diffs, oracle stdout/per-check results, question counts, repair counts, or browser evidence. Do not emit numeric correctness, in-scope edit-quality, question, repair, or verification scores from current artifacts; mark those dimensions `UNVERIFIED` rather than reconstructing them from hashes or inferring them from plausible code.
 
 Score candidate outputs as anonymous A/B, with candidate order randomized independently for each task/repetition. The scorer must not see the v3/v4 label until scores are recorded. Use the same rubric and task prompt for both candidates.
 
@@ -77,7 +79,7 @@ Score candidate outputs as anonymous A/B, with candidate order randomized indepe
 - **Repairs:** count post-first-attempt edit/retest cycles needed before both oracle checks pass; report the raw count.
 - **Verification (0–2):** 0 no relevant check reported; 1 check is claimed but output/result is incomplete; 2 the exact oracle is run and its outcome is accurately reported. A command not run is not a pass.
 
-Keep the raw diff, oracle output, question/repair counts, and browser verification state with each anonymous result. Do not infer success from plausible code or from one passing lane. These small synthetic tasks are a bounded comparison sample, not proof of general SWE quality.
+Do not score these dimensions from the current runner artifact: their required evidence is not retained. The runner reports the aggregate acceptance status and changed paths only. Do not infer success from plausible code or from one passing lane. These small synthetic tasks are a bounded comparison sample, not proof of general SWE quality.
 
 ## Local oracle smoke check
 
@@ -88,3 +90,19 @@ The frontend baseline was served from a prepared temporary copy and exercised in
 ## Fixture integrity
 
 `manifest.json` binds each task to its pristine tree digest, fixed prompt, allowed paths, and oracle. Recompute the digests after any intentional fixture edit and review that edit as a task-definition change; do not silently update a digest to make verification green. A modified candidate's digest is expected to differ from the pristine digest and must not be reused for another variant or repetition.
+
+## Live v3/v4 runner (#812)
+
+Run from a terminal on macOS so the browser lane can pause for a real BrowserOS check:
+
+```sh
+python3 scripts/v4_live_task_runner.py --live --repetitions 2
+```
+
+Use `--task go-deadline` (repeatable) to bound a run to selected fixtures. The runner builds the exact pinned source worktrees serially with one Go build worker, one `GOMAXPROCS`, and a 1 GiB runtime memory limit. Before any provider request it verifies the fixture digests, source availability, existing Codex access-token expiry for the full configured run budget, and macOS sandbox canaries.
+
+Authentication uses the existing ChatGPT Codex login only. The temporary private `PICOGENT_CODEX_HOME/auth.json` contains only the current access token and account ID; the refresh token and ID token are never copied. The provider client can read that per-run auth copy but cannot read the host `~/.codex` directory or write either credential directory. Every executable discovered on the host `PATH` is shadowed by a private wrapper that enters a nested sandbox denying both auth directories, network access, and writes outside the task-owned temporary root; Bash additionally receives a minimal environment. The runner tests a direct-tool wrapper and the Bash wrapper before making a provider request. Only the provider-client sandbox grants outbound network and the narrow `com.apple.trustd.agent` lookup required for Go TLS verification. No API key or paid API endpoint is used.
+
+The result artifact keeps hashes, paths and file modes, exit/acceptance status, observed latency, tool-start markers, bounded task/turn status codes, allowlisted stop reasons, and a coarse error category only. Raw model/provider output, free-form blocker text, diffs, oracle output, and auth data are not retained. Candidate A/B outcomes stay blind in the result artifact. An optional `--source-map-output <new-path>` writes the task/repetition-to-v3/v4-SHA map as a separate mode-`0600` file after all candidate results and objective acceptance statuses have been recorded; review the blind result artifact before opening that file. Provider HTTP request counts, actual served model, token totals, and manual rubric scores are `UNVERIFIED`. The tool-start threshold is a reactive stop signal—not a hard pre-dispatch call cap—so that dimension also remains `UNVERIFIED`; do not report an overall `PASS` from this runner.
+
+The command oracle runs in the disposable sandbox even when Picogent exits nonzero, so a partial edit can still receive an objective result; the overall run remains `FAIL` when the agent fails. The browser lane runs only after a successful agent exit, uses a unique `<run-id>.localhost` origin, and requires the exact real-browser journey above. Entering anything other than `PASS`/`FAIL`, running without an interactive terminal, or timing out leaves that lane `UNVERIFIED`; no DOM mock or alternate browser is accepted. `--output <new-path>` writes only the sanitized result JSON with mode `0600`; `--source-map-output <new-path>` writes the separate unblinding map and requires `--output`. Both refuse to overwrite existing files and must use distinct paths.
