@@ -77,6 +77,7 @@ type TaskStateHandler interface {
 
 type Result struct {
 	Text          string
+	LineChanges   []llm.FileChange
 	FilesChanged  []string
 	ToolRounds    int
 	Context       ctxmgr.Stats

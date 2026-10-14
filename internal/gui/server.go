@@ -48,31 +48,33 @@ import (
 )
 
 type event struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	Summary   string          `json:"summary,omitempty"`
-	Hint      string          `json:"hint,omitempty"`
-	Path      string          `json:"path,omitempty"`
-	Line      int             `json:"line,omitempty"`
-	LineEnd   int             `json:"line_end,omitempty"`
-	Added     int             `json:"added,omitempty"`
-	Removed   int             `json:"removed,omitempty"`
-	Count     int             `json:"count,omitempty"`
-	Kind      string          `json:"kind,omitempty"`
-	Status    string          `json:"status,omitempty"`
-	Available bool            `json:"available,omitempty"`
-	Tokens    int             `json:"tokens,omitempty"`
-	Budget    int             `json:"budget,omitempty"`
-	Pct       float64         `json:"pct,omitempty"`
-	Level     string          `json:"level,omitempty"`
-	SessionID string          `json:"session_id,omitempty"`
-	Task      *taskstate.Task `json:"task"`
-	turnGen   uint64          `json:"-"`
+	Changes   []llm.FileChange `json:"changes,omitempty"`
+	Type      string           `json:"type"`
+	Text      string           `json:"text,omitempty"`
+	Summary   string           `json:"summary,omitempty"`
+	Hint      string           `json:"hint,omitempty"`
+	Path      string           `json:"path,omitempty"`
+	Line      int              `json:"line,omitempty"`
+	LineEnd   int              `json:"line_end,omitempty"`
+	Added     int              `json:"added,omitempty"`
+	Removed   int              `json:"removed,omitempty"`
+	Count     int              `json:"count,omitempty"`
+	Kind      string           `json:"kind,omitempty"`
+	Status    string           `json:"status,omitempty"`
+	Available bool             `json:"available,omitempty"`
+	Tokens    int              `json:"tokens,omitempty"`
+	Budget    int              `json:"budget,omitempty"`
+	Pct       float64          `json:"pct,omitempty"`
+	Level     string           `json:"level,omitempty"`
+	SessionID string           `json:"session_id,omitempty"`
+	Task      *taskstate.Task  `json:"task"`
+	turnGen   uint64           `json:"-"`
 }
 
 type transcriptLine struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
+	Changes []llm.FileChange `json:"changes,omitempty"`
+	Role    string           `json:"role"`
+	Text    string           `json:"text"`
 }
 
 const maxQueuedTurns = 8
@@ -1609,6 +1611,17 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 			}
 			break
 		}
+
+		// Persist measured changes on this turn's final reply, not on model text
+		// or a previous reply after an interrupted/failed turn.
+		if len(result.LineChanges) > 0 {
+			for i := len(next) - 1; i >= 0 && next[i].Role != "user"; i-- {
+				if next[i].Role == "assistant" && next[i].Content == result.Text && len(next[i].ToolCalls) == 0 {
+					next[i].UIChanges = append([]llm.FileChange(nil), result.LineChanges...)
+					break
+				}
+			}
+		}
 		h.endTurn(result)
 		if result.GoalDone && runGoal != "" {
 			if err := s.clearGoalIf(runGoal, runGoalRevision, myGoalEpoch, myGen); err != nil {
@@ -2144,6 +2157,16 @@ func (h *guiHandler) endTurn(result agent.Result) {
 	if !h.live() {
 		return
 	}
+	if len(result.LineChanges) > 0 {
+		h.edits, h.added, h.removed = len(result.LineChanges), 0, 0
+		for _, change := range result.LineChanges {
+			if change.Known {
+				h.added += change.Added
+				h.removed += change.Removed
+			}
+		}
+		h.emit(event{Type: "turn_changes", Text: result.Text, Changes: result.LineChanges})
+	}
 	if result.Context.Compacted && result.Context.Method != "" {
 		h.emit(event{
 			Type:   "context",
@@ -2447,7 +2470,7 @@ func messagesToTranscript(msgs []llm.Message) []transcriptLine {
 			}
 		case "assistant":
 			if t := strings.TrimSpace(m.Content); t != "" {
-				out = append(out, transcriptLine{Role: "assistant", Text: t})
+				out = append(out, transcriptLine{Role: "assistant", Text: t, Changes: m.UIChanges})
 			}
 		case "tool":
 			if t := strings.TrimSpace(m.Content); t != "" {

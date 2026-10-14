@@ -491,6 +491,11 @@ function renderOverview(ov) {
   overviewBar.style.width = pct + "%";
 }
 
+// Unknown/binary/historical counts stay unknown rather than becoming +0 / -0.
+function measuredChanges(changes = []) {
+  return changes.map(c => ({ path: c.path, added: c.known ? c.added : null, removed: c.known ? c.removed : null }));
+}
+
 function changeTotals(changes) {
   const known = changes.length > 0 && changes.every(c => Number.isFinite(c.added) && c.added >= 0 && Number.isFinite(c.removed) && c.removed >= 0);
   return known ? { added: changes.reduce((n, c) => n + c.added, 0), removed: changes.reduce((n, c) => n + c.removed, 0) } : null;
@@ -1044,6 +1049,7 @@ function syncChangeCardUndo() {
 }
 
 function renderAssistantReply(text, content, wrap, recordedChanges = []) {
+  wrap.replyText = text;
   const footer = splitChangeFooter(text);
   wrap.querySelector(".turn-change-card")?.remove();
   content.hidden = false;
@@ -1147,7 +1153,7 @@ function renderAssistantReply(text, content, wrap, recordedChanges = []) {
   syncUndoControl();
 }
 
-function add(kind, text, attachmentMeta) {
+function add(kind, text, attachmentMeta, recordedChanges = []) {
   if (kind === "tool") {
     return;
   }
@@ -1192,7 +1198,7 @@ function add(kind, text, attachmentMeta) {
     const c = document.createElement("div");
     c.className = "content md";
     wrap.appendChild(c);
-    renderAssistantReply(text, c, wrap);
+    renderAssistantReply(text, c, wrap, recordedChanges);
     applyRefsFromText(text);
   } else {
     wrap.textContent = text;
@@ -1226,7 +1232,7 @@ function replayMessages(msgs) {
   clearLog();
   for (const m of msgs) {
     if (m.role === "tool") continue;
-    add(m.role === "user" ? "you" : m.role, m.text);
+    add(m.role === "user" ? "you" : m.role, m.text, null, measuredChanges(m.changes));
   }
 }
 
@@ -2464,6 +2470,16 @@ function connectEvents() {
         turnStats.removed = e.removed || turnStats.removed;
       }
       updateReasonStats();
+      return;
+    }
+    if (e.type === "turn_changes") {
+      turnChanges = measuredChanges(e.changes);
+      if (stream && stream.target === e.text) stream.changes = turnChanges.map(c => ({ ...c }));
+      const latest = [...logEl.querySelectorAll(".turn-assistant")].at(-1);
+      if (latest?.replyText === e.text) {
+        renderAssistantReply(e.text, latest.querySelector(".content"), latest, turnChanges);
+      }
+      renderChangesPanel();
       return;
     }
     if (e.type === "change" && e.path) {

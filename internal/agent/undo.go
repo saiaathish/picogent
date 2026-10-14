@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/saiaathish/picogent/internal/checkpoint"
+	"github.com/saiaathish/picogent/internal/llm"
 )
 
 // turnUndo aggregates the per-path snapshots captured before native file tools
@@ -118,6 +119,9 @@ func (a *Agent) finishTurnUndo(res *Result, u *turnUndo, nativeWriteRan bool) {
 		return
 	}
 	res.FilesChanged = paths
+	for _, change := range u.checkpoint.LineChanges() {
+		res.LineChanges = append(res.LineChanges, llm.FileChange{Path: change.Path, Added: change.Added, Removed: change.Removed, Known: change.Known})
+	}
 	if len(paths) == 0 {
 		return
 	}
