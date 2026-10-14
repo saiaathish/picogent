@@ -2490,20 +2490,38 @@ function connectEvents() {
       return;
     }
 	if (e.type === "test") {
+		const evidence = String(e.text || e.summary || "").trim();
+		const token = /^verify\s+(PASS|FAIL|INCONCLUSIVE|SKIPPED)(?=$|[\s(])/i.exec(evidence)?.[1]?.toUpperCase();
+		const failed = e.status === "fail" || token === "FAIL";
+		const passed = !failed && e.status === "done" && token === "PASS";
+		const noRunner = /no test runner found/i.test(evidence);
 		const note = document.createElement("div");
-		note.className = "test-result" + (e.status === "fail" ? " is-fail" : " is-pass");
+		note.className = "test-result" + (failed ? " is-fail" : passed ? " is-pass" : " is-unverified");
 		const title = document.createElement("strong");
-		title.textContent = e.text || "Tests";
+		title.textContent = failed ? "Checks failed" : passed ? "Checks passed" : token === "SKIPPED" ? "Checks not run" : "Changes not verified";
 		note.appendChild(title);
-      if (e.summary) {
+      const description = document.createElement("p");
+      description.className = "test-result-description";
+      description.textContent = noRunner
+        ? "No test runner was found in this project. These changes haven’t been verified."
+        : failed ? "Review the check output before continuing."
+        : passed ? "The configured checks completed successfully."
+        : "The checks did not establish a passing result. Review the details before relying on these changes.";
+      note.appendChild(description);
+      const output = String(e.summary || e.text || "").trim();
+      if (output) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "Check details";
         const pre = document.createElement("pre");
-        pre.textContent = e.summary.slice(0, 1200);
-        note.appendChild(pre);
+        pre.textContent = output.slice(0, 1200);
+        details.append(summary, pre);
+        note.appendChild(details);
       }
       logEl.appendChild(note);
       syncEmpty();
       scrollChat();
-      if (e.status === "fail") {
+      if (failed) {
         promptEl.value = "Fix the failing tests";
         promptEl.focus();
       }
