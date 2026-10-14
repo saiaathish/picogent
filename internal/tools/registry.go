@@ -28,10 +28,6 @@ var ErrRegistryClosed = errors.New("tool registry is closed")
 
 type Context struct {
 	Workspace string
-	// DisableExternalTools removes capabilities that can contact external
-	// services. It is used by isolated benchmark runs that permit provider
-	// traffic but must not let task content initiate unrelated network access.
-	DisableExternalTools bool
 	// WorkspaceIdentity is the runtime approval binding for the current file
 	// tool call. It is validated again immediately before workspace I/O.
 	WorkspaceIdentity *perm.WorkspaceIdentity
@@ -106,14 +102,12 @@ func NewRegistry(c Context) *Registry {
 		measureTool{},
 		bashTool{},
 		gitTool{},
+		webFetch{},
 		todoWrite{},
+		mcpManage{},
 		verifyTool{},
 	} {
 		r.register(t)
-	}
-	if !c.DisableExternalTools {
-		r.register(webFetch{})
-		r.register(mcpManage{})
 	}
 	return r
 }

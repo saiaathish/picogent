@@ -367,36 +367,6 @@ func (a *Agent) systemPrompt(userHint string) string {
 
 func systemPromptFor(state RuntimeState, userHint, taskSuffix, scopeBoundary string) string {
 	p := systemPromptBase
-	if state.Tools != nil {
-		_, webFetchAvailable := state.Tools.Get("web_fetch")
-		_, mcpManageAvailable := state.Tools.Get("mcp_manage")
-		if !webFetchAvailable {
-			p = strings.Replace(p, ", web_fetch", "", 1)
-		}
-		if !mcpManageAvailable {
-			p = strings.Replace(
-				p,
-				"5. To list, add, or remove MCP servers, use mcp_manage only — never browser MCP or config files.",
-				"5. MCP server management is unavailable for this run.",
-				1,
-			)
-			p = strings.Replace(
-				p,
-				"6. If a task needs GitHub, a browser, Slack, Postgres, or web search and it is not connected yet, mcp_manage add (user must approve). Remove it when finished.",
-				"6. Do not use external services that are not present in the available tools.",
-				1,
-			)
-			p = strings.Replace(p, ", mcp_manage", "", 1)
-		}
-		switch {
-		case !webFetchAvailable && !mcpManageAvailable:
-			p += "\n\nExternal web fetching and MCP server management are disabled for this run. Do not try to install or invoke them."
-		case !webFetchAvailable:
-			p += "\n\nExternal web fetching is unavailable for this run. Do not try to install or invoke it."
-		case !mcpManageAvailable:
-			p += "\n\nMCP server management is unavailable for this run. Do not try to install or invoke it."
-		}
-	}
 	if state.Tools != nil && state.Tools.HasMCP() {
 		p += systemPromptMCP
 		if state.Tools.HasBrowserMCP() {

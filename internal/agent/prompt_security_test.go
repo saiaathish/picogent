@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/saiaathish/picogent/internal/evolve"
-	"github.com/saiaathish/picogent/internal/tools"
 )
 
 func TestSystemPromptSeparatesUntrustedInstructionSources(t *testing.T) {
@@ -34,20 +33,5 @@ func TestSystemPromptSeparatesUntrustedInstructionSources(t *testing.T) {
 	}
 	if strings.Contains(prompt, "Project rules (follow these):") || strings.Contains(prompt, "follow quietly; do not narrate") {
 		t.Fatal("prompt retained an authority-looking source label")
-	}
-}
-
-func TestSystemPromptReflectsDisabledExternalTools(t *testing.T) {
-	registry := tools.NewRegistry(tools.Context{DisableExternalTools: true})
-	defer registry.Close()
-	prompt := systemPromptFor(RuntimeState{Tools: registry}, "", "", "")
-	if strings.Contains(prompt, "web_fetch") || strings.Contains(prompt, "mcp_manage") {
-		t.Fatalf("disabled external tool is still described as available:\n%s", prompt)
-	}
-	if !strings.Contains(prompt, "External web fetching and MCP server management are disabled for this run") {
-		t.Fatalf("prompt does not explain the external-tool restriction:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "list, add, or remove MCP servers") || strings.Contains(prompt, "GitHub, a browser, Slack, Postgres") {
-		t.Fatalf("prompt still suggests setting up unavailable external services:\n%s", prompt)
 	}
 }
