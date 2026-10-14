@@ -2493,7 +2493,8 @@ function connectEvents() {
 		const evidence = String(e.text || e.summary || "").trim();
 		const token = /^verify\s+(PASS|FAIL|INCONCLUSIVE|SKIPPED)(?=$|[\s(])/i.exec(evidence)?.[1]?.toUpperCase();
 		const failed = e.status === "fail" || token === "FAIL";
-		const passed = !failed && e.status === "done" && token === "PASS";
+		const countedPass = e.kind === "test" && Number.isInteger(e.count) && e.count > 0 && (e.added === undefined || e.added === 0);
+		const passed = !failed && e.status === "done" && (token === "PASS" || (!token && countedPass));
 		const noRunner = /no test runner found/i.test(evidence);
 		const note = document.createElement("div");
 		note.className = "test-result" + (failed ? " is-fail" : passed ? " is-pass" : " is-unverified");
