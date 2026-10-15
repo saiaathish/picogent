@@ -162,6 +162,7 @@ var unittestCount = regexp.MustCompile(`(?m)^Ran (\d+) tests? in `)
 var summaryCount = regexp.MustCompile(`(?i)(\d+)\s+(passed|failed)\b`)
 
 func count(out string) (passed, failed int) {
+	out = strings.ReplaceAll(out, "\r\n", "\n")
 	if match := unittestCount.FindStringSubmatch(out); len(match) > 1 && regexp.MustCompile(`(?m)^OK(?:$| \()`).MatchString(out) {
 		passed, _ = strconv.Atoi(match[1])
 		// Skipped tests alone must not authorize completion.

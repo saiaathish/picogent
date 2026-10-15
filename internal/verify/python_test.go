@@ -38,3 +38,10 @@ func TestPythonProjectChecks(t *testing.T) {
 		t.Fatalf("broken fixture passed: %+v", result)
 	}
 }
+
+func TestUnittestWindowsLineEndings(t *testing.T) {
+	passed, failed := count("test_x ... ok\r\n\r\nRan 1 test in 0.001s\r\n\r\nOK\r\n")
+	if passed != 1 || failed != 0 {
+		t.Fatalf("CRLF result: %d passed, %d failed", passed, failed)
+	}
+}
