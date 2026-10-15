@@ -20,7 +20,42 @@
         list.replaceChildren();
       }
       box.hidden = value !== "antigravity";
+      document.getElementById("login-refresh").hidden = !["codex", "quadcode", "antigravity"].includes(value);
+      document.getElementById("login-refresh-status").textContent = "";
+      document.getElementById("login-reconnect-btn").hidden = true;
     },
+  };
+  const refreshBtn = document.getElementById("login-refresh-btn");
+  const reconnectBtn = document.getElementById("login-reconnect-btn");
+  let reconnectProvider = "";
+  refreshBtn.onclick = async () => {
+    const selected = provider;
+    const output = document.getElementById("login-refresh-status");
+    refreshBtn.disabled = true;
+    output.textContent = "Refreshing login…";
+    try {
+      const response = await fetch("/api/setup/refresh", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({provider:selected}), signal:AbortSignal.timeout(24000) });
+      if (!response.ok) throw new Error("Login refresh unavailable");
+      const result = await response.json();
+      if (selected !== provider) return;
+      await window.AntigravityCheck.afterCheck?.();
+      output.textContent = result.detail;
+      reconnectProvider = selected;
+      reconnectBtn.hidden = result.ok;
+    } catch (_) { if (selected === provider) { output.textContent = "Login refresh unavailable. Reconnect to sign in again."; reconnectProvider = selected; reconnectBtn.hidden = false; } }
+    finally { refreshBtn.disabled = false; }
+  };
+  reconnectBtn.onclick = async () => {
+    const output = document.getElementById("login-refresh-status");
+    reconnectBtn.disabled = true;
+    try {
+      const response = await fetch("/api/setup/login", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({provider:reconnectProvider,target:reconnectProvider === "quadcode" ? "claude" : reconnectProvider,force:true,return_to:location.href}) });
+      if (!response.ok) throw new Error("Reconnect failed");
+      const result = await response.json();
+      if (result.url) location.href = result.url;
+      else output.textContent = result.hint || "Finish login in Terminal, then refresh login here.";
+    } catch (_) { output.textContent = "Could not start login. Open Setup and try again."; }
+    finally { reconnectBtn.disabled = false; }
   };
   button.onclick = async () => {
     if (provider !== "antigravity" || button.disabled) return;

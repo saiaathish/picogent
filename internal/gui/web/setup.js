@@ -9,6 +9,8 @@ let selectedProvider = sessionStorage.getItem("picogent-setup-provider");
 if (!knownProviders.includes(selectedProvider)) selectedProvider = "codex";
 let refreshNumber = 0;
 let loginPoll;
+let fieldsInitialized = false;
+let paintedProvider = "";
 
 const compsEl = document.getElementById("comps");
 const loginsEl = document.getElementById("logins");
@@ -77,6 +79,9 @@ function updateSetupModelDesc() {
 }
 
 function paint(st) {
+  const providerChanged = paintedProvider !== selectedProvider;
+  paintedProvider = selectedProvider;
+  const previousModel = document.getElementById("model").value;
   window.AntigravityCheck.setProvider(selectedProvider);
   status = st;
   providerInputs.forEach((input) => {
@@ -125,8 +130,9 @@ function paint(st) {
     ? (st.logged_in ? "An API key is already configured. Enter a new one only to replace it." : "Enter your OpenAI API key to continue.")
     : `Connect ${st.logins?.[0]?.name || "your agent"}, then return here.`;
 
-  if (st.workspace) document.getElementById("workspace").value = st.workspace;
-  if (st.mode) document.getElementById("mode").value = st.mode;
+  if (!fieldsInitialized && st.workspace) document.getElementById("workspace").value = st.workspace;
+  if (!fieldsInitialized && st.mode) document.getElementById("mode").value = st.mode;
+  fieldsInitialized = true;
   const modeHint = document.getElementById("mode-override-hint");
   if (modeHint) {
     modeHint.hidden = !st.mode_overridden;
@@ -153,7 +159,7 @@ function paint(st) {
       modelSel.appendChild(o);
     }
   }
-  modelSel.value = st.model || modelSel.options[0]?.value || "";
+  modelSel.value = (!providerChanged && previousModel) || st.model || modelSel.options[0]?.value || "";
   if (![...modelSel.options].some((o) => o.value === modelSel.value) && modelSel.options.length) {
     modelSel.value = modelSel.options[0].value;
   }
@@ -229,15 +235,17 @@ async function login(target) {
     return;
   }
   showError(data.hint || "Finish login in the window that opened, then return here.");
-  loginPoll = setInterval(async () => {
-    const st = await refresh();
-    const hit = (st.logins || []).find((l) => l.id === target);
-    if (hit && hit.ok) {
-      clearInterval(loginPoll);
-      loginPoll = undefined;
-      showStage(current);
-    }
-  }, 2000);
+  const deadline = Date.now() + 120000;
+  const provider = selectedProvider;
+  const poll = async () => {
+    if (provider !== selectedProvider || Date.now() >= deadline) { clearInterval(loginPoll); loginPoll = undefined; return; }
+    try {
+      const st = await refresh();
+      if ((st.logins || []).some(l => l.id === target && l.ok)) { loginPoll = undefined; showStage(current); return; }
+    } catch (_) { /* Keep login retryable while the provider is unavailable. */ }
+    if (provider === selectedProvider) loginPoll = setTimeout(poll, 2000);
+  };
+  loginPoll = setTimeout(poll, 2000);
 }
 
 async function finish() {
@@ -335,3 +343,5 @@ refresh().then((st) => {
 });
 
 window.AntigravityCheck.afterCheck = refresh;
+
+window.addEventListener("pagehide", () => clearTimeout(loginPoll));

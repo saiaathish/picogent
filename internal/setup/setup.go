@@ -445,8 +445,9 @@ func runTimed(d time.Duration, name string, args ...string) (string, error) {
 	}
 }
 
-func StartClaudeLogin() error {
-	if ClaudeLoggedIn() {
+func StartClaudeLogin() error { return StartClaudeLoginForce(false) }
+func StartClaudeLoginForce(force bool) error {
+	if !force && ClaudeLoggedIn() {
 		return nil
 	}
 	bin := lookWithFallback("claude", ".local", "bin", "claude")
@@ -467,8 +468,9 @@ func StartOpenCodeLogin() error {
 	return OpenInteractive(shellQuote(bin) + " auth login")
 }
 
-func StartAntigravityLogin() error {
-	if agyauth.LoggedIn() {
+func StartAntigravityLogin() error { return StartAntigravityLoginForce(false) }
+func StartAntigravityLoginForce(force bool) error {
+	if !force && agyauth.LoggedIn() {
 		return nil
 	}
 	bin := lookWithFallback("agy", ".local", "bin", "agy")

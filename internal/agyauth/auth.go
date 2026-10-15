@@ -123,16 +123,7 @@ func LoadContext(ctx context.Context) (Cred, error) {
 }
 
 // Token returns a usable access token (may be expired if only refresh is available).
-func Token() (string, error) {
-	c, err := Load()
-	if err != nil {
-		return "", err
-	}
-	if c.AccessToken == "" {
-		return "", errors.New("Antigravity is not logged in")
-	}
-	return c.AccessToken, nil
-}
+func Token() (string, error) { return TokenContext(context.Background()) }
 
 // RefreshToken returns the durable refresh token when present.
 func RefreshToken() (string, error) {
@@ -169,11 +160,13 @@ type ModelInfo struct {
 
 // ListModels runs `agy models` when the CLI is installed.
 func ListModels() ([]ModelInfo, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	bin, err := exec.LookPath("agy")
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(bin, "models")
+	cmd := exec.CommandContext(ctx, bin, "models")
 	cmd.Env = os.Environ()
 	out, err := cmd.CombinedOutput()
 	if err != nil {

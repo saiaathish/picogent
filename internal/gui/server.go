@@ -433,6 +433,7 @@ func (s *server) Handler() http.Handler {
 	api("/api/setup/install", []string{http.MethodPost}, s.setupInstall)
 	api("/api/setup/login", []string{http.MethodPost}, s.setupLogin)
 	api("/api/setup/check", []string{http.MethodPost}, s.setupCheck)
+	api("/api/setup/refresh", []string{http.MethodPost}, s.refreshLogin)
 	api("/api/setup/finish", []string{http.MethodPost}, s.setupFinish)
 	api("/api/chat", []string{http.MethodPost}, s.chat)
 	api("/api/permission", []string{http.MethodPost}, s.permission)
@@ -881,6 +882,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		Target   string `json:"target"`
 		Provider string `json:"provider"`
 		ReturnTo string `json:"return_to"`
+		Force    bool   `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -902,7 +904,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch strings.ToLower(in.Target) {
 	case "claude":
-		if err := setup.StartClaudeLogin(); err != nil {
+		if err := setup.StartClaudeLoginForce(in.Force); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -920,7 +922,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 			"hint": "A Terminal window opened for OpenCode login. Choose Zen and/or Go, paste your key, then come back here.",
 		})
 	case "antigravity", "agy":
-		if err := setup.StartAntigravityLogin(); err != nil {
+		if err := setup.StartAntigravityLoginForce(in.Force); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -2149,6 +2151,7 @@ func (h *guiHandler) beginTurn(prompt string) {
 		return
 	}
 	h.prompt = prompt
+	h.emit(event{Type: "progress", Text: "Understanding your request"})
 	h.learn.RecordTurn()
 	h.emit(event{Type: "think", Text: summarizePrompt(prompt), Kind: "plan", Status: "start"})
 	h.emit(event{Type: "activity", Kind: "reset"})
@@ -2168,6 +2171,14 @@ func (h *guiHandler) endTurn(result agent.Result) {
 		}
 		h.emit(event{Type: "turn_changes", Text: result.Text, Changes: result.LineChanges})
 	}
+	label := "Reply ready"
+	if len(result.FilesChanged) > 0 {
+		label = "Changes ready for review"
+	}
+	if verify.StatusFromEvidence(result.Verified) == verify.StatusFail {
+		label = "Checks failed — review the output"
+	}
+	h.emit(event{Type: "progress", Text: label})
 	if result.Context.Compacted && result.Context.Method != "" {
 		h.emit(event{
 			Type:   "context",
@@ -2250,6 +2261,7 @@ func (h *guiHandler) OnToolStart(call llm.ToolCall) {
 		return
 	}
 	h.learn.RecordTool(call.Name)
+	h.emit(event{Type: "progress", Text: progressFor(call)})
 
 	switch call.Name {
 	case "read_file":

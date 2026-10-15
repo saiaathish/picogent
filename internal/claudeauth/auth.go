@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +44,8 @@ func Load() (Cred, error) {
 }
 
 func LoadContext(ctx context.Context) (Cred, error) {
+	ctx, cancel := context.WithTimeout(ctx, 4*time.Second)
+	defer cancel()
 	// Explicit config dir (tests / CLAUDE_CONFIG_DIR) always wins.
 	if os.Getenv("CLAUDE_CONFIG_DIR") != "" {
 		return loadFile()
@@ -58,19 +59,7 @@ func LoadContext(ctx context.Context) (Cred, error) {
 }
 
 // Token returns a usable access token, or an error if not logged in / expired.
-func Token() (string, error) {
-	c, err := Load()
-	if err != nil {
-		return "", err
-	}
-	if c.AccessToken == "" {
-		return "", errors.New("Claude Code is not logged in")
-	}
-	if c.Expired() {
-		return "", fmt.Errorf("Claude Code session expired.\nFix:     run `claude auth login` (or picogent setup → Log in to Claude)")
-	}
-	return c.AccessToken, nil
-}
+func Token() (string, error) { return TokenContext(context.Background()) }
 
 func loadKeychain(ctx context.Context) (Cred, error) {
 	out, err := exec.CommandContext(ctx, "security", "find-generic-password", "-s", keychainService, "-w").Output()

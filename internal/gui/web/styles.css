@@ -2521,3 +2521,6 @@ button, input, textarea { font: inherit; color: inherit; }
   .rec:hover::after { transform: none; }
   .prompt.is-busy .beam { display: none; }
 }
+
+.activity-progress { margin: 0 0 4px; color: var(--ink); font-size: 13px; }
+.activity-progress:empty { display: none; }

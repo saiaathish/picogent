@@ -189,7 +189,7 @@ func newBackend(cfg config.Config) (llm.Client, error) {
 		if key := cfg.AnthropicKeyResolved(); key != "" {
 			return llm.NewAnthropic(key, cfg.BackendModel(), timeout), nil
 		}
-		if claudeauth.LoggedIn() {
+		if claudeauth.CanConnect() {
 			return llm.NewClaudeCode(cfg.BackendModel(), timeout), nil
 		}
 		return nil, fmt.Errorf("Claude Code is not logged in (run `claude auth login` or picogent setup), and no Anthropic API key is set")
@@ -199,7 +199,7 @@ func newBackend(cfg config.Config) (llm.Client, error) {
 		}
 		return llm.NewOpenCode(timeout), nil
 	case config.ProviderAntigravity:
-		if !agyauth.LoggedIn() {
+		if !agyauth.CanConnect() {
 			return nil, fmt.Errorf("Antigravity is not logged in (run `agy` or picogent login antigravity, or set GEMINI_API_KEY)")
 		}
 		return llm.NewAntigravity(cfg.BackendModel(), timeout), nil

@@ -335,10 +335,14 @@ function ensureActivityPanel() {
     toggle.classList.toggle("is-open", open);
   };
 
+  const progress = document.createElement("p");
+  progress.className = "activity-progress";
+  progress.setAttribute("role", "status");
+  block.appendChild(progress);
   block.appendChild(toggle);
   block.appendChild(details);
   reasoningEl.appendChild(block);
-  activityPanel = { block, toggle, details, label: toggle.querySelector(".activity-label") };
+  activityPanel = { block, toggle, details, progress, label: toggle.querySelector(".activity-label") };
   return activityPanel;
 }
 
@@ -2444,6 +2448,12 @@ function connectEvents() {
       const kind = e.text || "all";
       if (kind === "main" || kind === "all") loadHeroPrompts(true);
       if ((kind === "side" || kind === "all") && sideOpen) loadSidePrompts(true);
+      return;
+    }
+    if (e.type === "progress") {
+      const panel = ensureActivityPanel();
+      panel.progress.textContent = e.text || "";
+      reasoningEl.hidden = false;
       return;
     }
     if (e.type === "think") {

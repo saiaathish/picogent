@@ -115,14 +115,14 @@ func tokenLocked(ctx context.Context, force bool) (string, string, error) {
 		return c.AccessToken, c.AccountID, nil
 	}
 	if c.RefreshToken == "" {
-		if c.AccessToken != "" {
+		if c.AccessToken != "" && !expired(c.AccessToken) {
 			return c.AccessToken, c.AccountID, nil
 		}
 		return "", "", fmt.Errorf("Codex auth.json has no tokens. Run: picogent login")
 	}
 	next, err := refresh(ctx, c)
 	if err != nil {
-		if c.AccessToken != "" && !force {
+		if c.AccessToken != "" && !force && !expired(c.AccessToken) {
 			return c.AccessToken, c.AccountID, nil
 		}
 		return "", "", err
@@ -131,6 +131,11 @@ func tokenLocked(ctx context.Context, force bool) (string, string, error) {
 		return "", "", err
 	}
 	return next.AccessToken, next.AccountID, nil
+}
+
+func expired(access string) bool {
+	exp := jwtExp(access)
+	return !exp.IsZero() && !time.Now().Before(exp)
 }
 
 func expiring(access string) bool {
