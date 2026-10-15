@@ -214,7 +214,7 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 		targeted.Reason = "requested targets have no safe targeted command"
 		result.Stages[0] = targeted
 	}
-	if targeted.Status != StatusPass {
+	if targeted.Status != StatusPass && (requestedTargets || targeted.Status != StatusSkipped) {
 		result.Status = targeted.Status
 		result.Reason = targeted.Reason
 		result.Duration = time.Since(started)

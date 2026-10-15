@@ -24,6 +24,10 @@ func TestPythonProjectChecks(t *testing.T) {
 	if result.Status != StatusPass || result.Passed != 1 {
 		t.Fatalf("unittest not detected: %+v", result)
 	}
+	broad := RunPipeline(context.Background(), dir, Options{})
+	if broad.Status != StatusPass {
+		t.Fatalf("broad checks skipped: %+v", broad)
+	}
 	pipeline := RunPipeline(context.Background(), dir, Options{Targets: []string{"slug.py"}})
 	if pipeline.Status != StatusPass {
 		t.Fatalf("targeted unittest blocked: %+v", pipeline)
