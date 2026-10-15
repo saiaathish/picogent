@@ -40,7 +40,7 @@ var version = "1.1.0-dev"
 // errHeadlessPermissionDenied is intentionally distinguishable from provider
 // and tool failures. CI callers can treat exit code 2 as "blocked pending
 // approval" without mistaking it for an agent crash.
-var errHeadlessPermissionDenied = errors.New("Problem: permission denied.\nCause:   headless Safe mode could not approve the requested action.\nFix:     rerun interactively and approve it, or use --yes for non-destructive in-workspace work.")
+var errHeadlessPermissionDenied = fmt.Errorf("%w: headless execution cannot approve this action. Use native file tools and verify for in-workspace work; approve other actions interactively", perm.ErrApprovalRequired)
 
 type headlessOutcome uint8
 

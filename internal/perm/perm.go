@@ -15,6 +15,9 @@ import (
 	"github.com/saiaathish/picogent/internal/config"
 )
 
+// ErrApprovalRequired lets an unattended agent recover using native tools.
+var ErrApprovalRequired = errors.New("explicit approval required")
+
 type Decision string
 
 const (
