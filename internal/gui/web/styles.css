@@ -2099,6 +2099,11 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 .test-result.is-pass { border-color: color-mix(in srgb, var(--ok) 40%, var(--line)); }
 .test-result.is-fail { border-color: color-mix(in srgb, #c0392b 40%, var(--line)); }
+.test-result.is-unverified { border-color: var(--line); }
+.test-result-description { margin: 4px 0 0; color: var(--mute); line-height: 1.5; }
+.test-result details { margin-top: 10px; }
+.test-result summary { width: fit-content; cursor: pointer; color: var(--mute); font-size: 12px; }
+.test-result summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
 .test-result pre {
   margin: 8px 0 0;
   padding: 8px;
@@ -2516,3 +2521,6 @@ button, input, textarea { font: inherit; color: inherit; }
   .rec:hover::after { transform: none; }
   .prompt.is-busy .beam { display: none; }
 }
+
+.activity-progress { margin: 0 0 4px; color: var(--ink); font-size: 13px; }
+.activity-progress:empty { display: none; }

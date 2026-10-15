@@ -57,7 +57,7 @@ func (c *Antigravity) Chat(ctx context.Context, req ChatRequest) (ChatResponse, 
 		req.Model = normalizeGeminiModel(model)
 		return oa.Chat(ctx, req)
 	}
-	tok, err := agyauth.Token()
+	tok, err := agyauth.TokenContext(ctx)
 	if err != nil {
 		return ChatResponse{}, fmt.Errorf("Antigravity: %w\nFix:     run `agy` to log in, or set GEMINI_API_KEY (see Antigravity CLI docs)", err)
 	}
@@ -127,6 +127,9 @@ func (c *Antigravity) generateOnce(ctx context.Context, url, tok string, raw []b
 	}
 	defer res.Body.Close()
 	payload, _ := io.ReadAll(io.LimitReader(res.Body, 8<<20))
+	if res.StatusCode == http.StatusUnauthorized {
+		return ChatResponse{}, fmt.Errorf("Antigravity session rejected; reconnect in Setup")
+	}
 	if res.StatusCode >= 400 {
 		return ChatResponse{}, fmt.Errorf("antigravity http %d: %s", res.StatusCode, truncate(string(payload), 500))
 	}
@@ -292,7 +295,7 @@ func toAgyTools(tools []ToolSpec) []map[string]any {
 		decls = append(decls, map[string]any{
 			"name":        sanitizeAgyToolName(t.Name),
 			"description": t.Description,
-			"parameters":   params,
+			"parameters":  params,
 		})
 	}
 	return []map[string]any{{"functionDeclarations": decls}}

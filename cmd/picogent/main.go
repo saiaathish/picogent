@@ -40,7 +40,7 @@ var version = "1.1.0-dev"
 // errHeadlessPermissionDenied is intentionally distinguishable from provider
 // and tool failures. CI callers can treat exit code 2 as "blocked pending
 // approval" without mistaking it for an agent crash.
-var errHeadlessPermissionDenied = errors.New("Problem: permission denied.\nCause:   headless Safe mode could not approve the requested action.\nFix:     rerun interactively and approve it, or use --yes for non-destructive in-workspace work.")
+var errHeadlessPermissionDenied = fmt.Errorf("%w: headless execution cannot approve this action. Use native file tools and verify for in-workspace work; approve other actions interactively", perm.ErrApprovalRequired)
 
 type headlessOutcome uint8
 
@@ -141,6 +141,8 @@ func runContext(ctx context.Context, args []string) error {
 		return runLogin(args[1:])
 	case "mcp":
 		return runMCP(args[1:])
+	case "check":
+		return runConnectionCheck(ctx, args[1:])
 	case "version", "-v", "--version":
 		fmt.Println("picogent", version)
 		return nil
@@ -178,6 +180,8 @@ Usage:
   picogent login claude connect Claude Code CLI (subscription, no API key)
   picogent login opencode connect OpenCode Zen/Go (opencode auth login)
   picogent login antigravity connect Antigravity CLI (agy)
+  picogent check antigravity  check login and model access (no generation)
+  picogent check project [--dir PATH]  run detected project checks
   picogent mcp          list connected MCP tools
   picogent init         write ~/.picogent/config.yaml
   picogent version

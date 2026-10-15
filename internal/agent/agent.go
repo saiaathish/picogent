@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -31,7 +32,8 @@ You already are their assistant: do the work yourself, reuse what you have learn
 5. To list, add, or remove MCP servers, use mcp_manage only — never browser MCP or config files.
 6. If a task needs GitHub, a browser, Slack, Postgres, or web search and it is not connected yet, mcp_manage add (user must approve). Remove it when finished.
 7. After code changes, call verify (or Picogent will).
-8. Never git push. Never destructive shell unless asked.
+8. Use read_file/glob/grep/git for inspection and verify for tests. Avoid shell chains and Python heredocs for these tasks. If shell approval is denied, recover with native tools; do not repeat the denied command.
+9. Never git push. Never destructive shell unless asked.
 9. After successful file changes, end with:
    Changed: ...
    Run: ...
@@ -77,6 +79,7 @@ type TaskStateHandler interface {
 
 type Result struct {
 	Text          string
+	LineChanges   []llm.FileChange
 	FilesChanged  []string
 	ToolRounds    int
 	Context       ctxmgr.Stats
@@ -457,6 +460,11 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			return msgs, res, wrapped
 		}
 		msg := out.Message
+		var nativeCalls []llm.ToolCall
+		for _, call := range msg.ToolCalls {
+			nativeCalls = append(nativeCalls, tools.NativeShellCalls(call)...)
+		}
+		msg.ToolCalls = nativeCalls
 		if msg.Role == "" {
 			msg.Role = "assistant"
 		}
@@ -559,6 +567,12 @@ func (a *Agent) RunWithOptions(ctx context.Context, history []llm.Message, user 
 			req := tool.Permission(call.Arguments, regCtx)
 			req.Hint = perm.EnrichHint(req, call.Arguments)
 			dec, err := gate.Check(ctx, req)
+			if errors.Is(err, perm.ErrApprovalRequired) {
+				reason := "Approval required. This action was not executed. Continue with read_file, glob, grep, git, write_file/edit_file, or verify if they can safely finish the task. Otherwise explain the blocker."
+				ev.OnToolEnd(call, reason, nil)
+				pending = append(pending, executed{call: call, req: req, text: reason})
+				continue
+			}
 			if err != nil {
 				ev.OnToolEnd(call, "", err)
 				res.FilesChanged = sortedChanged(changed)

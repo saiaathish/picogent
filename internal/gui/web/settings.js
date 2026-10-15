@@ -70,6 +70,7 @@ function renderModeOverride(s) {
 
 function syncProviderUI() {
   const provider = document.getElementById("provider").value;
+  window.AntigravityCheck.setProvider(provider);
   const isClaude = provider === "quadcode";
   const isOpenAI = provider === "openai";
   document.getElementById("anthropic-block").hidden = !isClaude;
@@ -551,3 +552,8 @@ assistantInput.addEventListener("keydown", (e) => {
     runAssistant();
   }
 });
+
+window.AntigravityCheck.afterCheck = async () => {
+  await refreshCLIAuthFlags();
+  applyProviderAuthUI(document.getElementById("provider").value);
+};

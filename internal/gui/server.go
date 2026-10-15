@@ -48,31 +48,33 @@ import (
 )
 
 type event struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	Summary   string          `json:"summary,omitempty"`
-	Hint      string          `json:"hint,omitempty"`
-	Path      string          `json:"path,omitempty"`
-	Line      int             `json:"line,omitempty"`
-	LineEnd   int             `json:"line_end,omitempty"`
-	Added     int             `json:"added,omitempty"`
-	Removed   int             `json:"removed,omitempty"`
-	Count     int             `json:"count,omitempty"`
-	Kind      string          `json:"kind,omitempty"`
-	Status    string          `json:"status,omitempty"`
-	Available bool            `json:"available,omitempty"`
-	Tokens    int             `json:"tokens,omitempty"`
-	Budget    int             `json:"budget,omitempty"`
-	Pct       float64         `json:"pct,omitempty"`
-	Level     string          `json:"level,omitempty"`
-	SessionID string          `json:"session_id,omitempty"`
-	Task      *taskstate.Task `json:"task"`
-	turnGen   uint64          `json:"-"`
+	Changes   []llm.FileChange `json:"changes,omitempty"`
+	Type      string           `json:"type"`
+	Text      string           `json:"text,omitempty"`
+	Summary   string           `json:"summary,omitempty"`
+	Hint      string           `json:"hint,omitempty"`
+	Path      string           `json:"path,omitempty"`
+	Line      int              `json:"line,omitempty"`
+	LineEnd   int              `json:"line_end,omitempty"`
+	Added     int              `json:"added,omitempty"`
+	Removed   int              `json:"removed,omitempty"`
+	Count     int              `json:"count,omitempty"`
+	Kind      string           `json:"kind,omitempty"`
+	Status    string           `json:"status,omitempty"`
+	Available bool             `json:"available,omitempty"`
+	Tokens    int              `json:"tokens,omitempty"`
+	Budget    int              `json:"budget,omitempty"`
+	Pct       float64          `json:"pct,omitempty"`
+	Level     string           `json:"level,omitempty"`
+	SessionID string           `json:"session_id,omitempty"`
+	Task      *taskstate.Task  `json:"task"`
+	turnGen   uint64           `json:"-"`
 }
 
 type transcriptLine struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
+	Changes []llm.FileChange `json:"changes,omitempty"`
+	Role    string           `json:"role"`
+	Text    string           `json:"text"`
 }
 
 const maxQueuedTurns = 8
@@ -430,6 +432,8 @@ func (s *server) Handler() http.Handler {
 	api("/api/setup", []string{http.MethodGet}, s.setupStatus)
 	api("/api/setup/install", []string{http.MethodPost}, s.setupInstall)
 	api("/api/setup/login", []string{http.MethodPost}, s.setupLogin)
+	api("/api/setup/check", []string{http.MethodPost}, s.setupCheck)
+	api("/api/setup/refresh", []string{http.MethodPost}, s.refreshLogin)
 	api("/api/setup/finish", []string{http.MethodPost}, s.setupFinish)
 	api("/api/chat", []string{http.MethodPost}, s.chat)
 	api("/api/permission", []string{http.MethodPost}, s.permission)
@@ -878,6 +882,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 		Target   string `json:"target"`
 		Provider string `json:"provider"`
 		ReturnTo string `json:"return_to"`
+		Force    bool   `json:"force"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, err.Error(), 400)
@@ -899,7 +904,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch strings.ToLower(in.Target) {
 	case "claude":
-		if err := setup.StartClaudeLogin(); err != nil {
+		if err := setup.StartClaudeLoginForce(in.Force); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -917,7 +922,7 @@ func (s *server) setupLogin(w http.ResponseWriter, r *http.Request) {
 			"hint": "A Terminal window opened for OpenCode login. Choose Zen and/or Go, paste your key, then come back here.",
 		})
 	case "antigravity", "agy":
-		if err := setup.StartAntigravityLogin(); err != nil {
+		if err := setup.StartAntigravityLoginForce(in.Force); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -1609,6 +1614,17 @@ func (s *server) runAdmittedTurn(admitted turnAdmission, prompt string, parts []
 			}
 			break
 		}
+
+		// Persist measured changes on this turn's final reply, not on model text
+		// or a previous reply after an interrupted/failed turn.
+		if len(result.LineChanges) > 0 {
+			for i := len(next) - 1; i >= 0 && next[i].Role != "user"; i-- {
+				if next[i].Role == "assistant" && next[i].Content == result.Text && len(next[i].ToolCalls) == 0 {
+					next[i].UIChanges = append([]llm.FileChange(nil), result.LineChanges...)
+					break
+				}
+			}
+		}
 		h.endTurn(result)
 		if result.GoalDone && runGoal != "" {
 			if err := s.clearGoalIf(runGoal, runGoalRevision, myGoalEpoch, myGen); err != nil {
@@ -2135,6 +2151,7 @@ func (h *guiHandler) beginTurn(prompt string) {
 		return
 	}
 	h.prompt = prompt
+	h.emit(event{Type: "progress", Text: "Understanding your request"})
 	h.learn.RecordTurn()
 	h.emit(event{Type: "think", Text: summarizePrompt(prompt), Kind: "plan", Status: "start"})
 	h.emit(event{Type: "activity", Kind: "reset"})
@@ -2144,6 +2161,27 @@ func (h *guiHandler) endTurn(result agent.Result) {
 	if !h.live() {
 		return
 	}
+	if len(result.LineChanges) > 0 {
+		h.edits, h.added, h.removed = len(result.LineChanges), 0, 0
+		for _, change := range result.LineChanges {
+			if change.Known {
+				h.added += change.Added
+				h.removed += change.Removed
+			}
+		}
+		h.emit(event{Type: "turn_changes", Text: result.Text, Changes: result.LineChanges})
+	}
+	label := "Reply ready"
+	if len(result.FilesChanged) > 0 {
+		label = "Changes ready for review"
+		if verify.StatusFromEvidence(result.Verified) != verify.StatusPass {
+			label = "Changes made; verification incomplete"
+		}
+	}
+	if verify.StatusFromEvidence(result.Verified) == verify.StatusFail {
+		label = "Checks failed — review the output"
+	}
+	h.emit(event{Type: "progress", Text: label})
 	if result.Context.Compacted && result.Context.Method != "" {
 		h.emit(event{
 			Type:   "context",
@@ -2226,6 +2264,7 @@ func (h *guiHandler) OnToolStart(call llm.ToolCall) {
 		return
 	}
 	h.learn.RecordTool(call.Name)
+	h.emit(event{Type: "progress", Text: progressFor(call)})
 
 	switch call.Name {
 	case "read_file":
@@ -2447,7 +2486,7 @@ func messagesToTranscript(msgs []llm.Message) []transcriptLine {
 			}
 		case "assistant":
 			if t := strings.TrimSpace(m.Content); t != "" {
-				out = append(out, transcriptLine{Role: "assistant", Text: t})
+				out = append(out, transcriptLine{Role: "assistant", Text: t, Changes: m.UIChanges})
 			}
 		case "tool":
 			if t := strings.TrimSpace(m.Content); t != "" {

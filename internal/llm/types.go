@@ -11,13 +11,22 @@ type Part struct {
 	Data []byte `json:"data,omitempty"`
 }
 
+// FileChange is local UI metadata; provider transports explicitly map message fields.
+type FileChange struct {
+	Path    string `json:"path"`
+	Added   int    `json:"added"`
+	Removed int    `json:"removed"`
+	Known   bool   `json:"known"`
+}
+
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	Parts      []Part     `json:"parts,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"`
+	UIChanges  []FileChange `json:"ui_changes,omitempty"`
+	Role       string       `json:"role"`
+	Content    string       `json:"content,omitempty"`
+	Parts      []Part       `json:"parts,omitempty"`
+	ToolCalls  []ToolCall   `json:"tool_calls,omitempty"`
+	ToolCallID string       `json:"tool_call_id,omitempty"`
+	Name       string       `json:"name,omitempty"`
 }
 
 type ToolCall struct {

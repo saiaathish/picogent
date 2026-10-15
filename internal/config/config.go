@@ -37,17 +37,17 @@ const ModelAuto = "auto"
 
 // RouterConfig controls automatic model tier selection (Codex Luna/Terra/Sol or Quad Code Haiku/Sonnet/Opus).
 type RouterConfig struct {
-	Enabled         bool   `yaml:"enabled"`
-	UseLLMAdvisor   bool   `yaml:"use_llm_advisor"`
-	AllowFable      bool   `yaml:"allow_fable"`
-	FableConfirmed  bool   `yaml:"fable_confirmed"`
-	AdvisorModel    string `yaml:"advisor_model"`
-	LastTier        string `yaml:"last_tier,omitempty"`
-	LastModel       string `yaml:"last_model,omitempty"`
-	LastReason      string `yaml:"last_reason,omitempty"`
-	LastReasoning   string `yaml:"last_reasoning,omitempty"`
-	LastTaskKind    string `yaml:"last_task_kind,omitempty"`
-	LastRouteMode   string `yaml:"last_route_mode,omitempty"`
+	Enabled        bool   `yaml:"enabled"`
+	UseLLMAdvisor  bool   `yaml:"use_llm_advisor"`
+	AllowFable     bool   `yaml:"allow_fable"`
+	FableConfirmed bool   `yaml:"fable_confirmed"`
+	AdvisorModel   string `yaml:"advisor_model"`
+	LastTier       string `yaml:"last_tier,omitempty"`
+	LastModel      string `yaml:"last_model,omitempty"`
+	LastReason     string `yaml:"last_reason,omitempty"`
+	LastReasoning  string `yaml:"last_reasoning,omitempty"`
+	LastTaskKind   string `yaml:"last_task_kind,omitempty"`
+	LastRouteMode  string `yaml:"last_route_mode,omitempty"`
 }
 
 // ExtensionsConfig tracks installed extensions and permission preferences.
@@ -61,22 +61,22 @@ type ExtensionsConfig struct {
 }
 
 type Config struct {
-	Workspace      string           `yaml:"workspace"`
-	Mode           Mode             `yaml:"mode"`
-	TaskMode       string           `yaml:"task_mode"`
-	Provider       Provider         `yaml:"provider"`
-	BaseURL        string           `yaml:"base_url"`
-	APIKey         string           `yaml:"api_key"`
-	AnthropicKey   string           `yaml:"anthropic_api_key"`
-	Model          string           `yaml:"model"`
-	OllamaURL      string           `yaml:"ollama_url"`
-	MaxToolRounds  int              `yaml:"max_tool_rounds"`
-	LLMTimeoutSec  int              `yaml:"llm_timeout_sec"`
-	BashTimeoutSec int              `yaml:"bash_timeout_sec"`
-	SetupComplete  bool             `yaml:"setup_complete"`
-	AutoTaskMode   *bool            `yaml:"auto_task_mode"`
-	Router         RouterConfig     `yaml:"router"`
-	Extensions     ExtensionsConfig `yaml:"extensions"`
+	Workspace          string           `yaml:"workspace"`
+	Mode               Mode             `yaml:"mode"`
+	TaskMode           string           `yaml:"task_mode"`
+	Provider           Provider         `yaml:"provider"`
+	BaseURL            string           `yaml:"base_url"`
+	APIKey             string           `yaml:"api_key"`
+	AnthropicKey       string           `yaml:"anthropic_api_key"`
+	Model              string           `yaml:"model"`
+	OllamaURL          string           `yaml:"ollama_url"`
+	MaxToolRounds      int              `yaml:"max_tool_rounds"`
+	LLMTimeoutSec      int              `yaml:"llm_timeout_sec"`
+	BashTimeoutSec     int              `yaml:"bash_timeout_sec"`
+	SetupComplete      bool             `yaml:"setup_complete"`
+	AutoTaskMode       *bool            `yaml:"auto_task_mode"`
+	Router             RouterConfig     `yaml:"router"`
+	Extensions         ExtensionsConfig `yaml:"extensions"`
 	modeBeforeOverride Mode
 	modeOverridden     bool
 }
@@ -124,7 +124,7 @@ func (c Config) MissingAuth() error {
 		if c.AnthropicKeyResolved() != "" {
 			return nil
 		}
-		if claudeauth.LoggedIn() {
+		if claudeauth.CanConnect() {
 			return nil
 		}
 		return fmt.Errorf("Problem: Claude Code is not logged in.\nCause:   no Claude Code CLI session and no Anthropic API key.\nFix:     run `claude auth login` (or picogent setup → Log in to Claude), or set ANTHROPIC_API_KEY")
@@ -134,7 +134,7 @@ func (c Config) MissingAuth() error {
 		}
 		return fmt.Errorf("Problem: OpenCode is not logged in.\nCause:   no Zen/Go key in ~/.local/share/opencode/auth.json.\nFix:     run `opencode auth login` (or picogent login opencode)")
 	case ProviderAntigravity:
-		if agyauth.LoggedIn() {
+		if agyauth.CanConnect() {
 			return nil
 		}
 		return fmt.Errorf("Problem: Antigravity is not logged in.\nCause:   no `agy` session and no GEMINI_API_KEY.\nFix:     run `agy` to sign in, or picogent login antigravity, or set GEMINI_API_KEY")

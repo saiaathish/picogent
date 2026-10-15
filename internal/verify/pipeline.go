@@ -107,11 +107,15 @@ func DetectPlan(workspace string, targets []string) Plan {
 		targeted = Command{Runner: runner, Args: append([]string{"test", "--silent", "--"}, targets...), Scope: ScopeTargeted}
 	case "bun":
 		targeted = Command{Runner: runner, Args: append([]string{"test"}, targets...), Scope: ScopeTargeted}
+	case "python", "python3":
+		targeted = Command{Runner: runner, Args: append([]string(nil), args...), Display: display, Scope: ScopeTargeted}
 	case "pytest":
 		targeted = Command{Runner: runner, Args: append([]string{"-q"}, targets...), Scope: ScopeTargeted}
 	}
 	if targeted.Runner != "" {
-		targeted.Display = displayCommand(targeted.Runner, targeted.Args)
+		if targeted.Display == "" {
+			targeted.Display = displayCommand(targeted.Runner, targeted.Args)
+		}
 		plan.Targeted = []Command{targeted}
 	}
 	return plan
@@ -210,7 +214,7 @@ func RunPipeline(ctx context.Context, workspace string, options Options) Pipelin
 		targeted.Reason = "requested targets have no safe targeted command"
 		result.Stages[0] = targeted
 	}
-	if targeted.Status != StatusPass {
+	if targeted.Status != StatusPass && (requestedTargets || targeted.Status != StatusSkipped) {
 		result.Status = targeted.Status
 		result.Reason = targeted.Reason
 		result.Duration = time.Since(started)

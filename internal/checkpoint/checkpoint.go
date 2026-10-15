@@ -61,6 +61,7 @@ type entry struct {
 	path     string
 	before   fileState
 	expected fingerprint
+	lines    LineChange
 }
 
 type fileState struct {
@@ -169,6 +170,7 @@ func (c *Checkpoint) Seal() error {
 	}
 	for i := range c.entries {
 		c.entries[i].expected = states[i].sum
+		c.entries[i].lines = countLineChange(c.entries[i].path, c.entries[i].before.data, states[i].data)
 	}
 	c.sealed = true
 	return nil

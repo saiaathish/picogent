@@ -192,7 +192,7 @@ func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, er
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	if c.UseOAuth {
-		tok, err := claudeauth.Token()
+		tok, err := claudeauth.TokenContext(ctx)
 		if err != nil {
 			return ChatResponse{}, err
 		}
@@ -215,6 +215,9 @@ func (c *Anthropic) Chat(ctx context.Context, req ChatRequest) (ChatResponse, er
 	}
 	defer res.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(res.Body, 8<<20))
+	if res.StatusCode == http.StatusUnauthorized && c.UseOAuth {
+		return ChatResponse{}, fmt.Errorf("Claude session rejected; reconnect in Setup")
+	}
 	if res.StatusCode >= 400 {
 		return ChatResponse{}, fmt.Errorf("anthropic http %d: %s", res.StatusCode, strings.TrimSpace(string(raw)))
 	}

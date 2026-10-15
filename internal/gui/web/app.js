@@ -137,6 +137,11 @@ function renderTopContext(state) {
   const project = cleanWorkspace && cleanWorkspace !== "." ? parts[parts.length - 1] || cleanWorkspace : "No folder";
   topProjectEl.textContent = project;
   topProjectEl.title = cleanWorkspace || "Select a project folder";
+  const folder = document.querySelector("#hero-recs .rec-folder");
+  if (folder) {
+    folder.querySelector("span").textContent = cleanWorkspace ? "Change project" : "Select folder";
+    folder.querySelector("small").textContent = cleanWorkspace ? project : "Open a project";
+  }
   const mode = String(state?.mode || "safe").toLowerCase() === "fast" ? "Fast" : "Safe";
   const model = String(state?.model || "auto");
   topRuntimeEl.textContent = mode + " · " + (model === "auto" ? "Auto" : model);
@@ -335,10 +340,14 @@ function ensureActivityPanel() {
     toggle.classList.toggle("is-open", open);
   };
 
+  const progress = document.createElement("p");
+  progress.className = "activity-progress";
+  progress.setAttribute("role", "status");
+  block.appendChild(progress);
   block.appendChild(toggle);
   block.appendChild(details);
   reasoningEl.appendChild(block);
-  activityPanel = { block, toggle, details, label: toggle.querySelector(".activity-label") };
+  activityPanel = { block, toggle, details, progress, label: toggle.querySelector(".activity-label") };
   return activityPanel;
 }
 
@@ -489,6 +498,11 @@ function renderOverview(ov) {
   }
   overviewPct.textContent = label;
   overviewBar.style.width = pct + "%";
+}
+
+// Unknown/binary/historical counts stay unknown rather than becoming +0 / -0.
+function measuredChanges(changes = []) {
+  return changes.map(c => ({ path: c.path, added: c.known ? c.added : null, removed: c.known ? c.removed : null }));
 }
 
 function changeTotals(changes) {
@@ -1044,6 +1058,7 @@ function syncChangeCardUndo() {
 }
 
 function renderAssistantReply(text, content, wrap, recordedChanges = []) {
+  wrap.replyText = text;
   const footer = splitChangeFooter(text);
   wrap.querySelector(".turn-change-card")?.remove();
   content.hidden = false;
@@ -1147,7 +1162,7 @@ function renderAssistantReply(text, content, wrap, recordedChanges = []) {
   syncUndoControl();
 }
 
-function add(kind, text, attachmentMeta) {
+function add(kind, text, attachmentMeta, recordedChanges = []) {
   if (kind === "tool") {
     return;
   }
@@ -1192,7 +1207,7 @@ function add(kind, text, attachmentMeta) {
     const c = document.createElement("div");
     c.className = "content md";
     wrap.appendChild(c);
-    renderAssistantReply(text, c, wrap);
+    renderAssistantReply(text, c, wrap, recordedChanges);
     applyRefsFromText(text);
   } else {
     wrap.textContent = text;
@@ -1226,7 +1241,7 @@ function replayMessages(msgs) {
   clearLog();
   for (const m of msgs) {
     if (m.role === "tool") continue;
-    add(m.role === "user" ? "you" : m.role, m.text);
+    add(m.role === "user" ? "you" : m.role, m.text, null, measuredChanges(m.changes));
   }
 }
 
@@ -1407,7 +1422,7 @@ async function refresh() {
   });
 
   if (s.model_options?.length) {
-    if (s.model === "auto") userModelChoice = "auto";
+    userModelChoice = s.model || "auto";
     fillModelPick(s.model_options, userModelChoice);
   }
 
@@ -2336,6 +2351,7 @@ function connectEvents() {
       return;
     }
     if (e.type === "permission") {
+      setReviewOpen(false);
       showPermission(e);
       return;
     }
@@ -2406,7 +2422,7 @@ function connectEvents() {
       return;
     }
     if (e.type === "review" && e.path) {
-      openReview(e.path, e.line || 0, e.line_end || e.line || 0, "Reading file…");
+      // Reads belong in activity; open file previews only on user request.
       pushActivity("read", e.path, e.path);
       return;
     }
@@ -2440,6 +2456,12 @@ function connectEvents() {
       if ((kind === "side" || kind === "all") && sideOpen) loadSidePrompts(true);
       return;
     }
+    if (e.type === "progress") {
+      const panel = ensureActivityPanel();
+      panel.progress.textContent = e.text || "";
+      reasoningEl.hidden = false;
+      return;
+    }
     if (e.type === "think") {
       if (e.status === "start") addReasonStep(e.text);
       if (e.status === "done") {
@@ -2466,6 +2488,16 @@ function connectEvents() {
       updateReasonStats();
       return;
     }
+    if (e.type === "turn_changes") {
+      turnChanges = measuredChanges(e.changes);
+      if (stream && stream.target === e.text) stream.changes = turnChanges.map(c => ({ ...c }));
+      const latest = [...logEl.querySelectorAll(".turn-assistant")].at(-1);
+      if (latest?.replyText === e.text) {
+        renderAssistantReply(e.text, latest.querySelector(".content"), latest, turnChanges);
+      }
+      renderChangesPanel();
+      return;
+    }
     if (e.type === "change" && e.path) {
       const previous = turnChanges.find(c => c.path === e.path);
       if (previous) {
@@ -2490,20 +2522,42 @@ function connectEvents() {
       return;
     }
 	if (e.type === "test") {
+		const evidence = String(e.text || e.summary || "").trim();
+		const token = /^verify\s+(PASS|FAIL|INCONCLUSIVE|SKIPPED)(?=$|[\s(])/i.exec(evidence)?.[1]?.toUpperCase();
+		const failed = e.status === "fail" || token === "FAIL";
+		const countedPass = e.kind === "test" && Number.isInteger(e.count) && e.count > 0 && (e.added === undefined || e.added === 0);
+		const passed = !failed && e.status === "done" && (token === "PASS" || (!token && countedPass));
+		const noRunner = /no test runner found/i.test(evidence);
+		// A project without a runner has no check result to display. Keep the
+		// backend's inconclusive evidence, without adding a redundant chat card.
+		if (noRunner && token === "INCONCLUSIVE" && !failed) return;
 		const note = document.createElement("div");
-		note.className = "test-result" + (e.status === "fail" ? " is-fail" : " is-pass");
+		note.className = "test-result" + (failed ? " is-fail" : passed ? " is-pass" : " is-unverified");
 		const title = document.createElement("strong");
-		title.textContent = e.text || "Tests";
+		title.textContent = failed ? "Checks failed" : passed ? "Checks passed" : token === "SKIPPED" ? "Checks not run" : "Changes not verified";
 		note.appendChild(title);
-      if (e.summary) {
+      const description = document.createElement("p");
+      description.className = "test-result-description";
+      description.textContent = noRunner
+        ? "No test runner was found in this project. These changes haven’t been verified."
+        : failed ? "Review the check output before continuing."
+        : passed ? "The configured checks completed successfully."
+        : "The checks did not establish a passing result. Review the details before relying on these changes.";
+      note.appendChild(description);
+      const output = String(e.summary || e.text || "").trim();
+      if (output) {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = "Check details";
         const pre = document.createElement("pre");
-        pre.textContent = e.summary.slice(0, 1200);
-        note.appendChild(pre);
+        pre.textContent = output.slice(0, 1200);
+        details.append(summary, pre);
+        note.appendChild(details);
       }
       logEl.appendChild(note);
       syncEmpty();
       scrollChat();
-      if (e.status === "fail") {
+      if (failed) {
         promptEl.value = "Fix the failing tests";
         promptEl.focus();
       }

@@ -70,8 +70,8 @@ func Detect(workspace string) (runner, command string, args []string) {
 			return "npm", "npm test --silent", []string{"test", "--silent"}
 		}
 	}
-	if fileExists(filepath.Join(workspace, "pytest.ini")) || fileExists(filepath.Join(workspace, "pyproject.toml")) {
-		return "pytest", "pytest -q", []string{"-q"}
+	if runner, display, args := detectPython(workspace); runner != "" {
+		return runner, display, args
 	}
 	if fileExists(filepath.Join(workspace, "Cargo.toml")) {
 		return "cargo", "cargo test", []string{"test"}
@@ -116,6 +116,14 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 		out = out[:8<<10] + "\n… truncated …"
 	}
 	passed, failed := count(out)
+	if strings.HasPrefix(command.Display, "Python syntax check") {
+		result := Result{OK: false, Status: StatusInconclusive, Scope: command.Scope, Runner: command.Runner, Command: command.Display, Output: strings.TrimSpace(out), Duration: duration, Attempt: attempt, Reason: "syntax check passed; no tests were run"}
+		if err != nil {
+			result.Status = StatusFail
+			result.Reason = "Python syntax check failed"
+		}
+		return result
+	}
 	res := Result{
 		OK:       err == nil,
 		Status:   StatusPass,
@@ -149,9 +157,20 @@ func runCommand(ctx context.Context, workspace string, command Command, attempt 
 	return res
 }
 
+var unittestCount = regexp.MustCompile(`(?m)^Ran (\d+) tests? in `)
+
 var summaryCount = regexp.MustCompile(`(?i)(\d+)\s+(passed|failed)\b`)
 
 func count(out string) (passed, failed int) {
+	out = strings.ReplaceAll(out, "\r\n", "\n")
+	if match := unittestCount.FindStringSubmatch(out); len(match) > 1 && regexp.MustCompile(`(?m)^OK(?:$| \()`).MatchString(out) {
+		passed, _ = strconv.Atoi(match[1])
+		// Skipped tests alone must not authorize completion.
+		if skipped := regexp.MustCompile(`skipped=(\d+)`).FindStringSubmatch(out); len(skipped) > 1 {
+			n, _ := strconv.Atoi(skipped[1])
+			passed -= n
+		}
+	}
 	for _, line := range strings.Split(out, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "ok ") || strings.Contains(line, " PASS") {
