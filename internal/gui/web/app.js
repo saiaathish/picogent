@@ -137,6 +137,11 @@ function renderTopContext(state) {
   const project = cleanWorkspace && cleanWorkspace !== "." ? parts[parts.length - 1] || cleanWorkspace : "No folder";
   topProjectEl.textContent = project;
   topProjectEl.title = cleanWorkspace || "Select a project folder";
+  const folder = document.querySelector("#hero-recs .rec-folder");
+  if (folder) {
+    folder.querySelector("span").textContent = cleanWorkspace ? "Change project" : "Select folder";
+    folder.querySelector("small").textContent = cleanWorkspace ? project : "Open a project";
+  }
   const mode = String(state?.mode || "safe").toLowerCase() === "fast" ? "Fast" : "Safe";
   const model = String(state?.model || "auto");
   topRuntimeEl.textContent = mode + " · " + (model === "auto" ? "Auto" : model);
@@ -1417,7 +1422,7 @@ async function refresh() {
   });
 
   if (s.model_options?.length) {
-    if (s.model === "auto") userModelChoice = "auto";
+    userModelChoice = s.model || "auto";
     fillModelPick(s.model_options, userModelChoice);
   }
 
@@ -2346,6 +2351,7 @@ function connectEvents() {
       return;
     }
     if (e.type === "permission") {
+      setReviewOpen(false);
       showPermission(e);
       return;
     }
@@ -2416,7 +2422,7 @@ function connectEvents() {
       return;
     }
     if (e.type === "review" && e.path) {
-      openReview(e.path, e.line || 0, e.line_end || e.line || 0, "Reading file…");
+      // Reads belong in activity; open file previews only on user request.
       pushActivity("read", e.path, e.path);
       return;
     }
