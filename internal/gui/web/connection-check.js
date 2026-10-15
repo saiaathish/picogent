@@ -18,11 +18,11 @@
         details.hidden = true;
         details.open = false;
         list.replaceChildren();
+        document.getElementById("login-refresh-status").textContent = "";
+        document.getElementById("login-reconnect-btn").hidden = true;
       }
       box.hidden = value !== "antigravity";
       document.getElementById("login-refresh").hidden = !["codex", "quadcode", "antigravity"].includes(value);
-      document.getElementById("login-refresh-status").textContent = "";
-      document.getElementById("login-reconnect-btn").hidden = true;
     },
   };
   const refreshBtn = document.getElementById("login-refresh-btn");

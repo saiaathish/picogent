@@ -181,6 +181,7 @@ Usage:
   picogent login opencode connect OpenCode Zen/Go (opencode auth login)
   picogent login antigravity connect Antigravity CLI (agy)
   picogent check antigravity  check login and model access (no generation)
+  picogent check project [--dir PATH]  run detected project checks
   picogent mcp          list connected MCP tools
   picogent init         write ~/.picogent/config.yaml
   picogent version

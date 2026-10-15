@@ -24,6 +24,10 @@ func TestPythonProjectChecks(t *testing.T) {
 	if result.Status != StatusPass || result.Passed != 1 {
 		t.Fatalf("unittest not detected: %+v", result)
 	}
+	pipeline := RunPipeline(context.Background(), dir, Options{Targets: []string{"slug.py"}})
+	if pipeline.Status != StatusPass {
+		t.Fatalf("targeted unittest blocked: %+v", pipeline)
+	}
 	os.WriteFile(filepath.Join(dir, "slug.py"), []byte("def slug(x):\n return x\n"), 0600)
 	result = Run(context.Background(), dir)
 	if result.Status != StatusFail {

@@ -107,11 +107,15 @@ func DetectPlan(workspace string, targets []string) Plan {
 		targeted = Command{Runner: runner, Args: append([]string{"test", "--silent", "--"}, targets...), Scope: ScopeTargeted}
 	case "bun":
 		targeted = Command{Runner: runner, Args: append([]string{"test"}, targets...), Scope: ScopeTargeted}
+	case "python", "python3":
+		targeted = Command{Runner: runner, Args: append([]string(nil), args...), Display: display, Scope: ScopeTargeted}
 	case "pytest":
 		targeted = Command{Runner: runner, Args: append([]string{"-q"}, targets...), Scope: ScopeTargeted}
 	}
 	if targeted.Runner != "" {
-		targeted.Display = displayCommand(targeted.Runner, targeted.Args)
+		if targeted.Display == "" {
+			targeted.Display = displayCommand(targeted.Runner, targeted.Args)
+		}
 		plan.Targeted = []Command{targeted}
 	}
 	return plan

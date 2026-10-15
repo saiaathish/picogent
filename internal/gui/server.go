@@ -2174,6 +2174,9 @@ func (h *guiHandler) endTurn(result agent.Result) {
 	label := "Reply ready"
 	if len(result.FilesChanged) > 0 {
 		label = "Changes ready for review"
+		if verify.StatusFromEvidence(result.Verified) != verify.StatusPass {
+			label = "Changes made; verification incomplete"
+		}
 	}
 	if verify.StatusFromEvidence(result.Verified) == verify.StatusFail {
 		label = "Checks failed — review the output"
